@@ -54,8 +54,9 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    PythonRelatedCandidate, apply_class_facts, apply_project_module_names, find_related_tests,
-    owner_module_paths, related_test_candidates, related_tests_for_candidates,
+    ProjectNameIndex, PythonRelatedCandidate, apply_class_facts, apply_project_module_names_with,
+    apply_test_local_shadows, find_related_tests, owner_module_paths, related_test_candidates,
+    related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -446,16 +447,26 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                     reason: PartialRunReason::DiscoveryIncomplete { .. }
                 }
         );
-    let project_source_files: Vec<PathBuf> = if discovery_complete {
-        input
-            .production_files
-            .iter()
-            .chain(&input.ambiguous_files)
-            .cloned()
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let mut project_names = discovery_complete.then(|| {
+        ProjectNameIndex::build(
+            input.production_files.iter().chain(&input.ambiguous_files),
+            |path| root.join(path).exists(),
+        )
+    });
+
+    // Every selected file, test and helper files included, for test-local
+    // module shadows (#13706): `svc/a/tests/core.py` ahead on `sys.path`
+    // shadows `from core import limit`. Unselected files cannot shadow what
+    // they cannot be seen to, which only matters for a capped run, and that
+    // run already records no project-relative names.
+    let all_selected_files: Vec<PathBuf> = input
+        .production_files
+        .iter()
+        .chain(&input.test_files)
+        .chain(&input.helper_files)
+        .chain(&input.ambiguous_files)
+        .cloned()
+        .collect();
 
     for relative in &input.production_files {
         match load_facts_with_source(root, relative).and_then(|(facts, source)| {
@@ -491,11 +502,12 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                 );
                 // Project-relative names follow the re-export pass, as in diff
                 // mode, so a nested project's package gets its own name too.
-                if discovery_complete {
-                    apply_project_module_names(&mut facts.owners, project_source_files.iter(), |path| {
+                if let Some(index) = project_names.as_mut() {
+                    apply_project_module_names_with(&mut facts.owners, index, |path| {
                         root.join(path).exists()
                     });
                 }
+                apply_test_local_shadows(&mut facts.owners, all_selected_files.iter());
                 // Class facts are file-local, so the single shared owner of
                 // them runs here, before the owner inventory and finding
                 // projection read them, exactly as diff mode orders it

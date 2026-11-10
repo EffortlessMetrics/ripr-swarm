@@ -24,7 +24,10 @@ pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
 pub(super) use dunder_protocol::body_exercises_dunder_protocol;
-pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
+pub(super) use project_names::{
+    ProjectNameIndex, apply_project_module_names, apply_project_module_names_with,
+    owner_import_modules_for,
+};
 use test_local_shadow::test_local_module_shadows;
 pub(super) use test_local_shadow::{TestLocalShadow, apply_test_local_shadows};
 
@@ -848,7 +851,6 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             // name (#13675) is the owner's only for a test under its project.
             ambiguous.module == module
                 && (owner_paths.contains(&ambiguous.module)
-                    || owner.reexport_modules.contains(&ambiguous.module)
                     || module_name_identifies_owner_for(owner, module, &test.file))
         })
     };

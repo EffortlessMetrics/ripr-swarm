@@ -231,7 +231,7 @@ fn a_lone_nested_project_lib_module_is_not_its_bare_name() -> Result<(), String>
 const PKG_INIT: &str = "from .core import limit\n";
 const PKG_TEST: &str = "from pkg import limit\n\n\ndef test_limit():\n    assert limit(10) == False\n    assert limit(11) == True\n";
 
-fn project_package_files<'a>(test_path: &'a str) -> Vec<(&'a str, &'a str)> {
+fn project_package_files(test_path: &str) -> Vec<(&str, &str)> {
     vec![
         ("svc/a/pyproject.toml", PROJECT),
         ("svc/b/pyproject.toml", PROJECT),
@@ -350,7 +350,7 @@ fn repo_scan_class(
     Ok(finding.class.clone())
 }
 
-fn flat_scan_files<'a>(test_project: &'a str) -> Vec<(&'a str, &'a str)> {
+fn flat_scan_files(test_project: &str) -> Vec<(&'static str, &'static str)> {
     let test_path = match test_project {
         "a" => "svc/a/tests/test_core.py",
         "b" => "svc/b/tests/test_core.py",
@@ -425,4 +425,102 @@ fn repo_scan_credits_a_package_reexport_to_its_own_project_only() -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn assert_not_exposed_both_modes(
+    label: &str,
+    files: &[(&str, &str)],
+    owner_file: &str,
+) -> Result<(), String> {
+    let diff = analyze_one_line(&format!("{label}-diff"), files, owner_file, 2)?;
+    if diff.class == ExposureClass::Exposed {
+        return Err(format!("{label}: diff mode gave Exposed"));
+    }
+    let scan = repo_scan_class(&format!("{label}-scan"), files, owner_file)?;
+    if scan == ExposureClass::Exposed {
+        return Err(format!("{label}: repo scan gave Exposed"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_root_package_rival_withholds_a_project_package_reexport_import() -> Result<(), String> {
+    // A repo-root `pkg/__init__.py` defines its own `limit`; a root test doing
+    // `from pkg import limit` binds that one, not svc/a's re-exported one.
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/pkg/__init__.py", PKG_INIT),
+        ("svc/a/pkg/core.py", CORE_PY),
+        ("pkg/__init__.py", CORE_PY),
+        ("tests/test_core.py", PKG_TEST),
+    ];
+    assert_not_exposed_both_modes("root-package-rival", &files, "svc/a/pkg/core.py")
+}
+
+#[test]
+fn a_test_local_module_shadows_a_flat_project_module_in_both_modes() -> Result<(), String> {
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/core.py", CORE_PY),
+        ("svc/a/tests/core.py", CORE_PY),
+        ("svc/a/tests/test_core.py", STRONG_TEST),
+    ];
+    assert_not_exposed_both_modes("shadow-flat", &files, "svc/a/core.py")
+}
+
+#[test]
+fn a_test_local_module_shadows_a_project_package_reexport_in_both_modes() -> Result<(), String> {
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/pkg/__init__.py", PKG_INIT),
+        ("svc/a/pkg/core.py", CORE_PY),
+        ("svc/a/tests/pkg.py", CORE_PY),
+        ("svc/a/tests/test_core.py", PKG_TEST),
+    ];
+    assert_not_exposed_both_modes("shadow-package", &files, "svc/a/pkg/core.py")
+}
+
+#[test]
+fn a_capped_repo_run_records_no_project_names() -> Result<(), String> {
+    for test_project in ["a", "b"] {
+        let root = super::reexport_tests::unique_tempdir(&format!("scan-capped-{test_project}"))?;
+        for (path, contents) in flat_scan_files(test_project) {
+            super::reexport_tests::write_file(&root.join(path), contents)?;
+        }
+        let input = repo::select_repo_input_with_limit(
+            &root,
+            repo::RepoWorkingSetLimit {
+                limit: 2,
+                source: repo::RepoWorkingSetCapSource::Default,
+            },
+        );
+        let evidence = repo::build_repo_evidence(&input, &root);
+        let _ = std::fs::remove_dir_all(&root);
+        if input.counts.capped == 0 {
+            return Err("fixture did not cap the run".to_string());
+        }
+        if evidence
+            .findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed)
+        {
+            return Err(format!(
+                "a capped run credited a project-relative name for the project {test_project} test"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_project_root_init_reexport_does_not_relate_a_repo_root_test() -> Result<(), String> {
+    // `svc/a/__init__.py` is the project itself; its re-export must not give
+    // `svc/a/core.py` a bare name usable by a test outside the project.
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/__init__.py", PKG_INIT),
+        ("svc/a/core.py", CORE_PY),
+        ("tests/test_core.py", STRONG_TEST),
+    ];
+    assert_not_exposed_both_modes("project-root-init", &files, "svc/a/core.py")
 }
