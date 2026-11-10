@@ -736,10 +736,11 @@ check and does not run on ordinary pushes or PR updates.
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
 - **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
-  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
-  workflow (same guard shape as the merge-ready label flow; re-apply
-  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
-  run takes minutes and several GB of memory.
+  pull request that touches `crates/ripr/src/**`, `crates/ripr-contract/src/**`,
+  `xtask/src/kani_lane.rs` or the workflow (same guard shape as the merge-ready
+  label flow; re-apply `merge-ready` for a later head). Kani runs once per owning
+  package (`ripr`, then `ripr-contract`) under one whole-run deadline and compiles
+  each whole library, so a run takes minutes and several GB of memory.
 
 ### Advisory Printed-Command Paste Lane
 

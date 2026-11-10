@@ -509,7 +509,8 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Dura
         output.timed_out,
         exit_success,
         &exit_label,
-        args.timeout_secs,
+        // The budget this invocation actually received, not the whole-run total.
+        timeout.as_secs(),
     );
     let combined = format!("{}\n{}", output.stdout, output.stderr);
     reconcile_kani_output(harnesses, &combined, problem)
