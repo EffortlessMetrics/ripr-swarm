@@ -4770,9 +4770,46 @@ pub(crate) fn default_object_second_binding(
         && !owner.default_object_unsafe_siblings.is_empty()
         && import.imported.as_deref() == Some("default")
         && !import.namespace
-        && test.imports_in_file.iter().any(|other| {
+        && (test.imports_in_file.iter().any(|other| {
             !std::ptr::eq(other, import)
                 && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
+        }) || body_loads_owner_module(test, owner, alias_map, workspace_root))
+}
+
+/// A dynamic `import("...")`, `require("...")`, `requireActual("...")` or
+/// `importActual("...")` inside the test body whose literal specifier
+/// resolves to the owner's module is a second binding that produces no static
+/// import record (#13750). Detection is textual (comments and strings are not
+/// excluded), so it can only over-withhold.
+fn body_loads_owner_module(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let body = &test.body_text;
+    let owner_module = normalized_module_path(&owner.file);
+    ["import(", "require(", "requireActual(", "importActual("]
+        .iter()
+        .any(|needle| {
+            body.match_indices(needle).any(|(at, _)| {
+                if body[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_javascript_identifier_char)
+                {
+                    return false;
+                }
+                quoted_literal_after(body, at + needle.len()).is_some_and(|specifier| {
+                    normalized_relative_import_module(
+                        &test.file,
+                        &specifier,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(|module| module == owner_module)
+                })
+            })
         })
 }
 

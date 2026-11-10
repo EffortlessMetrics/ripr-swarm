@@ -595,6 +595,53 @@ fn every_second_binding_route_withholds_beside_a_credited_control() -> Result<()
 }
 
 #[test]
+fn a_dynamic_load_of_the_module_in_the_test_body_withholds() -> Result<(), String> {
+    // #13750 review: no static import record exists for these bindings.
+    let unsafe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  require('./utils').default.merge = () => ({ a: 1, b: 5, c: 4 });\n}\n\nexport default { merge, extend };",
+    );
+    for (label, load) in [
+        (
+            "dynamic-const",
+            "const m = await import('../src/utils');\n  m.default.extend();",
+        ),
+        (
+            "dynamic-inline",
+            "(await import('../src/utils')).default.extend();",
+        ),
+        (
+            "require-inline",
+            "require('../src/utils').default.extend();",
+        ),
+        (
+            "require-actual",
+            "vi.importActual('../src/utils');\n  jest.requireActual('../src/utils').default.extend();",
+        ),
+    ] {
+        let test = test_with(&format!("  {load}\n{CALL}")).replace("() => {", "async () => {");
+        assert_ne!(
+            class_of(&format!("{label}-unsafe"), &unsafe_owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Controls: the same test with no second load stays credited, and a load
+    // of an unrelated module does not withhold.
+    let plain = test_with(CALL);
+    assert_eq!(
+        class_of("no-load", &unsafe_owner, &plain)?,
+        ExposureClass::Exposed
+    );
+    let other = test_with(&format!("  require('../src/other');\n{CALL}"));
+    assert_eq!(
+        class_of("other-module", &unsafe_owner, &other)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
 fn node_process_globals_in_a_sibling_credit_nothing() -> Result<(), String> {
     // #13750 comment: `process`, `__filename` and `__dirname` reach the module
     // cache without naming anything else on the escape list.
@@ -604,8 +651,8 @@ fn node_process_globals_in_a_sibling_credit_nothing() -> Result<(), String> {
             "process-main-module",
             "(process as any).mainModule.require('./utils').default.merge = () => ({ a: 1, b: 5, c: 4 });",
         ),
-        ("filename", "void __filename;"),
-        ("dirname", "void __dirname;"),
+        ("filename", "void [__filename.length];"),
+        ("dirname", "void [__dirname.length];"),
     ] {
         let owner = OWNER.replace(
             "export default { merge };",
@@ -620,7 +667,7 @@ fn node_process_globals_in_a_sibling_credit_nothing() -> Result<(), String> {
         );
     }
     // Control: the same sibling shape without a Node global stays credited
-    // when the test never calls it.
+    // (the control test does call `utils.extend()`, which is safe here).
     let owner = OWNER.replace(
         "export default { merge };",
         "function extend(): void {\n  void 0;\n}\n\nexport default { merge, extend };",
