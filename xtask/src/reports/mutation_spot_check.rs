@@ -532,10 +532,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         && options.repos.iter().all(|(name, _)| {
             options.stryker_reports.contains_key(name)
                 || options.cosmic_ray_dumps.contains_key(name)
+                || options.mutmut_dumps.contains_key(name)
         })
     {
         return Err(
-            "--rust-diff-mode scores cargo-mutants repos, and every --repo here is scored from a Stryker report or cosmic-ray dump".to_string(),
+            "--rust-diff-mode scores cargo-mutants repos, and every --repo here is scored from a Stryker report, cosmic-ray dump or mutmut dump".to_string(),
         );
     }
     for name in options.mutants_args.keys() {
@@ -3856,6 +3857,14 @@ mod tests {
             "--rust-diff-mode",
         ]));
         assert!(only_ts.is_err_and(|err| err.contains("--rust-diff-mode")));
+        let only_mutmut = parse_options(&args(&[
+            "--repo",
+            "a=/tmp/a",
+            "--mutmut-dump",
+            "a=/tmp/m.jsonl",
+            "--rust-diff-mode",
+        ]));
+        assert!(only_mutmut.is_err_and(|err| err.contains("--rust-diff-mode")));
         assert!(USAGE.contains("--rust-diff-mode"));
         Ok(())
     }
