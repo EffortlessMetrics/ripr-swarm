@@ -3281,6 +3281,100 @@ fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), Str
 }
 
 #[test]
+fn related_test_walk_observes_deadline_inside_direct_candidates() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let (index, seams) = parallel_evidence_fixture()?;
+    let context = CompactGripContext::new(&index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            find_related_tests_with_context(seam, &context)
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        })
+        .ok_or("fixture needs a directly related test")?;
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) >= 1 {
+                started + Duration::from_secs(1)
+            } else {
+                started
+            }
+        }),
+    );
+    let related =
+        cancellation::with_token(&token, || find_related_tests_with_context(seam, &context));
+    assert!(
+        related.is_empty(),
+        "an interrupted relation walk cannot publish partial candidates"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "deadline must be observed inside the direct-candidate walk"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_discards_seam_when_deadline_expires_during_relation_walk() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass.context.as_ref().ok_or("fixture context must build")?;
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            find_related_tests_with_context(seam, context)
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        })
+        .ok_or("fixture needs a directly related test")?;
+    assert_eq!(pass.evidence_for(std::slice::from_ref(seam)).len(), 1);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+                started + Duration::from_secs(1)
+            } else {
+                started
+            }
+        }),
+    );
+    let evidence =
+        cancellation::with_token(&token, || pass.evidence_for(std::slice::from_ref(seam)));
+    assert!(
+        evidence.is_empty(),
+        "the interrupted seam must not become evidence"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    Ok(())
+}
+
+#[test]
 fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
     let (index, seams) = parallel_evidence_fixture()?;
