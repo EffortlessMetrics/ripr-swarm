@@ -5,7 +5,7 @@ use std::process::Command;
 
 const CONTROLS: &str = r#"
 import copy, importlib.util, json, pathlib, subprocess, sys, tomllib, unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 p=pathlib.Path(sys.argv[1]); spec=importlib.util.spec_from_file_location('intake',p)
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 B,H,G,T='a'*40,'b'*40,'c'*40,'d'*40
@@ -25,7 +25,16 @@ DATA={'schema_id':'hermes.queue-intake.v2','schema_version':2,'repository':m.REP
       'enqueue_request_id':'enqueue-1','base_sha':'f'*40,'expires_at':'2026-11-09T00:00:00Z',
       'authority_sha256':'1'*64,'producer_generation_sha256':'2'*64,'producer_closure':CLOSURE}
 CHECK={'id':123,'app':{'id':9001},'name':'CI Lifecycle Qualification','head_sha':H,
-       'external_id':'hermes-queue:admit-1:H','status':'completed','conclusion':'success','output':{'text':m.canonical(DATA)}}
+       'external_id':'hermes-queue:admit-1:H','status':'completed','conclusion':'success','output':{
+        'title':'H: conditional queue admission; G is not tested',
+        'summary':m.canonical({'schema':'hermes.queue-check.v1','phase':'H','repository':m.REPOSITORY,
+                              'commit':H,'evidence_sha256':'4'*64}),
+        'text':m.canonical(DATA)}}
+def withdraw(check):
+ # Actual Hermes withdraw() PATCH, including replacement of the H summary.
+ check.update(status='completed',conclusion='failure',output={
+  'title':'Queue authority withdrawn',
+  'summary':'A current blocking finding revoked conditional landing authority. Read native landing/removal state.'})
 ROW={'id':'MQE_42','position':1,'baseCommit':{'oid':B},'headCommit':{'oid':G},
      'pullRequest':{'id':'PR_42','number':42,'state':'OPEN','isDraft':False,'headRefOid':H,
                     'baseRefName':'main','headRepository':{'nameWithOwner':m.REPOSITORY},'mergeQueueEntry':{'id':'MQE_42'}}}
@@ -61,6 +70,23 @@ class API:
   if path.startswith('/git/trees/'):return copy.deepcopy(self.trees[path.rsplit('/',1)[1]])
   raise AssertionError(path)
 
+class PublicationAPI(API):
+ def __init__(self,publish_after=1):
+  super().__init__();self.publish_after=publish_after;self.payload=copy.deepcopy(DATA)
+  self.publication=self.checks['check_runs'][0];self.publication['output'].pop('text')
+ def get(self,path):
+  if '/check-runs?' in path and self.publish_after is not None and self.check_count>=self.publish_after:
+   self.publication['output']['text']=m.canonical(self.payload)
+  return super().get(path)
+
+class Clock:
+ def __init__(self,after_wait=None):
+  self.elapsed=0;self.sleeps=[];self.after_wait=after_wait
+ def read(self):return self.elapsed
+ def wait(self,seconds):
+  self.sleeps.append(seconds);self.elapsed+=seconds
+  if self.after_wait:self.after_wait()
+
 class Controls(unittest.TestCase):
  def refused(self,call):
   with self.assertRaises((m.Refused,ValueError,KeyError,TypeError)):call()
@@ -84,6 +110,174 @@ class Controls(unittest.TestCase):
   self.assertEqual(r['member'],MEMBER);self.assertNotEqual(r['admission']['intake']['base_sha'],B)
   self.assertEqual(api.queue_count,2);self.assertEqual(api.check_count,2)
   self.assertEqual(m.observe(API(),SUBJECT,CONFIG,lambda:NOW,r),r)
+ def test_intake_publication_can_follow_native_queue_event(self):
+  # Hermes first publishes H success, enqueues, then PATCHes output.text with
+  # the acknowledged entry. The initial H check is authentic but incomplete.
+  api=PublicationAPI();clock=Clock()
+  r=m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+  self.assertEqual(r['member'],MEMBER)
+  self.assertGreaterEqual(api.check_count,3)
+  self.assertEqual(clock.sleeps,[m.INITIAL_INTAKE_INTERVAL])
+ def test_pending_intake_ignores_conclusively_withdrawn_h_history(self):
+  for position in [0,1]:
+   for text in ['absent','null']:
+    with self.subTest(position=position,text=text):
+     api=PublicationAPI();old=copy.deepcopy(CHECK)
+     old['id']=122;old['external_id']='hermes-queue:older:H';withdraw(old)
+     if text=='null':old['output']['text']=None
+     api.checks['check_runs'].insert(position,old);api.checks['total_count']=2
+     clock=Clock();r=m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+     self.assertEqual(r['admission']['check_run_id'],123)
+     self.assertEqual(clock.sleeps,[m.INITIAL_INTAKE_INTERVAL]);self.assertEqual(api.check_count,3)
+ def test_pending_history_must_prove_distinct_withdrawn_authority(self):
+  for change in ['status','conclusion','title','summary','head','id','external','same_check','same_request']:
+   with self.subTest(change=change):
+    api=PublicationAPI();old=copy.deepcopy(CHECK)
+    old['id']=122;old['external_id']='hermes-queue:older:H';withdraw(old)
+    if change=='status':old['status']='in_progress'
+    elif change=='conclusion':old['conclusion']='cancelled'
+    elif change=='title':old['output']['title']='unknown failure'
+    elif change=='summary':old['output']['summary']='unknown revocation'
+    elif change=='head':old['head_sha']='9'*40
+    elif change=='id':old['id']=True
+    elif change=='external':old['external_id']='hermes-queue:older:G'
+    elif change=='same_check':old['id']=123
+    else:old['external_id']=CHECK['external_id']
+    api.checks['check_runs'].append(old);api.checks['total_count']=2;clock=Clock()
+    self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+    self.assertEqual(clock.sleeps,[]);self.assertEqual(api.check_count,1)
+    self.assertFalse(any('/git/' in path for path in api.reads))
+ def test_frozen_pending_withdrawal_never_becomes_ignorable_history(self):
+  for replacement in [False,True]:
+   with self.subTest(replacement=replacement):
+    api=PublicationAPI(publish_after=None)
+    def revoke():
+     withdraw(api.publication)
+     if replacement:
+      other=copy.deepcopy(CHECK);other['id']=124;other['external_id']='hermes-queue:replacement:H'
+      other['output'].pop('text');api.checks['check_runs'].append(other);api.checks['total_count']=2
+    clock=Clock(revoke)
+    self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+    self.assertEqual(len(clock.sleeps),1);self.assertEqual(api.check_count,2)
+    self.assertFalse(any('/git/' in path for path in api.reads))
+ def test_initial_wait_is_bounded_and_rechecks_native_membership(self):
+  api=PublicationAPI(publish_after=2);clock=Clock()
+  r=m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+  self.assertEqual(r['member'],MEMBER)
+  self.assertEqual(clock.sleeps,[m.INITIAL_INTAKE_INTERVAL]*2)
+  self.assertEqual(api.queue_count,4);self.assertEqual(api.check_count,4)
+  api=PublicationAPI(publish_after=None);clock=Clock()
+  with self.assertRaisesRegex(m.Refused,'publication timed out'):
+   m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+  self.assertEqual(clock.elapsed,m.INITIAL_INTAKE_SECONDS)
+  self.assertLessEqual(api.check_count,m.INITIAL_INTAKE_ATTEMPTS)
+  self.assertTrue(all(0<s<=m.INITIAL_INTAKE_INTERVAL for s in clock.sleeps))
+  self.assertFalse(any('/git/' in path for path in api.reads))
+ def test_initial_wait_also_caps_observations_when_clock_does_not_advance(self):
+  api=PublicationAPI(publish_after=None);sleeps=[]
+  with self.assertRaisesRegex(m.Refused,'publication timed out'):
+   m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=lambda:0,wait=sleeps.append)
+  self.assertEqual(api.check_count,m.INITIAL_INTAKE_ATTEMPTS)
+  self.assertEqual(len(sleeps),m.INITIAL_INTAKE_ATTEMPTS-1)
+ def test_wait_never_adopts_a_changed_head_or_queue_entry(self):
+  for change in ['head','entry']:
+   with self.subTest(change=change):
+    api=PublicationAPI()
+    def moved():
+     row=api.q['data']['repository']['mergeQueue']['entries']['nodes'][0]
+     if change=='head':row['pullRequest']['headRefOid']='9'*40
+     else:row['id']=row['pullRequest']['mergeQueueEntry']['id']='MQE_NEW'
+    clock=Clock(moved)
+    with self.assertRaisesRegex(m.Refused,'changed while awaiting publication'):
+     m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+    self.assertEqual(api.check_count,1);self.assertEqual(len(clock.sleeps),1)
+ def test_pending_check_and_authority_are_frozen_until_publication(self):
+  for change in ['check','request','summary']:
+   for publish_after in [1,None]:
+    with self.subTest(change=change,publish_after=publish_after):
+     api=PublicationAPI(publish_after=publish_after)
+     def moved():
+      check=api.checks['check_runs'][0]
+      if change=='check':check['id']=124
+      elif change=='request':check['external_id']='hermes-queue:other:H'
+      else:
+       summary=json.loads(check['output']['summary']);summary['evidence_sha256']='5'*64
+       check['output']['summary']=m.canonical(summary)
+     clock=Clock(moved)
+     self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+     self.assertEqual(len(clock.sleeps),1)
+ def test_untrusted_revoked_and_malformed_pending_checks_never_wait(self):
+  for change in ['app','name','head','external','status','revoked','id','title','summary',
+                 'summary_head','summary_extra','summary_digest','text','empty','missing','ambiguous']:
+   with self.subTest(change=change):
+    api=PublicationAPI(publish_after=None);check=api.checks['check_runs'][0]
+    if change=='app':check['app']['id']=9002
+    elif change=='name':check['name']='lookalike'
+    elif change=='head':check['head_sha']='9'*40
+    elif change=='external':check['external_id']='hermes-queue:admit-1:G'
+    elif change=='status':check['status']='in_progress'
+    elif change=='revoked':check['conclusion']='cancelled'
+    elif change=='id':check['id']=True
+    elif change=='title':check['output']['title']='G is qualified'
+    elif change=='summary':check['output']['summary']='not JSON'
+    elif change.startswith('summary_'):
+     summary=json.loads(check['output']['summary'])
+     if change=='summary_head':summary['commit']='9'*40
+     elif change=='summary_extra':summary['extra']='unrecognized'
+     else:summary['evidence_sha256']='not-a-digest'
+     check['output']['summary']=m.canonical(summary)
+    elif change=='text':check['output']['text']=[]
+    elif change=='empty':check['output']['text']=''
+    elif change=='missing':api.checks={'total_count':0,'check_runs':[]}
+    else:api.checks['check_runs']*=2;api.checks['total_count']=2
+    clock=Clock()
+    self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+    self.assertEqual(clock.sleeps,[])
+    self.assertFalse(any('/git/' in path for path in api.reads))
+ def test_revocation_during_initial_wait_refuses_without_another_wait(self):
+  api=PublicationAPI(publish_after=None)
+  def revoke():api.checks['check_runs'][0]['conclusion']='cancelled'
+  clock=Clock(revoke)
+  self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+  self.assertEqual(len(clock.sleeps),1);self.assertEqual(api.check_count,2)
+ def test_receipt_expiring_during_wait_refuses_without_another_wait(self):
+  api=PublicationAPI();clock=Clock()
+  api.payload['expires_at']=(NOW+timedelta(seconds=1)).isoformat()
+  with self.assertRaisesRegex(m.Refused,'intake expired'):
+   m.observe(api,SUBJECT,CONFIG,lambda:NOW+timedelta(seconds=clock.elapsed),clock=clock.read,wait=clock.wait)
+  self.assertEqual(len(clock.sleeps),1);self.assertEqual(api.check_count,2)
+ def test_complete_receipt_ignores_an_older_unpublished_check(self):
+  for withdrawn in [False,True]:
+   with self.subTest(withdrawn=withdrawn):
+    api=API();old=copy.deepcopy(CHECK)
+    old['id']=122;old['external_id']='hermes-queue:older:H';old['conclusion']='cancelled'
+    old['output'].pop('text')
+    if withdrawn:withdraw(old)
+    api.checks['check_runs'].insert(0,old);api.checks['total_count']=2
+    clock=Clock();r=m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+    self.assertEqual(r['admission']['check_run_id'],123);self.assertEqual(clock.sleeps,[])
+ def test_final_expected_intake_never_waits_for_missing_publication(self):
+  previous=m.observe(API(),SUBJECT,CONFIG,lambda:NOW)
+  api=PublicationAPI();clock=Clock()
+  self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,previous,clock=clock.read,wait=clock.wait))
+  self.assertEqual(api.check_count,1);self.assertEqual(clock.sleeps,[])
+ def test_after_source_recheck_never_waits_or_accepts_late_publication(self):
+  class MissingAfterSource(API):
+   def get(self,path):
+    if '/check-runs?' in path and self.check_count==1:self.checks['check_runs'][0]['output'].pop('text')
+    return super().get(path)
+  api=MissingAfterSource();clock=Clock()
+  self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait))
+  self.assertEqual(api.check_count,2);self.assertEqual(clock.sleeps,[])
+  api=PublicationAPI()
+  class SlowPublicationClock(Clock):
+   def read(self):
+    if api.check_count>=2:self.elapsed=m.INITIAL_INTAKE_SECONDS
+    return self.elapsed
+  clock=SlowPublicationClock()
+  with self.assertRaisesRegex(m.Refused,'publication timed out'):
+   m.observe(api,SUBJECT,CONFIG,lambda:NOW,clock=clock.read,wait=clock.wait)
+  self.assertFalse(any('/git/' in path for path in api.reads))
  def test_binding_is_disabled_until_actual_app_is_configured(self):
   for key,value in [('enabled',False),('publisher_app_id',0),('publisher_app_id',True),('publisher_app_id',15368),('repository','attacker/repo')]:
    with self.subTest(key=key,value=value):
