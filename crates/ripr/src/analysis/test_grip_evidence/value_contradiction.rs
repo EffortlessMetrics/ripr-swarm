@@ -2561,6 +2561,50 @@ mod tests {
         Ok(())
     }
 
+    /// #13868: the item-binding tree walk depends on the body and the owner,
+    /// not on the assertion or the repeated asks, so every ask after the first
+    /// reuses it.
+    #[test]
+    fn item_binding_walk_is_shared_across_asks_for_one_body() -> Result<(), String> {
+        let source = "pub fn discounted_total(a: u64, b: u64) -> u64 {\n    a + b\n}\n#[cfg(test)]\nmod tests {\n    use super::discounted_total;\n    #[test]\n    fn case() {\n        {\n            fn discounted_total(a: u64, b: u64) -> u64 { b }\n            assert_eq!(discounted_total(1, 5), 1);\n        }\n        assert_eq!(discounted_total(2, 6), 2);\n        assert!(discounted_total(3, 7) > 0);\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "discounted_total")
+            .ok_or("owner function is indexed")?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "case")
+            .ok_or("test is indexed")?;
+        assert_eq!(test.assertions.len(), 3);
+        let index = RustIndex::default();
+        let before = crate::analysis::classify::item_binding_read_count();
+        let answers: Vec<Vec<bool>> = (0..4)
+            .map(|_| {
+                test.assertions
+                    .iter()
+                    .map(|oracle| bare_owner_call_is_shadowed(test, owner, &oracle.text, &index))
+                    .collect()
+            })
+            .collect();
+        let reads = crate::analysis::classify::item_binding_read_count() - before;
+        assert_eq!(reads, 1, "one walk for 12 asks of one body");
+        // The shared walk must still answer each assertion from its own scope:
+        // only the assertion inside the shadowing block is shadowed.
+        for round in &answers {
+            assert_eq!(
+                round,
+                &[true, false, false],
+                "per-assertion answers survive sharing: {answers:?}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn non_equality_assertions_are_not_evaluable() -> Result<(), String> {
         for assertion in [

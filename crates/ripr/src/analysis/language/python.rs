@@ -538,6 +538,35 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
     findings.push(finding);
 }
 
+/// Record which related rows live in a test file the diff changed (#14027) so
+/// the one shared headline pick can prefer them. Nothing is stamped when the
+/// first row already is one (the default pick already names it) or no row is.
+/// Display evidence only: row order, class and oracle strength are untouched.
+fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    if changed_files.is_empty()
+        || finding
+            .related_tests
+            .first()
+            .is_none_or(|first| changed_files.contains(&first.file))
+    {
+        return;
+    }
+    finding.evidence.extend(
+        finding
+            .related_tests
+            .iter()
+            .filter(|row| changed_files.contains(&row.file))
+            .map(|row| {
+                format!(
+                    "{}{}:{}",
+                    crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                    normalized_path(&row.file),
+                    row.line
+                )
+            }),
+    );
+}
+
 /// Whether `text` holds `name` as a whole Python identifier.
 fn mentions_python_name(text: &str, name: &str) -> bool {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -628,6 +657,11 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Test-local modules that shadow a top-level name of this owner's module
+    /// paths for tests under pytest's prepend import mode (`related_tests.rs`,
+    /// #13706). Empty until the workspace pass fills it.
+    #[serde(default)]
+    test_local_shadows: Vec<related_tests::TestLocalShadow>,
     /// Dotted module paths of other workspace source files that define a
     /// free function with this owner's name (`related_tests.rs`, #8759). A
     /// test that imports the name from one of them (and from no module that
@@ -1715,6 +1749,15 @@ impl PythonAdapter {
                 .filter(|file| !is_test_file(file)),
             |path| options.root.join(path).exists(),
         );
+        // Test-local helper modules are found by path as well (#13706); every
+        // discovered file counts, test files included.
+        related_tests::apply_test_local_shadows(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -2019,6 +2062,11 @@ impl PythonAdapter {
             }
         }
 
+        let changed_test_files: BTreeSet<PathBuf> = python_changed_files
+            .iter()
+            .filter(|changed| !changed.added_lines.is_empty() || !changed.removed_lines.is_empty())
+            .map(|changed| changed.path.clone())
+            .collect();
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut related_memo = related_tests::RelatedCandidateMemo::default();
@@ -2244,6 +2292,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
+                    stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                     publish_production_finding(&mut findings, finding);
                 }
             }
@@ -2273,7 +2322,8 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            for finding in deleted {
+            for mut finding in deleted {
+                stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                 publish_production_finding(&mut findings, finding);
             }
         }

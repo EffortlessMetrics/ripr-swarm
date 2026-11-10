@@ -8352,7 +8352,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 5
+            != 6
             || candidate
                 .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()

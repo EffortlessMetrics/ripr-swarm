@@ -947,7 +947,46 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
     let facade_lines: Vec<&str> = facade_stdout.lines().collect();
     let card_stdout = stdout_text(&card);
     let mut cursor = 0usize;
+    // The facade prints the start summary and then the card. Five card lines
+    // would only repeat facts the summary just printed, so the facade card
+    // omits them (token budget, `agent_output_budget`); each omitted line's
+    // payload must still be present in the start summary.
+    let omitted_prefixes = [
+        "  Changed behavior: ",
+        "  Suggested assertion: ",
+        "  Next: write the test, then run `",
+        "  Repair attempt: ",
+        "  Machine-readable details (JSON): ",
+    ];
     for line in card_stdout.lines() {
+        if let Some(prefix) = omitted_prefixes
+            .iter()
+            .find(|prefix| line.starts_with(**prefix))
+        {
+            assert!(
+                !facade_lines.contains(&line),
+                "facade must not repeat the summary line {line:?}:\n{facade_stdout}"
+            );
+            let payload = line
+                .trim_start_matches(*prefix)
+                .trim_end_matches('`')
+                .split(" (")
+                .next()
+                .unwrap_or_default();
+            // Compare on the stable core of each payload: the continue
+            // command and attempt id, the assertion text, the behavior text.
+            let core = match *prefix {
+                "  Next: write the test, then run `" => ids[0].as_str(),
+                "  Repair attempt: " => ids[0].as_str(),
+                "  Machine-readable details (JSON): " => "agent-packet.json",
+                _ => payload,
+            };
+            assert!(
+                facade_stdout.contains(core),
+                "start summary lost the fact behind {line:?} (looked for {core:?}):\n{facade_stdout}"
+            );
+            continue;
+        }
         let Some(offset) = facade_lines[cursor..].iter().position(|c| *c == line) else {
             return Err(format!(
                 "card line {line:?} missing from facade output:\n{facade_stdout}"

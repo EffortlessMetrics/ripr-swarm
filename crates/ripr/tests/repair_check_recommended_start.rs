@@ -1036,38 +1036,150 @@ fn every_test_that_runs_the_owner_must_be_a_placed_weak_read() -> Result<(), Str
     }
 }
 
-/// Splits a command line the way the bound-root quoting writes it: single
-/// quotes group, `'\''` is a literal quote, whitespace separates.
+/// Splits a command line the way the bound-root quoting writes it, in either
+/// host form the renderer emits (`agent::loop_commands::shell_arg_for`):
+///
+/// - POSIX: single quotes group and `'\''` is a literal quote;
+/// - Windows console (`windows_console_quote`): double quotes group, an
+///   interior `""` is a literal quote, and a backslash run doubled before the
+///   closing quote is halved.
+///
+/// Whitespace outside quotes separates. #9272: the POSIX-only form fused a
+/// double-quoted Windows root with its own space into two broken words.
 fn shell_split(command: &str) -> Result<Vec<String>, String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Quote {
+        None,
+        Single,
+        Double,
+    }
     let mut words = Vec::new();
     let mut current = String::new();
     let mut started = false;
-    let mut quoted = false;
-    for ch in command.chars() {
-        match (ch, quoted) {
-            ('\'', _) => {
-                quoted = !quoted;
+    let mut quote = Quote::None;
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Quote::None, '\'') => {
+                quote = Quote::Single;
                 started = true;
             }
-            (c, false) if c.is_whitespace() => {
+            (Quote::Single, '\'') => quote = Quote::None,
+            (Quote::None, '"') => {
+                quote = Quote::Double;
+                started = true;
+            }
+            (Quote::Double, '"') => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current.push('"');
+                } else {
+                    quote = Quote::None;
+                }
+            }
+            (Quote::Double, '\\') => {
+                let mut run = 1;
+                while chars.peek() == Some(&'\\') {
+                    chars.next();
+                    run += 1;
+                }
+                let closes = chars.peek() == Some(&'"') && {
+                    let mut ahead = chars.clone();
+                    ahead.next();
+                    ahead.peek() != Some(&'"')
+                };
+                let kept = if closes { run / 2 } else { run };
+                current.push_str(&"\\".repeat(kept));
+            }
+            (Quote::None, '\\') if chars.peek() == Some(&'\'') => {
+                chars.next();
+                current.push('\'');
+                started = true;
+            }
+            (Quote::None, c) if c.is_whitespace() => {
                 if started {
                     words.push(std::mem::take(&mut current));
                     started = false;
                 }
             }
-            (c, _) => {
+            (_, c) => {
                 current.push(c);
                 started = true;
             }
         }
     }
-    if quoted {
+    if quote != Quote::None {
         return Err(format!("unbalanced quote in: {command}"));
     }
     if started {
         words.push(current);
     }
     Ok(words)
+}
+
+/// The splitter reads both host forms the renderer writes for a spaced root.
+#[test]
+fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
+    let expect = |command: &str, words: &[&str]| -> Result<(), String> {
+        let split = shell_split(command)?;
+        if split == words {
+            Ok(())
+        } else {
+            Err(format!(
+                "{command:?} split into {split:?}, expected {words:?}"
+            ))
+        }
+    };
+    // The examples keep `example.test` spellings: a real drive path here is a
+    // local-context finding (check-local-context scans test sources too).
+    expect(
+        "ripr agent stub --root '/tmp/field hint-1' --at src/lib.rs:8",
+        &[
+            "ripr",
+            "agent",
+            "stub",
+            "--root",
+            "/tmp/field hint-1",
+            "--at",
+            "src/lib.rs:8",
+        ],
+    )?;
+    expect(
+        r#"ripr agent stub --root "//example.test/target/ripr-recstart-field hint-2816" --at src/lib.rs:8"#,
+        &[
+            "ripr",
+            "agent",
+            "stub",
+            "--root",
+            "//example.test/target/ripr-recstart-field hint-2816",
+            "--at",
+            "src/lib.rs:8",
+        ],
+    )?;
+    expect(r"--root 'it'\''s here'", &["--root", "it's here"])?;
+    expect(r#"--root "a""b c""#, &["--root", r#"a"b c"#])?;
+    expect(
+        r#"--root "//work/dir pair\\" next"#,
+        &["--root", r"//work/dir pair\", "next"],
+    )?;
+    expect(
+        r#"--root "//work/dir pair/sub""#,
+        &["--root", r"//work/dir pair/sub"],
+    )?;
+    // `windows_console_quote` doubles only the trailing run, so the halving
+    // applies only before the closing quote: an interior run, a run before a
+    // doubled (literal) quote, and an odd trailing run all keep their count.
+    expect(
+        r#"--root "//server/share pair\\""#,
+        &["--root", r"//server/share pair\"],
+    )?;
+    expect(r#"--root "a\""b c""#, &["--root", r#"a\"b c"#])?;
+    expect(r#"--root "x y\\\\\\""#, &["--root", r"x y\\\"])?;
+    expect(r#"--root "a""" next"#, &["--root", r#"a""#, "next"])?;
+    if shell_split(r#"--root "unterminated"#).is_ok() {
+        return Err("an unterminated double quote must be refused".to_string());
+    }
+    Ok(())
 }
 
 /// #13203 A0: the inline counterpart. A private owner whose file holds one

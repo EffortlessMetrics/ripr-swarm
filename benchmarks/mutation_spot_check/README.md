@@ -124,6 +124,24 @@ other keys are unaffected):
   Python/TypeScript agreement stays `not_established` in this criterion (both are scored separately by the synthetic-diff method), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
+The span join scores Rust mutants against repo-exposure seams, which is not
+the path a developer meets: `ripr check --diff`. With `--rust-diff-mode`, each
+cargo-mutants mutant is also applied from its own recorded diff to a scratch
+copy of the checkout and run through `ripr check --diff`, using the same
+verdict join as TypeScript and Python (`agreement_method:
+synthetic_diff_verdict`, capped by `--max-mutants`). A recorded diff that no
+longer matches the checkout is refused by the same `mutants.out` preflight as
+the span join; `recorded_diff_mismatch` is the per-mutant guard if a diff still
+fails to apply. A Rust run keeps the checkout's own `ripr.toml`. A
+mutant with no recorded diff (cargo-mutants before 27) is
+`recorded_diff_missing`; a hunk that only deletes lines is
+`deletion_only_mutant`, because it has no new line to read a verdict from. The
+result is additive and never changes a span-join figure: a
+`rust_diff_mode_verdict` section with its own `repos` entries, and
+`recall_of_missed.by_language.rust_diff_mode`, which stays
+`insufficient_sample` below 30 scored claim pairs. `--rederive-summaries`
+re-derives it from that section's per-repo tables.
+
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
 refresh a recorded receipt without re-running mutation testing:
 `cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.

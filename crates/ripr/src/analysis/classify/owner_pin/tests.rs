@@ -3572,6 +3572,28 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
     }
 }
 
+/// #14028: a `#[test]` refused because an import rebinds `test` is explained
+/// by the rebinding, not by the plain built-in attribute it looks like.
+#[test]
+fn a_rebound_test_attribute_is_named_as_the_import_not_the_attribute() {
+    let tests = "use demo::weight;\nuse skipper::serial as test;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let refusal = weight_refusal(tests, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestRebound
+        ))
+    );
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains("may rebind `test`") && !clause.contains("carries `#[test]`")
+            }),
+        "{clause:?}"
+    );
+}
+
 #[test]
 fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
@@ -9213,6 +9235,93 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
 /// sites the scan reports.
 fn sites_in_widest_context(source: &str, trusted: &[&str]) -> Vec<(String, MacroBindingSite)> {
     trusted_macro_binding_sites(source, &BTreeSet::new(), trusted, &|_, _| false, &|_| false)
+}
+
+#[test]
+fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(), String> {
+    // `mod global_rng; pub use global_rng::*;` globs the file's own module the
+    // way `crate::global_rng::*` does, so it cannot rebind an assertion macro
+    // that the workspace scan does not already report at its own site (#14031).
+    for (source, local) in [
+        ("mod global;\npub use global::*;\n", true),
+        // An inline module's own imports are scoped to it, so a `pub use` inside
+        // would reach the root through the glob unseen.
+        ("mod global {}\nuse global::*;\n", false),
+        (
+            "mod global { pub use pretty_assertions::assert_eq; }\npub use global::*;\n",
+            false,
+        ),
+        ("#[cfg(unix)]\nmod global;\nuse global::*;\n", true),
+        // The root is no module of this file: another crate may supply it.
+        ("pub use global::*;\n", false),
+        ("mod other;\npub use global::*;\n", false),
+        // A nested glob spells a crate-root path in the 2015 edition.
+        ("mod global;\nmod inner { pub use global::*; }\n", false),
+        // Another item of the same name, or an item-position macro, may
+        // bind the root differently.
+        (
+            "mod global;\nextern crate foreign as global;\npub use global::*;\n",
+            false,
+        ),
+        ("mod global;\nitems!();\npub use global::*;\n", false),
+        // Another item or import may bind the root under a `cfg` the scan
+        // does not evaluate, or the module may hold files it cannot see.
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep as global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep::global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self};\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self as g2, x};\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(a)]\nmod global;\n#[cfg(not(a))]\nmod global {}\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[path = \"x.rs\"]\nmod global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global { include!(\"x.rs\"); }\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate r#global;\npub use global::*;\n",
+            false,
+        ),
+        ("mod global;\npub use ::global::*;\n", false),
+        // One local glob never suppresses another, foreign one.
+        ("mod global;\npub use global::*;\npub use dep::*;\n", false),
+        // Only the whole `module::*` glob is read: a longer path or a grouped
+        // glob keeps its dedicated rule.
+        ("mod global;\npub use global::prelude::*;\n", false),
+        ("mod global;\npub use global::{self, *};\n", false),
+        // The standard roots keep their dedicated rules.
+        ("mod std;\nuse std::*;\n", false),
+    ] {
+        let sites = sites_in_widest_context(source, &["assert_eq"]);
+        let candidates = stored_candidates(source)?;
+        assert_eq!(
+            sites.is_empty(),
+            local,
+            "scan {source:?} reported {sites:?}"
+        );
+        assert_eq!(
+            candidates.may_bind("assert_eq"),
+            !local,
+            "candidates {source:?} gave {candidates:?}"
+        );
+    }
+    Ok(())
 }
 
 fn stored_candidates(source: &str) -> Result<MacroBindingCandidates, String> {
