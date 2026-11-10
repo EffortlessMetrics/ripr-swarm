@@ -269,7 +269,11 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)),
   so a finding suppressed by `check` can still block. In `acknowledgeable`
   mode, use `--label ripr-waive` to acknowledge a policy-eligible gap for the
-  run; it remains visible in the reports.
+  run; it remains visible in the reports. The bare label acknowledges every
+  blocking candidate without a matching scoped acknowledgement, not just a
+  finding you already checked, and applies to later workflow runs until
+  removed. Review every affected gap in `gate-decision.md`, then remove the
+  label when review is complete.
 - **Exclusions read as incomplete.** A changed file left out of the analysis
   currently marks the run `partial_with_limitations`, so `missed-txt` prints a
   `# ripr:` comment even on a clean change. That happens when a
