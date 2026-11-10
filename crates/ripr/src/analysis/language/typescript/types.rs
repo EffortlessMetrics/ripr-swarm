@@ -211,6 +211,13 @@ pub(crate) struct TypeScriptTest {
     /// anything but an identifier path, an index assignment, or an argument
     /// list past 8 KB. Populated once per file by `extract_tests`.
     pub(crate) member_replacements_in_file: Shared<String>,
+    /// Literal specifiers of every `import("...")`, `require("...")`,
+    /// `requireActual("...")` or `importActual("...")` anywhere in the
+    /// containing test file (hooks, describe bodies, top level and sibling
+    /// tests included). Textual, so it can only over-collect; a non-literal
+    /// or `${}` template argument is not recorded. Populated once per file by
+    /// `extract_tests` (RIPR-SPEC-0243 rule 5, #13750).
+    pub(crate) dynamic_load_specifiers_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -494,6 +501,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.written_locals_in_file);
         test.member_replacements_in_file
             .share_with(&previous.member_replacements_in_file);
+        test.dynamic_load_specifiers_in_file
+            .share_with(&previous.dynamic_load_specifiers_in_file);
         test.mock_factories_in_file
             .share_with(&previous.mock_factories_in_file);
         test.mock_spread_sources_in_file
