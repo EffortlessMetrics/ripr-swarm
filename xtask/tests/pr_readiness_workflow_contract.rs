@@ -86,8 +86,9 @@ fn event_declarations(source: &str) -> Result<Vec<&str>, String> {
 /// Direct job keys have exactly two leading spaces and direct job fields have
 /// four. More deeply indented block-scalar text therefore cannot impersonate a
 /// sibling job or its `name` field.
-fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
+fn direct_job_field<'a>(source: &'a str, job: &str, field: &str) -> Option<&'a str> {
     let target = format!("  {job}:");
+    let prefix = format!("    {field}: ");
     let mut in_jobs = false;
     let mut in_target = false;
 
@@ -116,12 +117,17 @@ fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
             continue;
         }
 
-        if in_target && let Some(name) = line.strip_prefix("    name: ") {
-            return Some(name.trim());
+        if in_target && let Some(value) = line.strip_prefix(&prefix) {
+            return Some(value.trim());
         }
     }
 
     None
+}
+
+/// Read a direct static job name from the `jobs` mapping.
+fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
+    direct_job_field(source, job, "name")
 }
 
 /// Read the direct static name emitted by the required result job.
@@ -318,10 +324,11 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
     Ok(())
 }
 
-// #4987: these are event/config contract checks, not a scheduler, review cache,
-// or a claim that a hosted lifecycle has been observed.
+// These are event/config contract checks, not a scheduler, review cache, or
+// a claim that a hosted lifecycle has been observed.
 const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
-const REVIEW_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
+const UB_GUARD: &str = "github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
+const UB_PUBLICATION_EVENTS: &[&str] = &["opened", "pull_request_other", "reopened", "synchronize"];
 
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
     repo_policy::routed_rust_pull_request_types(source)
@@ -347,86 +354,104 @@ fn publication_events(config: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
+fn ub_admits(
+    source: &str,
+    action: &str,
+    label: Option<&str>,
+    same_repository: bool,
+) -> Result<bool, String> {
+    let guard = direct_job_field(source, "ub-review", "if")
+        .ok_or_else(|| "UB executable job guard must be directly auditable".to_owned())?;
+    if guard != UB_GUARD {
+        return Err(format!("unexpected UB executable guard: {guard}"));
+    }
+    Ok(same_repository && action == "labeled" && label == Some("full-ci"))
+}
+
 fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
-    let mut ub_events = parsed_types(ub)?;
-    ub_events.sort();
-    if ub_events != REVIEW_EVENTS {
-        return Err(format!("UB early review events changed: {ub_events:?}"));
+    if parsed_types(ub)? != ["labeled"] {
+        return Err("UB subscribe only to labeled pull-request events".to_owned());
     }
     let mut posts = publication_events(config)?;
     posts.sort();
-    if posts != REVIEW_EVENTS {
+    if posts != UB_PUBLICATION_EVENTS {
         return Err(format!(
-            "UB must publish all early review passes: {posts:?}"
+            "UB must retain prior publication and admit full-ci reviews: {posts:?}"
         ));
+    }
+    if !ub_admits(ub, "labeled", Some("full-ci"), true)? {
+        return Err("same-repository full-ci must execute the advisory review".to_owned());
     }
     Ok(())
 }
 
 #[test]
-fn advisory_ready_dedup_contract() -> Result<(), String> {
+fn full_ci_admission_and_publication_contract() -> Result<(), String> {
     advisory_contract(&repo_file(UB_WORKFLOW)?, &repo_file(".ub-review.toml")?)
 }
 
 #[test]
-fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -> Result<(), String>
-{
-    // GitHub event admission has no dependency on the previous run's outcome.
-    // The real UB workflow covers all three prior states; there is no fixture
-    // state machine that could manufacture review success.
-    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
-    assert!(
-        !events.iter().any(|event| event == "ready_for_review"),
-        "UB: Ready must neither replace active work nor repeat completed/unavailable work"
-    );
+fn non_request_labels_ready_updates_and_forks_execute_no_ub_job() -> Result<(), String> {
+    let source = repo_file(UB_WORKFLOW)?;
+    for (action, label, same_repository) in [
+        ("labeled", Some("merge-ready"), true),
+        ("labeled", Some("windows-ci"), true),
+        ("labeled", Some("full-ci"), false),
+        ("labeled", None, true),
+        ("opened", None, true),
+        ("reopened", None, true),
+        ("synchronize", None, true),
+        ("ready_for_review", None, true),
+    ] {
+        assert!(
+            !ub_admits(&source, action, label, same_repository)?,
+            "UB must not execute for {action}/{label:?}/same_repository={same_repository}"
+        );
+    }
     assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
     Ok(())
 }
 
 #[test]
-fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(), String> {
-    let posts = publication_events(&repo_file(".ub-review.toml")?)?;
-    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
-    for action in REVIEW_EVENTS {
-        assert!(
-            events.iter().any(|event| event == action),
-            "UB: {action} still computes review"
-        );
-        assert!(
-            posts.iter().any(|event| event == action),
-            "UB {action} still permits publication through the pinned action"
-        );
-    }
+fn full_ci_label_reapplication_admits_the_new_exact_head() -> Result<(), String> {
+    let source = repo_file(UB_WORKFLOW)?;
+    // The same label event requests review once. Re-applying it for a new head
+    // is a separate request, not an opened/synchronize/Ready re-entry path.
+    assert!(ub_admits(&source, "labeled", Some("full-ci"), true)?);
+    assert!(source.contains("          pr-head-sha: ${{ github.event.pull_request.head.sha }}\n"));
+    assert!(source.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
     Ok(())
 }
 
 #[test]
-fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
+fn advisory_sensors_concurrency_and_trust_remain_exact() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
-    // Pin executable guard fields, not coincidental words in comments.
-    assert!(
-        ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository\n")
-    );
+    assert_eq!(direct_job_field(&ub, "ub-review", "if"), Some(UB_GUARD));
     assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
     assert!(ub.contains("          review-mode: advisory\n"));
     assert!(ub.contains("          config: .ub-review.toml\n"));
     assert!(ub.contains("          posting: review\n"));
     assert!(ub.contains("          pr-head-sha: ${{ github.event.pull_request.head.sha }}\n"));
+    assert!(
+        ub.contains("uses: EffortlessMetrics/ub-review@8d45f2cace407b1b0117cffe30e32bf6267d5182")
+    );
+    assert!(ub.contains("uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"));
+    assert!(ub.contains("uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"));
     Ok(())
 }
 
 #[test]
-fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(), String> {
+fn contract_rejects_reentry_and_missing_publication() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
     let config = repo_file(".ub-review.toml")?;
-    let changed = ub.replacen("types: [", "types: [ready_for_review, ", 1);
+    let changed = ub.replacen("types: [", "types: [synchronize, ", 1);
     assert_ne!(changed, ub, "mutation engages UB review");
-    assert!(
-        advisory_contract(&changed, &config).is_err(),
-        "Ready reentry must violate UB review"
-    );
+    assert!(advisory_contract(&changed, &config).is_err());
     let changed = config.replace("\"synchronize\", ", "");
     assert_ne!(changed, config, "publication mutation engages");
+    assert!(advisory_contract(&ub, &changed).is_err());
+    let changed = config.replace(", \"pull_request_other\"", "");
+    assert_ne!(changed, config, "full-ci publication mutation engages");
     assert!(advisory_contract(&ub, &changed).is_err());
     Ok(())
 }
@@ -454,6 +479,14 @@ fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(),
     ] {
         assert!(repo_policy::routed_rust_pull_request_types(source).is_none());
     }
+    assert_eq!(
+        direct_job_field(
+            "jobs:\n  ub-review:\n    name: unrelated\n  other:\n    if: ignored\n",
+            "ub-review",
+            "if"
+        ),
+        None
+    );
     for config in [
         "[gate]\nrequired_check = 'ub-review/gate'\n",
         "[gate]\npost_review_on = 'opened'\n",

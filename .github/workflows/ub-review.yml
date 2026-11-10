@@ -5,7 +5,7 @@ name: ub-review
 # review plus a CI gate result. See docs/QUICKSTART.md and docs/ADOPTION_MODES.md.
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   ub-review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'full-ci'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

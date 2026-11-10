@@ -144,7 +144,8 @@ superseded.
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
   with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
+  only when `merge-ready` is re-applied. UB is the explicit exception:
+  `full-ci` alone requests its advisory review, and `merge-ready` never does.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
@@ -183,7 +184,7 @@ reviewed candidate, never as a general "please run CI" signal.
 
 | State | How to read it on the PR | Next action |
 | --- | --- | --- |
-| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Candidate | Draft or Ready, no `merge-ready` for this head; light checks run on push, UB waits for `full-ci`, and gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
 | Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
 | Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
 | Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
@@ -191,7 +192,8 @@ reviewed candidate, never as a general "please run CI" signal.
 
 A green `ub-review` wrapper is advisory: read its review and sensor output, not
 only the conclusion (see the `ub-review` notes under Current Workflows). A
-cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
+cancelled `ub-review` run was superseded by re-requesting `full-ci` for a head
+and is not a result.
 
 ## Verification Economics Policy
 
@@ -963,18 +965,23 @@ the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
-UB retains early review on `opened`, `synchronize`, and `reopened`, including
-Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
-cancels active UB review nor repeats completed advisory work. Its existing
-same-repository guard and concurrency remain unchanged. Automatic Droid PR
-review is retired under #5086; manual `@droid` commands and scheduled security
-scans retain their separate triggers and safeguards. UB explicitly lists all
-three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
+UB runs only for a same-repository `full-ci` labeled event. The workflow
+subscribes only to `labeled`, and its executable job guard additionally requires
+`github.event.action == 'labeled'` and `github.event.label.name == 'full-ci'`.
+Non-full-ci labels, `merge-ready` alone, Ready, reopen and push do not execute
+the UB job or invoke its sensors. `full-ci` requests one advisory review of the
+exact head passed by `pr-head-sha`. Remove and re-apply `full-ci` after a new
+head is ready for advisory review. The unchanged same-repository fork guard and
+concurrency/cancellation settings govern these requests; a cancelled old run is
+not review evidence.
+
+`.ub-review.toml` retains `opened`, `synchronize` and `reopened` in
+`gate.post_review_on` and adds `pull_request_other` for the newly admitted
+full-ci review. These are publication permissions, not additional workflow
+triggers. The action pin, sensors, evidence receipts, exact head, artifacts and
+advisory posture are unchanged. Automatic Droid PR review remains retired under
+#5086; manual `@droid` commands and scheduled security scans retain their
+separate triggers and safeguards.
 
 Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
 action/config identity, and review receipts. The same PR head with a changed
@@ -982,10 +989,11 @@ base or merge tree is a different review identity; this event change supplies
 no cache hit or integration re-review. Before merge, inspect material integration
 changes and obtain applicable fresh review through the existing review route.
 Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
+failed, or skipped provider remains missing review evidence; no synthetic
+success replaces it. A green wrapper remains advisory: inspect the review and
+sensor output rather than treating the wrapper as proof or qualification.
+`xtask/tests/pr_readiness_workflow_contract.rs` checks parsed event/config and
+executable guard contracts, not hosted provider execution.
 
 UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
 workflow test and run commands use `--no-default-features` to build the JSON
@@ -1025,8 +1033,8 @@ needs its own evidence.
 - A push after the request leaves the new head without the required check.
   Refresh affected proof and review, then remove and re-apply `merge-ready`
   for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+- For lanes other than UB, labels such as `full-ci` take effect at the next
+  `merge-ready` request, not when they are added; add them before the request.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
