@@ -227,6 +227,60 @@ fn relates(index: &RustIndex, name: &str) -> bool {
 }
 
 #[test]
+fn cross_spelling_warm_facts_preserve_consumer_identity() -> TestResult<()> {
+    let fixture = EditFixture::new()?;
+    let uncached = build_index(&fixture.root, &fixture.files)?;
+    assert!(relates(&uncached, "boundary_case"));
+    let prefixed = fixture
+        .files
+        .iter()
+        .map(|path| {
+            Ok((
+                PathBuf::from("./").join(path),
+                fs::read(fixture.root.join(path))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+
+    // Prime the real cache with another spelling, then require a canonical
+    // warm consumer to agree with independent parsing in every identity.
+    let primed = build_index_with_file_fact_cache(
+        &fixture.root,
+        &prefixed,
+        &fixture.adapter,
+        &LexicalRustSyntaxAdapter,
+        &fixture.cache,
+        || fixture.cache.known_file_paths(),
+    )?;
+    assert_eq!(primed.file_fact_cache.misses, FILE_COUNT);
+    assert_eq!(primed.file_fact_cache.stores, FILE_COUNT);
+    let warm = build_index_with_file_fact_cache(
+        &fixture.root,
+        &fixture
+            .files
+            .iter()
+            .map(|path| Ok((path.clone(), fs::read(fixture.root.join(path))?)))
+            .collect::<Result<Vec<_>, std::io::Error>>()?,
+        &fixture.adapter,
+        &LexicalRustSyntaxAdapter,
+        &fixture.cache,
+        || fixture.cache.known_file_paths(),
+    )?;
+    assert_eq!(warm.file_fact_cache.hits, FILE_COUNT);
+    assert_eq!(warm.file_fact_cache.misses, 0);
+    assert_eq!(warm.file_fact_cache.stores, 0);
+    assert_eq!(warm.index.files(), uncached.files());
+    assert_eq!(warm.index.functions(), uncached.functions());
+    assert_eq!(warm.index.tests(), uncached.tests());
+    assert!(relates(&warm.index, "boundary_case"));
+    assert_eq!(
+        serde_json::to_value(owner_findings(&warm.index))?,
+        serde_json::to_value(owner_findings(&uncached))?
+    );
+    Ok(())
+}
+
+#[test]
 fn production_edit_reuses_other_files_and_revert_reuses_old_generation() -> TestResult<()> {
     let fixture = EditFixture::new()?;
     let first = fixture.replay(0, FILE_COUNT, &[])?;
