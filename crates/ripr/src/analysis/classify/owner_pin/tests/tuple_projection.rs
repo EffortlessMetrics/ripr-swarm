@@ -272,3 +272,30 @@ fn a_rewrite_equal_on_every_input_keeps_the_pin() -> Result<(), String> {
     assert_eq!(admitted, 1);
     Ok(())
 }
+
+#[test]
+fn operand_order_decides_whether_the_versions_agree() -> Result<(), String> {
+    // after: self * other + other; before: self + other. They agree exactly
+    // when self is 0 or other is 1, so swapping receiver and argument in the
+    // lowered call changes the answer.
+    let lib = "#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\n\nimpl Money {\n    pub fn mix(self, other: Money) -> Money {\n        Self(self.0 * other.0 + other.0)\n    }\n}\n";
+    let changed = "Self(self.0 * other.0 + other.0)";
+    let before = "Self(self.0 + other.0)";
+    for (label, body, expected) in [
+        (
+            "receiver zero: versions agree",
+            "    let r = Money(0).mix(Money(7));\n    assert_eq!(r.0, 7);",
+            0,
+        ),
+        (
+            "argument zero: versions differ",
+            "    let r = Money(7).mix(Money(0));\n    assert_eq!(r.0, 7);",
+            1,
+        ),
+    ] {
+        let tests = test_file("", body);
+        let admitted = admitted_with_before(lib, "mix", changed, before, &tests)?;
+        assert_eq!(admitted, expected, "{label}");
+    }
+    Ok(())
+}
