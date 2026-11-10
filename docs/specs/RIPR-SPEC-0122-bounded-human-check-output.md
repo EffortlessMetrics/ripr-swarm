@@ -1061,6 +1061,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
 - `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
+- `crates/ripr/src/output/human.rs::tests::evidence_path_keeps_the_assertion_not_credited_reason_beside_flow_rows`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written`
