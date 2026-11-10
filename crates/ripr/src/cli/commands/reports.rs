@@ -83,8 +83,12 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     }
     // Persist the producer's selected directory, not a label that a consumer
     // would resolve in its own invocation directory (#7382).
-    let selected_root = std::fs::canonicalize(&options.root)
-        .map_err(|error| format!("resolve gap-ledger root {} failed: {error}", options.root))?;
+    let selected_root = std::fs::canonicalize(&options.root).map_err(|error| {
+        format!(
+            "resolve gap-ledger root {} failed: {error}; pass an existing directory as `--root`",
+            options.root
+        )
+    })?;
     let records_path = ledger_source_path(options.source.path())?;
     // An unreadable source means the command could not complete for the same
     // reason: refuse before writing a `blocked` ledger.
@@ -131,7 +135,7 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
         path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map_err(|error| format!("resolve gap-ledger source path failed: {error}"))?
+            .map_err(|error| format!("resolve gap-ledger source path failed: {error}; run `ripr` from an existing directory (the current one may have been deleted)"))?
             .join(path)
     };
     Ok(output::baseline_delta::display_path(&absolute))
@@ -422,7 +426,7 @@ fn parse_typescript_limitations_options(
     }
 
     let Some(check_output) = check_output else {
-        return Err("reports ts-limitations requires --check-output PATH".to_string());
+        return Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string());
     };
 
     Ok(TypeScriptLimitationsOptions {
@@ -485,7 +489,7 @@ fn parse_typescript_false_actionable_options(
     }
 
     let Some(corpus) = corpus else {
-        return Err("reports ts-false-actionable requires --corpus PATH".to_string());
+        return Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string());
     };
 
     Ok(TypeScriptFalseActionableOptions {
@@ -596,7 +600,7 @@ mod tests {
     fn reports_ts_limitations_requires_check_output_input() {
         assert_eq!(
             super::reports(&args(&["ts-limitations"])),
-            Err("reports ts-limitations requires --check-output PATH".to_string())
+            Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string())
         );
         assert_eq!(
             super::reports(&args(&["ts-limitations", "--check-output"])),
@@ -676,7 +680,7 @@ mod tests {
     fn reports_ts_false_actionable_requires_corpus_input() {
         assert_eq!(
             super::reports(&args(&["ts-false-actionable"])),
-            Err("reports ts-false-actionable requires --corpus PATH".to_string())
+            Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string())
         );
         assert_eq!(
             super::reports(&args(&["ts-false-actionable", "--corpus"])),
@@ -1005,6 +1009,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &[],
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");

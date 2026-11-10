@@ -531,6 +531,14 @@ fn check_with_progress_and_origins_run(
                 eprintln!("ripr: {line}");
             }
         }
+        if let Some(stats) = analysis.rust_consumed_sources.file_fact_cache.as_ref() {
+            if let Some(line) = crate::output::check_file_fact_cache::render_verbose_line(stats) {
+                eprintln!("ripr: {line}");
+            }
+            for line in crate::analysis::file_fact_store_failure_summary(stats) {
+                eprintln!("{}", terminal_safe(line));
+            }
+        }
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
@@ -540,6 +548,7 @@ fn check_with_progress_and_origins_run(
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
+    output.file_fact_cache = consumed_sources.file_fact_cache.clone();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {
@@ -551,6 +560,9 @@ fn check_with_progress_and_origins_run(
         apply_suppression_policy(&mut output, &policy)
             .map_err(CoreError::suppression_policy_invalid)?;
     }
+    // #13819: after the policy, so a finding the policy already suppressed
+    // is neither listed nor decremented twice.
+    apply_owner_opt_outs(&mut output);
     progress.complete();
     Ok((output, origins, consumed_sources, language_view))
 }
@@ -617,6 +629,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            owner_opt_outs: Vec::new(),
             language_view: None,
             preview_fact_caches: Vec::new(),
         },
@@ -674,6 +687,59 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
         warnings,
     });
     Ok(())
+}
+
+/// Withholds findings whose changed owner opted out (#13819).
+///
+/// The analysis records which findings' owners carry `#[mutants::skip]`; this
+/// is the one place that turns that fact into withholding, mirroring
+/// [`apply_suppression_policy`]: the findings stay in `output.findings`
+/// (renderers mark them and leave them out of actionable listings), the
+/// per-class `summary` buckets are decremented, and `output.owner_opt_outs`
+/// keeps exactly the withheld findings so the count and reason are disclosed.
+/// No class changes and nothing is reclassified as `exposed`.
+fn apply_owner_opt_outs(output: &mut CheckOutput) {
+    if output.owner_opt_outs.is_empty() {
+        return;
+    }
+    let policy_suppressed: std::collections::BTreeSet<String> = output
+        .suppression
+        .iter()
+        .flat_map(|outcome| {
+            outcome
+                .suppressed
+                .iter()
+                .map(|entry| entry.finding_id.clone())
+        })
+        .collect();
+    let mut by_id: std::collections::BTreeMap<String, crate::analysis::owner_opt_out::OwnerOptOut> =
+        std::mem::take(&mut output.owner_opt_outs)
+            .into_iter()
+            .filter(|opt_out| !policy_suppressed.contains(&opt_out.finding_id))
+            .map(|opt_out| (opt_out.finding_id.clone(), opt_out))
+            .collect();
+    let mut withheld = Vec::new();
+    for finding in &output.findings {
+        if let Some(opt_out) = by_id.remove(&finding.id) {
+            output.summary.decrement_exposure_class(&finding.class);
+            withheld.push(opt_out);
+        }
+    }
+    if withheld.is_empty() {
+        return;
+    }
+    output.owner_opt_outs = withheld;
+    let hidden = output.withheld_finding_ids();
+    let live = || {
+        output
+            .findings
+            .iter()
+            .filter(|finding| !hidden.contains(finding.id.as_str()))
+    };
+    let conflicting = crate::analysis::summary::conflicting_expression_count(live());
+    let proof_harness_only = crate::analysis::summary::proof_harness_only_count(live());
+    output.summary.conflicting_expressions = conflicting;
+    output.summary.proof_harness_only = proof_harness_only;
 }
 
 /// Build the SPEC-0064-canonical argv for the Perl facts exporter's
@@ -1528,6 +1594,7 @@ mod tests {
             ignored_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            owner_opt_outs: Vec::new(),
             language_view: None,
             preview_fact_caches: Vec::new(),
         }

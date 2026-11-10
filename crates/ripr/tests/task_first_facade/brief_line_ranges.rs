@@ -96,6 +96,7 @@ fn brief_line_ranges_real_diff_preserves_full_document_and_measures_bytes() -> R
         args.push("--line-ranges");
         let ranged_output = run_ripr(&fixture.root, &args)?;
         assert_exit(&ranged_output, 0, "range brief");
+        assert_eq!(full_output.stderr, ranged_output.stderr);
         let ranged: Value =
             serde_json::from_slice(&ranged_output.stdout).map_err(|e| e.to_string())?;
         assert_eq!(expand(ranged.clone())?, full);
@@ -170,5 +171,6 @@ fn brief_line_ranges_help_usage_and_refusal_keep_their_contract() -> Result<(), 
     assert_eq!(full.status.code(), ranged.status.code());
     assert!(!full.status.success());
     assert_eq!(full.stdout, ranged.stdout);
+    assert_eq!(full.stderr, ranged.stderr);
     Ok(())
 }

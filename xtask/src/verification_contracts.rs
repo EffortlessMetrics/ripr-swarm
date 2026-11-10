@@ -55,6 +55,15 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // Input contract: the native DX ingestion consumer owns this version.
+        "muse-plugin-eval",
+        &[producer(
+            "xtask/src/reports/dx_scoreboard/muse_plugin.rs",
+            "pub(super) const SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -73,6 +82,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         &[producer(
             "crates/ripr/src/app.rs",
             "pub(crate) const CHECK_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The minimal `cli_refusal` document written for argv usage errors and
+        // context selector misses under an explicit JSON request (#11584).
+        "cli-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -228,6 +247,28 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["changed_line_ranges", "agent-brief-line-ranges-v1"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/muse-plugin-eval.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/verification/muse-plugin-eval.md",
+        doc_markers: &[
+            "schema_version",
+            "observations",
+            "run_id",
+            "trial_id",
+            "recorded_unix_ms",
+            "subject",
+            "scenario",
+            "evidence",
+            "setup",
+            "static",
+            "durable",
+            "executions",
+            "usage",
+        ],
     },
     VerificationContract {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
@@ -400,6 +441,17 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
     },
+    // A completed bounded partial-scope run (RIPR-PROP-0019) writes an
+    // analysis_scope object with run_status `limited_partial_scope` and no
+    // refusal block; it must validate and stay free of the #11584 block.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["limited_partial_scope"],
+    },
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
@@ -408,6 +460,16 @@ const CONTRACTS: &[VerificationContract] = &[
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
     // document shape against the published 0.3 schema.
+    // The `cli_refusal` document for argv usage errors and selector misses
+    // under an explicit JSON request (#11584, #6834 decision).
+    VerificationContract {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cli-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["cli_refusal", "unknown_argument", "selector_miss"],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         schema_pointer: None,
@@ -758,6 +820,13 @@ pub(crate) fn check_verification_contracts_with_hooks(
             ));
         }
     }
+
+    // Stability (#1720): a breaking edit to a published schema needs a
+    // version bump relative to the merge base.
+    let (compat_violations, compat_summary) =
+        crate::schema_compat::check(&root, &published_schemas);
+    violations.extend(compat_violations);
+    println!("verification contracts: {compat_summary}");
 
     if violations.is_empty() {
         // The audited count is reported beside the contract count so a run
@@ -2355,22 +2424,30 @@ mod tests {
                 assert!(violations.is_empty(), "{violations:?}");
             }
         }
-        // Numeric/depth admission must also walk the additional-value schema.
-        let schema = parse_exact_text(r#"{"additionalProperties":{"minimum":1e300}}"#)?;
-        let value = parse_exact_text(r#"{"extra":0}"#)?;
-        let mut violations = Vec::new();
-        validate_exact_value_against_schema(
-            &value,
-            &schema,
-            &schema,
-            "$".to_string(),
-            &mut violations,
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|text| text.contains("unsupported numeric"))
-        );
+        // Admission must walk the additional-value schema before boolean
+        // evaluation: otherwise `not` turns a nested numeric refusal into a
+        // successful match. The refusal must come from the root preflight.
+        for schema in [
+            r#"{"additionalProperties":{"minimum":1e300}}"#,
+            r#"{"additionalProperties":{"not":{"minimum":1e300}}}"#,
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(r#"{"extra":0}"#)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|text| text.starts_with("$: unsupported numeric")),
+                "{violations:?}"
+            );
+        }
         Ok(())
     }
 
@@ -3905,6 +3982,82 @@ mod tests {
         assert_eq!(
             fixture["run_limitations"][0]["downstream_consumable"],
             false
+        );
+        Ok(())
+    }
+
+    /// #11584: the refusal block appears exactly on refusal documents. The
+    /// published schemas keep `status`/`error` optional (adding the pairing as
+    /// a schema rule is a breaking change that needs a schema_version bump), so
+    /// this pins the producer-captured fixtures instead: each validates, the
+    /// refusal carries the block, and completed runs, including a bounded
+    /// partial-scope run, do not. The schema still rejects a malformed block.
+    #[test]
+    fn check_refusal_block_tracks_refusal_not_partial_scope() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture = |name: &str| {
+            read_json(root.join(format!(
+                "tests/fixtures/verification/ripr/{name}.valid.json"
+            )))
+        };
+        let violations_of = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "check fixture".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        let has_block =
+            |value: &Value| value.get("status").is_some() || value.get("error").is_some();
+
+        let partial = fixture("check-partial-scope")?;
+        assert_eq!(
+            partial["analysis_scope"]["run_status"], "limited_partial_scope",
+            "partial-scope fixture must carry the partial run_status"
+        );
+        assert!(
+            partial["findings"]
+                .as_array()
+                .is_some_and(|findings| !findings.is_empty()),
+            "partial-scope fixture must be a completed run with findings"
+        );
+        let found = violations_of(&partial);
+        assert!(found.is_empty(), "{found:#?}");
+        assert!(
+            !has_block(&partial),
+            "a completed partial-scope run must not carry the refusal block"
+        );
+
+        let limited = fixture("check-limited")?;
+        let found = violations_of(&limited);
+        assert!(found.is_empty(), "{found:#?}");
+        assert_eq!(
+            limited["status"], "refused",
+            "a refusal document must carry `status`"
+        );
+        assert!(
+            limited["error"]["code"].is_string(),
+            "a refusal document must carry `error`"
+        );
+
+        let complete = fixture("check-complete")?;
+        let found = violations_of(&complete);
+        assert!(found.is_empty(), "{found:#?}");
+        assert!(
+            !has_block(&complete),
+            "a completed run must not carry the refusal block"
+        );
+
+        let mut malformed = limited.clone();
+        malformed["error"] = serde_json::json!({"code": "x"});
+        assert!(
+            !violations_of(&malformed).is_empty(),
+            "the schema must reject a refusal block missing `message`/`next`"
         );
         Ok(())
     }

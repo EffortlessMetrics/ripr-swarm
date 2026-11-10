@@ -284,13 +284,13 @@ fn committed_weak_test_gap_keeps_saying_ready_where_repair_starts() -> Result<()
     // The command the card names starts, and the started card names the
     // attempt's next step instead of "no ready command" (#11381).
     let repair = repo.ripr(&["repair", "--root", "."])?;
-    assert!(repair.contains("repair started"), "{repair}");
+    assert!(repair.contains("Repair prepared for seam"), "{repair}");
     assert!(
         repair.contains("The repair has started and is waiting for your test."),
         "{repair}"
     );
     assert!(
-        repair.contains("write the test, then run `ripr continue"),
+        repair.contains("Next, after the test edit: ripr continue"),
         "{repair}"
     );
     assert!(!repair.contains("no ready command"), "{repair}");
