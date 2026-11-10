@@ -846,16 +846,34 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 events.push((name.clone(), false));
                 continue;
             }
-            if let Some(field) = tail.strip_prefix('.') {
-                let field_end = field
-                    .find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-                    .unwrap_or(field.len());
-                let after_field = field[field_end..].trim_start();
-                if field_end > 0
-                    && after_field.starts_with('=')
+            if at > 0 && bytes[at - 1] == b'.' {
+                // `other.name`: a field label, not the local.
+                continue;
+            }
+            if tail.starts_with('.') {
+                // `name.0 = ..`, `name.a.b -= ..`: walk the field path, then
+                // look for a plain or compound assignment operator.
+                let mut after_field = tail;
+                let mut segments = 0usize;
+                while let Some(field) = after_field.strip_prefix('.') {
+                    let field_end = field
+                        .find(|character: char| {
+                            !character.is_ascii_alphanumeric() && character != '_'
+                        })
+                        .unwrap_or(field.len());
+                    if field_end == 0 {
+                        break;
+                    }
+                    after_field = field[field_end..].trim_start();
+                    segments += 1;
+                }
+                const COMPOUND: [&str; 10] =
+                    ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+                let plain = after_field.starts_with('=')
                     && !after_field.starts_with("==")
-                    && !after_field.starts_with("=>")
-                {
+                    && !after_field.starts_with("=>");
+                let compound = COMPOUND.iter().any(|op| after_field.starts_with(op));
+                if segments > 0 && (plain || compound) {
                     events.push((name.clone(), false));
                 }
                 continue;
@@ -879,7 +897,12 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
                 continue;
             }
-            let initializer = statement_prefix(&assign[1..]);
+            // Stop at the first `;` even inside a block: a call before it is
+            // discarded, not the assigned value (fail closed).
+            let initializer = statement_prefix(&assign[1..])
+                .split(';')
+                .next()
+                .unwrap_or_default();
             events.push((name.clone(), text_calls_owner(initializer, owner_name)));
         }
     }
@@ -1857,6 +1880,18 @@ mod tests {
                 "mutable borrow",
                 "let mut amount = tax(100); reset(&mut amount); assert_eq!(amount, 0);",
             ),
+            (
+                "compound field write",
+                "let mut amount = tax(100); amount.0 += 1; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "nested field write",
+                "let mut amount = tax(100); amount.a.b = 1; assert_eq!(amount.a.b, 1);",
+            ),
+            (
+                "block initializer discarding the owner call",
+                "let mut amount = tax(1); amount = { let x = 0; tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
         ] {
             assert!(bound(body).is_empty(), "{label}: {body}");
         }
@@ -1880,6 +1915,10 @@ mod tests {
             (
                 "field write",
                 "let amount = tax(100); other.amount = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "nested field of another receiver",
+                "let amount = tax(100); other.amount.value = 0; assert_eq!(amount, 90);",
             ),
             (
                 "quoted loop",
