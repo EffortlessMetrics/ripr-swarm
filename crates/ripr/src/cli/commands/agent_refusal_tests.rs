@@ -57,7 +57,9 @@ fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
     ));
     assert!(matches!(
         classify_verify_movement_error(
-            "no repository movement between before and after artifacts: still at abc".to_string()
+            crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+                head: "abc1234".to_string(),
+            },
         ),
         AgentVerifyError::Refusal {
             kind: AgentVerifyRefusalKind::NoMovement,
@@ -78,10 +80,13 @@ fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
         classify_incomparable_pair_error("repository heads differ".to_string()),
         AgentVerifyError::Operational(_)
     ));
-    assert!(matches!(
-        classify_verify_movement_error("unexpected movement shape".to_string()),
-        AgentVerifyError::Operational(_)
-    ));
+    // #14021: the movement classifier is producer-typed — the producer
+    // carries exactly the NoMovement variant, so no movement error classifies
+    // as operational through this path anymore.
+    let operational_shape = AgentVerifyError::Operational(
+        "agent verify could not read after artifact at /tmp/x".to_string(),
+    );
+    assert_eq!(operational_shape.into_command_error().exit_code(), 2);
 }
 
 #[test]
@@ -732,4 +737,46 @@ fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(),
         "an unprovable leading `..` is flagged"
     );
     Ok(())
+}
+
+#[test]
+fn no_movement_class_travels_with_the_variant_not_the_message() {
+    // #14021: a reworded no-movement message must not be able to flip the
+    // class. The producer-typed classifier mints the refusal from
+    // `AgentVerifyMovementError`, and the same rendered text without the
+    // type does not.
+    let typed = classify_verify_movement_error(
+        crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+            head: "aaaaaaa".to_string(),
+        },
+    );
+    let rendered = typed.to_string();
+    assert!(
+        rendered.starts_with("agent verify no repository movement"),
+        "user-visible message keeps its shape: {rendered}"
+    );
+    assert!(
+        matches!(
+            typed,
+            AgentVerifyError::Refusal {
+                kind: AgentVerifyRefusalKind::NoMovement,
+                ..
+            }
+        ),
+        "the class rides on the producer's variant, not the prose"
+    );
+    // A refusal with deliberately reworded prose keeps the class: the exit
+    // mapping reads `kind`, so a future reword of the rendered message cannot
+    // flip the exit code.
+    let reworded_but_typed = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded_but_typed.into_command_error().exit_code(), 3);
+    // The identical rendered text without the typed class is operational:
+    // message text alone must not mint the refusal class.
+    let same_text_untyped = AgentVerifyError::Operational(rendered.clone());
+    // Both render identically for the user; only the class differs.
+    assert_eq!(same_text_untyped.to_string(), rendered);
+    assert_eq!(same_text_untyped.into_command_error().exit_code(), 2);
 }
