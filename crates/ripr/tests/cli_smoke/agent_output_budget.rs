@@ -137,7 +137,7 @@ Hidden:
     );
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
-    within("check --format json-terse", &terse, 49_000);
+    within("check --format json-terse", &terse, 46_500);
     within("check --format github", &github, 3_300);
     Ok(())
 }
@@ -230,5 +230,56 @@ fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResu
         lines <= 15,
         "agent repair start grew to {lines} lines, over its 15-line budget:\n{combined}"
     );
+    Ok(())
+}
+
+/// The task-first `ripr repair <id>` stdout is the start summary followed by
+/// the handoff card. The card must not repeat what the summary just printed
+/// (changed behavior, assertion shape, continue command, packet route,
+/// attempt id), and the whole stdout stays inside a byte budget.
+#[test]
+fn ripr_repair_start_does_not_repeat_the_summary_in_the_card() -> TestResult {
+    let root = super::repair_route_workspace("ripr repair start budget")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = super::run_ripr_with_env(
+        &["repair", super::REPAIR_ROUTE_SEAM, "--root", &root_arg],
+        &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
+    );
+    // The binary prints `/` separators on Windows, so fold the root the same way
+    // it is printed instead of replacing the backslash spelling of the argument.
+    let stdout = String::from_utf8(output.stdout)?.replace(&printed_path(&root), "<root>");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    // Positive: the summary and the card's own lines are both present.
+    for kept in [
+        "Repair prepared for seam ",
+        "assertion shape: ",
+        "Next, after the test edit: ripr continue ",
+        "Repair brief for this gap",
+        "  Ready to repair. The repair has started and is waiting for your test.",
+        "  Files you may change: ",
+        "  Done when: ",
+    ] {
+        assert!(stdout.contains(kept), "stdout lost `{kept}`:\n{stdout}");
+    }
+    // Negative: the card does not restate the summary.
+    for repeated in [
+        "  Changed behavior: ",
+        "  Suggested assertion: ",
+        "  Next: write the test, then run",
+        "  Repair attempt: ",
+        "  Machine-readable details (JSON): ",
+    ] {
+        assert!(
+            !stdout.contains(repeated),
+            "the card repeats `{repeated}` from the start summary:\n{stdout}"
+        );
+    }
+    assert_eq!(
+        stdout.matches("ripr continue ").count(),
+        1,
+        "the continue command must print once:\n{stdout}"
+    );
+    within("ripr repair start (stdout)", &stdout, 1_450);
     Ok(())
 }

@@ -257,6 +257,7 @@ pub(crate) fn parse_cosmic_ray_dump(
             end_col,
             status,
             outcome,
+            recorded_diff: None,
         });
     }
     if lines == 0 {
