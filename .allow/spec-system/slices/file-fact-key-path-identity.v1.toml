@@ -13,7 +13,8 @@ platform, plus Windows-only verbatim-prefix stripping and case folding,
 applied identically at key construction, the entry filename, envelope
 admission, and the known-paths inventory. One file reached through different
 caller spellings reuses one entry instead of reparsing under each spelling,
-and a hit serves `FileFacts` under the key's canonical identity path.
+and a hit rebinds every embedded file-local path and matching function-symbol
+prefix to the requested path spelling a cold parse would produce.
 Admission stays fail-closed on schema, analyzer, path identity, and content
 hash, so no stale or wrong-file facts are served. `1.58` entries orphan under
 the `1.59` schema bump. On Unix a backslash remains an ordinary filename
@@ -31,7 +32,7 @@ non_goals = [
 
 return_conditions = [
   "Return to root if two spellings of one file mint separate entries again.",
-  "Return to root if a hit serves facts under a non-canonical `FileFacts.path`.",
+  "Return to root if a hit serves facts or function-symbol identities under a spelling other than the cold parse for the requested path.",
   "Return to root if distinct Unix files (backslash or case variants) share an entry.",
 ]
 

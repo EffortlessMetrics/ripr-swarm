@@ -207,9 +207,13 @@ fn test_source(name: &str, value: usize) -> String {
 }
 
 fn owner_findings(index: &RustIndex) -> Vec<Finding> {
+    owner_findings_at(index, Path::new(OWNER))
+}
+
+fn owner_findings_at(index: &RustIndex, owner: &Path) -> Vec<Finding> {
     // Relative locations match the relative facts used by the classifier;
     // probe extraction reads the supplied index, not the current directory.
-    let probes = probes_for_repo_file(Path::new(""), Path::new(OWNER), index);
+    let probes = probes_for_repo_file(Path::new(""), owner, index);
     assert!(
         !probes.is_empty(),
         "the fixture must emit actual owner probes"
@@ -231,15 +235,14 @@ fn cross_spelling_warm_facts_preserve_consumer_identity() -> TestResult<()> {
     let fixture = EditFixture::new()?;
     let uncached = build_index(&fixture.root, &fixture.files)?;
     assert!(relates(&uncached, "boundary_case"));
-    let prefixed = fixture
+    let prefixed_paths = fixture
         .files
         .iter()
-        .map(|path| {
-            Ok((
-                PathBuf::from("./").join(path),
-                fs::read(fixture.root.join(path))?,
-            ))
-        })
+        .map(|path| PathBuf::from("./").join(path))
+        .collect::<Vec<_>>();
+    let prefixed = prefixed_paths
+        .iter()
+        .map(|path| Ok((path.clone(), fs::read(fixture.root.join(path))?)))
         .collect::<Result<Vec<_>, std::io::Error>>()?;
 
     // Prime the real cache with another spelling, then require a canonical
@@ -276,6 +279,37 @@ fn cross_spelling_warm_facts_preserve_consumer_identity() -> TestResult<()> {
     assert_eq!(
         serde_json::to_value(owner_findings(&warm.index))?,
         serde_json::to_value(owner_findings(&uncached))?
+    );
+
+    // Under one requested spelling, cold and disk-hit facts must also agree;
+    // cache-key normalization must not become a producer identity rewrite.
+    let prefixed_uncached = build_index(&fixture.root, &prefixed_paths)?;
+    let prefixed_warm = build_index_with_file_fact_cache(
+        &fixture.root,
+        &prefixed,
+        &fixture.adapter,
+        &LexicalRustSyntaxAdapter,
+        &fixture.cache,
+        || fixture.cache.known_file_paths(),
+    )?;
+    assert_eq!(prefixed_warm.file_fact_cache.hits, FILE_COUNT);
+    assert_eq!(prefixed_warm.file_fact_cache.misses, 0);
+    assert_eq!(prefixed_warm.file_fact_cache.stores, 0);
+    assert_eq!(prefixed_warm.index.files(), prefixed_uncached.files());
+    assert_eq!(
+        prefixed_warm.index.functions(),
+        prefixed_uncached.functions()
+    );
+    assert_eq!(prefixed_warm.index.tests(), prefixed_uncached.tests());
+    assert_eq!(
+        serde_json::to_value(owner_findings_at(
+            &prefixed_warm.index,
+            Path::new("./src/lib.rs"),
+        ))?,
+        serde_json::to_value(owner_findings_at(
+            &prefixed_uncached,
+            Path::new("./src/lib.rs"),
+        ))?
     );
     Ok(())
 }

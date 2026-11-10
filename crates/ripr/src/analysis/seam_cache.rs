@@ -3425,8 +3425,8 @@ fn indexed_paths_all_under_cache_layers(toplevel: &Path, base_relative: &Path) -
     indexed
 }
 
-/// Rebind every serialized fact that names its containing file to the cache
-/// key's canonical path. Owner resolution also reads the file prefix in a
+/// Rebind every serialized fact that names its containing file to the
+/// requested path spelling. Owner resolution also reads the file prefix in a
 /// function's `SymbolId`, so preserve only the symbol-local suffix. Source
 /// declaration targets are not containing-file identities and stay untouched.
 fn rebind_file_fact_identity(mut facts: FileFacts, path: &Path) -> FileFacts {
@@ -3513,6 +3513,17 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
+        self.load_file_facts_for_path(key, key.file_path())
+    }
+
+    /// Load a key hit with the same path spelling a cold parse for
+    /// `requested_path` would produce. The normalized key remains the cache
+    /// identity; the requested spelling must resolve to that key or miss.
+    pub(crate) fn load_file_facts_for_path(
+        &self,
+        key: &RepoFileFactCacheKey,
+        requested_path: &Path,
+    ) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3522,6 +3533,9 @@ impl RepoFileFactCache {
             return CacheLoad::CorruptIgnored {
                 reason: reason.to_owned(),
             };
+        }
+        if !file_fact_paths_equal(requested_path, key.file_path()) {
+            return CacheLoad::Miss;
         }
         let path = self.entry_path(key);
         let bytes = match std::fs::read(&path) {
@@ -3548,7 +3562,7 @@ impl RepoFileFactCache {
                     }
                     CacheLoad::Hit(rebind_file_fact_identity(
                         envelope.file_facts,
-                        key.file_path(),
+                        requested_path,
                     ))
                 } else {
                     CacheLoad::Miss
@@ -5229,8 +5243,7 @@ mod tests {
         let cache = RepoFileFactCache::at_dir(scratch.0.clone());
         let source = "#[path = \"other.rs\"]\nmod other;\npub fn f(x: u32) -> u32 { x + 1 }\n#[test]\nfn changes_f() { assert_eq!(f(1), 2); }\n";
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("./src/lib.rs"), source)?;
-        let assert_canonical_identity = |loaded: &FileFacts, key: &RepoFileFactCacheKey| {
-            let path = key.file_path();
+        let assert_requested_identity = |loaded: &FileFacts, path: &Path| {
             assert_eq!(loaded.path, path);
             assert_eq!(loaded.tests.len(), 1);
             for function in &loaded.functions {
@@ -5253,10 +5266,12 @@ mod tests {
         cache.store_file_facts(&stored, &facts)?;
         for spelling in ["src/lib.rs", "./src/lib.rs"] {
             let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
-            match cache.load_file_facts(&key) {
-                // A hit serves all file-local identities under the key, not
-                // the spelling they were summarized under.
-                CacheLoad::Hit(loaded) => assert_canonical_identity(&loaded, &key),
+            match cache.load_file_facts_for_path(&key, Path::new(spelling)) {
+                // A hit serves all file-local identities under the caller's
+                // requested spelling, not the stored producer's spelling.
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new(spelling));
+                }
                 other => {
                     return Err(format!("spelling {spelling} must hit: {other:?}"));
                 }
@@ -5283,8 +5298,10 @@ mod tests {
                 RepoFileFactCacheKey::new(Path::new(r"src\other.rs"), source.as_bytes());
             cache.store_file_facts(&backslash_key, &backslash_facts)?;
             let canonical = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
-            match cache.load_file_facts(&canonical) {
-                CacheLoad::Hit(loaded) => assert_canonical_identity(&loaded, &canonical),
+            match cache.load_file_facts_for_path(&canonical, Path::new("src/other.rs")) {
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new("src/other.rs"));
+                }
                 other => return Err(format!("canonical spelling must hit: {other:?}")),
             }
         }
@@ -5336,6 +5353,10 @@ mod tests {
         let other_path = RepoFileFactCacheKey::new(Path::new("src/another.rs"), source.as_bytes());
         assert!(matches!(
             cache.load_file_facts(&other_path),
+            CacheLoad::Miss
+        ));
+        assert!(matches!(
+            cache.load_file_facts_for_path(&stored, Path::new("src/another.rs")),
             CacheLoad::Miss
         ));
         let other_content = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn f() {}\n");
