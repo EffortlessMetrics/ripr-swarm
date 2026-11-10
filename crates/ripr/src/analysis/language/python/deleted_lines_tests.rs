@@ -1483,8 +1483,7 @@ fn deleted_line_finding_stamps_the_changed_related_test_and_leads_the_headline()
         "{deleted:?}"
     );
     assert_eq!(
-        crate::output::related_test_miss::headline_related_test_for_finding(deleted)
-            .map(|row| row.file.clone()),
+        crate::domain::python_headline_related_test(deleted).map(|row| row.file.clone()),
         Some(PathBuf::from("tests/test_z.py"))
     );
     Ok(())
