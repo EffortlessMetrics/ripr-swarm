@@ -2354,6 +2354,16 @@ pub(super) fn unresolved_loop_list_boundary(
     {
         return false;
     }
+    // The edit must change only the relational operator: any other change to
+    // the condition (for example removing `or True`) is a different edit.
+    let (Some(old_op), Some(new_prefix), Some(new_suffix)) =
+        (old.get(*os..os + ol), new.get(..*ns), new.get(ns + nl..))
+    else {
+        return false;
+    };
+    if format!("{new_prefix}{old_op}{new_suffix}").trim() != old.trim() {
+        return false;
+    }
     // Only the complete accumulator-selection owner is understood here. An
     // arbitrary loop can visibly return or mutate on the equality branch.
     let Some(source) = source else { return false };
