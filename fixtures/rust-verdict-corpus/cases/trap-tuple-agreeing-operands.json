@@ -1,0 +1,51 @@
+{
+  "case_id": "trap-tuple-agreeing-operands",
+  "subject_id": "authored-tuple-agreeing-operands",
+  "diff": "cases/trap-tuple-agreeing-operands.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "tuple_struct_owner_zero_operands",
+  "hard_case": "The test passes `Money(0)` for both operands, so `other.0 - self.0` and `other.0 + self.0` both return 0 and the assertion on `r.0` cannot tell them apart. A pin on the owner's tuple value looks like a discriminator, but the old and new tail agree on these operands.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self(other.0 - self.0)",
+        "mutated_line": "Self(other.0 - self.0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: subtraction differs from addition on nonzero operands, but zero minus zero is zero so no executed assertion observes it"
+      },
+      {
+        "replacement": "Self(other.0 * self.0)",
+        "mutated_line": "Self(other.0 * self.0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: product differs from sum on nonzero operands, but zero times zero is zero so no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Issue #12808: a tuple-struct owner was credited exposed because `Money(0).add(Money(0)).0 == 0` reads like a pin on the changed tail. The closed integer evaluator now lowers the owner and its operands and finds both versions return 0, so the assertion is not credited. Adversarial shape (operands both versions agree on).",
+  "labeling_observation": {
+    "ripr_commit": "0f8b77dd88",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
