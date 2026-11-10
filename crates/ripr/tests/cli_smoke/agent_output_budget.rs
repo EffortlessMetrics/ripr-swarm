@@ -137,7 +137,7 @@ Hidden:
     );
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
-    within("check --format json-terse", &terse, 49_000);
+    within("check --format json-terse", &terse, 46_500);
     within("check --format github", &github, 3_300);
     Ok(())
 }
