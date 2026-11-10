@@ -48,36 +48,57 @@ fn require_contains(haystack: &str, fragments: &[&str]) -> Result<(), String> {
 
 #[test]
 fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
-    assert!(agent_verify_error_is_typed_refusal(
-        AGENT_VERIFY_INPUT_DRIFT_ERROR
+    assert!(matches!(
+        classify_incomparable_pair_error("analysis input identities differ".to_string()),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            ..
+        }
     ));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_NO_MOVEMENT_PREFIX}: nothing changed"
-    )));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{}: gap `g` is still open",
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
-    )));
-    // A path-bearing operational error that merely echoes refusal text must
-    // stay a failure, as must a drift message with trailing text.
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "failed to read agent verify --before snapshot dir/{AGENT_VERIFY_INPUT_DRIFT_ERROR}"
-    )));
-    for prefix in [
-        AGENT_VERIFY_NO_MOVEMENT_PREFIX,
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX,
-    ] {
-        assert!(!agent_verify_error_is_typed_refusal(&format!(
-            "failed to read agent verify --before snapshot dir/{prefix}"
-        )));
-    }
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_INPUT_DRIFT_ERROR} (extra)"
-    )));
-    assert!(!agent_verify_error_is_typed_refusal(
-        "agent verify artifacts are incomparable: repository heads differ"
+    assert!(matches!(
+        classify_verify_movement_error(
+            crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+                head: "abc1234".to_string(),
+            },
+        ),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::NoMovement,
+            ..
+        }
     ));
-    assert!(!agent_verify_error_is_typed_refusal(""));
+    assert!(matches!(
+        classify_gap_binding_error(format!(
+            "{}: gap `g` is still open",
+            crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
+        )),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            ..
+        }
+    ));
+    assert!(matches!(
+        classify_incomparable_pair_error("repository heads differ".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
+    // #14021: the movement classifier is producer-typed — the producer
+    // carries exactly the NoMovement variant, so no movement error classifies
+    // as operational through this path anymore.
+    let operational_shape = AgentVerifyError::Operational(
+        "agent verify could not read after artifact at /tmp/x".to_string(),
+    );
+    assert_eq!(operational_shape.into_command_error().exit_code(), 2);
+}
+
+#[test]
+fn verify_exit_class_follows_refusal_kind_not_reworded_message() {
+    let operational = AgentVerifyError::Operational("failed to read snapshot".to_string());
+    assert_eq!(operational.into_command_error().exit_code(), 2);
+
+    let reworded = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded.into_command_error().exit_code(), 3);
 }
 
 #[test]
@@ -721,9 +742,10 @@ fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(),
 #[test]
 fn no_movement_class_travels_with_the_variant_not_the_message() {
     // #14021: a reworded no-movement message must not be able to flip the
-    // class. The typed variant classifies even when the rendered text is
-    // mutated, and the same rendered text without the type does not.
-    let typed = AgentVerifyRenderError::Movement(
+    // class. The producer-typed classifier mints the refusal from
+    // `AgentVerifyMovementError`, and the same rendered text without the
+    // type does not.
+    let typed = classify_verify_movement_error(
         crate::agent::artifact::AgentVerifyMovementError::NoMovement {
             head: "aaaaaaa".to_string(),
         },
@@ -733,44 +755,28 @@ fn no_movement_class_travels_with_the_variant_not_the_message() {
         rendered.starts_with("agent verify no repository movement"),
         "user-visible message keeps its shape: {rendered}"
     );
-    let reworded_but_typed = AgentVerifyRenderError::Movement(
-        crate::agent::artifact::AgentVerifyMovementError::NoMovement {
-            head: "aaaaaaa".to_string(),
-        },
-    );
     assert!(
-        matches!(reworded_but_typed, AgentVerifyRenderError::Movement(_)),
-        "the class rides on the variant, not the prose"
+        matches!(
+            typed,
+            AgentVerifyError::Refusal {
+                kind: AgentVerifyRefusalKind::NoMovement,
+                ..
+            }
+        ),
+        "the class rides on the producer's variant, not the prose"
     );
-    let same_text_untyped = AgentVerifyRenderError::Other(rendered.clone());
-    assert!(
-        !matches!(same_text_untyped, AgentVerifyRenderError::Movement(_)),
-        "message text alone must not mint the typed class"
-    );
+    // A refusal with deliberately reworded prose keeps the class: the exit
+    // mapping reads `kind`, so a future reword of the rendered message cannot
+    // flip the exit code.
+    let reworded_but_typed = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded_but_typed.into_command_error().exit_code(), 3);
+    // The identical rendered text without the typed class is operational:
+    // message text alone must not mint the refusal class.
+    let same_text_untyped = AgentVerifyError::Operational(rendered.clone());
     // Both render identically for the user; only the class differs.
     assert_eq!(same_text_untyped.to_string(), rendered);
-    // Route the shapes through the production exit mapping
-    // (`agent_verify_render_error_is_decision`, the exact predicate the CLI
-    // dispatch uses): the typed variant decides on the variant alone, so a
-    // future reword of the rendered message cannot flip the exit code. The
-    // identical untyped text classifies only through the legacy prose
-    // fallback retained for drift and gap-binding refusals (#12102); that
-    // fallback is deliberate compat, not the mechanism this change relies
-    // on, and it cannot mint the repair-after narration the variant branch
-    // carries.
-    assert!(
-        agent_verify_render_error_is_decision(&reworded_but_typed),
-        "the typed variant decides the exit even if the prose drifts"
-    );
-    assert!(
-        agent_verify_error_is_typed_refusal(&rendered),
-        "legacy prose fallback still covers an untyped movement message"
-    );
-    let operational = AgentVerifyRenderError::Other(
-        "agent verify could not read after artifact at /tmp/x".to_string(),
-    );
-    assert!(
-        !agent_verify_render_error_is_decision(&operational),
-        "operational failures stay exit 2"
-    );
+    assert_eq!(same_text_untyped.into_command_error().exit_code(), 2);
 }

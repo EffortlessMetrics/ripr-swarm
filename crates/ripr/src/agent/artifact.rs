@@ -1586,9 +1586,9 @@ pub(crate) fn validate_verify_movement(
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
-        // #11026: the leading clause is matched by the CLI as a named refusal
-        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
-        // language: the repository has not changed since the before phase.
+        // #14021: the CLI reads the typed `AgentVerifyMovementError` variant,
+        // not this message, so only the tail is plain language: the
+        // repository has not changed since the before phase.
         let short = before
             .repository_head
             .get(..7)
