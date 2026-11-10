@@ -277,17 +277,18 @@ fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
     // in `mutmut show`; adding the code indent again would score a different
     // mutation.
     let raw = &new[prefix..new.len() - suffix];
-    let starts_in_code = via_indent
-        .get(usize::try_from(position_in(&old, prefix, 0).0).unwrap_or(usize::MAX))
-        .copied()
-        .unwrap_or(false);
+    let start_line = usize::try_from(position_in(&old, prefix, 0).0).unwrap_or(usize::MAX);
+    let starts_in_code = via_indent.get(start_line).copied().unwrap_or(false);
     let replacement = raw
         .split('\n')
         .enumerate()
         .map(|(index, part)| {
             let shift = index != 0
                 && !part.is_empty()
-                && via_indent.get(index).copied().unwrap_or(starts_in_code);
+                && via_indent
+                    .get(start_line.saturating_add(index))
+                    .copied()
+                    .unwrap_or(starts_in_code);
             if shift {
                 format!("{indent}{part}")
             } else {
@@ -596,6 +597,38 @@ mod tests {
         assert!(
             edit.mutated
                 .contains("        s = \"\"\"XXa\n        bXX\"\"\"\n")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nonzero_prefix_lines_do_not_reindent_string_continuations() -> Result<(), String> {
+        let src = concat!(
+            "class Multi:\n",
+            "    def m(self):\n",
+            "        observed = 1\n",
+            "        text = \"\"\"alpha\n",
+            "        continuation\"\"\"\n",
+            "        return text\n",
+        );
+        let read_multi = |_: &str| Some(src.to_string());
+        let diff = show(concat!(
+            " def m(self):\n",
+            "     observed = 1\n",
+            "-    text = \"\"\"alpha\n",
+            "-        continuation\"\"\"\n",
+            "+    text = \"\"\"XXalpha\n",
+            "+        modified\"\"\"\n",
+            "     return text",
+        ));
+        let dump = record("m.xǁMultiǁm__mutmut_1", "killed", &diff); // ripr-allow: static-language: mutmut status name
+        let (sources, _) = parse_mutmut_dump(&dump, &read_multi, None)?;
+        let mutant = &sources[0].mutants[0];
+        assert_eq!(mutant.replacement, "XXalpha\n        modified");
+        let edit = synthesize_edit("src/m.py", src, mutant).map_err(str::to_string)?;
+        assert!(
+            edit.mutated
+                .contains("        text = \"\"\"XXalpha\n        modified\"\"\"\n")
         );
         Ok(())
     }
