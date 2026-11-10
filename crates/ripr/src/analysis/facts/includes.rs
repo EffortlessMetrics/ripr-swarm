@@ -139,6 +139,9 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             "rust_include_edge_limit_exceeded",
         ));
         index.include_parents.clear();
+        // A fresh build starts with no targets; an index extended in place
+        // would otherwise keep the set an earlier pass found.
+        index.include_targets.clear();
         sort_limitations(&mut limitations);
         index.include_limitations = limitations;
         return;
@@ -225,6 +228,55 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
+/// Whether the index already carries include state from an earlier
+/// resolution pass: resolved parents (whose function identities are rebased)
+/// or physical include targets. The overflow path of the resolution pass
+/// returns before replacing the targets, so a stale set would survive an
+/// in-place extension that a fresh build never had.
+pub(super) fn index_holds_include_state(index: &RustIndex) -> bool {
+    !index.include_parents.is_empty() || !index.include_targets.is_empty()
+}
+
+/// Whether adding a file with this decoded `source` to an already-indexed
+/// workspace can re-parent function identities through an `include!`
+/// directive. Only an invocation that can become an edge counts: a
+/// parser-backed file-level `include!` with a literal path to a repository
+/// file the merged index holds (`kept`). A mention in a comment or a string
+/// never enters the producer the resolution pass reads, and a nested,
+/// dynamic, out-of-repository or unindexed-target invocation only records a
+/// limitation, so none of them re-parents anything (the same-run reuse used
+/// to fall back to a full rebuild for every added file whose bytes merely
+/// contained `include!`). A file the parser refuses, or one over the
+/// directive budget, reports `true`: its directives are unknown, so the
+/// caller fails closed to a fresh build. The edge budget is shared by the
+/// whole index and is spent on inert directives too, so once the cached
+/// index already holds include state (`core_has_include_state`) any
+/// directive in an added file could push the merged total over the budget,
+/// which clears the edges without undoing the rebased identities: it counts.
+pub(super) fn added_file_may_rebase_includes(
+    path: &Path,
+    source: &str,
+    kept: &BTreeSet<&Path>,
+    core_has_include_state: bool,
+) -> bool {
+    if !might_contain_include_macro(source) {
+        return false;
+    }
+    let Ok(directives) = rust_include_directives(path, source, MAX_INCLUDE_EDGES) else {
+        return true;
+    };
+    directives.len() > MAX_INCLUDE_EDGES
+        || (core_has_include_state && !directives.is_empty())
+        || directives.iter().any(|directive| {
+            directive.is_file_level
+                && directive
+                    .literal_path
+                    .as_deref()
+                    .and_then(|literal| repository_relative_target(path, literal))
+                    .is_some_and(|target| kept.contains(target.as_path()))
+        })
+}
+
 fn might_contain_include_macro(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut offset = 0;
@@ -294,7 +346,7 @@ fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
     limitations.dedup();
 }
 
-fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
+pub(crate) fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
     if literal.is_absolute() {
         return None;
     }
@@ -436,14 +488,14 @@ mod tests {
             start_line: 1,
             end_line: 2,
             body: "fn f() {}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -834,6 +886,212 @@ mod tests {
             parallel_snapshot.include_limitations
         );
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    /// An index extended in place can carry the target set an earlier pass
+    /// found; the budget-overflow path must leave none, as a fresh build does.
+    #[test]
+    fn edge_budget_overflow_leaves_no_stale_include_targets() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-include-overflow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut many = String::new();
+        for _ in 0..=MAX_INCLUDE_EDGES {
+            many.push_str("mod m { include!(\"frag.rs\"); }\n");
+        }
+        let sources = [
+            ("src/lib.rs", many.as_str()),
+            ("src/frag.rs", "pub fn f() {}\n"),
+        ];
+        write_fixture(&root, &sources).map_err(|error| error.to_string())?;
+        let mut index = manual_index(&sources);
+        index.include_targets.insert(PathBuf::from("src/frag.rs"));
+        resolve_repository_local_includes(&root, &mut index);
+        let _ = fs::remove_dir_all(&root);
+        assert!(index.include_parents.is_empty());
+        assert!(index.include_targets.is_empty());
+        assert!(
+            index
+                .include_limitations
+                .iter()
+                .any(|limit| limit.reason_code == "rust_include_edge_limit_exceeded")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn include_state_covers_targets_left_without_resolved_parents() {
+        let mut index = RustIndex::default();
+        assert!(!index_holds_include_state(&index));
+        index.include_targets.insert(PathBuf::from("src/frag.rs"));
+        assert!(
+            index_holds_include_state(&index),
+            "ambiguous parents leave targets but no include_parents"
+        );
+    }
+
+    #[test]
+    fn added_file_rebase_check_reads_parsed_directives_not_mentions() {
+        let path = Path::new("src/added.rs");
+        let kept: BTreeSet<&Path> = [Path::new("src/lib.rs"), Path::new("src/x.rs")].into();
+        // A mention in a comment, a string, a similarly named macro or a
+        // macro definition body is not an `include!` invocation.
+        for mention in [
+            "// include!(\"x.rs\") is documented here\npub fn a() {}\n",
+            "pub fn a() -> &'static str { \"include!(\\\"x.rs\\\")\" }\n",
+            "pub fn a() { let _ = include_str!(\"x.rs\"); }\n",
+            "macro_rules! m { () => { include!(\"x.rs\") } }\npub fn a() {}\n",
+        ] {
+            assert!(
+                !added_file_may_rebase_includes(path, mention, &kept, false),
+                "mention must not count: {mention}"
+            );
+        }
+        // A real invocation counts at file level, nested, attributed, with
+        // token-separating trivia, and when the parser refuses the file.
+        for directive in [
+            "include!(\"x.rs\");\n",
+            "#[cfg(test)]\ninclude!(\"x.rs\");\n",
+            "include /* why */ ! (\"x.rs\");\n",
+            "include!(\"x.rs\"); fn broken( {\n",
+        ] {
+            assert!(
+                added_file_may_rebase_includes(path, directive, &kept, false),
+                "directive must count: {directive}"
+            );
+        }
+        // With rebased edges already in the core, even an inert directive
+        // counts toward the shared edge budget.
+        assert!(added_file_may_rebase_includes(
+            path,
+            "mod m { include!(\"x.rs\"); }\n",
+            &kept,
+            true
+        ));
+        assert!(!added_file_may_rebase_includes(
+            path,
+            "// include!(\"x.rs\")\n",
+            &kept,
+            true
+        ));
+        // An invocation that cannot become an edge only records a limitation.
+        for inert in [
+            "include!(\"missing.rs\");\n",
+            "mod m { include!(\"x.rs\"); }\n",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/x.rs\"));\n",
+            "include!(\"../../escaped.rs\");\n",
+        ] {
+            assert!(
+                !added_file_may_rebase_includes(path, inert, &kept, false),
+                "inert directive must not count: {inert}"
+            );
+        }
+    }
+
+    /// Reusing a same-run core for a workspace that adds a file which only
+    /// mentions `include!` extends the index in place, and a real `include!`
+    /// still takes the fresh build; both equal a fresh build over the target.
+    #[test]
+    fn added_file_mentioning_include_extends_in_place_and_real_include_rebuilds()
+    -> Result<(), String> {
+        use crate::analysis::facts::{
+            build_analysis_index_from_loaded_files, index_build_probe, reuse_cached_index_in_run,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "ripr-include-rebase-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let plain_core = [
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            ("src/lib.rs", "pub fn base() -> u8 { 1 }\n"),
+            ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
+        ];
+        // A core that already rebased `frag.rs` through a real edge.
+        let edge_core = [
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            (
+                "src/lib.rs",
+                "include!(\"frag.rs\");\npub fn base() -> u8 { 1 }\n",
+            ),
+            ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
+        ];
+        let load = |names: &[(&str, &str)]| -> Vec<(PathBuf, Vec<u8>)> {
+            names
+                .iter()
+                .filter(|(path, _)| path.ends_with(".rs"))
+                .map(|(path, source)| (PathBuf::from(path), source.as_bytes().to_vec()))
+                .collect()
+        };
+        let snapshot = |index: &RustIndex| -> Result<String, String> {
+            Ok(format!(
+                "{:?}|{}|{}",
+                include_resolution_snapshot(index),
+                serde_json::to_string(&index.functions().iter().collect::<Vec<_>>())
+                    .map_err(|error| error.to_string())?,
+                index
+                    .files()
+                    .keys()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))
+        };
+        for (core_sources, added_source, expect_rebuild) in [
+            (
+                plain_core,
+                "// include!(\"frag.rs\")\npub fn added() -> &'static str { \"include!\" }\n",
+                0usize,
+            ),
+            // An include whose target the merged index does not hold records
+            // a limitation only; it is not an edge.
+            (
+                plain_core,
+                "include!(\"nope.rs\");\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
+            (
+                plain_core,
+                "include!(\"frag.rs\");\npub fn added() -> u8 { 3 }\n",
+                1usize,
+            ),
+            // The shared edge budget: with a rebased edge in the core, even an
+            // inert directive or a mention-free file with one must rebuild,
+            // while a plain mention still extends in place.
+            (
+                edge_core,
+                "mod m { include!(\"nope.rs\"); }\npub fn added() -> u8 { 3 }\n",
+                1usize,
+            ),
+            (
+                edge_core,
+                "// include!(\"nope.rs\")\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
+        ] {
+            write_fixture(&root, &core_sources).map_err(|error| error.to_string())?;
+            let mut target_sources = core_sources.to_vec();
+            target_sources.push(("src/added.rs", added_source));
+            write_fixture(&root, &[("src/added.rs", added_source)])
+                .map_err(|error| error.to_string())?;
+            let core = build_analysis_index_from_loaded_files(&root, &load(&core_sources), &[])?;
+            let target = load(&target_sources);
+            let (reused, rebuilds) = index_build_probe::observe_rebase_fallbacks(|| {
+                reuse_cached_index_in_run(core, &root, &target, &[])
+            });
+            let reused = reused?;
+            assert_eq!(rebuilds, expect_rebuild, "{added_source}");
+            let fresh = build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            assert_eq!(
+                snapshot(&reused.index)?,
+                snapshot(&fresh.index)?,
+                "{added_source}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
         Ok(())
     }
 }

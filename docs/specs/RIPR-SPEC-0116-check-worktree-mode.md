@@ -106,6 +106,14 @@ head it analyzed.
   `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH``
   line directly after `head:` (#11159). It is display-only and absent on a
   working-tree read and when no untracked routed file was left out.
+- **Gitignored routed files.** Gitignored routed files are excluded from
+  analysis and disclosed in the human and GitHub notes and the JSON
+  `ignored_working_tree_source_paths` list, with the `git add -f -N` repair.
+  Dependency and build-output trees are not disclosed (#13597): a path with a
+  `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+  `vendor` component, or whose first component is `dist` or `build`, stays
+  excluded but is not listed, so the repair is never offered for vendored
+  code.
 - **LSP and library callers are unchanged.** The LSP already reads the
   working tree for every refresh (`check_workspace_worktree_*`), and the
   public `check_workspace*` library entry points keep their committed-history
@@ -319,6 +327,10 @@ that untracked source was analyzed.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke.rs::check_gitignored_files_are_disclosed_not_silent`
+- `crates/ripr/src/analysis/committed_source/tests.rs::vendored_dependency_paths_are_not_user_sources`
+  - gitignored user sources are disclosed with the force intent-to-add
+  repair; gitignored dependency and build-output trees are not listed.
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_tracked_path_recovery_works_in_every_mode`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_untracked_path_recovery_is_a_filesystem_rename`

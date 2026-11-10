@@ -33,6 +33,7 @@ use crate::domain::{
     RepairCardSnapshotCurrentness, RepairCardTarget, RepairCardV1, StaticMovementGoal,
 };
 use crate::output;
+use crate::output::agent_card::agent_card_plain_lines;
 
 use super::agent::{
     policy_omitted_seam_hint, policy_omitted_seam_remedy_route, unknown_seam_id_hint,
@@ -56,6 +57,25 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// post-publication card refusal keeps stdout empty (#7032). Byte-identical
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
+    agent_card_stdout_with(options, None)
+}
+
+/// The card printed right after the `ripr repair` start summary: that summary
+/// already carries the changed behavior, assertion shape, continue command,
+/// packet route and attempt id, so the brief leaves those lines out instead of
+/// repeating them in the same stdout. The changed-behavior and assertion
+/// lines are left out only when `start_summary` printed the same text.
+pub(super) fn agent_card_stdout_after_start(
+    options: AgentCardOptions,
+    start_summary: &str,
+) -> Result<String, CommandError> {
+    agent_card_stdout_with(options, Some(start_summary))
+}
+
+fn agent_card_stdout_with(
+    options: AgentCardOptions,
+    start_summary: Option<&str>,
+) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
     // Any id `ripr check` or `ripr pilot` prints works here: a finding id, a
     // gap id or a `file:line` goes through the same shared resolver `ripr
@@ -114,7 +134,13 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         }
         lines
     } else {
-        agent_card_plain_lines(&card, &packet_command, Some(&options.root), hold.as_ref())
+        agent_card_plain_lines(
+            &card,
+            &packet_command,
+            Some(&options.root),
+            hold.as_ref(),
+            start_summary,
+        )
     };
     for line in lines {
         rendered.push_str(&line);
@@ -190,6 +216,18 @@ fn refusal_remedy_route(
         &root.to_string_lossy(),
     ));
     match kind {
+        // #13791: a TypeScript/Python preview finding or gap id has no seam
+        // and never will, so re-listing seams cannot find it. Its typed route
+        // is the same `check --format agent` command the refusal prose names
+        // (one owner renders both). Unknown and Rust-shaped ids keep pilot.
+        AgentCardRefusalKind::SeamNotFound
+            if crate::app::task_first::preview_item_language(seam_id).is_some() =>
+        {
+            crate::app::task_first::preview_check_command(
+                root_path,
+                crate::app::task_first::PreviewCheckInput::Default,
+            )
+        }
         AgentCardRefusalKind::SeamNotFound => {
             format!("ripr pilot --root {root}")
         }
@@ -499,249 +537,6 @@ pub(crate) fn agent_card_prose_lines(
     lines
 }
 
-/// The default human card: a short brief a first-time reader can act on.
-/// Every line is projected from a typed card field; nothing is re-derived and
-/// the JSON card is untouched. The ledger rows (producer, subject, non-claim,
-/// detail routes, hashes) live in [`agent_card_prose_lines`] under
-/// `--verbose`.
-pub(crate) fn agent_card_plain_lines(
-    card: &RepairCardV1,
-    packet_command: &str,
-    paste_root: Option<&std::path::Path>,
-    hold: Option<&CardStartHold>,
-) -> Vec<String> {
-    let mut lines = vec!["Repair brief for this gap".to_string()];
-    lines.push(format!("  Changed behavior: {}", card.changed_behavior));
-    // One verdict: the shared start gate (`hold`) outranks the card's own
-    // evidence readiness, so "ready" is only printed when `ripr repair`
-    // would also start (#11397, #11381).
-    // Any gate refusal means `ripr repair` would not start, so it forces
-    // `ready` and `started` off (fail closed). Only the held-file cause,
-    // which carries its own next step, also replaces the card's wording and
-    // next action; other refusals keep the card's evidence wording and
-    // canonical next action, and the gate's reason is only the fallback.
-    let refused = hold.is_some();
-    let hold_with_next = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
-    let ready = card.readiness.repair_ready && !refused;
-    if let Some(hold) = hold_with_next {
-        lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
-    } else if started {
-        lines.push(
-            "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
-        );
-    } else if ready {
-        lines.push("  Ready to repair.".to_string());
-    } else {
-        let missing = card
-            .readiness
-            .missing_evidence
-            .iter()
-            .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
-            .collect::<Vec<_>>()
-            .join("; ");
-        // Plain evidence words first; the producer's blocker string can carry
-        // internal vocabulary, so it is only the fallback.
-        let reason = (!missing.is_empty())
-            .then_some(missing)
-            .or_else(|| {
-                card.exact_blocker
-                    .clone()
-                    .filter(|blocker| !blocker.is_empty())
-            })
-            .or_else(|| hold.map(|hold| hold.reason.clone()));
-        lines.push(match reason {
-            Some(reason) => format!("  Not ready to repair yet: {reason}"),
-            None => "  Not ready to repair yet.".to_string(),
-        });
-    }
-    lines.push(format!(
-        "  Suggested assertion: {}",
-        match (
-            &card.assertion_goal_detail,
-            card.instruction.has_suggested_assertion
-        ) {
-            (Some(detail), true) => detail.clone(),
-            // A repair that can start or has started has a route, so the
-            // "no bounded repair route" wording would contradict it.
-            _ if ready || started => {
-                "none; ripr has no exact assertion to suggest for this gap.".to_string()
-            }
-            _ => instruction_plain_words(card.instruction.state).to_string(),
-        }
-    ));
-    match &card.selected_target {
-        Some(RepairCardTarget::Existing { file, line, .. }) => {
-            lines.push(format!("  Test to extend: {file}:{line}"));
-        }
-        Some(RepairCardTarget::Proposed { file, .. }) => {
-            lines.push(format!("  Add a test in: {file}"));
-        }
-        None => {}
-    }
-    let own_route = card
-        .canonical_next_action
-        .as_ref()
-        .is_some_and(|action| action.command().is_some());
-    let root_arg = || {
-        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
-            &paste_root.map_or_else(|| ".".to_string(), |r| r.to_string_lossy().into_owned()),
-        ))
-    };
-    let start_command = || {
-        format!(
-            "ripr repair {} --root {}",
-            crate::agent::loop_commands::shell_arg(&card.subject.seam_id),
-            root_arg()
-        )
-    };
-    match &card.canonical_next_action {
-        _ if hold_with_next.is_some() => {
-            if let Some(next) = hold_with_next.and_then(|hold| hold.next.as_ref()) {
-                lines.push(format!("  Next: {next}"));
-                if let Some(command) = hold_with_next.and_then(|hold| hold.command.as_deref()) {
-                    lines.extend(powershell_pair(command));
-                }
-            }
-        }
-        // No runnable command of the card's own, a repair not yet started,
-        // and the start gate holds nothing: the one next step is the repair
-        // start itself (#11397), the command the pilot printed.
-        _ if ready && !started && !own_route => {
-            let command = start_command();
-            lines.push(format!("  Next: {command}"));
-            lines.extend(powershell_pair(&command));
-        }
-        // A started attempt with no stop of its own: the next step is the
-        // attempt's, not "no ready command" (#11381).
-        Some(action)
-            if started
-                && !own_route
-                && action.stop().is_none_or(|stop| {
-                    matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
-                }) =>
-        {
-            if let Some(attempt) = &card.attempt {
-                let command = format!(
-                    "ripr continue --root {} --attempt {}",
-                    root_arg(),
-                    crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
-                );
-                lines.push(format!("  Next: write the test, then run `{command}`"));
-                lines.extend(powershell_pair(&command));
-            }
-        }
-        Some(action) => {
-            lines.extend(
-                crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
-            );
-        }
-        None => match &card.next_action {
-            Some(action) => lines.push(format!("  Next: {}", action.display)),
-            None => lines.push(
-                "  Next: ripr has no ready command for this gap (see --verbose).".to_string(),
-            ),
-        },
-    }
-    if !card.allowed_files.is_empty() {
-        lines.push(format!(
-            "  Files you may change: {}",
-            card.allowed_files.join(", ")
-        ));
-    }
-    if !card.forbidden_files.is_empty() {
-        lines.push(format!(
-            "  Do not change: {} (ripr rejects the repair if these change)",
-            card.forbidden_files.join(", ")
-        ));
-    }
-    lines.push(plain_done_when_line(&card.done_when));
-    if let Some(attempt) = &card.attempt {
-        lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
-    }
-    let already_shown: &[String] = card
-        .canonical_next_action
-        .as_ref()
-        .map_or(&[], |action| action.limitations());
-    let limits: Vec<&str> = already_shown
-        .iter()
-        .chain(
-            card.limitations
-                .iter()
-                .filter(|l| !already_shown.contains(l)),
-        )
-        .map(String::as_str)
-        .collect();
-    if !limits.is_empty() {
-        // Keep the brief short: two limits inline, the rest behind --verbose.
-        let shown = limits
-            .iter()
-            .take(2)
-            .copied()
-            .collect::<Vec<_>>()
-            .join("; ");
-        let more = limits.len().saturating_sub(2);
-        lines.push(if more == 0 {
-            format!("  Limits: {shown}")
-        } else {
-            format!("  Limits: {shown}; and {more} more (see --verbose)")
-        });
-    }
-    // The raw gap id is a copy-paste handle, not a title: it sits below the
-    // actionable lines, next to the machine-readable route that takes it.
-    lines.push(format!("  Repair ID: {}", card.subject.seam_id));
-    lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
-    lines.push(format!(
-        "  Machine-readable details (JSON): {packet_command}"
-    ));
-    if let Some(form) = crate::output::markdown::powershell_text_variant(packet_command) {
-        lines.push(format!("  (PowerShell) {form}"));
-    }
-    lines.push("  More fields: add --verbose.".to_string());
-    lines
-}
-
-/// The `(PowerShell)` pair line for a printed bash command, from the shared
-/// translator every plain-text command surface uses; `None` when PowerShell
-/// runs the bash spelling unchanged.
-fn powershell_pair(command: &str) -> Option<String> {
-    crate::output::markdown::powershell_text_variant(command)
-        .map(|form| format!("  (PowerShell) {form}"))
-}
-
-/// Plain spelling of what a missing suggestion means; exhaustive so a new
-/// instruction state must choose its wording.
-fn instruction_plain_words(value: FixInstructionState) -> &'static str {
-    match value {
-        FixInstructionState::FixSiteReady => {
-            "ripr found where the fix goes but has no exact assertion to suggest."
-        }
-        FixInstructionState::StaticLimitation => "ripr has no bounded repair route for this gap.",
-        FixInstructionState::Stale => "this brief is out of date; rerun ripr check first.",
-        FixInstructionState::InspectOnly => "inspect only; there is nothing to fix here.",
-        FixInstructionState::Unavailable => "none; ripr has no suggested assertion for this gap.",
-    }
-}
-
-/// The plain done-when line: the same typed axes as [`done_when_line`], minus
-/// the internal ones (edit surface, mutation, snapshot), which stay in
-/// `--verbose` and JSON.
-fn plain_done_when_line(done: &RepairCardDoneWhen) -> String {
-    let test = match done.focused_test_execution {
-        FocusedExecutionGoal::VerifiedPass => "the new test passes",
-        FocusedExecutionGoal::ExplicitlyNotRun => {
-            "you have run the new test yourself (ripr does not)"
-        }
-    };
-    let gap = match done.static_movement {
-        StaticMovementGoal::ClosedBySelectedRoute => "the gap no longer shows in `ripr check`",
-        StaticMovementGoal::ImprovedAccordingToSelectedRoute => {
-            "`ripr check` shows the gap improved"
-        }
-    };
-    format!("  Done when: {test} and {gap}.")
-}
-
 /// Plain-language spelling of the snapshot currentness for the human summary.
 /// The wire value stays in `--json`; the match is exhaustive so a new variant
 /// must choose its wording.
@@ -951,6 +746,41 @@ mod tests {
         if !packet.starts_with("ripr agent packet --root ") || !packet.contains("--seam-id seam-a")
         {
             return Err("packet remedy must bind the invocation root and seam id".to_string());
+        }
+        Ok(())
+    }
+
+    /// #13791 review: a preview-shaped id's not-found route is the preview
+    /// `check --format agent` command the prose names, while an unknown seam
+    /// id and a Rust-shaped finding id keep re-listing through pilot.
+    #[test]
+    fn seam_not_found_remedy_route_names_check_for_preview_shaped_ids() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let expected = crate::app::task_first::preview_check_command(
+            root,
+            crate::app::task_first::PreviewCheckInput::Default,
+        );
+        for id in [
+            "probe:src_discount.ts:typescript_preview:2396aec1",
+            "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if route != expected
+                || !route.starts_with("ripr check --root ")
+                || !route.ends_with(" --format agent")
+            {
+                return Err(format!("preview id `{id}` must route to check: {route}"));
+            }
+        }
+        for id in [
+            "seam:definitely-not-real",
+            "probe:src_lib.rs:12:predicate",
+            "gap:rust:src/lib.rs:add:call_deletion:x",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if !route.starts_with("ripr pilot --root ") {
+                return Err(format!("id `{id}` must keep the pilot route: {route}"));
+            }
         }
         Ok(())
     }
@@ -1262,8 +1092,13 @@ mod tests {
         card.allowed_files = vec!["tests/t.rs".to_string()];
         card.forbidden_files = vec!["src/lib.rs".to_string()];
         card.limitations = (0..6).map(|i| format!("limit {i}")).collect();
-        let lines =
-            agent_card_plain_lines(&card, "ripr agent packet --root 'a b' --json", None, None);
+        let lines = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --root 'a b' --json",
+            None,
+            None,
+            None,
+        );
         let text = lines.join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
             return Err(format!("not-ready reason not plain:\n{text}"));
@@ -1273,6 +1108,66 @@ mod tests {
         }
         if !text.contains("and 4 more") || lines.len() > 18 {
             return Err(format!("limits/cap wrong ({} lines):\n{text}", lines.len()));
+        }
+        Ok(())
+    }
+
+    /// After a fresh start the card leaves out a fact only when the start
+    /// summary printed that exact text; a differing changed behavior or a
+    /// card-only assertion stays on the card.
+    #[test]
+    fn post_start_brief_drops_a_line_only_when_the_summary_printed_it() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = true;
+        card.attempt = Some(crate::domain::RepairCardAttempt {
+            attempt_id: "repair-attempt-1".to_string(),
+            state: "awaiting_edit".to_string(),
+        });
+        card.assertion_goal_detail = Some("assert_eq!(f(1), 2)".to_string());
+        card.instruction.has_suggested_assertion = true;
+        let render = |summary: Option<&str>| {
+            agent_card_plain_lines(&card, "ripr agent packet --json", None, None, summary)
+                .join("\n")
+        };
+        let same = render(Some(
+            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n  Next: ripr continue --attempt repair-attempt-1\n",
+        ));
+        if same.contains("Changed behavior") || same.contains("Suggested assertion") {
+            return Err(format!("printed facts repeated:\n{same}"));
+        }
+        let differing = render(Some(
+            "  changed behavior: other\n  assertion shape: other\n  Next: ripr continue --attempt repair-attempt-1\n",
+        ));
+        if !differing.contains("Changed behavior: expr")
+            || !differing.contains("Suggested assertion: assert_eq!(f(1), 2)")
+        {
+            return Err(format!("card-only facts dropped:\n{differing}"));
+        }
+        // A longer summary line that merely starts with the card's text is a
+        // different fact: the card keeps its own line.
+        let prefix_only = render(Some(
+            "  changed behavior: expression changed\n  assertion shape: assert_eq!(f(1), 2) && more\n  Next: ripr continue --attempt repair-attempt-1\n",
+        ));
+        if !prefix_only.contains("Changed behavior: expr")
+            || !prefix_only.contains("Suggested assertion: assert_eq!(f(1), 2)")
+        {
+            return Err(format!("prefix match dropped card facts:\n{prefix_only}"));
+        }
+        // A summary that never printed this attempt's id (an unreadable
+        // packet, say) is not a start the card may lean on: full brief.
+        let no_attempt_id = render(Some(
+            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n",
+        ));
+        if !no_attempt_id.contains("Repair attempt: repair-attempt-1")
+            || !no_attempt_id.contains("Changed behavior: expr")
+        {
+            return Err(format!(
+                "brief lost lines without the attempt id:\n{no_attempt_id}"
+            ));
+        }
+        let full = render(None);
+        if !full.contains("Changed behavior") || !full.contains("Suggested assertion") {
+            return Err(format!("full brief lost lines:\n{full}"));
         }
         Ok(())
     }
@@ -1298,6 +1193,7 @@ mod tests {
             "ripr agent packet --json",
             None,
             Some(&route_not_ready),
+            None,
         )
         .join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly")
@@ -1320,6 +1216,7 @@ mod tests {
             "ripr agent packet --json",
             None,
             Some(&refused),
+            None,
         );
         let text = lines.join("\n");
         if text.contains("Ready to repair.") || text.contains("Next: ripr repair") {
@@ -1337,8 +1234,9 @@ mod tests {
             next: Some("commit or stash `src/lib.rs`, then run `ripr repair s`".to_string()),
             command: Some("ripr repair s".to_string()),
         };
-        let text = agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held))
-            .join("\n");
+        let text =
+            agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held), None)
+                .join("\n");
         if !text.contains("Not ready to repair yet: the inline test target")
             || !text.contains("Next: commit or stash `src/lib.rs`")
             || text.contains("Ready to repair.")
@@ -1360,7 +1258,8 @@ mod tests {
         let root = std::path::Path::new("/tmp/it's $here");
         let mut card = prose_test_card();
         card.instruction.state = FixInstructionState::Unavailable;
-        let lines = agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None);
+        let lines =
+            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None, None);
         let at = lines
             .iter()
             .position(|line| line.starts_with("  Next: ripr repair "))
@@ -1379,8 +1278,13 @@ mod tests {
             ),
             command: Some("ripr repair s --root 'it'\\''s'".to_string()),
         };
-        let lines =
-            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), Some(&held));
+        let lines = agent_card_plain_lines(
+            &card,
+            "ripr agent packet --json",
+            Some(root),
+            Some(&held),
+            None,
+        );
         let at = lines
             .iter()
             .position(|line| line.starts_with("  Next: commit or stash"))
@@ -1405,6 +1309,7 @@ mod tests {
         let lines = agent_card_plain_lines(
             &card,
             "ripr agent packet --seam-id seam:demo --json",
+            None,
             None,
             None,
         );

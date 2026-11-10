@@ -209,7 +209,10 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  Gap ID (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  Gap ID (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
     let changed = finding
         .probe
@@ -250,7 +253,8 @@ pub(crate) fn render_finding_digest_with_config(
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_default_missing(
+        let missing = &super::evidence_lines::plain_default_missing_for(
+            finding,
             &super::evidence_lines::plain_internal_wording(missing),
         );
         // #4320: the digest renders one entry while the exhaustive form's
@@ -306,18 +310,25 @@ pub(crate) fn render_finding_digest_with_config(
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis. Borrow the typed
         // refusal only when it names this headline row (#6541).
-        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
-            .then(|| {
-                let entry = crate::domain::assertion_not_credited_entry_for_test(
-                    &finding.evidence,
-                    &test.name,
-                )?;
-                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
-                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
-                crate::domain::guard_refusal_kind(reason)?;
-                Some(format!(" ({entry})"))
-            })
-            .flatten())
+        let why = (matches!(
+            test.miss,
+            Some(
+                RelatedTestMiss::AssertionNotCredited
+                    | RelatedTestMiss::AssertionInert
+                    | RelatedTestMiss::AssertionAdmissionUnproven
+            )
+        )
+        .then(|| {
+            let entry = crate::domain::assertion_not_credited_entry_for_test(
+                &finding.evidence,
+                &test.name,
+            )?;
+            let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+            let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+            crate::domain::guard_refusal_kind(reason)?;
+            Some(format!(" ({entry})"))
+        })
+        .flatten())
         .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
@@ -685,7 +696,10 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!("  owner:  {owner}\n"));
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  gap id (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  gap id (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
 
     if should_render_language_metadata(finding) {
@@ -794,7 +808,27 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
+    // #11926: the one recommended action leads the Python repair card, whose
+    // stop conditions and limits are about 20 lines of reference detail. Every
+    // other branch keeps the historical order (card, then Next step).
+    let push_next_step = |out: &mut String| {
+        if finding.recommended_next_step.is_some() {
+            out.push_str("\nNext step\n");
+            if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
+                out.push_str(guidance);
+            } else {
+                // #7756: labelled field line — no trailing period on the value.
+                out.push_str(&format!(
+                    "  {}\n",
+                    trim_field_period(&reconcile_next_step(finding))
+                ));
+            }
+        }
+    };
+    let mut next_step_pushed = false;
     if let Some(card) = python_repair_card(finding) {
+        push_next_step(&mut out);
+        next_step_pushed = true;
         push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
@@ -840,17 +874,8 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
-    if finding.recommended_next_step.is_some() {
-        out.push_str("\nNext step\n");
-        if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
-            out.push_str(guidance);
-        } else {
-            // #7756: labelled field line — no trailing period on the value.
-            out.push_str(&format!(
-                "  {}\n",
-                trim_field_period(&reconcile_next_step(finding))
-            ));
-        }
+    if !next_step_pushed {
+        push_next_step(&mut out);
     }
 
     if shared.is_some() {
@@ -1455,11 +1480,6 @@ struct RepairPlacement<'a> {
 /// (#4379 rewalk W4): "partially complete — see full form" told a reader
 /// nothing they could act on from the digest.
 fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
-    // #7003: callee-only reach evidence disclaims owner invocation in its own
-    // summary, so no branch below may claim a reaching test for it.
-    if is_callee_only_reach(&ripr.reach) {
-        return NO_CALLING_TEST_HINT;
-    }
     let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
     // An Unknown stage is not established, so its hint says so rather than
     // stating the gap as fact (#4411 review).
@@ -1494,6 +1514,7 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
 /// with the reach line printed beneath it (F5-10) the way the
 /// `NoStaticPath` hints do.
 const NO_CALLING_TEST_HINT: &str = "no test is seen calling this change";
+const UNESTABLISHED_REACH_HINT: &str = "test reach to this change is not established";
 
 /// Whether the reach stage is callee-only evidence: every related test
 /// exercises the seam's converted callee and none invokes the changed
@@ -1557,14 +1578,28 @@ fn classification_hint(
     refused_macro: Option<&str>,
 ) -> Option<String> {
     let reveal = &ripr.reveal;
-    // #7003: "reaches this change" is a reach claim — a callee-only finding
-    // has no test seen calling the owner, so every claim site below falls
-    // back to the no-calling-test hint for it (mirror of the #6796
-    // propagation guard for `InfectionUnknown`).
+    // Every hint in these two classes can claim a reaching test. A weak or
+    // otherwise unestablished reach cannot support that claim, including the
+    // weak-discriminator shortcut (#7330). Callee-only evidence explicitly
+    // disclaims owner invocation even if its state were inconsistent (#7003).
     let callee_only = is_callee_only_reach(&ripr.reach);
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && (ripr.reach.state != StageState::Yes || callee_only)
+    {
+        return Some(
+            if callee_only {
+                NO_CALLING_TEST_HINT
+            } else {
+                UNESTABLISHED_REACH_HINT
+            }
+            .to_string(),
+        );
+    }
     match class {
         ExposureClass::WeaklyExposed => {
-            if reveal.discriminate.state == StageState::Weak && !callee_only {
+            if reveal.discriminate.state == StageState::Weak {
                 // #4381: the shared missing-discriminator sentence lives in
                 // output::gap_vocabulary; quote the constant, never re-type it.
                 Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE.to_string())
@@ -1573,9 +1608,7 @@ fn classification_hint(
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
-                && !callee_only
-            {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
                 // A compound oracle can carry no established assertion
                 // identity. Do not infer one from its probe family.
                 let standard_macro = refused_macro.map_or_else(
@@ -1585,16 +1618,11 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
-            } else if reveal.observe.state == StageState::No
-                && !callee_only
-                && ripr.reach.state != StageState::Weak
-            {
+            } else if reveal.observe.state == StageState::No {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
                 )
-            } else if reveal.observe.state == StageState::No {
-                Some(NO_CALLING_TEST_HINT.to_string())
             } else {
                 Some(partial_path_hint(ripr).to_string())
             }
@@ -1897,12 +1925,38 @@ mod classification_hint_tests {
         assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
     }
 
-    // #7003 negative: the no-calling-test fallback is scoped to callee-only
-    // reach evidence. Any other weak reach keeps its established hint,
-    // quoted from the shared constant (#4381): the
-    // `shared_sentence_is_quoted_not_retyped` audit forbids re-typing it.
+    // #7330: generic weak reach must not produce a "reaches this change" hint
+    // through partial_path_hint (trait-shadow and similar weak_token_substring
+    // witnesses).
     #[test]
-    fn non_callee_weak_reach_keeps_the_established_hint() {
+    fn generic_weak_reach_never_claims_reaching_test_in_partial_path_hint() {
+        let mut evidence = ripr(StageState::Weak, StageState::No);
+        evidence.reach = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "No test is seen calling render; tests share only its file or a name token: render_is_empty",
+        );
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+        ] {
+            let hint = classification_hint(&class, &evidence);
+            assert_eq!(
+                hint.as_deref(),
+                Some("test reach to this change is not established"),
+                "{class:?}"
+            );
+            assert!(
+                hint.as_deref()
+                    .is_none_or(|hint| !hint.contains("reaches this change")),
+                "{class:?}: {hint:?}"
+            );
+        }
+    }
+
+    // #7330: weak discriminator evidence must not bypass weak reach.
+    #[test]
+    fn non_callee_weak_reach_with_weak_discriminator_does_not_claim_reach() {
         let mut evidence = ripr(StageState::Weak, StageState::Yes);
         evidence.reach = StageEvidence::new(
             StageState::Weak,
@@ -1913,7 +1967,7 @@ mod classification_hint_tests {
         let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
         assert_eq!(
             hint.as_deref(),
-            Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
+            Some("test reach to this change is not established")
         );
     }
 }

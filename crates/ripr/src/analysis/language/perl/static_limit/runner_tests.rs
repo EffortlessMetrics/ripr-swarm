@@ -134,6 +134,7 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
         file_fact_cache: None,

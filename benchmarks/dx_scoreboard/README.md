@@ -9,11 +9,27 @@ regression margin. The report lands at
 The definitions live in [`scoreboards.toml`](scoreboards.toml). Changing a
 target, margin, or corpus pin is a reviewed edit to that file.
 
+## Input validity
+
+A comparison baseline must contain at least one metric row, and every row must
+be an object with a nonblank, unique string `id`. Empty inventories and duplicate
+IDs are rejected before comparison, so row order cannot select a favorable
+baseline. This validates metric identity, not every field in historical reports.
+A baseline may still cover only some configured metrics; new metrics and
+repositories retain their existing comparison policy.
+
+File-backed rates use nonnegative integer `numerator` and `denominator` counts,
+with numerator no greater than denominator. Exactly `0/0` means `not_measured`.
+Negative, fractional, missing, wrongly typed or impossible counts (including
+nonzero divided by zero) fail the instrument and `--gate`; they cannot become a
+favorable rate or an empty-population result. Valid endpoint rates remain `0/N = 0`
+and `N/N = 1` for positive `N`.
+
 ## Boards
 
 | Board | What a developer feels | Metrics |
 |---|---|---|
-| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
+| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` p50 and p95 time over repeated samples and peak memory (the maximum over them), and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), the oracle accuracy and overclaim rate on Rust corpus cases labeled with a spec-adopted related-test oracle kind and strength (targets 1.0 and 0; kept apart from the verdict rates, derived from the same rows), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
@@ -50,19 +66,132 @@ cargo xtask dx-scoreboard --boards ci,paste        # seconds, no corpus
 `--ripr-bin <path>` measures an existing binary; otherwise the command builds
 release ripr first, because developers run release builds.
 
+### Size tiers and memory budgets
+
+`[[size_tier]]` tables in `scoreboards.toml` give each repository-size tier
+its warm-check peak-memory bar from the release ladder (docs/METRICS.md, R1).
+A corpus entry names its tier in `size_tier`; the tier bar becomes that
+entry's hard `speed.warm_check_peak_rss_mb` ceiling unless the entry sets its
+own, and `--gate` enforces it like any other ceiling. The report carries
+`size_tier` on each repository row.
+
+| Tier | Bar | Source |
+|---|---|---|
+| `small` (Rust, up to 800 files) | 150 MB | ladder: under 150 MB for 100 to 800 Rust files |
+| `medium` (Rust, about 800 to 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `large` (Rust, more than 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `python_ts` (Python/TypeScript) | 512 MB | ladder: under 512 MB for 3,000-file Python/TypeScript repositories |
+
+An explicit ceiling tighter than its bar stands. One looser than the bar is a
+ratchet toward it and must carry a `memory_ratchet` note with the current
+ceiling and a `YYYY-MM-DD` date; a note on a row that meets its bar is
+refused as stale. File counts are approximate descriptions of the pinned
+trees. Current ratchets, all to be lowered in the PR that earns the gain and
+never raised:
+
+| Row | Tier | Ceiling now | Ladder bar | Set |
+|---|---|---|---|---|
+| `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
+| `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
+
+`bevy`, `deno` and `polars` (heavy, `large` tier) came from the 2026-11-08 robustness sweep (shallow clones, 15-file edits, peak RSS at most 525 MB; warm check 18 s, 32 s and 26 s; cold pilot 275 s, 73 s and 275 s). Their memory ceilings (700 MB) sit under the 1,024 MB large-tier bar, so none carries a `memory_ratchet` note, and the latency ceilings are ratchets about 30% above those measurements. The sweep's edits were synthetic; the rows pin a real upstream commit that edits several Rust files instead. The pilot stopping at exactly 275 s on bevy and polars is a suspected pilot-analysis-budget cut with a partial summary, **not verified**. A partial pilot is recorded as an incomplete sample, never a value, so a ceilinged pilot metric on those rows fails the gate until the pilot completes; the cold-pilot sample detail names the summary's `reason` (for example `timeout`) beside its `status`, so the first measured run shows whether the cut was a budget.
+
+Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
+1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
+`speed.warm_check_p95_ms`; rows above that size are held by their per-row
+latency ceilings until a bar is accepted. Today's measured position against
+those bars is in docs/METRICS.md.
+
 ## How each instrument works
+
+Corpus measurements use a private checkout of the pinned commit in run-owned
+scratch. Untracked and ignored files in the cached corpus checkout are not
+copied into that checkout; the cached working tree and generated files are
+left in place. The private checkout must contain the pinned commit, its
+effective base, and their tree objects; preparation failures are reported as
+instrument failures. The scratch checkout is removed after the run.
+New `--clone` corpus caches include full Git objects; this costs more network
+and disk space than a blob-filtered clone. If an existing partial cache lacks
+objects for the selected pin or base, `--clone` allows an unfiltered refetch;
+without it the instrument fails instead of fetching missing objects.
+Corpus preparation requires Git's `--no-lazy-fetch` global option; if the
+installed Git does not support it, preparation fails with the Git error.
+
+### Terminal evidence after cleanup
+
+Measured corpus rows add `terminal_evidence` (diagnostic schema `1`) without
+changing the v1 metric schema, admission rules, targets or gate decisions.
+It records the binary SHA-256 observed before pilot, root-identity SHA-256,
+base and requested modes, followed by ordered pilot, check warm-up and measured
+check invocations. Array position is the invocation ordinal. LSP sessions are
+not included in this invocation list; their existing metric details remain.
+
+Each invocation distinguishes completed capture, failed exit, termination,
+deadline, launch/capture failure and not-run. Analysis completeness is separate:
+an exit-zero pilot with `status: partial` stays partial, with its `timeout`
+reason and spent timeout retained in both the diagnostic projection and sample
+detail. An expected partial check remains named `expected_partial`, not complete.
+Check finding counts come from the existing admission result, so zero is visible
+and a missing count is not invented as zero. The list retains intended but unstarted measured slots; it fabricates no streams
+or resource observations for them or for launch failure.
+
+Only bounded producer diagnostics survive scratch deletion: the pilot's
+status/reason/budget projection, up to 16 short authenticated phase rows per
+invocation, and the existing authenticated CPU/RSS receipt through the shared
+receipt parser. Unknown strings are withheld rather than copied. The first 16 authenticated
+lines of at most 512 bytes are considered before vocabulary filtering; a 17th
+line is lookahead only. Unknown or malformed rows consume that inspection budget.
+`phase_lines_considered` and `phase_rows_withheld` expose filtering loss, while
+`phase_limit_reached` reports lookahead beyond the cap. Overlong lines are skipped.
+This is a bounded subset, not a complete phase inventory. The diff phases use
+production names `diff_admission_query` / `diff_admit_dependents` and numeric
+`core_files_` / `main_files_` status suffixes. The CLI's existing 50-sample limit bounds a row to 52 pilot/check
+records. Diagnostics use the producer's existing trace switch and token; they
+do not add another resource collector. An unavailable resource observation stays
+unavailable. Binary hashing requires a readable regular file no larger than
+256 MiB; otherwise its identity is explicitly unavailable without changing
+metric admission. The binary hash is an observation, not a freeze or race
+guarantee.
+
+Arbitrary stdout/stderr, configuration/environment contents, source text and
+credentials are not copied into the report. Stream byte counts and SHA-256
+identities are retained with `retention: digests_only`; those fields are **not**
+references to recoverable raw bytes. They identify the lossily decoded UTF-8 text
+that the shared capture reader returns (`identity: lossy_utf8_decoded`), so a
+stream with invalid bytes is counted after replacement-character decoding, not
+as the emitted bytes. Only the listed pilot-summary fields are
+retained, not its full packet. Older reports without this additive diagnostic
+object remain valid. No old measurement is relabeled by this change.
+
+### Measurements
 
 - **Cold pilot.** Fresh `RIPR_CACHE_DIR`, no `target/ripr` in the checkout,
   then the exact invocation the generated CI workflow runs:
   `ripr pilot --root <repo> --out <dir> --mode ready --max-seams 5`. The
   sample counts only when pilot exits 0 and `pilot-summary.json` says
   `complete`; otherwise it is `incomplete` and cannot meet its target.
-- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` twice
-  on the cache pilot left behind; the second run is measured. Both runs set
+- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` once
+  on the cache pilot left behind as a warm-up, then `--samples N` measured runs
+  (default 3, at most 50; the cold pilot stays one run). All runs set
   `RIPR_CHECK_FINDINGS_BYTES=0`: the contradiction scan reads every finding,
-  and a byte-bounded prefix would make a large-diff row `incomplete`.
+  and a byte-bounded prefix would make a large-diff row `incomplete`. The
+  series gives `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms`,
+  nearest-rank over the measured runs (value at rank `ceil(p/100 * N)` of the
+  ascending series). With fewer than 20 samples the p95 rank is N, so **p95 is
+  the maximum**; the sample detail says so and lists the sorted series. The
+  original `speed.warm_check_ms` is kept as the p50 under its old id so
+  existing ceilings and baselines keep their meaning (its target stays the
+  earlier 2 s proposal; the ladder bars are 1 s p50 and 3 s p95 on the new
+  ids). Every run must be admitted for the intended subject; one rejected,
+  failed or timed-out run ends the series and makes all warm-check metrics of
+  that row `incomplete`, so a fast median cannot hide a bad run. The first
+  run's document feeds the contradiction scan. Baselines taken before this
+  change hold a single-sample `speed.warm_check_ms`; the two new ids are
+  absent from them and read as "absent from baseline" until a nightly refresh.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
-  10 ms loop that enforces the deadline. Linux only; a lower bound.
+  10 ms loop that enforces the deadline. Linux only; a lower bound. For the
+  warm check, `speed.warm_check_peak_rss_mb` is the maximum over the measured
+  samples (the warm-up is not a sample).
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
   line count of `.github/workflows/ripr.yml`. The source-build flag is 1 only
   when `cargo install ripr` is the workflow's sole route; a fallback behind a
@@ -225,6 +354,27 @@ status (a manifest re-pin, or a fail-closed refusal that is now intended),
 replace the baseline with the new `dx-scoreboard.json` in the same PR, which
 puts the change in front of a reviewer.
 
+## Partial measurements
+
+A numeric metric with `partial: true` has intended samples that were not
+measured. Its existing `status` still describes the measured values, and its
+number remains the worst observed sample. The rollup and each board's counts
+place otherwise-qualifying partial metrics in `partial`, separate from
+`meets_target`; a board with only those metrics reads `partial`, not fully met
+or unmeasured. Below-target and failed metrics retain their own counts and
+status, with partial coverage disclosed beside the metric.
+
+The Markdown summary adds a Partial column when qualifying partial metrics
+exist. The public proof page preserves the same distinction using the evidence
+source that supplies each bar, including a lane baseline. Independently derived
+evidence does not inherit the partial flag of an unused scoreboard row.
+
+The optional metric flag remains compatible with older receipts, and the new
+`partial` count is additive in the v1 report. Renderers treat absent flags and
+counts as false and zero. Reports without partial measurements keep their
+existing Markdown layout. Coverage disclosure does not change a target,
+regression comparison, or gate decision.
+
 ## Targets versus the regression gate
 
 A **target** is the bar a developer would feel. Missing it is a gap to close
@@ -240,8 +390,45 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+
+Built-in measured per-repository metrics pair numeric samples only when the
+retained `corpus` entries agree on URL, full head SHA, effective base,
+language and `expected_partial` (#13177). The producer records `HEAD~1`
+explicitly when no base SHA is configured; that recipe is bound to the exact
+head. It also records an explicit `null` when only complete analysis is admitted.
+A changed pin or scope under the same display ID is not a speed trend.
+Missing, malformed or duplicate identity is excluded from the common subset,
+including legacy reports that lack these fields. JSON and Markdown name each
+excluded repository and reason, even when another unchanged repository still
+compares. The current measurements and target status remain visible.
+
+Incomplete measurements still fail independently when a repository stopped
+completing. An incomplete baseline sample only excuses an already incomplete
+row when its workload identity matches; unknown or changed identity cannot
+hide a current failure. Absolute ceilings remain independent of baseline
+comparability. Ingested per-repository sources keep their own population
+contracts. These fields establish workload and scope, not sampling-method
+equivalence; the repeated-warm measurement work in #13076 owns that separate
+contract. No baseline is rewritten or accepted by this check.
+
+A passing gate is named honestly. When the missing-evidence counts the
+headline prints — `not_measured` plus the not-compared list — exceed half
+of the selected metrics, the gate status is `pass_with_gaps` instead of
+plain `pass`, and the headline rollup (in the Markdown report, on the
+console, and as `gate.counts` in the JSON) prints the meets-target,
+below-target, not-measured, failed and not-compared counts.
+`pass_with_gaps` still exits zero; only `fail` exits nonzero, because the
+gate judges regressions, not completeness. The committed baseline, for
+example, records 37 `not_measured` and 17 uncompared of 66 metrics, so a
+run matching it would headline `pass_with_gaps`, not `pass`.
 Metrics the baseline measured that a run cannot compare, such as ingested
-metrics without a receipt, are listed as not compared. Wall-time and memory
+metrics without a receipt, are listed as not compared. One exception: when
+every selected metric has no value this run and nothing comparable (as
+when an ingest board runs without
+any receipt), the gate fails and names the board in
+`gate.zero_evidence_boards` — a pass on zero measured evidence would be a
+false pass. A measured-but-incomparable metric (runner class, population,
+or grain mismatch) still only lists as not compared. Wall-time and memory
 metrics compare only against a baseline from the
 same runner class: host, OS, architecture, CPU count and, on Linux, the CPU
 model from `/proc/cpuinfo` (for example

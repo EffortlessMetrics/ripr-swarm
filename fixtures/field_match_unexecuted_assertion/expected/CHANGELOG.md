@@ -269,3 +269,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (21)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (22)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

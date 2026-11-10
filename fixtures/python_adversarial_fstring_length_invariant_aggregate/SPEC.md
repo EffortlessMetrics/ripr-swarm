@@ -37,6 +37,13 @@ discriminator. A format-spec change (which alters an interpolation, so it is not
 length-invariant) or an exact string-comparison oracle keeps the credit — companion
 unit tests pin both.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_status.py:python_preview:f3e3e6b2 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` when a length-invariant f-string change is observed only via a

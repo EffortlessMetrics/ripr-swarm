@@ -54,7 +54,7 @@ specs already state.
 | `async_boundary_opaque` | heuristic annotation | no | probe expression mentions `async`, `spawn`, or `await` | RIPR-SPEC-0411 |
 | `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0411 |
 | `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0411 |
-| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.) without an owner function | RIPR-SPEC-0411 |
+| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.), a continuation line of one, or a const that a top-level assertion in the same file names, without an owner function (#12040) | RIPR-SPEC-0411 |
 | `unsafe_obligation` | unsafe obligation | no | `static_unknown` probe labels `unsafe fn` or unchecked-assumption block | RIPR-SPEC-0168 |
 | `transitive_reach_unresolved` | reach limitation | yes | bounded reach walk stops at an unresolved internal edge | RIPR-SPEC-0114 |
 | `macro_reach_unresolved` | reach limitation | yes | reach candidate stops at an unexpanded same-repo macro | RIPR-SPEC-0117 |
@@ -122,7 +122,7 @@ slice does not remove tokens.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/probe.rs` — wire enum and glosses
+- `crates/ripr-contract/src/domain/probe.rs` — wire enum and glosses
 - `crates/ripr/src/analysis/classify/decision.rs` — heuristics and backfill
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs` — registry (#5514)
 - Reach and gap producers named in the table above

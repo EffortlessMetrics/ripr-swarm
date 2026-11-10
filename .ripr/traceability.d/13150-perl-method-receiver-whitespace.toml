@@ -1,0 +1,16 @@
+# RIPR-SPEC-0235 rule 22: method spacing preserves threshold-input identity.
+[[extend]]
+id = "RIPR-SPEC-0235"
+tests = [
+  "crates/ripr/src/analysis/language/perl/boundary_input_projection_tests.rs::threshold_method_spacing_preserves_wrong_and_unknown_receivers",
+  "crates/ripr/src/analysis/language/perl/boundary_input_projection_tests.rs::threshold_method_spacing_preserves_the_owner_positive_control",
+  "crates/ripr/src/analysis/language/perl/boundary_input_projection_tests.rs::unrelated_spaced_method_oracle_cannot_supply_the_owner_threshold",
+  "crates/ripr/src/analysis/language/perl/boundary_input_projection_tests.rs::same_owner_spaced_method_oracle_still_supplies_the_threshold",
+  "crates/ripr/src/analysis/language/perl/boundary_input_projection_tests.rs::spaced_receiver_honesty_projection_matches_production",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "xtask/src/tests/perl_threshold_receiver_honesty.rs::spaced_receiver_contract_rejects_false_credit_and_vacuity",
+]

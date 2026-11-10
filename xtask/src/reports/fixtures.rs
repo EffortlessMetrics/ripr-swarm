@@ -152,7 +152,14 @@ fn golden_check_run() -> Result<GoldenCheckRun, String> {
             violations,
         });
     }
-    let run_set = collect_golden_runs()?;
+    let mut run_set = collect_golden_runs()?;
+    // #12928: print the expected-class ledger; the per-language count may only rise.
+    let (ledger_line, ratchet_violations) = crate::fixture_expected_classes::ledger_report(
+        Path::new("fixtures"),
+        Path::new(crate::fixture_expected_classes::RATCHET_PATH),
+    );
+    println!("{ledger_line}");
+    run_set.violations.extend(ratchet_violations);
     // #8614: warn (do not fail) when a fixture input's working-tree endings
     // differ from its normalized form; `goldens bless` refuses on the same
     // evidence. Warning here keeps a local pass from looking clean.
@@ -605,6 +612,17 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     // output must not be silently blessed as the new golden.
     validate_bless_output(&run, &fixture)?;
 
+    // #12928: a rebless must not re-pin a class that contradicts the fixture's
+    // declared `expected-classes`; change the SPEC block in the same commit.
+    let class_violations =
+        crate::fixture_expected_classes::bless_violations(&fixture, &run.check_json)?;
+    if !class_violations.is_empty() {
+        return Err(format!(
+            "goldens bless refused for fixture `{name}`: the new output contradicts the fixture's declared expected classes. No files were changed.\n{}\nnext: if the new class is intended, update the SPEC.md `expected-classes` block in the same commit, then re-run bless",
+            class_violations.join("\n")
+        ));
+    }
+
     let expected = fixture.join("expected");
     fs::create_dir_all(&expected)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(&expected)))?;
@@ -632,6 +650,13 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
                 normalize_path(&run.human_full_txt)
             )
         })?;
+    }
+    for surface in ["sarif.json", "github.txt"] {
+        let target = expected.join(surface);
+        if target.exists() {
+            fs::copy(run.actual_dir.join(surface), &target)
+                .map_err(|error| format!("failed to bless {}: {error}", normalize_path(&target)))?;
+        }
     }
     let changelog = expected.join("CHANGELOG.md");
     let mut text = if changelog.exists() {
@@ -741,6 +766,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "adapter-substrate-qualification-corpus"
+                    | "cross-language-edge-registry-currentness-corpus"
                     | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
@@ -783,6 +810,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -794,6 +822,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_intake_identity"
                     | "work_plan_identity"
                     | "work_adapter_identity"
+                    | "product-route-parity"
+                    | "repository_orientation"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -850,6 +880,9 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
             violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
         }
     }
+    violations.extend(crate::fixture_expected_classes::fixture_dir_violations(
+        path,
+    ));
     Ok(violations)
 }
 
@@ -966,14 +999,39 @@ pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let comparisons = fixture_golden_comparisons(
+    let mut comparisons = fixture_golden_comparisons(
         &fixture_name,
         &expected,
         &run.check_json,
         &run.human_txt,
         &run.human_full_txt,
     )?;
+    comparisons.extend(annotation_golden_comparisons(
+        &fixture_name,
+        &expected,
+        &run.actual_dir,
+    )?);
     Ok(FixtureRun { comparisons, ..run })
+}
+
+fn annotation_golden_comparisons(
+    fixture: &str,
+    expected: &Path,
+    actual: &Path,
+) -> Result<Vec<GoldenComparison>, String> {
+    let mut comparisons = Vec::new();
+    for surface in ["sarif.json", "github.txt"] {
+        let expected_surface = expected.join(surface);
+        if expected_surface.exists() {
+            comparisons.push(compare_golden(
+                fixture,
+                surface,
+                &expected_surface,
+                &actual.join(surface),
+            )?);
+        }
+    }
+    Ok(comparisons)
 }
 
 /// Validate the run output before blessing it as the new golden (#2410).
@@ -1155,6 +1213,23 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
+    // Opt-in annotation goldens share this fixture's warmed producer cache.
+    // Only fixtures retaining the surface pay for its additional projection.
+    for (surface, format) in [
+        ("sarif.json", FixtureCheckFormat::Sarif),
+        ("github.txt", FixtureCheckFormat::Github),
+    ] {
+        if path.join("expected").join(surface).exists() {
+            let text = run_fixture_check(&root, &diff_file, format, Some(&cache_dir))?;
+            let text = if surface == "sarif.json" {
+                normalize_fixture_json_output(&text)
+            } else {
+                normalize_fixture_human_output(&text)
+            };
+            fs::write(actual_dir.join(surface), text).map_err(|error| error.to_string())?;
+        }
+    }
+
     Ok(FixtureRun {
         name,
         actual_dir,
@@ -1168,6 +1243,12 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
 #[derive(Clone, Copy)]
 pub(crate) enum FixtureCheckFormat {
     Json,
+    JsonCompact,
+    JsonTerse,
+    SarifCompact,
+    Agent,
+    Sarif,
+    Github,
     Human,
     HumanFull,
 }
@@ -1439,6 +1520,30 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
+        FixtureCheckFormat::JsonCompact => {
+            args.push("--format".to_string());
+            args.push("json-compact".to_string());
+        }
+        FixtureCheckFormat::JsonTerse => {
+            args.push("--format".to_string());
+            args.push("json-terse".to_string());
+        }
+        FixtureCheckFormat::SarifCompact => {
+            args.push("--format".to_string());
+            args.push("sarif-compact".to_string());
+        }
+        FixtureCheckFormat::Agent => {
+            args.push("--format".to_string());
+            args.push("agent".to_string());
+        }
+        FixtureCheckFormat::Sarif => {
+            args.push("--format".to_string());
+            args.push("sarif".to_string());
+        }
+        FixtureCheckFormat::Github => {
+            args.push("--format".to_string());
+            args.push("github".to_string());
+        }
         // Goldens are one deterministic projection: pin the Evidence legend
         // that the CLI collapses after the first run in a build tree.
         FixtureCheckFormat::Human => args.push("--legend".to_string()),
@@ -2002,9 +2107,25 @@ fn strip_language_completeness_member(value: &str) -> String {
     format!("{head}{}", &value[end..])
 }
 
+/// Classification goldens also exclude the additive `finding_routes`
+/// follow-up command projection (#11976); dedicated CLI/schema tests own it.
+fn strip_finding_routes_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"finding_routes\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
+    if !matches!(values.next(), Some(Ok(_))) {
+        return value.to_string();
+    }
+    let end = start + MARKER.len() + values.byte_offset();
+    format!("{}{}", &value[..start], &value[end..])
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
     split_compact_root_object_closer(&strip_language_completeness_member(
-        &strip_canonical_next_action_member(value),
+        &strip_canonical_next_action_member(&strip_finding_routes_member(value)),
     ))
 }
 
@@ -3267,7 +3388,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",
@@ -3988,6 +4109,37 @@ mod tests {
             ),
             "  no repair start offered: classifying the finding's seams failed<reason>"
         );
+    }
+
+    #[test]
+    fn annotation_goldens_are_optional_but_compare_both_surfaces() -> Result<(), String> {
+        let dir = unique_temp_path("12925-annotation-goldens");
+        let expected = dir.join("expected");
+        let actual = dir.join("actual");
+        fs::create_dir_all(&expected).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+        assert!(annotation_golden_comparisons("boundary_gap", &expected, &actual)?.is_empty());
+        for surface in ["sarif.json", "github.txt"] {
+            fs::write(expected.join(surface), "retained\n").map_err(|error| error.to_string())?;
+            fs::write(actual.join(surface), "retained\n").map_err(|error| error.to_string())?;
+        }
+        let clean = annotation_golden_comparisons("boundary_gap", &expected, &actual)?;
+        assert_eq!(clean.len(), 2);
+        assert!(clean.iter().all(|comparison| comparison.matches));
+        for surface in ["sarif.json", "github.txt"] {
+            fs::write(actual.join(surface), "wrong mapping\n")
+                .map_err(|error| error.to_string())?;
+            let changed = annotation_golden_comparisons("boundary_gap", &expected, &actual)?;
+            assert!(
+                changed
+                    .iter()
+                    .any(|comparison| comparison.surface == surface && !comparison.matches),
+                "{surface} drift was ignored"
+            );
+            fs::write(actual.join(surface), "retained\n").map_err(|error| error.to_string())?;
+        }
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     /// #12163: moving a cited TypeScript test shifts its line in every surface

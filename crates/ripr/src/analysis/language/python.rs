@@ -376,9 +376,15 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+// The may-reach graph is built and measured by tests and the corpus report
+// only; no verdict reads it yet (#11425), so it is not part of the shipped
+// build.
+#[cfg(test)]
+mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -394,6 +400,9 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+mod exception_variant;
+#[cfg(test)]
+mod exception_variant_tests;
 mod hypothesis;
 mod module_constants;
 mod nested_result;
@@ -529,6 +538,35 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
     findings.push(finding);
 }
 
+/// Record which related rows live in a test file the diff changed (#14027) so
+/// the one shared headline pick can prefer them. Nothing is stamped when the
+/// first row already is one (the default pick already names it) or no row is.
+/// Display evidence only: row order, class and oracle strength are untouched.
+fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    if changed_files.is_empty()
+        || finding
+            .related_tests
+            .first()
+            .is_none_or(|first| changed_files.contains(&first.file))
+    {
+        return;
+    }
+    finding.evidence.extend(
+        finding
+            .related_tests
+            .iter()
+            .filter(|row| changed_files.contains(&row.file))
+            .map(|row| {
+                format!(
+                    "{}{}:{}",
+                    crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                    normalized_path(&row.file),
+                    row.line
+                )
+            }),
+    );
+}
+
 /// Whether `text` holds `name` as a whole Python identifier.
 fn mentions_python_name(text: &str, name: &str) -> bool {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -619,6 +657,11 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Test-local modules that shadow a top-level name of this owner's module
+    /// paths for tests under pytest's prepend import mode (`related_tests.rs`,
+    /// #13706). Empty until the workspace pass fills it.
+    #[serde(default)]
+    test_local_shadows: Vec<related_tests::TestLocalShadow>,
     /// Dotted module paths of other workspace source files that define a
     /// free function with this owner's name (`related_tests.rs`, #8759). A
     /// test that imports the name from one of them (and from no module that
@@ -1350,7 +1393,7 @@ fn source_fact_parse_error_limitation(
         AnalysisStage::LanguageAdapter,
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
-            "Fix the file so it parses as Python, then re-run the analysis.",
+            crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY,
         )?,
     )
     .with_affected_items(1)?
@@ -1697,6 +1740,24 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_project_module_names(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
+            |path| options.root.join(path).exists(),
+        );
+        // Test-local helper modules are found by path as well (#13706); every
+        // discovered file counts, test files included.
+        related_tests::apply_test_local_shadows(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -1853,14 +1914,17 @@ impl PythonAdapter {
         // Bytecode CPython never checks against its source, or an import path
         // a test configuration adds, can run code other than what is read
         // here (#9226). Read once, only when a file changed.
-        let shadowed_import = !python_changed_files.is_empty()
-            && (module_value::unchecked_bytecode(
+        let unchecked_bytecode = !python_changed_files.is_empty()
+            && module_value::unchecked_bytecode(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ) || module_value::import_path_configured(
+            );
+        let configured_import_path = !python_changed_files.is_empty()
+            && module_value::import_path_configured(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ));
+            );
+        let shadowed_import = unchecked_bytecode || configured_import_path;
         let extension_names = if python_changed_files.is_empty() {
             Some(BTreeSet::new())
         } else {
@@ -1876,21 +1940,59 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        let foreign_of = |file: &Path| {
-            let mut foreign = foreign_index.excluding(file);
-            if shadowed_import
+        let import_path_admission = if !workspace_incomplete && !unchecked_bytecode {
+            import_identity::import_path_admission(
+                &options.root,
+                &import_roots,
+                configured_import_path,
+            )
+        } else {
+            import_identity::ImportPathAdmission::Refused
+        };
+        // A canonical `import pytest` can load a local module or package.
+        // The exception-class reading needs the real framework's semantics;
+        // keep this per-run fact separate from other module-value credit.
+        let pytest_import_unshadowed = import_path_admission.admitted()
+            && exception_variant::pytest_import_unshadowed(
+                &options.root,
+                &import_roots,
+                extension_names.as_ref(),
+            );
+        let import_shadow_for = |file: &Path| {
+            shadowed_import
                 || module_value::extension_beside(&options.root, file)
                 || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
                     .is_none_or(|names| module_value::shadowed_by_extension(names, file))
-            {
+        };
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
+            if import_shadow_for(file) {
                 foreign.mark_compiled_shadow();
             }
             foreign
         };
+        let mut unshadowed_modules = BTreeSet::new();
         for changed in &python_changed_files {
-            let mut foreign = foreign_of(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            let module_import_unshadowed = import_identity::module_import_unshadowed(
+                &options.root,
+                &changed.path,
+                &workspace_read.sources,
+                &import_roots,
+                extension_names.as_ref(),
+                import_path_admission,
+                &foreign,
+            );
+            if module_import_unshadowed {
+                unshadowed_modules.insert(changed.path.clone());
+            }
+            // Keep the legacy refusal on the shared owner. Only the two
+            // bounded readings receive the separate positive import fact.
+            if import_shadow_for(&changed.path) {
+                foreign.mark_compiled_shadow();
+            }
             // A sole top-level line replacement may be a module constant a
             // sibling module reads through a relative import of one of its
             // readers (#9619); each such module gets its own write view.
@@ -1960,6 +2062,11 @@ impl PythonAdapter {
             }
         }
 
+        let changed_test_files: BTreeSet<PathBuf> = python_changed_files
+            .iter()
+            .filter(|changed| !changed.added_lines.is_empty() || !changed.removed_lines.is_empty())
+            .map(|changed| changed.path.clone())
+            .collect();
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut related_memo = related_tests::RelatedCandidateMemo::default();
@@ -2159,6 +2266,8 @@ impl PythonAdapter {
                         (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
+                    module_import_unshadowed: unshadowed_modules.contains(&changed.path),
+                    pytest_import_unshadowed,
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2183,6 +2292,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
+                    stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                     publish_production_finding(&mut findings, finding);
                 }
             }
@@ -2212,7 +2322,8 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            for finding in deleted {
+            for mut finding in deleted {
+                stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                 publish_production_finding(&mut findings, finding);
             }
         }
@@ -2248,6 +2359,7 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -2413,6 +2525,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod helper_module_attribute_tests;
+
+#[cfg(test)]
 mod capability_disposition_tests;
 
 #[cfg(test)]
@@ -2424,6 +2539,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
@@ -2444,13 +2561,24 @@ mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]
+mod may_reach_tests;
+#[cfg(test)]
 mod module_value_tests;
+
+#[cfg(test)]
+pub(crate) use module_value_tests::{
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
+
 #[cfg(test)]
 mod new_declaration_tests;
 
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod reexport_tests;
 
@@ -2471,6 +2599,8 @@ mod tests;
 
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod unemitted_stage_unknown_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;
 
