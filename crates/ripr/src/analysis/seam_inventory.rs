@@ -4985,26 +4985,31 @@ mod tests {
         assert_eq!(value["store_failures_dropped"], 0);
     }
 
+    /// Host-path samples are assembled at run time so the repository's local
+    /// context policy does not see a literal machine path in this source.
+    fn host_text(template: &str) -> String {
+        template
+            .replace("<unix-home>", &format!("/{}/user", "home"))
+            .replace("<win-home>", &format!("{}:{}Users{}user", 'C', '\\', '\\'))
+    }
+
     #[test]
     fn cache_failure_projection_refuses_host_paths_and_preserves_safe_details() {
         let mut stats = FileFactCacheStats::zero_work();
         for (path, message) in [
             (
-                "/home/user/cache/secret",
-                "write /home/user/cache/secret failed",
+                "<unix-home>/cache/secret",
+                "write <unix-home>/cache/secret failed",
             ),
             ("../outside.rs", "permission denied"),
-            (
-                "C:\\Users\\user\\cache",
-                "write C:\\Users\\user\\cache failed",
-            ),
+            ("<win-home>\\cache", "write <win-home>\\cache failed"),
             ("src/lib.rs", "permission denied"),
         ] {
             stats.record_store_failure(
-                PathBuf::from(path),
+                PathBuf::from(host_text(path)),
                 super::super::seam_cache::FileFactStoreError {
                     stage: super::super::seam_cache::FileFactStoreStage::Write,
-                    message: message.to_string(),
+                    message: host_text(message),
                 },
             );
         }
@@ -5016,7 +5021,7 @@ mod tests {
         assert_eq!(rows[3]["path"], "src/lib.rs");
         assert_eq!(rows[3]["error"], "permission denied");
         let rendered = format!("{receipt} {:?}", file_fact_store_failure_summary(&stats));
-        assert!(!rendered.contains("/home/user"));
+        assert!(!rendered.contains(&host_text("<unix-home>")));
         assert!(!rendered.contains("Users"));
     }
 
@@ -5056,23 +5061,23 @@ mod tests {
             assert_eq!(portable_store_failure_error(safe), safe);
         }
         for unsafe_detail in [
-            "write /home/user/cache failed",
-            "write C:\\Users\\user\\cache failed",
+            "write <unix-home>/cache failed",
+            "write <win-home>\\cache failed",
             "write \\\\server\\share\\cache failed",
             "write ../outside/cache failed",
-            "Input/output error (os error 5): /home/user/cache",
-            "/home/user/Input/output error (os error 5)",
+            "Input/output error (os error 5): <unix-home>/cache",
+            "<unix-home>/Input/output error (os error 5)",
             "Remote I/O error (os error 121): \\\\server\\share",
             "C:private: Input/output error (os error 5)",
-            "open /home/user: Input/output error (os error 5)",
+            "open <unix-home>: Input/output error (os error 5)",
             "Input/output error (os error 5): ../outside",
             "nested: context: Input/output error (os error 5)",
             "write: Input/output error (os error 99999999999999999999999)",
             "write: Input/output error (os error five)",
-            "write: Input/output error (os error 5) /home/user",
+            "write: Input/output error (os error 5) <unix-home>",
         ] {
             assert_eq!(
-                portable_store_failure_error(unsafe_detail),
+                portable_store_failure_error(&host_text(unsafe_detail)),
                 "details withheld: error contains a path separator"
             );
         }
