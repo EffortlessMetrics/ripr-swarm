@@ -21,7 +21,7 @@ mod dunder_protocol;
 mod project_names;
 mod test_local_shadow;
 pub(super) use dunder_entries::{
-    PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
+    PythonClassFacts, apply_class_facts, operator_entry_in_text_with_factories, with_entry,
 };
 pub(super) use dunder_protocol::body_exercises_dunder_protocol;
 pub(super) use project_names::{
@@ -395,10 +395,10 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
             && candidate.class_path.is_empty()
             && candidate.qualified_name == candidate.name
     };
-    let callers: Vec<&PythonOwner> = if let Some(callers) =
+    let (callers, dunder_module_helper): (Vec<&PythonOwner>, bool) = if let Some(callers) =
         dunder_entry_callers(owner, owners, by_class)
     {
-        callers
+        (callers, false)
     } else if !top_level_function(owner)
         || owners
             .iter()
@@ -410,9 +410,12 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
     {
         return Vec::new();
     } else {
-        module_function_callers(owner, owners, top_level_function)
+        (
+            module_function_callers(owner, owners, top_level_function),
+            true,
+        )
     };
-    helper_candidates_from_callers(callers, all_tests)
+    helper_candidates_from_callers(callers, all_tests, dunder_module_helper, owners)
 }
 
 fn module_function_callers<'o>(
@@ -456,6 +459,8 @@ fn module_function_callers<'o>(
 fn helper_candidates_from_callers<'a>(
     callers: Vec<&PythonOwner>,
     all_tests: &'a [PythonTest],
+    dunder_module_helper: bool,
+    owners: &[PythonOwner],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
@@ -469,9 +474,10 @@ fn helper_candidates_from_callers<'a>(
         // its relation check.
         let related = |test: &'a PythonTest| {
             !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
-                && related_test_relation(test, caller).is_some_and(|relation| {
-                    relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
-                })
+                && ((dunder_module_helper && dunder_protocol_helper_call(test, caller, owners))
+                    || related_test_relation(test, caller).is_some_and(|relation| {
+                        relation.uses_oracle() || relation == PythonRelationKind::CliRunnerInvoke
+                    }))
         };
         let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
             #[cfg(test)]
@@ -511,6 +517,67 @@ fn helper_candidates_from_callers<'a>(
             .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
     });
     found
+}
+
+/// A test protocol-invocation path to a dunder that calls a module-level
+/// helper. The import identifies the caller's module, and an asserted operator
+/// operand must be a bound instance of that class or a uniquely named
+/// same-package factory whose bare-call facts and imports identify it. The resulting
+/// `helper_owner_call` relation never carries an oracle:
+/// `duration1 + duration2` can reach `Duration.__add__`, and through its bare
+/// call graph `fquotmod`, without promoting it to `exposed`.
+fn dunder_protocol_helper_call(
+    test: &PythonTest,
+    caller: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    let Some(class) = dunder_method_class(caller) else {
+        return false;
+    };
+    let top_class = class.split_once('.').map_or(class, |(top, _)| top);
+    let class_reaches_caller = test_references_owner_class(test, caller, class)
+        || test.imports.iter().any(|import| {
+            (import.imported == top_class || import.imported == "*")
+                && module_contains_owner(&import.source_module, caller)
+                && !test_rebinds_import_alias(test, &import.alias)
+                && test
+                    .imports
+                    .iter()
+                    .filter(|other| other.alias == import.alias)
+                    .count()
+                    == 1
+        });
+    if !class_reaches_caller {
+        return false;
+    }
+    let factories = owners
+        .iter()
+        .filter(|factory| {
+            caller.ambiguous_src_modules.is_empty()
+                && factory.file.parent() == caller.file.parent()
+                && factory.class_path.is_empty()
+                && factory.owner_kind == Some(OwnerKind::Function)
+                && factory.qualified_name == factory.name
+                && factory.module_callees.contains(&top_class.to_string())
+                && (factory.file == caller.file
+                    || factory.imports.iter().any(|import| {
+                        import.imported == top_class
+                            && module_contains_owner(&import.source_module, caller)
+                    }))
+                && owners
+                    .iter()
+                    .filter(|other| {
+                        other.file == factory.file
+                            && other.owner_kind == Some(OwnerKind::Function)
+                            && other.class_path.is_empty()
+                            && other.qualified_name == factory.qualified_name
+                    })
+                    .count()
+                    == 1
+        })
+        .map(|factory| factory.name.clone())
+        .collect::<Vec<_>>();
+    protocol_entry_in_body_with_factories(test, caller, &factories)
 }
 
 fn strongest_rank(test: &PythonTest) -> u8 {
@@ -1408,9 +1475,17 @@ fn owner_protocol_entry_calls(
 /// (`assert list(reversed(Range(0))) == []`). An unasserted entry elsewhere in
 /// the body does not relate the test.
 fn protocol_entry_in_body(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.assertions
-        .iter()
-        .any(|assertion| oracle_operand_protocol_entry(&assertion.gate_text, test, owner))
+    protocol_entry_in_body_with_factories(test, owner, &[])
+}
+
+fn protocol_entry_in_body_with_factories(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    factories: &[String],
+) -> bool {
+    test.assertions.iter().any(|assertion| {
+        oracle_operand_protocol_entry_with_factories(&assertion.gate_text, test, owner, factories)
+    })
 }
 
 /// Whether an assertion's text takes a protocol entry of the owner dunder on a
@@ -1421,7 +1496,16 @@ pub(super) fn oracle_operand_protocol_entry(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> bool {
-    if operator_entry_in_text(text, test, owner) {
+    oracle_operand_protocol_entry_with_factories(text, test, owner, &[])
+}
+
+pub(super) fn oracle_operand_protocol_entry_with_factories(
+    text: &str,
+    test: &PythonTest,
+    owner: &PythonOwner,
+    factories: &[String],
+) -> bool {
+    if operator_entry_in_text_with_factories(text, test, owner, factories) {
         return true;
     }
     let Some(depth) = oracle_operand_depth(text) else {

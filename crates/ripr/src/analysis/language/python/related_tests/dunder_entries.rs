@@ -246,12 +246,28 @@ fn is_comparison(operator: &str) -> bool {
 /// Locals the test binds once, as a whole value, to a construction of the
 /// owner's class: `a = Money(1)`.
 fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<String> {
+    bound_instances_for_callables(test, &owner_class_locals(test, owner, class), false)
+}
+
+/// Instances bound once to a call of one of `callables`. `callables` may be
+/// the owner class itself or a same-package factory whose bare-call facts and
+/// imports identify that class. Every other binding and scope guard is shared with ordinary
+/// direct constructions, so factory names do not weaken receiver identity.
+/// `factory_conversion` distinguishes a fixture's input value from an object
+/// produced by a validated factory (`dur1` string to `Duration` via
+/// `parse_duration`). It never relaxes the class, import, construction, or
+/// single-binding checks. Direct construction always passes `false`.
+fn bound_instances_for_callables(
+    test: &PythonTest,
+    callables: &[String],
+    factory_conversion: bool,
+) -> Vec<String> {
     let body = test.body_text.as_str();
     // `with rec:` reads like an annotation (`rec: int`) to the target-list
     // scan; a context-manager header binds nothing.
     let scrubbed = scrub_with_headers(body);
     let mut locals = Vec::new();
-    for local in owner_class_locals(test, owner, class) {
+    for local in callables {
         let construct = format!("{local}(");
         for (idx, _) in body.match_indices(&construct) {
             if !python_callee_start_has_boundary(body, idx)
@@ -264,7 +280,7 @@ fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<S
                 && assignment_count(body, &var) == 1
                 && !keyword_or_operator_binds_text(body, &var, true)
                 && !binds_in_target_list(&scrubbed, &var)
-                && !test.fixtures.contains(&var)
+                && (factory_conversion || !test.fixtures.contains(&var))
                 && !is_callable_parameter(body, &var)
                 && !locals.contains(&var)
             {
@@ -379,6 +395,24 @@ fn operator_runs_owner(operator: &str, owner: &PythonOwner) -> bool {
                             .any(|name| name == "__ne__"))
             })
         })
+}
+
+/// Operator dispatch for the weak module-helper relation. A non-plain class
+/// (such as a class with a dunder alias) does not exclude a factory-bound
+/// receiver here: the row never carries an oracle. The existing strict
+/// `!=`/`__eq__` fallback remains intact, including an explicit `__ne__`.
+fn operator_runs_module_helper(
+    operator: &str,
+    owner: &PythonOwner,
+    factory_receiver: bool,
+) -> bool {
+    if !factory_receiver || operator == "!=" {
+        return operator_runs_owner(operator, owner);
+    }
+    OPERATOR_DUNDERS
+        .iter()
+        .find(|(token, _)| *token == operator)
+        .is_some_and(|(_, dunders)| dunders.contains(&owner.name.as_str()))
 }
 
 /// Unclosed bracket positions before `idx`, outermost first.
@@ -632,12 +666,14 @@ fn operator_at(text: &str, idx: usize) -> Option<&'static str> {
 
 /// Whether an assertion's text runs the owner dunder through an operator whose
 /// receiver is a statically bound instance of the owner class and whose result
-/// is an asserted operand (`assert Money(5) + Money(7) == Money(12)`,
-/// `assert (a + b).cents == 12`, `assert a == b`).
-pub(in crate::analysis::language::python) fn operator_entry_in_text(
+/// is an asserted operand. With no factories supplied this is unchanged from
+/// the original strict path; validated same-module factories are allowed only
+/// for the weak module-helper receiver proof.
+pub(in crate::analysis::language::python) fn operator_entry_in_text_with_factories(
     text: &str,
     test: &PythonTest,
     owner: &PythonOwner,
+    factories: &[String],
 ) -> bool {
     let Some(class) = dunder_method_class(owner) else {
         return false;
@@ -654,7 +690,11 @@ pub(in crate::analysis::language::python) fn operator_entry_in_text(
     if super::super::test_activation::activation_control(test).is_some() {
         return false;
     }
-    let (class_locals, instances) = bound_receivers(test, owner, class);
+    let (mut class_locals, mut instances) = bound_receivers(test, owner, class);
+    if !factories.is_empty() {
+        class_locals.extend_from_slice(factories);
+        instances.extend(bound_instances_for_callables(test, factories, true));
+    }
     if class_locals.is_empty() {
         return false;
     }
@@ -664,7 +704,7 @@ pub(in crate::analysis::language::python) fn operator_entry_in_text(
         };
         if python_text_hides_code(text, at)
             || bracket_depth_at(text, at) < base
-            || !operator_runs_owner(operator, owner)
+            || !operator_runs_module_helper(operator, owner, !factories.is_empty())
             || !grouping_chain_is_plain(text, at, base)
         {
             continue;
