@@ -397,7 +397,7 @@ jobs = ["paste"]
 commands = ["cargo test -p ripr --test printed_command_paste"]
 estimated_lem = 18
 artifact_families = []
-description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly, on pull requests touching ripr source or the harness, and on dispatch. A shell the platform should provide but lacks fails the job."
+description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly and on explicit dispatch; the ordinary PR subscription is retired under #4842. A shell the platform should provide but lacks fails the job."
 
 [[lane]]
 id = "kani"

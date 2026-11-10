@@ -1405,26 +1405,32 @@ outside main does not judge another branch as main health.
 The retained probe runs `cargo check --locked -p ripr` and the exact
 `cli_smoke version_is_exact_and_precedes_help_or_output_flags` test with the
 existing 20-minute probe and 30-minute job bounds. Native exit statuses, missing
-logs and zero executed tests remain observable failures. The existing main-red
-tracker identity is retained so explicit recovery can reconcile an incident
-originally discovered by the former timer. This probe neither qualifies G nor
-authorizes landing, and cannot dispatch another workflow.
+logs and zero executed tests remain observable failures. Its subject is the
+invocation's full `GITHUB_SHA`, the selected main commit, even if main advances
+during the run. A passing job means only that this bounded compile/smoke probe
+passed, not full main health or incident recovery. The probe neither qualifies
+G nor authorizes landing, and cannot dispatch another workflow.
 
 The probe also reads the latest completed, non-cancelled, non-skipped main-push
-runs of `routed-rust.yml` and `ci.yml` with `actions: read`, retaining the run,
-commit and failed jobs in its evidence. These are historical push observations,
-not qualification of the selected queue candidate or the current checkout; after
-push retirement, no new push result is expected. A failed observed gate turns
-the advisory verdict red. An unreadable, missing or unexpected result is
-`unknown` and cannot close an open tracker as recovered. Each API read is
-bounded, and a failed read cannot skip the probe judge. The read-only inspection
-rebuilds, reruns and dispatches nothing. Tracker updates are deduplicated by the
-probe result and failed gate run IDs.
+runs of `routed-rust.yml` and `ci.yml` with `actions: read`, retaining the full
+commit, run and failed jobs. Only a failed gate bound to the exact selected
+commit makes its current advisory verdict red. Older success and failure remain
+explicitly historical evidence; after push retirement, no new push result is
+expected. Missing, malformed or unreadable observations are `unknown`, never
+current success. Each API read is bounded, and a failed read cannot skip the
+probe judge. This inspection rebuilds, reruns and dispatches nothing.
+
+The existing main-red tracker identity and historical failure evidence remain
+intact. A failed current probe or exact-selected-commit gate creates or updates
+the tracker, deduplicated by full probe identity and failed gate run IDs. No
+passing probe closes the tracker or posts a recovery claim. The investigator
+must reconcile the existing full-gate obligations using appropriate current
+full qualification; bounded success cannot erase them.
 
 `xtask/tests/main_health_sentinel_contract.rs` checks explicit event admission,
 request scope, bounded execution, read-only gate inspection and tracker/evidence
-behavior. Source tests do not establish a completed incident probe or current
-main health.
+behavior, including shell replay with a fake API. These source tests do not
+establish a hosted incident probe or current full qualification.
 
 ### Golden Re-bless
 

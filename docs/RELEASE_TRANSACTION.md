@@ -152,8 +152,11 @@ restated here only as pointers; their semantics stay with their owners:
   probe manually with an `incident` and `question`; its recurring timer is
   retired. Its `main-red` tracker is advisory evidence to reconcile before
   relying on unpinned main state. Historical push-gate observations are not
-  qualification of the current checkout. The probe holds no branch-protection
-  or ruleset authority ([CI](CI.md#explicit-main-health-incident-probe)).
+  qualification of the current checkout. Only failures bound to the selected
+  full commit affect the current probe verdict. A passing bounded probe never
+  closes the tracker or claims recovery; the investigator reconciles full-gate
+  obligations with appropriate current full qualification. The probe holds no
+  branch-protection or ruleset authority ([CI](CI.md#explicit-main-health-incident-probe)).
 
 ## 1. Reset truth and pre-cut queue observations
 

@@ -4,8 +4,9 @@ name: Main health incident probe
 # do not request another build. The owning session supplies the incident and
 # question, then inspects the bounded check/smoke evidence for this exact main.
 # This does not qualify a queued candidate or authorize a merge. Keep the
-# existing main-red tracker identity so an explicit recovery probe can reconcile
-# an incident originally observed by the retired scheduled sentinel.
+# existing main-red tracker identity and evidence from the retired scheduled
+# sentinel. Only the investigator can reconcile it after appropriate full proof;
+# this bounded probe never closes an incident or declares full-main recovery.
 on:
   workflow_dispatch:
     inputs:
@@ -22,7 +23,7 @@ permissions:
   contents: read
 
 # Serialize overlapping fires. Do not cancel: an in-progress probe must finish
-# writing its summary and tracker state before the next fire reads or heals it.
+# writing its summary and red evidence before the next fire reads it.
 concurrency:
   group: main-health-sentinel-${{ github.repository }}
   cancel-in-progress: false
@@ -90,16 +91,12 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$d/smoke.status"
           exit 0
 
-      # Test-level breaks pass the bounded probe (#13793 stale CLI reference,
-      # #13639 Perl test, #13783 editor smoke all sat on main with a green
-      # sentinel). Main's push gates do finish: their concurrency supersedes
-      # only queued runs, so roughly one run per gate completes per hour. Read
-      # the latest completed, non-cancelled main-push run of each gate instead
-      # of building anything again: zero extra runner time. An unreadable or
-      # absent gate run is shown as `unknown` and claims neither red nor green;
-      # the probe above stays the fail-closed half of the verdict. Each call
-      # is bounded and the step never blocks the judge: a hung or failed read
-      # leaves `unknown` rows (or none) and the probe evidence is still judged.
+      # Test-level breaks can pass this bounded probe. Retain the latest
+      # completed push-gate observations as historical evidence after push
+      # retirement. Only a failure at this invocation's full GITHUB_SHA may
+      # affect its current verdict; main may move while the probe runs. Missing,
+      # malformed or unreadable results are unknown, never full-health proof.
+      # Reads are bounded and cannot prevent the probe judge from running.
       - name: Read the latest completed main push gates
         timeout-minutes: 5
         continue-on-error: true
@@ -120,11 +117,14 @@ jobs:
               0:success|0:failure|0:timed_out|0:action_required|0:startup_failure) ;;
               *) printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"; continue ;;
             esac
+            if ! [[ "$id" =~ ^[0-9]+$ && "$sha" =~ ^[0-9a-f]{40}$ && "$url" == "$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$id" ]]; then
+              printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"; continue
+            fi
             failed="-"
             if [ "$conclusion" != success ]; then
               failed="$(timeout 60 gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)" || failed=unreadable
             fi
-            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$wf" "$conclusion" "${sha::7}" "$id" "$url" "${failed:-unreadable}" >> "$d/gates.tsv"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$wf" "$conclusion" "$sha" "$id" "$url" "${failed:-unreadable}" >> "$d/gates.tsv"
           done
           exit 0
 
@@ -142,16 +142,24 @@ jobs:
           [ "$(grep -c . "$d/gates.tsv" || true)" -ge 2 ] || echo 1 > "$d/gates.unknown"
           : > "$d/gates.md"
           : > "$d/gates.fp"
-          { echo "### Latest completed main push gates"; echo; echo "| Gate | Conclusion | Run and failed jobs |"; echo "| --- | --- | --- |"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Latest completed main push gates (not full current qualification)"; echo; echo "Selected probe commit: $GITHUB_SHA"; echo; echo "| Gate | Scope | Conclusion | Run and failed jobs |"; echo "| --- | --- | --- | --- |"; } >> "$GITHUB_STEP_SUMMARY"
           while IFS=$'\t' read -r wf conclusion sha id url failed; do
             [ -n "$wf" ] || continue
-            echo "| $wf | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
+            scope=unknown
+            if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$id" =~ ^[0-9]+$ && "$url" == "$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$id" && "$conclusion" =~ ^(success|failure|timed_out|action_required|startup_failure)$ ]]; then
+              scope=historical
+              [ "$sha" != "$GITHUB_SHA" ] || scope=selected-commit
+            else
+              conclusion=unknown
+            fi
+            echo "| $wf | $scope | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
+            [ "$scope" = selected-commit ] || echo 1 > "$d/gates.unknown"
             case "$conclusion" in
               success) ;;
               unknown) echo 1 > "$d/gates.unknown" ;;
               *)
-                echo 1 > "$d/gates.red"
-                printf -- '- latest completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n' "$wf" "$conclusion" "$sha" "$url" "$failed" >> "$d/gates.md"
+                if [ "$scope" = selected-commit ]; then echo 1 > "$d/gates.red"; fi
+                printf -- '- %s completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n' "$scope" "$wf" "$conclusion" "$sha" "$url" "$failed" >> "$d/gates.md"
                 printf '%s:%s,' "$wf" "$id" >> "$d/gates.fp"
                 ;;
             esac
@@ -177,7 +185,8 @@ jobs:
           result_line="$(grep -E '^test result:' "$d/smoke.log" 2>/dev/null | tail -n 1 || true)"
           passed="$(printf '%s' "$result_line" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')"
           {
-            echo "## Main health sentinel"
+            echo "## Selected-commit bounded main-health probe"
+            echo "A passing probe is not full qualification or incident recovery; existing tracker obligations remain open."
             echo
             echo "| Probe | Exit | Detail |"
             echo "| --- | --- | --- |"
@@ -192,23 +201,21 @@ jobs:
           verdict=green
           if [ "$missing" -ne 0 ] || [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
             verdict=red
-            echo "::error title=Main is red::the explicit main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
+            echo "::error title=Selected-commit probe failed::the explicit bounded probe failed on $GITHUB_SHA; see the step summary and the main-red tracker"
           fi
           if [ "$gates_red" -ne 0 ]; then
             verdict=red
-            echo "::error title=Historical main-push gate failed::the latest completed main push gate run failed; see its commit and run in the step summary and the main-red tracker"
+            echo "::error title=Selected-commit main-push gate failed::a completed main push gate failed at $GITHUB_SHA; see its commit and run in the step summary and the main-red tracker"
           fi
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           [ "$verdict" = green ] || exit 1
 
-      # The durable record. Red: open the tracker once, then append one
-      # comment per confirming probe. Green: comment the recovering run and
-      # close, but only when both gate reads succeeded: an unknown gate is not
-      # recovery, so it keeps an open tracker open. Status files are read with
-      # the same 124 fallback as the judge, so a timed-out probe still lands
-      # its tracker record. Skipped only
-      # when the judge never ran (checkout, toolchain, cache): that failure
-      # is visible as a red run and claims no main verdict.
+      # Red evidence opens or updates the existing tracker, deduplicated by
+      # probe and gate identity. A passing bounded probe never comments recovery
+      # or closes the tracker, even when observed push gates succeeded. The
+      # investigator reconciles full-gate obligations using appropriate current
+      # full qualification. Missing probe statuses still read as 124. A failure
+      # before the judge remains a visible failed job without a probe verdict.
       - name: Reconcile the main-red tracker
         if: always() && steps.judge.outputs.verdict != ''
         env:
@@ -226,18 +233,20 @@ jobs:
             smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
             gates="$(cat "$RUNNER_TEMP/main-health-sentinel/gates.md" 2>/dev/null || true)"
             # One comment per new piece of evidence, not one per fire.
-            probe_fp="${GITHUB_SHA::7}:$check_status:$smoke_status"
+            probe_fp="$GITHUB_SHA:$check_status:$smoke_status"
             [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || ! grep -Eq '^test result: [a-z]+\. [1-9]' "$RUNNER_TEMP/main-health-sentinel/smoke.log" 2>/dev/null || probe_fp=green
             fingerprint="fingerprint: probe=$probe_fp gates=$(cat "$RUNNER_TEMP/main-health-sentinel/gates.fp" 2>/dev/null || true)"
             body="$marker
-          The explicitly requested main-health probe at \`${GITHUB_SHA::7}\` observed red evidence. Current probe statuses and historical main-push gate results follow.
+          The explicitly requested main-health probe at \`$GITHUB_SHA\` observed red evidence for the selected commit. Bounded probe statuses and scope-labelled main-push gate observations follow.
 
           - probe run: $run_url
           - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
           $gates
 
-          Opened and closed automatically by the sentinel (#10991); the repair
-          travels through the ordinary PR gate, not this issue.
+          Recorded automatically by the incident probe (#4984/#4842). The
+          investigator must reconcile this tracker with appropriate current full
+          qualification; a passing bounded probe never closes it. The repair
+          travels through the protected PR path, not this issue.
 
           $fingerprint"
             if [ -z "$number" ]; then
@@ -249,7 +258,4 @@ jobs:
                 gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
               fi
             fi
-          elif [ -n "$number" ] && [ "$(cat "$RUNNER_TEMP/main-health-sentinel/gates.unknown" 2>/dev/null || echo 1)" = 0 ]; then
-            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the current probe passed at \`${GITHUB_SHA::7}\` ($run_url), and the latest completed historical main-push gate results were successful. Closing the tracker." > /dev/null
-            gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
           fi

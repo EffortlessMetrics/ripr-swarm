@@ -148,8 +148,9 @@ checkouts; the CI lane never passes it.
 ### The lane
 
 `.github/workflows/kani.yml` is advisory and not a required check. It runs
-nightly, on dispatch and when `merge-ready` is applied to a pull request that
-touches either owning crate source, with `kani-verifier` pinned to an exact version. See
+nightly and on explicit dispatch, with `kani-verifier` pinned to an exact
+version. The ordinary PR/`merge-ready` subscription is retired under #4842;
+proof still covers both owning packages, `ripr` and `ripr-contract`. See
 [CI](../CI.md#advisory-kani-lane).
 
 ## What a proof does and does not claim
