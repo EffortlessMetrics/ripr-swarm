@@ -175,7 +175,7 @@ pub(super) struct OwnerContext<'index> {
 }
 
 impl<'index> OwnerContext<'index> {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
+    pub(super) fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_function(seam.file(), seam.display_line());
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
