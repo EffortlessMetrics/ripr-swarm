@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0095"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/class_receiver_overclaim_tests.rs",
+]
+code = ["crates/ripr/src/analysis/language/typescript/related_tests.rs"]

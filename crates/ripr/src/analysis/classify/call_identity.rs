@@ -80,6 +80,14 @@ type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>
 type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
 type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
+/// Memo key for the local-rival answer: owner id, test file, name and start
+/// line, and a hash of the test body.
+type LocalRivalKey = (String, std::path::PathBuf, String, usize, u64);
+
+/// Memo key for the item bindings of one test body read for one owner: the
+/// owner's id, the test's file, start line and name, and a hash of the body.
+pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
+
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
@@ -160,6 +168,19 @@ pub(crate) struct CallIdentityMemos {
     /// from a crate outside the workspace. The answer depends on the file's
     /// syntax alone, so the per-(probe, test) receiver check reads it once.
     external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per (owner, test, source), the item bindings read from the test body
+    /// (#13868). The tree walk depends on the body text, the owner name and
+    /// the owner's call identity against that test, never on the seam or
+    /// the assertion, so the per-(seam, related test, assertion) shadow check
+    /// reads it once instead of re-walking a large test file each time.
+    item_bindings:
+        Mutex<BTreeMap<ItemBindingsKey, std::sync::Arc<super::indirect_owner::ItemBindings>>>,
+    /// Per (owner, test), whether the test calls the owner's name only through a
+    /// module of its own file that defines a rival (#13868). The answer scans
+    /// every indexed function and lexes the test file, and depends on the
+    /// index, owner and test alone, so the per-(seam, related test) check
+    /// pays it once.
+    local_rival_modules: Mutex<BTreeMap<LocalRivalKey, bool>>,
     /// Per (trait name, receiver head), whether some indexed source may
     /// implement the trait for a std-headed type. The answer reads every
     /// indexed file's syntax and depends on the index alone, so the
@@ -179,6 +200,40 @@ pub(crate) struct CallIdentityMemos {
 }
 
 impl CallIdentityMemos {
+    /// The memoized item bindings for `key`, computed by `compute` on first
+    /// use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn item_bindings(
+        &self,
+        key: ItemBindingsKey,
+        compute: impl FnOnce() -> super::indirect_owner::ItemBindings,
+    ) -> std::sync::Arc<super::indirect_owner::ItemBindings> {
+        if let Ok(cache) = self.item_bindings.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return std::sync::Arc::clone(found);
+        }
+        let bindings = std::sync::Arc::new(compute());
+        if let Ok(mut cache) = self.item_bindings.lock() {
+            cache.insert(key, std::sync::Arc::clone(&bindings));
+        }
+        bindings
+    }
+
+    /// The memoized local-rival answer for `key`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    fn local_rival_module(&self, key: LocalRivalKey, compute: impl FnOnce() -> bool) -> bool {
+        if let Ok(cache) = self.local_rival_modules.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.local_rival_modules.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
     /// The memoized answer for (`file`, `name`), computed by `compute` on
     /// first use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn external_import(
@@ -3276,6 +3331,31 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     if test.file == owner.file {
         return false;
     }
+    // Two inline sibling modules can put a same-named test on one physical
+    // line, so the body is part of the test's identity here.
+    let body_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        test.body.as_str().hash(&mut hasher);
+        hasher.finish()
+    };
+    let key = (
+        owner.id.0.clone(),
+        test.file.clone(),
+        test.name.clone(),
+        test.start_line,
+        body_hash,
+    );
+    index
+        .call_identity_memos
+        .local_rival_module(key, || local_rival_module_reading(index, owner, test))
+}
+
+fn local_rival_module_reading(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
     let defines_rival = index.functions().iter().any(|function| {
         function.file == test.file
             && function.name == owner.name
@@ -3960,6 +4040,55 @@ mod tests {
         assert_eq!(withheld("tests/boundary.rs"), Some(true));
         // `crate::` is the library root elsewhere: the production relation stays.
         assert_eq!(withheld("src/boundary.rs"), Some(false));
+    }
+
+    /// #13868: the memo key names the test body, so two same-named tests that
+    /// share one physical line (inline sibling modules) keep their own answer
+    /// whichever is asked first.
+    #[test]
+    fn same_line_sibling_tests_keep_their_own_local_rival_answer() {
+        let prod = "pub fn score() -> i32 { 1 }\n";
+        let tests = "mod a { pub fn score() -> i32 { 0 } #[test] fn t() { assert_eq!(crate::a::score(), 0); } } mod b { #[test] fn t() { assert_eq!(modules::score(), 1); } }\n";
+        let files = [("src/lib.rs", prod), ("tests/edge.rs", tests)];
+        let answers = |order: [usize; 2]| {
+            let index = index(&files);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"));
+            let mut found = [None, None];
+            if let Some(owner) = owner {
+                let ts: Vec<&TestSummary> = index
+                    .tests()
+                    .iter()
+                    .filter(|test| test.file == Path::new("tests/edge.rs") && test.name == "t")
+                    .collect();
+                assert_eq!(ts.len(), 2, "both same-line tests are indexed");
+                assert_eq!(ts[0].start_line, ts[1].start_line);
+                for slot in order {
+                    found[slot] = Some(test_calls_only_through_local_rival_module(
+                        &index, owner, ts[slot],
+                    ));
+                }
+            }
+            found
+        };
+        let forward = answers([0, 1]);
+        let reverse = answers([1, 0]);
+        assert_eq!(
+            forward, reverse,
+            "the answer never depends on the ask order"
+        );
+        assert_eq!(
+            forward[0],
+            Some(true),
+            "the first test calls the local rival"
+        );
+        assert_eq!(
+            forward[1],
+            Some(false),
+            "the second test keeps the owner relation"
+        );
     }
 
     fn strings(segments: &[&str]) -> Vec<String> {

@@ -2640,7 +2640,8 @@ pub(super) mod tests {
             RECEIPT_FIXTURE_SEAM,
             &retained_packet_path,
             Some(finished.repair_attempt_id.as_str()),
-        )?;
+        )
+        .map_err(|error| error.message())?;
         let reading = AgentReceiptReading::from_value(&receipt);
         if reading.status.as_deref() != Some(case.producer_status)
             || reading.movement.as_deref() != Some(case.movement)

@@ -39,6 +39,7 @@ Evidence
   - related test tests/weight_tests.rs:5 checks_weight uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source assertion argument value 12 at line 7
   - source function argument value input = 4 at line 7
+  - assertion not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:7: the test calls `skip!`, whose expansion ripr cannot see, so a hidden `return` or `?` could skip the assertion
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
