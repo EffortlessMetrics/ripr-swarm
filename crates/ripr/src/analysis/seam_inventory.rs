@@ -1283,6 +1283,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
@@ -1333,6 +1334,7 @@ fn compact_classified_seams_from_seams<'a>(
     for seam in seams {
         cancellation::checkpoint()?;
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         classified.push(ClassifiedSeam {
             evidence,
@@ -3615,6 +3617,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
@@ -4659,11 +4662,9 @@ impl<'a> FieldSeamAdmission<'a> {
         let context = self
             .context
             .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
-        Ok(
-            !test_grip_evidence::compact_evidence_for_seam(seam, context)
-                .missing_discriminators
-                .is_empty(),
-        )
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, context);
+        cancellation::checkpoint()?;
+        Ok(!evidence.missing_discriminators.is_empty())
     }
 }
 
