@@ -1003,6 +1003,115 @@ fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
     Ok(())
 }
 
+const CLONE_OWNER: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
+const CLONE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -14,7 +14,7 @@ impl Window {\n impl Clone for Window {\n     fn clone(&self) -> Self {\n         Window {\n-            start: self.end,\n+            start: self.start,\n             end: self.end,\n         }\n     }\n";
+const ERR_OWNER: &str = "#[derive(Debug, PartialEq)]\npub enum Failure {\n    Bad { code: u32 },\n}\npub fn parse(n: u32) -> Result<u32, Failure> {\n    if n == 0 {\n        return Err(Failure::Bad { code: 1 });\n    }\n    Ok(n)\n}\n";
+const ERR_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,7 +4,7 @@ pub enum Failure {\n }\n pub fn parse(n: u32) -> Result<u32, Failure> {\n     if n == 0 {\n-        return Err(Failure::Bad { code: 2 });\n+        return Err(Failure::Bad { code: 1 });\n     }\n     Ok(n)\n }\n";
+
+/// #13558: the claims nomination also reaches the `field_construction` clone
+/// and err-variant gates. A claims form needs an `Ok`/`Some` payload, which a
+/// `clone` owner and an `Err(..)` pin cannot satisfy, so it must not credit
+/// them; the `assert_eq!` twin on the same subject is the control.
+#[test]
+fn claims_payload_equality_does_not_credit_clone_or_err_variant_owners() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_clone_err");
+    let ok_import = "use claims::assert_ok_eq;";
+    let some_import = "use claims::assert_some_eq;";
+    let make = |name: &'static str, owner, diff, imports, body| Case {
+        name,
+        owner,
+        diff,
+        owner_extra: "",
+        imports,
+        body,
+        dependency: CLAIMS_DEP,
+        credited: false,
+    };
+    let rows: [(&str, &str, &str, &str, &str); 6] = [
+        (
+            "clone_ok_eq",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            ok_import,
+            "let window = Window::new(3, 9);\n    assert_ok_eq!(window.clone(), window);",
+        ),
+        (
+            "clone_some_eq",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            some_import,
+            "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), window);",
+        ),
+        // A literal expected operand gets past the claims extraction, so the
+        // refusal comes from the clone gate itself, not from the operand shape.
+        (
+            "clone_ok_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            ok_import,
+            "let window = Window::new(3, 9);\n    assert_ok_eq!(window.clone(), 3);",
+        ),
+        (
+            "clone_some_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            some_import,
+            "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), 3);",
+        ),
+        (
+            "err_variant_ok_eq",
+            ERR_OWNER,
+            ERR_DIFF,
+            ok_import,
+            "assert_ok_eq!(parse(0), 1);",
+        ),
+        (
+            "err_variant_some_eq",
+            ERR_OWNER,
+            ERR_DIFF,
+            some_import,
+            "assert_some_eq!(parse(0), 1);",
+        ),
+    ];
+    for (name, owner, diff, imports, body) in rows {
+        let outcome = run(
+            &root_dir,
+            &make(name, owner, diff, imports, body),
+            "field_construction",
+        )?;
+        assert_ne!(outcome.class, "exposed", "{name}: {outcome:?}");
+        assert_eq!(
+            outcome.oracle,
+            ("unknown".to_string(), "none".to_string()),
+            "{name}: {outcome:?}"
+        );
+    }
+    // The `assert_eq!` twins on the same subjects, to show the subjects are
+    // ones a pin can reach at all.
+    for (name, owner, diff, body) in [
+        (
+            "clone_assert_eq_twin",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            "let window = Window::new(3, 9);\n    assert_eq!(window.clone(), window);",
+        ),
+        (
+            "err_variant_assert_eq_twin",
+            ERR_OWNER,
+            ERR_DIFF,
+            "assert_eq!(parse(0), Err(Failure::Bad { code: 1 }));",
+        ),
+    ] {
+        let outcome = run(
+            &root_dir,
+            &make(name, owner, diff, "", body),
+            "field_construction",
+        )?;
+        assert_eq!(outcome.class, "exposed", "{name}: {outcome:?}");
+    }
+    Ok(())
+}
+
 /// #12394 item 3: the repo-wide audit reads the same test through the same
 /// owner-pin decision as `ripr check`. For the owner's `Ok(..)` / `Some(..)`
 /// return-value seam the audit reads `strongly_gripped` exactly when the diff
