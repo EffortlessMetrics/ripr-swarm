@@ -263,10 +263,13 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `check`: an untested changed function can be left out of review guidance
   ([#13892](https://github.com/EffortlessMetrics/ripr-swarm/issues/13892));
   a changed test anywhere in the same file keeps a gap advisory
-  ([#13893](https://github.com/EffortlessMetrics/ripr-swarm/issues/13893));
-  `--suppression-policy` does not reach the gate
-  ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)).
+  ([#13893](https://github.com/EffortlessMetrics/ripr-swarm/issues/13893)).
   Until those land, read `missed-txt` alongside the gate decision.
+  Separately, `--suppression-policy` does not reach the gate
+  ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)),
+  so a finding suppressed by `check` can still block. In `acknowledgeable`
+  mode, use `--label ripr-waive` to acknowledge a policy-eligible gap for the
+  run; it remains visible in the reports.
 - **Exclusions read as incomplete.** A changed file left out of the analysis
   currently marks the run `partial_with_limitations`, so `missed-txt` prints a
   `# ripr:` comment even on a clean change. That happens when a
