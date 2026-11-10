@@ -628,6 +628,11 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Test-local modules that shadow a top-level name of this owner's module
+    /// paths for tests under pytest's prepend import mode (`related_tests.rs`,
+    /// #13706). Empty until the workspace pass fills it.
+    #[serde(default)]
+    test_local_shadows: Vec<related_tests::TestLocalShadow>,
     /// Dotted module paths of other workspace source files that define a
     /// free function with this owner's name (`related_tests.rs`, #8759). A
     /// test that imports the name from one of them (and from no module that
@@ -1714,6 +1719,15 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
             |path| options.root.join(path).exists(),
+        );
+        // Test-local helper modules are found by path as well (#13706); every
+        // discovered file counts, test files included.
+        related_tests::apply_test_local_shadows(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter(),
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
