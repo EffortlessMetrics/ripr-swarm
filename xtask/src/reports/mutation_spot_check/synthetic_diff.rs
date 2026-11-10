@@ -354,15 +354,34 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
         .collect();
     let mut distinct = verdicts.into_iter();
     match (distinct.next(), distinct.next()) {
-        (Some((token, owner)), None) if !token.is_empty() => Verdict::Class {
-            token: token.to_string(),
-            owner: owner.to_string(),
-            expression: matched
-                .first()
-                .and_then(|finding| finding.pointer("/probe/expression"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
+        (Some((token, owner)), None) if !token.is_empty() => {
+            let has_transitive_reach_limit = matched.iter().any(|finding| {
+                finding.get("static_limit_kind").and_then(Value::as_str)
+                    == Some("python_transitive_reach_unresolved")
+                    || finding
+                        .get("stop_reasons")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .any(|reason| reason.as_str() == Some("transitive_reach_unresolved"))
+            });
+            if token == "no_static_path" && has_transitive_reach_limit {
+                // The producer explicitly could not trace a bounded method
+                // path, so this is an honest unknown, not evidence that a
+                // caught mutant lacked a discriminator.
+                Verdict::Limited("python_transitive_reach_unresolved")
+            } else {
+                Verdict::Class {
+                    token: token.to_string(),
+                    owner: owner.to_string(),
+                    expression: matched
+                        .first()
+                        .and_then(|finding| finding.pointer("/probe/expression"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                }
+            }
+        }
         _ => Verdict::Ambiguous,
     }
 }
@@ -1144,6 +1163,29 @@ mod tests {
         assert_eq!(read_verdict(&incomplete, "a.ts", 2, 2), Verdict::Incomplete);
         let partial = check_json(&[("exposed", "a.ts", 2, "o")], false, None);
         assert_eq!(read_verdict(&partial, "a.ts", 2, 2), Verdict::Incomplete);
+    }
+
+    #[test]
+    fn python_transitive_reach_limits_are_honest_unknowns_not_false_gaps() {
+        let mut by_kind = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_kind["findings"][0]["static_limit_kind"] = json!("python_transitive_reach_unresolved");
+        assert_eq!(
+            read_verdict(&by_kind, "a.py", 2, 2),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let mut by_stop_reason = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_stop_reason["findings"][0]["stop_reasons"] = json!(["transitive_reach_unresolved"]);
+        assert_eq!(
+            read_verdict(&by_stop_reason, "a.py", 2, 2),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let unlimited = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        assert!(matches!(
+            read_verdict(&unlimited, "a.py", 2, 2),
+            Verdict::Class { .. }
+        ));
     }
 
     #[test]
