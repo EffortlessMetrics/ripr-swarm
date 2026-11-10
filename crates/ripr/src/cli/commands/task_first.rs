@@ -535,12 +535,15 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // advanced route serves. The attempt is already published here, so a
     // card failure must name the started attempt and its recovery
     // instead of implying no attempt exists.
-    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
-        root: options.root.clone(),
-        root_explicit: true,
-        seam_id: seam_id.clone(),
-        json: false,
-    })
+    let card_stdout = super::agent_card::agent_card_stdout_after_start(
+        AgentCardOptions {
+            root: options.root.clone(),
+            root_explicit: true,
+            seam_id: seam_id.clone(),
+            json: false,
+        },
+        &before_stdout,
+    )
     .map_err(|error| {
         // The held start summary is the only copy of the edit target, cage
         // and next command on this route (#13803 dropped the stderr copies),
