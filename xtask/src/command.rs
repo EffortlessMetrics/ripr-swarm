@@ -1533,7 +1533,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>] | mutation-spot-check --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>] | mutation-spot-check --repo <name>=<checkout> --cosmic-ray-dump <name>=<dump> [--cosmic-ray-version <v>] [--max-mutants <n>] | mutation-spot-check --repo <name>=<checkout> --mutmut-dump <name>=<dump> [--mutmut-version <v>] [--mutmut-test-args <name>=<pytest args>] [--max-mutants <n>] | mutation-spot-check --rederive-summaries <mutation-spot-check.json>",
             "report_only",
-            "target/ripr/reports/mutation-spot-check.{json,md}",
+            "target/ripr/reports/mutation-spot-check.{json,md} and mutation-spot-check-records.jsonl",
             false,
             false,
             "Scores static grip verdicts against real cargo-mutants outcomes on supplied checkouts through the ripr calibrate join; agreement counts only operator mutants joined by seam_id or span containment to predicate or return seams.",
