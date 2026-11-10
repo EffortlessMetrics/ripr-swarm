@@ -4,11 +4,10 @@ on:
   schedule:
     - cron: "41 4 * * *"
   pull_request:
+    # No trigger-level `paths` filter (#12904): a filtered-out PR would report
+    # no Kani check at all, so a required context could never be earned. The
+    # `detect` job decides relevance and `Kani Result` always reports.
     types: [labeled]
-    paths:
-      - "crates/ripr/src/**"
-      - "xtask/src/kani_lane.rs"
-      - ".github/workflows/kani.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,20 +23,77 @@ concurrency:
 
 # Kani lane (RIPR-SPEC-0371): bounded model checking of pure cores.
 #
-# "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
-# not run on ordinary pushes or PR updates. It runs nightly, on dispatch, and
-# when `merge-ready` is applied to a PR that touches ripr source (the `paths`
-# filter above). Kani compiles the whole `ripr` library for verification, so a
-# run is minutes, not seconds.
+# "Lighter, later, tighter" (docs/CI.md): this does not run on ordinary pushes
+# or PR updates. It runs nightly, on dispatch, and when `merge-ready` is
+# applied to a PR. On a merge-ready request `detect` classifies the PR diff
+# (base...head) and `kani` runs only when it touches the lane's inputs; on
+# schedule and dispatch `kani` always runs. Kani compiles the whole `ripr`
+# library for verification, so a run is minutes, not seconds.
+#
+# `Kani Result` (#12904) is the stable, always-reported context for a request:
+# it passes only when `kani` succeeded, or when `kani` was skipped because
+# `detect` succeeded and reported no relevant change. A detect failure, a
+# failed, cancelled or timed-out `kani`, or a skipped `kani` on a relevant
+# diff fails it. Any other pull_request label event names the job
+# `Kani Nonrequest`, never `Kani Result` (a skipped or nonrequest job must not
+# earn the context). Branch protection is unchanged by this workflow.
 #
 # The pass/fail contract lives in `cargo xtask kani`, not in shell: a missing
 # tool, a missing verdict, an unreachable `cover!` or zero harnesses fails the
 # job. Nothing passes by absence.
 
 jobs:
+  detect:
+    name: Detect Kani Surface
+    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      relevant: ${{ steps.check.outputs.relevant }}
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check whether the PR diff touches the Kani lane's inputs
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Anything not established as irrelevant runs the lane (fail toward run).
+          relevant=true reason=not_pull_request
+          classify() {
+            [ "$EVENT_NAME" = pull_request ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            reason=unavailable_history
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null && git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null \
+              || git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            [ "$(git rev-parse --is-shallow-repository)" = false ] || return 0
+            changed="$(mktemp)" reason=diff_failed
+            # No rename collapsing: a removed and an added path are both classified.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                # Fixed reason only: a PR-controlled path never reaches $GITHUB_OUTPUT.
+                crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/*|.github/workflows/kani.yml) reason=lane_input; return 0 ;;
+              esac
+            done < "$changed"
+            relevant=false reason=no_lane_input
+          }
+          classify
+          { echo "reason=$reason"; echo "relevant=$relevant"; } >> "$GITHUB_OUTPUT"
+          { echo "### Kani surface detection (#12904)"; echo ""; echo "- relevant: \`$relevant\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
+
   kani:
     name: kani
-    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')
+    needs: [detect]
+    if: needs.detect.result == 'success' && needs.detect.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -82,3 +138,33 @@ jobs:
           name: ripr-kani
           path: target/ripr/reports/kani.md
           if-no-files-found: warn
+
+  result:
+    # Static `Kani Result` only for schedule/dispatch runs and an explicit
+    # merge-ready request; any other pull_request label event is a nonrequest
+    # under a different name so the context is never earned by it.
+    name: ${{ (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && 'Kani Result' || 'Kani Nonrequest' }}
+    needs: [detect, kani]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarize Kani result
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          DETECT_RESULT: ${{ needs.detect.result }}
+          RELEVANT: ${{ needs.detect.outputs.relevant }}
+          REASON: ${{ needs.detect.outputs.reason }}
+          KANI_RESULT: ${{ needs.kani.result }}
+        run: |
+          status=pass message="kani succeeded"
+          if [ "$EVENT_NAME" = pull_request ] && { [ "$EVENT_ACTION" != labeled ] || [ "$LABEL_NAME" != merge-ready ]; }; then message="not a merge-ready request; named Kani Nonrequest, never Kani Result"
+          elif [ "$DETECT_RESULT" != success ]; then status=fail message="detect result was $DETECT_RESULT; never pass by absence"
+          elif [ "$RELEVANT" = true ]; then [ "$KANI_RESULT" = success ] || { status=fail message="kani result was $KANI_RESULT on a relevant diff ($REASON)"; }
+          elif [ "$RELEVANT" = false ] && [ "$KANI_RESULT" = skipped ]; then message="no Kani lane input changed ($REASON); kani skipped"
+          else status=fail message="detect relevant='$RELEVANT' with kani $KANI_RESULT is not a passing combination"
+          fi
+          { echo "### Kani Result"; echo ""; echo "- event: \`$EVENT_NAME\`"; echo "- detect: \`$DETECT_RESULT\` relevant=\`$RELEVANT\` reason=\`$REASON\`"; echo "- kani: \`$KANI_RESULT\`"; echo "- status: \`$status\` ($message)"; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = pass ] || { echo "::error::$message"; exit 1; }

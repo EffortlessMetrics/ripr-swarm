@@ -2100,3 +2100,92 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
         "      - uses: actions/cache@{sha} # v4.2.0\n"
     )));
 }
+
+/// Every input `cargo kani -p ripr` compiles or the lane driver uses to judge
+/// a verdict (#12904): the `ripr` crate, its `ripr-contract` path dependency,
+/// workspace manifests and toolchain, and the whole xtask package (lane driver, command
+/// parsing and dispatch, and the process runner it uses to judge a verdict).
+const KANI_LANE_INPUTS: &str = "crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/*|.github/workflows/kani.yml)";
+
+/// Whether `kani.yml` keeps the always-reported `Kani Result` contract
+/// (#12904): no trigger-level `paths` filter, a `detect` gate in front of
+/// `kani`, and a result job that always runs, needs both jobs and passes only
+/// on kani success or a detect-established irrelevant skip.
+fn kani_result_contract_holds(text: &str) -> bool {
+    let Some((triggers, _)) = text.split_once("\npermissions:") else {
+        return false;
+    };
+    let detect = job_block(text, "detect");
+    let kani = job_block(text, "kani");
+    let result = job_block(text, "result");
+    let has = |block: &str, line: &str| block.lines().any(|candidate| candidate == line);
+    !triggers.lines().any(|line| {
+        line.trim_start().starts_with("paths:") || line.trim_start().starts_with("paths-ignore:")
+    }) && !detect.is_empty()
+        && has(&kani, "    needs: [detect]")
+        && has(
+            &kani,
+            "    if: needs.detect.result == 'success' && needs.detect.outputs.relevant == 'true'",
+        )
+        && has(&result, "    if: always()")
+        && has(&result, "    needs: [detect, kani]")
+        && result.lines().any(|line| {
+            line.starts_with("    name: ")
+                && line.contains("&& 'Kani Result' || 'Kani Nonrequest' }}")
+        })
+        && !result.contains("continue-on-error")
+        && result.contains(
+            r#"if [ "$EVENT_NAME" = pull_request ] && { [ "$EVENT_ACTION" != labeled ] || [ "$LABEL_NAME" != merge-ready ]; }; then message="#,
+        )
+        && detect.contains(KANI_LANE_INPUTS)
+        && detect.contains(r#"reason=lane_input; return 0 ;;"#)
+        && !detect.contains("reason=\"lane_input:")
+        && result.contains(r#"elif [ "$DETECT_RESULT" != success ]; then status=fail"#)
+        && result.contains(
+            r#"elif [ "$RELEVANT" = true ]; then [ "$KANI_RESULT" = success ] || { status=fail"#,
+        )
+        && result.contains(r#"elif [ "$RELEVANT" = false ] && [ "$KANI_RESULT" = skipped ]; then"#)
+        && result.contains(r#"[ "$status" = pass ] || { echo "::error::$message"; exit 1; }"#)
+}
+
+#[test]
+fn kani_result_is_always_reported_and_never_passes_by_absence() -> Result<(), String> {
+    let text = repo_workflow("kani.yml")?;
+    assert!(
+        kani_result_contract_holds(&text),
+        "kani.yml must keep the always-reported Kani Result contract (#12904)"
+    );
+    for wrong in [
+        text.replace(
+            "    types: [labeled]\n",
+            "    types: [labeled]\n    paths:\n      - \"crates/ripr/src/**\"\n",
+        ),
+        text.replace("    if: always()\n", "    if: success()\n"),
+        text.replace("    needs: [detect, kani]\n", "    needs: [kani]\n"),
+        text.replace("    needs: [detect]\n", ""),
+        text.replace("'Kani Result'", "'Kani'"),
+        text.replace(
+            r#"[ "$KANI_RESULT" = success ] || {"#,
+            r#"[ "$KANI_RESULT" != failure ] || {"#,
+        ),
+        text.replace(r#"&& [ "$KANI_RESULT" = skipped ]"#, ""),
+        text.replace(r#"if [ "$EVENT_NAME" = pull_request ] && {"#, "if {"),
+        text.replace("crates/ripr-contract/*|", ""),
+        text.replace("crates/ripr/src/*|", ""),
+        text.replace("xtask/*|", ""),
+        text.replace(
+            "reason=lane_input; return 0",
+            r#"reason="lane_input:$path"; return 0"#,
+        ),
+        text.replace(
+            "    if: always()\n",
+            "    if: always()\n    continue-on-error: true\n",
+        ),
+    ] {
+        assert!(
+            !kani_result_contract_holds(&wrong),
+            "a weakened Kani Result contract must be rejected"
+        );
+    }
+    Ok(())
+}
