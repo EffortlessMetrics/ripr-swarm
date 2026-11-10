@@ -448,12 +448,13 @@ esac
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir();
         fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        let dir = Scratch(root.join(format!(
+        let path = root.join(format!(
             "main-health-replay-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
-        )));
-        fs::create_dir(&dir.0).map_err(|e| e.to_string())?;
+        ));
+        fs::create_dir(&path).map_err(|e| e.to_string())?;
+        let dir = Scratch(path);
         fs::create_dir(dir.0.join("bin")).map_err(|e| e.to_string())?;
         let evidence = dir.0.join("main-health-sentinel");
         fs::create_dir(&evidence).map_err(|e| e.to_string())?;

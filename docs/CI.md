@@ -173,7 +173,22 @@ expiry and authority/producer generation, and verifies G's exact producer
 objects and modes. The admitted target may differ from protected B; H's earlier
 admission base need not equal G's later base. Native membership and the receipt
 are read again after source observation and compared with the initially frozen
-observation at finalization. Missing, changed or ambiguous intake refuses.
+observation at finalization. Changed or ambiguous intake refuses.
+
+Hermes enqueues before attaching the native-entry receipt to its H check. Initial
+admission can wait for that publication only after observing one active,
+authenticated successful H check without receipt text. Conclusively withdrawn
+historical checks with distinct check and request identities do not make that
+active authority ambiguous. It freezes the check, App, H, request,
+authority summary and native membership while waiting. The publication window
+is 30 seconds, with two-second intervals and at most 16 observations. Missing
+checks, malformed evidence, revocation of the active authority and identity
+changes refuse immediately.
+An incomplete check never authorizes source checkout or proof. The existing
+transport timeout and request bound still apply; the publication window does
+not cancel an in-flight socket operation. A late receipt cannot complete
+admission after the pending window expires. Both the post-source-read check and
+the final expected-intake check remain immediate and do not retry.
 
 `cargo test -p repo-policy --test queue_intake` exercises the shipped evaluator
 with fake API observations, including head/entry/issuer/source/expiry negatives

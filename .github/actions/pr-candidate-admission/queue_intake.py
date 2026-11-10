@@ -18,11 +18,15 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 import tomllib
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_BYTES = 1024 * 1024
+INITIAL_INTAKE_SECONDS = 30
+INITIAL_INTAKE_INTERVAL = 2
+INITIAL_INTAKE_ATTEMPTS = 16
 REPOSITORY = "EffortlessMetrics/ripr-swarm"
 ROOTS = {".github": "tree", ".cargo": "tree", ".config": "tree", "Cargo.toml": "blob",
          "Cargo.lock": "blob", "rust-toolchain.toml": "blob", "policy": "tree",
@@ -44,6 +48,12 @@ OBSERVE = """query { repository(owner:"EffortlessMetrics",name:"ripr-swarm") {
 
 class Refused(ValueError):
     pass
+
+
+class IntakePending(Refused):
+    def __init__(self, identity):
+        super().__init__("authenticated H check awaits native intake publication")
+        self.identity = identity
 
 
 def require(condition, reason):
@@ -185,21 +195,68 @@ def closure(value, configured):
     return value
 
 
-def intake(api, current, configured, now):
+def pending_check_identity(check, current, configured):
+    """Recognize only Hermes's authentic pre-enqueue H success shape.
+
+    This is a reason to wait for output.text, never permission to run proof.
+    Keep the check and its authority summary fixed while the publisher adds
+    the acknowledged native entry to that same check after enqueue returns.
+    """
+    external = check.get("external_id")
+    output = check.get("output")
+    require(positive(check.get("id")) and check.get("app", {}).get("id") == configured["publisher_app_id"]
+            and check.get("head_sha") == current["head_sha"]
+            and check.get("status") == "completed" and check.get("conclusion") == "success"
+            and isinstance(external, str)
+            and re.fullmatch(r"hermes-queue:[A-Za-z0-9][A-Za-z0-9_.-]{0,79}:H", external)
+            and isinstance(output, dict)
+            and output.get("title") == "H: conditional queue admission; G is not tested",
+            "pending H check is not authenticated admission")
+    summary = decode(output.get("summary"))
+    require(isinstance(summary, dict)
+            and set(summary) == {"schema", "phase", "repository", "commit", "evidence_sha256"}
+            and summary["schema"] == "hermes.queue-check.v1" and summary["phase"] == "H"
+            and summary["repository"] == REPOSITORY and summary["commit"] == current["head_sha"]
+            and isinstance(summary["evidence_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", summary["evidence_sha256"]),
+            "pending H authority summary is invalid")
+    return {"check_run_id": check["id"], "app_id": check["app"]["id"],
+            "head_sha": check["head_sha"], "external_id": external, "summary": summary}
+
+
+def withdrawn_h_check(check, current):
+    """Recognize the publisher's terminal H withdrawal, never an active wait."""
+    external, output = check.get("external_id"), check.get("output")
+    return (positive(check.get("id")) and check.get("head_sha") == current["head_sha"]
+            and check.get("status") == "completed" and check.get("conclusion") == "failure"
+            and isinstance(external, str)
+            and re.fullmatch(r"hermes-queue:[A-Za-z0-9][A-Za-z0-9_.-]{0,79}:H", external) is not None
+            and isinstance(output, dict) and output.get("title") == "Queue authority withdrawn"
+            and output.get("summary") == "A current blocking finding revoked conditional landing authority. "
+                                        "Read native landing/removal state.")
+
+
+def intake(api, current, configured, now, pending=None):
     result = api.get("/commits/" + current["head_sha"] + "/check-runs?" + urlencode({
         "check_name": configured["publisher_check_name"], "filter": "all", "per_page": 100}))
     require(isinstance(result, dict) and type(result.get("total_count")) is int
             and isinstance(result.get("check_runs"), list)
             and result["total_count"] == len(result["check_runs"]) <= 100, "H checks observation incomplete")
-    matches = []
+    matches, unpublished = [], []
     for check in result["check_runs"]:
         if (check.get("name") != configured["publisher_check_name"]
                 or not positive(check.get("app", {}).get("id"))
                 or check["app"]["id"] != configured["publisher_app_id"]):
             continue
         raw = check.get("output", {}).get("text")
-        if not isinstance(raw, str):
+        if raw is None:
+            if pending is not None and (check.get("id") == pending["check_run_id"]
+                                         or check.get("external_id") == pending["external_id"]):
+                require(pending_check_identity(check, current, configured) == pending,
+                        "pending H authority changed while awaiting publication")
+            unpublished.append(check)
             continue
+        require(isinstance(raw, str), "intake text is malformed")
         data = decode(raw)
         if not isinstance(data, dict) or data.get("entry_id") != current["entry_id"]:
             continue
@@ -220,9 +277,48 @@ def intake(api, current, configured, now):
         require(isinstance(data["expires_at"], str), "missing intake expiry")
         expiry = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
         require(expiry.tzinfo is not None and expiry > now, "intake expired")
+        require(pending is None or pending_check_identity(check, current, configured) == pending,
+                "pending H authority changed before intake publication")
         matches.append({"check_run_id": check["id"], "app_id": check["app"]["id"], "intake": data})
+    if not matches:
+        active, withdrawn = [], []
+        for check in unpublished:
+            # App/name were authenticated above. A prior H withdrawn before
+            # enqueue has no intake text; it must not make a new H ambiguous.
+            (withdrawn if withdrawn_h_check(check, current) else active).append(check)
+        if len(active) == 1:
+            identity = pending_check_identity(active[0], current, configured)
+            require(all(check["id"] != identity["check_run_id"]
+                        and check["external_id"] != identity["external_id"] for check in withdrawn),
+                    "pending H conflicts with withdrawn authority")
+            raise IntakePending(identity)
     require(len(matches) == 1, "unique authenticated intake is not proven")
     return matches[0]
+
+
+def initial_intake(api, subject, current, configured, now, clock, wait):
+    """Allow the post-enqueue PATCH to arrive within a fixed initial window."""
+    pending = None
+    deadline = clock() + INITIAL_INTAKE_SECONDS
+    for attempt in range(INITIAL_INTAKE_ATTEMPTS):
+        if pending is not None:
+            require(clock() < deadline, "authenticated intake publication timed out")
+            require(member(api, subject) == current, "native intake changed while awaiting publication")
+            require(clock() < deadline, "authenticated intake publication timed out")
+        try:
+            admitted = intake(api, current, configured, now(), pending)
+        except IntakePending as missing:
+            require(pending is None or missing.identity == pending,
+                    "pending H authority changed while awaiting publication")
+            pending = missing.identity
+            remaining = deadline - clock()
+            require(remaining > 0 and attempt + 1 < INITIAL_INTAKE_ATTEMPTS,
+                    "authenticated intake publication timed out")
+            wait(min(INITIAL_INTAKE_INTERVAL, remaining))
+            continue
+        require(pending is None or clock() < deadline, "authenticated intake publication timed out")
+        return admitted
+    raise Refused("authenticated intake publication observation bound exhausted")
 
 
 def verify_target(api, group, expected):
@@ -248,9 +344,12 @@ def verify_target(api, group, expected):
                 "actual G differs from authenticated producer closure")
 
 
-def observe(api, subject, configured, now, expected=None):
+def observe(api, subject, configured, now, expected=None, *, clock=time.monotonic, wait=time.sleep):
     first = member(api, subject)
-    admitted = intake(api, first, configured, now())
+    # Only initial admission may await the publisher's post-enqueue PATCH.
+    # Final expected-intake and after-source-read rechecks remain immediate.
+    admitted = (initial_intake(api, subject, first, configured, now, clock, wait)
+                if expected is None else intake(api, first, configured, now()))
     verify_target(api, subject["group_sha"], admitted["intake"]["producer_closure"])
     # Membership and authority can move during source reads. Never adopt a new H.
     require(member(api, subject) == first and intake(api, first, configured, now()) == admitted,
