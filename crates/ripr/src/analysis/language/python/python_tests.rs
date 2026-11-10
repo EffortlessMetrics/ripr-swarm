@@ -2151,7 +2151,6 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         reexport_modules: vec!["core".to_string()],
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
-        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -2165,6 +2164,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        test_local_shadows: Vec::new(),
     };
     let mut test = align_importing_test("core", "");
     test.file = PathBuf::from("svc/a/tests/test_core.py");
