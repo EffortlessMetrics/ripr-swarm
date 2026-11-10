@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- TypeScript default-object credit (RIPR-SPEC-0243 rule 5): `process`, `__filename` and `__dirname` in a sibling member of an `export default { ... }` object now mark it unsafe, so a test that calls it no longer earns `exposed` for another member. Negative tests now pin each second-binding route (named import, second default local, `{ default as u2 }`, `ns.default.x()`, `require`) beside a credited control (#13750). Limit: a second binding through a path alias the import resolver cannot match to the owner module is not detected.

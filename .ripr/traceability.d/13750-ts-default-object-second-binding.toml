@@ -1,0 +1,8 @@
+# Registers the default-object second-binding and Node-global escape tests (#13750) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/default_object_member_tests.rs::every_second_binding_route_withholds_beside_a_credited_control",
+  "crates/ripr/src/analysis/language/typescript/tests/default_object_member_tests.rs::node_process_globals_in_a_sibling_credit_nothing",
+]
+code = ["crates/ripr/src/analysis/language/typescript/owners.rs"]

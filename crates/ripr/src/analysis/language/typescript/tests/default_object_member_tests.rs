@@ -536,6 +536,103 @@ fn a_second_binding_of_the_module_withholds_when_a_sibling_is_unsafe() -> Result
 }
 
 #[test]
+fn every_second_binding_route_withholds_beside_a_credited_control() -> Result<(), String> {
+    // #13750: one negative per route, each beside a positive control whose
+    // sibling is safe (same test shape, same binding, nothing reachable).
+    let unsafe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  require('./utils').default.merge = () => ({ a: 1, b: 5, c: 4 });\n}\n\nexport default { merge, extend };",
+    );
+    let safe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  return;\n}\n\nexport default { merge, extend };",
+    );
+    let header = "import { it, expect, vi } from 'vitest';\nimport utils from '../src/utils';\n";
+    for (label, binding, call) in [
+        (
+            "named-import",
+            "import { extend } from '../src/utils';",
+            "extend();",
+        ),
+        (
+            "second-default-local",
+            "import u2 from '../src/utils';",
+            "u2.extend();",
+        ),
+        (
+            "default-as",
+            "import { default as u2 } from '../src/utils';",
+            "u2.extend();",
+        ),
+        (
+            "namespace-default",
+            "import * as ns from '../src/utils';",
+            "ns.default.extend();",
+        ),
+        (
+            "require",
+            "const m = require('../src/utils');",
+            "m.default.extend();",
+        ),
+    ] {
+        let test = format!("{header}{binding}\n\nit('merges', () => {{\n  {call}\n{CALL}\n}});\n");
+        assert_ne!(
+            class_of(&format!("{label}-unsafe"), &unsafe_owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+        // A `require()` of the owner module is not a credited shape even with
+        // a safe sibling (it stays withheld, fail closed), so it has no control.
+        if label != "require" {
+            assert_eq!(
+                class_of(&format!("{label}-safe"), &safe_owner, &test)?,
+                ExposureClass::Exposed,
+                "{label} control"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn node_process_globals_in_a_sibling_credit_nothing() -> Result<(), String> {
+    // #13750 comment: `process`, `__filename` and `__dirname` reach the module
+    // cache without naming anything else on the escape list.
+    let test = test_with(&format!("  utils.extend();\n{CALL}"));
+    for (label, body) in [
+        (
+            "process-main-module",
+            "(process as any).mainModule.require('./utils').default.merge = () => ({ a: 1, b: 5, c: 4 });",
+        ),
+        ("filename", "void __filename;"),
+        ("dirname", "void __dirname;"),
+    ] {
+        let owner = OWNER.replace(
+            "export default { merge };",
+            &format!(
+                "function extend(): void {{\n  {body}\n}}\n\nexport default {{ merge, extend }};"
+            ),
+        );
+        assert_ne!(
+            class_of(label, &owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: the same sibling shape without a Node global stays credited
+    // when the test never calls it.
+    let owner = OWNER.replace(
+        "export default { merge };",
+        "function extend(): void {\n  void 0;\n}\n\nexport default { merge, extend };",
+    );
+    assert_eq!(
+        class_of("no-node-global", &owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
 fn overload_signatures_do_not_count_as_a_second_declaration() -> Result<(), String> {
     // Bodiless overloads share the implementation's name (#13694 review).
     let owner = format!("function merge(base: object, extra: object): object;\n{OWNER}");

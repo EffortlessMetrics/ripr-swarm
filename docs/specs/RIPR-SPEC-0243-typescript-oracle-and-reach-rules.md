@@ -1021,7 +1021,8 @@ A sibling member called as `local.other()` could replace the owner before
 the asserted call (#13694 review), so each owner records the siblings whose
 declaration is unsafe: it contains `this`, `import(...)`, `import.meta`, a
 reference to `require`, `module`, `exports`, `globalThis`, `global`,
-`window`, `self`, `eval`, `Function`, `arguments` or `define`, a reference
+`window`, `self`, `eval`, `Function`, `arguments`, `define`, `process`,
+`__filename` or `__dirname`, a reference
 to any imported binding (relative or package), or a reference to another
 unsafe top-level name (fixpoint; references match by name, so shadowing only
 over-approximates). A member that is not a top-level declaration of the
@@ -1033,9 +1034,14 @@ A test file that calls any unsafe sibling of the owner
 through `local` gets no rule-5 relation for that owner; a test that never
 calls one keeps it. When the owner has any unsafe sibling, a second binding of
 the owner's module in the test file (another default local, a named or
-namespace import, a `require()`) also withholds the relation, since it could
-reach the sibling outside `local.member(` calls (#13750 tracks bindings the
-import resolver cannot match). The test file must use `local` for nothing but direct
+namespace import, `import { default as u2 }`, a `require()`) also withholds
+the relation, since it could reach the sibling outside `local.member(` calls
+(`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
+fail-closed rule, not a check of which names the second binding uses (#13750).
+Known limits: a second binding whose source the import resolver cannot match
+to the owner module, and a sibling that reaches the module only through a
+path alias such as `@/utils` (only sources starting with `.` count as possibly
+self-reachable), are not covered. The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
 the owner it names; amended #6653), anywhere in the file (setup hooks and
 file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
