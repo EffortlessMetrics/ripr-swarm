@@ -1004,7 +1004,7 @@ fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
 }
 
 const CLONE_OWNER: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
-const CLONE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -14,7 +14,7 @@ impl Window {\n impl Clone for Window {\n     fn clone(&self) -> Self {\n         Window {\n-            start: self.end,\n+            start: self.start,\n             end: self.end,\n         }\n";
+const CLONE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -14,7 +14,7 @@ impl Window {\n impl Clone for Window {\n     fn clone(&self) -> Self {\n         Window {\n-            start: self.end,\n+            start: self.start,\n             end: self.end,\n         }\n     }\n";
 const ERR_OWNER: &str = "#[derive(Debug, PartialEq)]\npub enum Failure {\n    Bad { code: u32 },\n}\npub fn parse(n: u32) -> Result<u32, Failure> {\n    if n == 0 {\n        return Err(Failure::Bad { code: 1 });\n    }\n    Ok(n)\n}\n";
 const ERR_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,7 +4,7 @@ pub enum Failure {\n }\n pub fn parse(n: u32) -> Result<u32, Failure> {\n     if n == 0 {\n-        return Err(Failure::Bad { code: 2 });\n+        return Err(Failure::Bad { code: 1 });\n     }\n     Ok(n)\n }\n";
 
@@ -1027,7 +1027,7 @@ fn claims_payload_equality_does_not_credit_clone_or_err_variant_owners() -> Resu
         dependency: CLAIMS_DEP,
         credited: false,
     };
-    let rows: [(&str, &str, &str, &str, &str); 4] = [
+    let rows: [(&str, &str, &str, &str, &str); 6] = [
         (
             "clone_ok_eq",
             CLONE_OWNER,
@@ -1041,6 +1041,22 @@ fn claims_payload_equality_does_not_credit_clone_or_err_variant_owners() -> Resu
             CLONE_DIFF,
             some_import,
             "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), window);",
+        ),
+        // A literal expected operand gets past the claims extraction, so the
+        // refusal comes from the clone gate itself, not from the operand shape.
+        (
+            "clone_ok_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            ok_import,
+            "let window = Window::new(3, 9);\n    assert_ok_eq!(window.clone(), 3);",
+        ),
+        (
+            "clone_some_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            some_import,
+            "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), 3);",
         ),
         (
             "err_variant_ok_eq",
