@@ -1739,6 +1739,18 @@ change.
 5. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every
    pin either version agrees with keep their current result.
+6. Tuple-struct owners and operands both versions agree on (#12808). When the
+   changed tail is the whole `T(e)` / `Self(e)` of a one-field built-in
+   integer tuple struct, the owner is lowered to the same subset (every `T`
+   or `Self` parameter and `self` becomes the field's integer, `p.0` becomes
+   `p`, the constructor is dropped; a parameter named `self_` or a repeated
+   name is not lowered) and the call must pass only `T(<decimal literal>)`
+   operands, receiver first. When both versions return the same value for
+   those operands, and differ for some operand vector drawn from `1, 2, 3, 5,
+   -2`, no assertion on that call can tell the change apart and the pin does
+   not credit. A rewrite equal on every probed vector (`a + b` to `b + a`)
+   and anything outside the subset keep their current result. This is a
+   bounded static check, not a proof of equivalence.
 
 ### Bool-owner pins
 
@@ -2978,6 +2990,12 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Tuple-struct owners and agreeing operands (#12808):
+  `crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs`
+  (agreeing operands withheld, distinguishing and unreadable operands kept,
+  free-function form, operand order, an equal-on-every-input rewrite, a
+  `self_` alias) and the verdict corpus trap case
+  `trap-tuple-agreeing-operands`.
 - Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
   covers direct and added-owner paths, the named guard, input/return-path
   controls, assertion identity and execution order, distinct evidence rows
