@@ -2331,9 +2331,61 @@ pub(super) fn own_crate_qualified_entry_path(
             .is_some_and(|root| root == Path::new("src/lib.rs"));
     let module = super::call_identity::root_library_item_module_path(index, caller)
         .filter(|_| composes_under_library_root)?;
-    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
-    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
-    // paths from a parent file whose bindings this scan does not read.
+    let facts = index.files().get(&test.file)?;
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let crate_name = index.root_library_name.as_deref()?;
+    let masked_file = mask_comments_and_strings(&facts.source);
+    let code_line = call_line
+        .checked_sub(1)
+        .and_then(|line| masked_file.lines().nth(line))?;
+    let spelled_path: String = std::iter::once(crate_name)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(caller.name.as_str()))
+        .collect::<Vec<_>>()
+        .join("::");
+    (is_qualified_owner_call(code_line, &spelled_path)
+        && own_crate_name_unshadowed_in_test(index, test, crate_name))
+    .then_some(spelled_path)
+}
+
+/// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
+/// module composed under it), the only owner a root integration test reaches
+/// through the library's own crate name.
+fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    !path_is_absolute_form(&owner.file)
+        && package_prefix(&owner.file).is_none()
+        && super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"))
+        // The `impl` must be a top-level item of its file: a function-local or
+        // inline-module namesake type's method shares the exported type's
+        // indexed id, so only the placement tells them apart.
+        && owner_impl_is_root_item_of(index, owner, &owner.file)
+}
+
+/// Whether `krate` is the root package's library identifier and `test` — an
+/// integration test of the root package — names it unshadowed (#14036).
+fn root_library_name_is_unshadowed(index: &RustIndex, test: &TestSummary, krate: &str) -> bool {
+    super::call_identity::under_tests_dir(&test.file)
+        && !path_is_absolute_form(&test.file)
+        && package_prefix(&test.file).is_none()
+        && index.root_library_name.as_deref() == Some(krate)
+        && own_crate_name_unshadowed_in_test(index, test, krate)
+}
+
+/// Whether `crate_name` — the root package's library identifier — names that
+/// library from `test` unshadowed (#8999, #14036): the test is a test-crate root
+/// (`tests/<name>.rs`, `tests/<name>/main.rs`; a module child resolves paths
+/// from a parent file whose bindings this scan does not read), splices no
+/// items, and neither the file nor the test body declares, imports, renames or
+/// globs the name into something else. The caller has already established the
+/// test sits under the root package's `tests/` directory.
+fn own_crate_name_unshadowed_in_test(
+    index: &RustIndex,
+    test: &TestSummary,
+    crate_name: &str,
+) -> bool {
     let normalized_test = normalize_path(&test.file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
@@ -2342,18 +2394,16 @@ pub(super) fn own_crate_qualified_entry_path(
         _ => false,
     };
     if !is_test_crate_root {
-        return None;
+        return false;
     }
-    let facts = index.files().get(&test.file)?;
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
     if facts.source.contains("include!")
         || super::call_identity::source_may_splice_items(&facts.source, true)
     {
-        return None;
+        return false;
     }
-    // The one identifier the package's library is imported as: `[lib] name`
-    // when set, else the package name (hyphens folded). The package name is
-    // not a second spelling when `[lib] name` differs.
-    let crate_name = index.root_library_name.as_deref()?;
     let stripped_file = strip_comments_and_strings(&facts.source);
     // Any import that may bind the crate name to something else, in the
     // file or in the test body: a glob, or a path ending in that name
@@ -2369,29 +2419,12 @@ pub(super) fn own_crate_qualified_entry_path(
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
     };
-    // The call fact's text is the whole source line: match the own-crate
-    // spelling only in code, never in a string or comment beside a foreign
-    // call of the same name.
-    // The line is read from the comment/string-masked FULL file at the call's
-    // own location: a call path inside a multiline raw string or block
-    // comment that ends on a line holding a real call is masked out.
-    let masked_file = mask_comments_and_strings(&facts.source);
-    let code_line = call_line
-        .checked_sub(1)
-        .and_then(|line| masked_file.lines().nth(line))?;
-    let spelled_path: String = std::iter::once(crate_name)
-        .chain(module.iter().map(String::as_str))
-        .chain(std::iter::once(caller.name.as_str()))
-        .collect::<Vec<_>>()
-        .join("::");
-    (is_qualified_owner_call(code_line, &spelled_path)
-        && !file_may_bind_name(&stripped_file, crate_name)
+    !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body))
-    .then_some(spelled_path)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
@@ -4561,6 +4594,12 @@ fn initializer_names_impl_type(
         ([ty], Some(b'(')) => factory("", ty),
         ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
+        // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
+        // through the `krate::Ty` spelling and accepts only the root
+        // package's own unshadowed library name.
+        ([krate, ty, name], Some(b'(')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), name)
+        }
         _ => false,
     }
 }
@@ -5539,6 +5578,21 @@ fn inherent_receiver_call_resolves_with(
     let owner_local = index
         .zip(owner)
         .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
+    // An explicit `use` that binds the receiver type's name to a type from a
+    // crate outside the workspace cannot be the owner's own type (#13525), yet
+    // the constructor below resolves by that name alone. Decline it. Imports
+    // rooted at `crate`/`self`/`super` or at a workspace member are unchanged,
+    // so a member-to-member same-named type is still a name-only match.
+    if let Some(index) = index
+        && !owner_local
+        && index
+            .call_identity_memos
+            .external_import(&test.file, impl_type, || {
+                file_imports_name_from_external_crate(index, &test.file, impl_type)
+            })
+    {
+        return false;
+    }
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
@@ -5553,6 +5607,14 @@ fn inherent_receiver_call_resolves_with(
                     return false;
                 }
                 head == impl_type
+            } else if let Some((krate, ty)) = ty.split_once("::") {
+                // A crate-qualified constructor head (`krate::Ty::new()`,
+                // #14036): the leading segment must be the root package's
+                // library name, unshadowed in this test, and the owner an
+                // item of that library.
+                owner.is_some_and(|owner| owner_is_root_library_item(index, owner))
+                    && root_library_name_is_unshadowed(index, test, krate)
+                    && associated_constructor_names_own_type(index, ty, name, None)
             } else {
                 if associated_constructor_names_own_type(
                     index,
@@ -5602,8 +5664,76 @@ fn inherent_receiver_call_resolves_with(
             pin_syntax,
             trust_unplaced_standard_root,
             &resolves,
+        ) || helper_borne_call_resolves(
+            test,
+            method,
+            owner,
+            index,
+            pin_syntax,
+            trust_unplaced_standard_root,
+            &resolves,
         )
     }
+}
+
+/// A call that `facts::test_helpers` copied onto `test` from a credited
+/// same-file helper (#13411) sits on the helper's lines, so the test body
+/// never holds the `let re = Type::new(..)` that types its receiver. Read that
+/// call in the helper's own body, by the same receiver rules as a call written
+/// in the test. The helper is the one free function of the test's file whose
+/// lines hold the call; any other holder (none, several, a method, a nested
+/// function) keeps the name-only relation.
+fn helper_borne_call_resolves(
+    test: &TestSummary,
+    method: &str,
+    owner: Option<&FunctionSummary>,
+    index: Option<&RustIndex>,
+    pin_syntax: &super::OwnerPinSyntax,
+    trust_unplaced_standard_root: bool,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
+    let (Some(index), Some(owner)) = (index, owner) else {
+        return false;
+    };
+    let mut borne = test.calls.iter().filter(|call| {
+        call.name == method && !(test.start_line..=test.end_line).contains(&call.line)
+    });
+    // One call site: a second one could hold a different receiver.
+    let (Some(call), None) = (borne.next(), borne.next()) else {
+        return false;
+    };
+    // The test file's own functions, not the whole workspace's.
+    let Some(file) = index.files().get(&test.file) else {
+        return false;
+    };
+    let mut holders = file
+        .functions
+        .iter()
+        .filter(|function| (function.start_line..=function.end_line).contains(&call.line));
+    let (Some(helper), None) = (holders.next(), holders.next()) else {
+        return false;
+    };
+    if helper.item.container != FunctionContainer::Free
+        || !helper.nested_fn_names.is_empty()
+        || !function_calls_resolve(
+            test,
+            &helper.body,
+            helper.start_line,
+            Some(index),
+            pin_syntax,
+            trust_unplaced_standard_root,
+            resolves,
+        )
+    {
+        return false;
+    }
+    // Last, because it is the costly check: the direct route resolves a
+    // constructor by the impl type's name alone, so a same-named type imported
+    // from elsewhere would be credited. The helper route also needs the test
+    // file's import to bind that name to the owner's own type (the #8999
+    // method-entry authority).
+    super::call_identity::inherent_entry_type_identity(index, owner)
+        .is_some_and(|identity| identity.binds_inherent_entry_type(test, index))
 }
 
 /// A helper-name graph supplies candidates, never executable function identity.
@@ -5838,9 +5968,32 @@ fn executable_call_resolves(
     trust_unplaced_standard_root: bool,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
+    function_calls_resolve(
+        test,
+        &test.body,
+        test.start_line,
+        index,
+        pin_syntax,
+        trust_unplaced_standard_root,
+        resolves,
+    )
+}
+
+/// The executable calls of one function body (`body`, whose first line is
+/// `first_line` of `test`'s file): the test's own body, or a credited
+/// same-file helper's (#13411).
+fn function_calls_resolve(
+    test: &TestSummary,
+    body: &str,
+    first_line: usize,
+    index: Option<&RustIndex>,
+    pin_syntax: &super::OwnerPinSyntax,
+    trust_unplaced_standard_root: bool,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
     let parse = match index {
-        Some(index) => index.source_syntax.parse_fragment(&test.body),
-        None => crate::analysis::syntax::parse_clean_source_file(&test.body),
+        Some(index) => index.source_syntax.parse_fragment(body),
+        None => crate::analysis::syntax::parse_clean_source_file(body),
     };
     let Some(parse) = parse else {
         return false;
@@ -5861,11 +6014,8 @@ fn executable_call_resolves(
             .any(|call| {
                 let binding_admitted = index.is_none_or(|index| {
                     let offset = u32::from(call.syntax().text_range().start()) as usize;
-                    let line = test.start_line
-                        + test.body[..offset]
-                            .bytes()
-                            .filter(|byte| *byte == b'\n')
-                            .count();
+                    let line =
+                        first_line + body[..offset].bytes().filter(|byte| *byte == b'\n').count();
                     call.path().is_some_and(|path| {
                         let name = path.syntax().text().to_string();
                         if trust_unplaced_standard_root {
@@ -6469,6 +6619,64 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
         .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
+/// Whether `file` has a non-glob `use` whose bound name (its alias, else its
+/// last segment) is `name` and whose path is rooted at a crate that is neither
+/// `crate`/`self`/`super`, a workspace member, nor a module or type declared in
+/// `file` itself.
+fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    let members = index.workspace_member_crates();
+    // With no manifest in the index the workspace's own crate names are
+    // unknown, so no root can be called foreign.
+    if members.is_empty() {
+        return false;
+    }
+    // A root that names a module or type declared in this file (2018 uniform
+    // paths: `mod support; use support::Regex;`) is local, not a crate.
+    let local_items: std::collections::BTreeSet<String> = tree
+        .syntax()
+        .descendants()
+        .filter_map(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::Adt::cast(node).and_then(|item| item.name()))
+        })
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+        .collect();
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let text = item.syntax().text().to_string();
+            super::reveal::flattened_use_paths(&text)
+                .iter()
+                .any(|import| {
+                    let last = import.path.rsplit("::").next().unwrap_or("");
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or(last)
+                        .trim_start_matches("r#");
+                    let root = import
+                        .path
+                        .trim_start_matches("::")
+                        .split("::")
+                        .next()
+                        .unwrap_or("")
+                        .trim_start_matches("r#");
+                    last != "*"
+                        && bound == name
+                        && !matches!(root, "crate" | "self" | "super" | "")
+                        && !local_items.contains(root)
+                        && !members
+                            .iter()
+                            .any(|member| member.replace('-', "_") == root)
+                })
+        })
+}
+
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
 /// `super::*`, or a `type` alias called `ty`: any of which can make a bare
 /// `ty` mean a type declared elsewhere.
@@ -6759,6 +6967,38 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
             .target_placement_unavailable(index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
+}
+
+/// Whether `owner`'s inherent call resolves in `caller` once `body` stands in
+/// for the test's body: the relation the direct-call path applies, over a body
+/// where a cross-file forwarding macro call (#12886) was replaced by the
+/// operands it evaluates. The index is untouched and nothing is credited; the
+/// answer only lets the caller name a limit. Binding, shadow and receiver rules
+/// are the ones the direct relation applies.
+pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
+    caller: &TestSummary,
+    body: String,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if !requires_inherent_receiver_identity(owner) {
+        return false;
+    }
+    let mut rewritten = caller.clone();
+    rewritten.body = crate::analysis::facts::SourceText::owned(body);
+    owner_call_relation_reason_gated(
+        &rewritten,
+        Some(owner),
+        &owner.name,
+        &[],
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+        false,
+    ) == RelationReason::DirectOwnerCall
 }
 
 /// Whether the last call of `method` in `prefix` (masked test source cut at
@@ -8906,12 +9146,12 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 end_line: 4,
                 body: "let mut ledger = Ledger::new(100);\nledger.apply(5);".into(),
                 // Body-only: the receiver form is what must be credited.
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 assertions: Vec::new(),
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -9254,7 +9494,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 line: 1,
                 name: "render".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
                 "{line}"
@@ -9371,7 +9612,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
         let owner = free_function("src/lib.rs", "kb");
         let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
-        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1).into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test],
@@ -10967,7 +11208,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             "let config = Config { strict: true };\nassert_eq!(config.parse(\"hey\").1, Some(3));",
             "parse",
         );
-        test.calls = Vec::new();
+        test.calls = Vec::new().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test],
@@ -13088,12 +13329,13 @@ fn crate_c_score_test() {
                 line: 1,
                 name: "call_inner".to_string(),
                 text: "call_inner!(10, 3)".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -13119,12 +13361,12 @@ fn crate_c_score_test() {
             start_line: 1,
             end_line: 5,
             body: "let result = crate_under_test::internal::inner(10, 3);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -13777,14 +14019,14 @@ fn crate_c_score_test() {
             start_line: 1,
             end_line: 3,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -13801,12 +14043,13 @@ fn crate_c_score_test() {
                 line: 1,
                 name: "score".to_string(),
                 text: body.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -14087,8 +14330,8 @@ let r = try_parse_summary(\"x\");",
         let (index, probe) = shadow_flag_law_index(SHADOWING_TEST_SOURCE, |facts| {
             facts.used_lexical_fallback = true;
             for test in &mut facts.tests {
-                test.nested_fn_names = Vec::new();
-                test.let_bindings = Vec::new();
+                test.nested_fn_names = Vec::new().into();
+                test.let_bindings = Vec::new().into();
             }
         })?;
         let owner = index.functions()[0].clone();
@@ -14516,12 +14759,12 @@ let r = try_parse_summary(\"x\");",
             start_line: 5,
             end_line: 5,
             body: "let _ = fixture();".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let mut first = second.clone();
@@ -14815,7 +15058,8 @@ let r = try_parse_summary(\"x\");",
                 line: 1,
                 name: "render".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "render", "u8"),
                 "{line}"
@@ -14934,7 +15178,8 @@ let r = try_parse_summary(\"x\");",
                 line: 1,
                 name: "build".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 "{body}"
@@ -15204,12 +15449,13 @@ try_parse_summary(raw).map_err(Into::into)"
                 line: 1,
                 name: call_name.to_string(),
                 text: body.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -15268,12 +15514,12 @@ try_parse_summary(raw).map_err(Into::into)"
             start_line: 1,
             end_line: 10,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions,
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -16385,7 +16631,8 @@ quickcheck! {
                     line: 1,
                     name: owner,
                     text: body.into(),
-                }];
+                }]
+                .into();
                 summaries.push(summary);
             }
         }

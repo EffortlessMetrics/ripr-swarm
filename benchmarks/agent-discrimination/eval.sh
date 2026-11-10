@@ -7,14 +7,21 @@
 #
 # Protocol (fixed direction, matches RUNBOOK.md):
 #   Phase 1 (ORIGINAL): flip the crate's changed source files back to
-#            HEAD~1 content, run `cargo test <name>`  -> MUST PASS
+#            HEAD~1 content, run the exact integration test -> MUST PASS
 #            (exit 0 AND an exact `test <name> ... ok` line).
-#   Phase 2 (CHANGED): restore HEAD content, run `cargo test <name>`
+#   Phase 2 (CHANGED): restore HEAD content, run the exact integration test
 #            -> MUST FAIL (nonzero exit AND an exact
 #            `test <name> ... FAILED` line).
 #
-# Prints DISCRIMINATES: yes|no plus the assert lines (inputs) the test uses.
-# Phase logs are kept in <bench>/logs/. Exit code 0 iff DISCRIMINATES: yes.
+# The test name must be defined in exactly one top-level tests/*.rs
+# integration target; the phases run that target with an exact name filter so
+# the verdict and the displayed inputs are bound to one source file.
+#
+# Prints DISCRIMINATES: yes|no, a SHA-256 digest of the test source used, plus
+# the assert lines (inputs) the test uses.
+# Phase logs are kept in a run-owned directory next to the crate, never
+# inside it: a submitted test must not be able to observe (or be scored by)
+# evaluator artifacts under the crate. Exit code 0 iff DISCRIMINATES: yes.
 #
 # Validity fixes over the Nov 2-4 seed-study evaluator (issue #13113):
 #   - step-zero toolchain PATH normalization (cargo was off the harness PATH
@@ -28,10 +35,6 @@
 set -u
 export CARGO_TERM_COLOR=never
 
-BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$BENCH_DIR/logs"
-mkdir -p "$LOG_DIR"
-
 if [ $# -ne 2 ]; then
   echo "Usage: bash eval.sh <crate_path> <test_function_name>"
   exit 2
@@ -43,9 +46,14 @@ if [ ! -d "$1" ]; then
 fi
 CRATE="$(cd "$1" && pwd -W 2>/dev/null || pwd)"
 TEST_NAME="$2"
-CRATE_NAME="$(basename "$CRATE")"
-LOG_ORIG="$LOG_DIR/$CRATE_NAME-eval-original.log"
-LOG_CHNG="$LOG_DIR/$CRATE_NAME-eval-changed.log"
+# Run-owned log directory OUTSIDE the crate: the evaluator's phase logs are
+# not crate content, and a submitted test must not be able to inspect their
+# presence or absence inside the crate (a test scoring on the log's absence
+# would fake discrimination). One writer per run-owned clone, so a
+# crate-named subdirectory under the sibling logs root cannot collide.
+LOG_DIR="$(dirname "$CRATE")/.agent-bench-logs/$(basename "$CRATE")"
+LOG_ORIG="$LOG_DIR/eval-original.log"
+LOG_CHNG="$LOG_DIR/eval-changed.log"
 
 # ---- Step zero: toolchain PATH normalization (issue #13113) -----------------
 if ! command -v cargo >/dev/null 2>&1; then
@@ -71,20 +79,21 @@ esac
 git -C "$CRATE" rev-parse --verify -q HEAD >/dev/null || { echo "ERROR: $CRATE is not a git repo"; exit 2; }
 git -C "$CRATE" rev-parse --verify -q HEAD~1 >/dev/null || { echo "ERROR: $CRATE has no HEAD~1 (need 2 commits)"; exit 2; }
 
-# Refuse a crate nested under any Cargo workspace manifest: cargo resolves
-# the nearest ancestor [workspace] and rejects the crate ("package is not a
-# member of the workspace"), which would score every phase as a setup
-# failure. Materialize run-owned clones outside Cargo workspace checkouts.
+# Conservatively refuse any ancestor Cargo manifest, including the filesystem
+# root: a workspace ancestor can claim the nested package and break
+# evaluation; some non-workspace manifests would be safe, but the scripts
+# refuse them all rather than guess. The manifest check runs BEFORE the
+# root-pattern break so a root Cargo.toml is still detected.
 DIR_WALK="$CRATE"
 while :; do
   if [ -f "$DIR_WALK/Cargo.toml" ] && [ "$DIR_WALK" != "$CRATE" ]; then
-    echo "ERROR: crate '$CRATE' sits under Cargo workspace manifest '$DIR_WALK/Cargo.toml'; cargo would claim it ('not a member of the workspace')." >&2
-    echo "       Materialize run-owned clones outside any Cargo workspace checkout (see RUNBOOK.md)." >&2
+    echo "ERROR: crate '$CRATE' sits under Cargo manifest '$DIR_WALK/Cargo.toml'; an ancestor workspace may claim it." >&2
+    echo "       Materialize run-owned clones outside any ancestor Cargo manifest (see RUNBOOK.md)." >&2
     exit 2
   fi
+  case "$DIR_WALK" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   PARENT="$(dirname "$DIR_WALK")"
   [ "$PARENT" = "$DIR_WALK" ] && break
-  case "$PARENT" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   DIR_WALK="$PARENT"
 done
 
@@ -97,24 +106,56 @@ if ! git -C "$CRATE" diff --quiet -- $CHANGED_FILES; then
   exit 2
 fi
 
-TEST_FILE="$(grep -RlF "fn ${TEST_NAME}(" "$CRATE/tests" 2>/dev/null | head -n 1)"
-if [ -z "$TEST_FILE" ]; then
-  echo "ERROR: no 'fn ${TEST_NAME}(' found under $CRATE/tests"
-  echo "       The new test must live in a file under tests/ (see RUNBOOK.md)."
+# Cargo can run identically named tests in multiple integration targets. A
+# name alone cannot bind its verdict and displayed input to one source file,
+# so the test name must be a plain identifier defined in exactly one
+# top-level tests/*.rs integration target (no nested test files).
+# Limitation: the fn-name search below is textual, so a `fn <name>(` inside a
+# comment, string, or #[cfg]-gated item also counts; a nested-mod function
+# additionally requires a module::name filter this protocol does not use.
+# Both cases fail safe (phase 1 cannot produce the exact ok line), they can
+# only score `no`, never credit a wrong verdict.
+case "$TEST_NAME" in
+  ''|*[!a-zA-Z0-9_]*) echo "ERROR: test name must be a Rust function identifier"; exit 2 ;;
+esac
+TEST_FILES="$(grep -RlF "fn ${TEST_NAME}(" "$CRATE/tests" 2>/dev/null || true)"
+TEST_COUNT="$(printf '%s\n' "$TEST_FILES" | awk 'NF { n++ } END { print n+0 }')"
+if [ "$TEST_COUNT" -ne 1 ]; then
+  echo "ERROR: expected exactly one test file defining fn ${TEST_NAME}( under $CRATE/tests; found $TEST_COUNT"
   exit 2
 fi
+TEST_FILE="$TEST_FILES"
+# The protocol uses a top-level integration target, not a unit test or an
+# included helper module with an unrelated Cargo target name. The nested
+# pattern comes first: in case globs `*` also matches `/`, so a nested file
+# would otherwise satisfy the top-level pattern.
+case "$TEST_FILE" in
+  "$CRATE"/tests/*/*) echo "ERROR: nested test files are not supported"; exit 2 ;;
+  "$CRATE"/tests/*.rs) ;;
+  *) echo "ERROR: test must be in a top-level tests/*.rs integration target"; exit 2 ;;
+esac
+TEST_TARGET="${TEST_FILE##*/}"
+TEST_TARGET="${TEST_TARGET%.rs}"
 
 restore_changed() {
   git -C "$CRATE" checkout -q HEAD -- $CHANGED_FILES
 }
+mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create $LOG_DIR" >&2; exit 2; }
 trap restore_changed EXIT
 
 # Sets PHASE_RC to cargo's true exit status. The caller must read $PHASE_RC,
 # NOT $? : the trailing assignment inside this function makes the function
 # itself always exit 0 (the seed-study bug this fixes).
 run_phase() { # $1=logpath
-  ( cd "$CRATE" && cargo test --color never "$TEST_NAME" ) > "$1" 2>&1
-  PHASE_RC=$?
+  # Open the log BEFORE running cargo and stop if it cannot be opened for
+  # writing: a readable-but-unwritable stale log must not let fail_line read
+  # an old FAILED line and fake a discriminating verdict.
+  local log_fd phase_rc
+  exec {log_fd}>"$1" || { echo "ERROR: cannot open $1 for writing" >&2; exit 2; }
+  ( cd "$CRATE" && cargo test --color never --test "$TEST_TARGET" -- "$TEST_NAME" --exact ) >&"$log_fd" 2>&1
+  phase_rc=$?
+  exec {log_fd}>&-
+  PHASE_RC=$phase_rc
 }
 
 ok_line() { # $1=log ; echoes exact `test <name> ... ok` line, if any
@@ -162,6 +203,10 @@ if [ -n "$REASON" ]; then
   tr -d '\r' < "$LOG_CHNG" | tail -n 20
 fi
 
+# Digest of the exact test source the verdict is bound to; record-run.sh
+# re-computes it from --final-test and refuses a mismatch, so a recorded
+# report can never credit bytes the evaluator did not run.
+echo "TEST_SOURCE_SHA256: $(sha256sum "$TEST_FILE" | awk '{print $1}')"
 echo "TEST_INPUT_EVIDENCE (from $(basename "$TEST_FILE")):"
 tr -d '\r' < "$TEST_FILE" | sed -n "/fn ${TEST_NAME}(/,/^}/p" | grep -n "assert" | sed 's/^/  /'
 

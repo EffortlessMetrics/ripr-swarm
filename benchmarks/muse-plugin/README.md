@@ -110,3 +110,101 @@ class, Muse version, plugin version, RIPR version, and fixture identity
 preserved. Plugin runs do not edit scoreboard baselines, ceilings, or admitted
 comparisons. A single run establishes an observation, not a target. Ingestion
 into the scoreboard is a separate reviewed change.
+
+
+## Typed-setup producer slice (#13184)
+
+`cargo xtask muse-plugin-setup` is the deterministic, model-free producer and
+evaluator seam for native setup trials. It attempts the real native setup for
+one scenario of this suite, retains every evidence byte in a disposable trial
+bundle, and emits one `muse-plugin-eval-v1` record per trial. It never runs a
+model: a `muse exec` exit 0 is not a pass, and this slice records
+`mcp.tools_discovered` as empty because no session tool listing is part of a
+setup-only trial.
+
+Two deterministic setups target `missing-or-unapproved-server`:
+
+- `missing-ripr` (`--setup missing-ripr`): every PATH entry that exposes a
+  `ripr` binary is removed and `ripr` is resolved explicitly against the
+  remaining entries (the OS executable search also consults the application
+  directory and would otherwise leak a dev build into the trial). The expected
+  typed outcome is `server_unavailable` with `environment.ripr_binary`
+  `missing`, or `predates_mcp` when the exposed binary answers
+  `ripr mcp --stdio` with `unknown command "mcp"`.
+- `unapproved-capability` (`--setup unapproved-capability --expose-ripr <dir>`):
+  the plugin is installed through the real Muse CLI but the capability
+  `plugin:ripr:mcp_server:core` is never approved, so the expected typed
+  outcome is `approval_required` when the exposed ripr is MCP-capable.
+
+Both setups also cover the historical cold-install shape: a released 0.10.x
+binary must be diagnosed with the MCP version floor, not a generic failure.
+
+The producer runs, in order and each with retained argv/stdout/stderr/exit
+bytes and observation timestamps: `muse --version`, `ripr --version`, a
+bounded `ripr mcp --stdio` initialize handshake, `muse plugins validate`,
+`muse plugins install` (skipped entirely by `--read-only`), and
+`muse plugins inspect`. An unavailable prerequisite (missing Muse entry
+point, missing plugin directory, missing ripr) is itself a typed setup
+outcome, never a panic and never fabricated success. `--read-only` exists so
+trials can run without mutating the host plugin store; the record's judgment
+names that choice, and `approval_required` coverage that needs the install
+step is a judged, non-read-only run.
+
+The evaluator (`--evaluate-only <bundle-dir>`, also run automatically after
+every produce) recomputes a digest for every retained byte and REFUSES a
+bundle with missing, substituted, or mismatched evidence. The guarantee is
+relative to the production manifest, which is the trust root and is not
+itself digest-authenticated: an edit that rewrites both a file and its
+recorded length/digest is outside that check, so the evaluator additionally
+binds every step stream to its expected bundle-relative path and refuses
+remapped bindings. It then re-derives
+the typed setup outcome from the retained bytes alone — the producer's claim
+is advisory and never consulted — builds the `muse-plugin-eval-v1` record,
+pins its wire shape against the canonical schema (#13165), and refuses any
+record whose claims outrun the bytes (ready/tools-loaded or executed credit
+from a failed-setup bundle, or an `mcp_capable` environment claim).
+
+### Reproducing the typed-setup slice
+
+The Muse launcher is typically invoked by absolute path; it is often not on
+PATH. Locate it first (`muse` on POSIX hosts, `muse.cmd` on Windows — try
+`which muse` or `where muse`, or the Muse install location) and pass it via
+`--muse`:
+
+```bat
+cargo run -p xtask -- muse-plugin-setup ^
+  --setup missing-ripr --read-only ^
+  --muse "<path to the Muse launcher>"
+```
+
+Recorded with Muse Code 1.4.14 (1.4.14-R7309.1): the command above produced
+`server_unavailable` with `environment.ripr_binary: missing`. Re-exposing a
+released pre-0.11 ripr such as 0.10.0 (`--setup unapproved-capability
+--read-only --expose-ripr <dir containing that ripr>`) produced
+`server_unavailable` with `environment.ripr_binary: predates_mcp` and the
+`unknown command "mcp"` bytes retained. Trial bundles land under
+`target/ripr/muse-plugin/<scenario>-<unix-ms>/` (out of the repository; the
+bundles are large, transient, host-specific evidence) together with the
+emitted record and a `manifest.json` that binds every retained byte to a
+digest. The two recorded bundles re-verify with
+`cargo xtask muse-plugin-setup --evaluate-only <bundle-dir>`.
+
+### Coverage status after the typed-setup slice
+
+Only `missing-or-unapproved-server` has machine-readable typed-setup trials;
+all seven other scenarios remain without dedicated end-to-end runs, and the
+two historical receipts above still do not establish them:
+
+| Scenario | Status |
+| --- | --- |
+| `missing-or-unapproved-server` | Typed-setup trials only (`server_unavailable` for missing and pre-MCP ripr; `approval_required` requires a judged non-read-only run with an MCP-capable ripr on PATH). No model journey. |
+| `rust-boundary-gap` | Unexecuted as a machine-readable trial; only historical prose receipts. |
+| `no-actionable-gap` | Unexecuted (the receipts explicitly leave it without a dedicated run). |
+| `stale-snapshot` | Unexecuted as a typed refusal trial (the second receipt's coverage is a successful journey's refresh, not a retained stale-read refusal). |
+| `changed-head-or-baseline` | Unexecuted. |
+| `test-only-edit-constraint` | Unexecuted (a test-only diff inside one successful journey is not a rejected out-of-scope edit). |
+| `typescript-weak-assertion` | Unexecuted. |
+| `incorrect-repair-control` | Unexecuted as an isolated incorrect-only journey (the receipts note the interior example ran alongside the boundary test). |
+
+Model-dependent journeys, natural-request runs, the incorrect-repair-control
+execution, and scoreboard ingestion all remain out of scope for this slice.

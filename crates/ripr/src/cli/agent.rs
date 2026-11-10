@@ -187,6 +187,10 @@ pub(super) struct AgentRepairOptions {
     pub(super) verify_authorization: crate::app::python_repair_verification::VerifyAuthorization,
     /// Request the rollback proof as part of the verify phase (#3570).
     pub(super) verify_rollback: bool,
+    /// `--test-result <path>` (#13203 slice B): a caller-supplied focused
+    /// `cargo test` result that the after phase validates and records. After
+    /// phase only; ripr never runs the tests itself.
+    pub(super) test_result: Option<PathBuf>,
     /// Explicit repair-attempt store locator, resolved against `root`.
     /// `None` is the repository-local default and keeps next-command bytes
     /// compatible.
@@ -355,6 +359,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut verify_authorized = false;
     let mut verify_authority: Option<String> = None;
     let mut verify_rollback = false;
+    let mut test_result: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
     let mut json = false;
     let mut i = 0usize;
@@ -476,6 +481,15 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--verify-rollback" => {
                 verify_rollback = true;
+            }
+            "--test-result" => {
+                i += 1;
+                refuse_repeated_flag(test_result.is_some(), "agent repair", "--test-result")?;
+                let value = expect_value(args, i, "--test-result")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --test-result requires a non-empty path; pass the focused test result file right after --test-result".to_string());
+                }
+                test_result = Some(PathBuf::from(value));
             }
             "--store" => {
                 i += 1;
@@ -648,6 +662,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 .to_string(),
         );
     }
+    if test_result.is_some() && phase != AgentRepairPhase::After {
+        return Err(
+            "agent repair --test-result is only valid with --phase after; the focused run happens after the edit and the after phase records it"
+                .to_string(),
+        );
+    }
     if phase == AgentRepairPhase::Verify && edit_authorization.authorized {
         return Err(
             "agent repair --edit-authorized/--edit-authority are only valid with --phase before; the verify phase takes --verify-authorized and --verify-authority <identity>"
@@ -720,6 +740,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        test_result,
         store,
         json,
         quiet: false,
@@ -1886,6 +1907,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,
@@ -1921,6 +1943,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,
@@ -1962,6 +1985,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
                 quiet: false,
@@ -2103,6 +2127,7 @@ mod tests {
                     authority: None,
                 },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,
