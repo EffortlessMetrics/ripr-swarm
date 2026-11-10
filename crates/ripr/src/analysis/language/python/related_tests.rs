@@ -2527,7 +2527,11 @@ fn path_is_under(file: &Path, root: &Path) -> bool {
 /// identifies the owner only for a test under the owner's project root that
 /// is not inside a rival's (deeper) project root; anywhere else the import is
 /// as likely to be the rival's module, so it fails closed.
-fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file: &Path) -> bool {
+pub(super) fn module_name_identifies_owner_for(
+    owner: &PythonOwner,
+    module: &str,
+    test_file: &Path,
+) -> bool {
     // A test-local module of the same name is ahead on `sys.path` (#13706).
     if test_local_module_shadows(owner, module, test_file) {
         return false;

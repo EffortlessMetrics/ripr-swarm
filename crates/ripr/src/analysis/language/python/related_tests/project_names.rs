@@ -93,7 +93,15 @@ pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
         })
     };
     let mut files_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    // Package initializers by their repository-relative module path, to find
+    // the file behind each recorded re-exporting package.
+    let mut init_files: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for file in source_files {
+        if file.file_name().and_then(|name| name.to_str()) == Some("__init__.py")
+            && let Some(full) = owner_module_paths(file).into_iter().next()
+        {
+            init_files.entry(full).or_default().push(file.clone());
+        }
         let Some(root) = nearest_project_root(file, &mut has_marker) else {
             continue;
         };
@@ -134,6 +142,71 @@ pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
                 rival_roots,
                 shadowed: false,
             });
+        }
+        record_project_reexport_names(
+            owner,
+            &owner_root,
+            &init_files,
+            &files_by_module,
+            &mut has_marker,
+        );
+    }
+}
+
+/// Gives the package that re-exports `owner` its project-relative name
+/// (`svc/b/pkg/__init__.py` in the project `svc/b` imports as `pkg`), so
+/// `from pkg import limit` in a test of that project resolves (#13737).
+/// [`apply_package_reexports`](super::super::reexports) only knows the
+/// repository-relative paths (`svc.b.pkg`). The same closed gate applies as for
+/// the owner's own names: the package must sit in the owner's project root, the
+/// name goes through the ambiguity record (so only a test under that root may
+/// use it) and a same-project twin (`pkg.py` beside `pkg/__init__.py`) leaves
+/// the name identifying neither. Runs after the reexport pass.
+fn record_project_reexport_names(
+    owner: &mut PythonOwner,
+    owner_root: &Path,
+    init_files: &BTreeMap<String, Vec<PathBuf>>,
+    files_by_module: &BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
+    has_marker: &mut impl FnMut(&Path) -> bool,
+) {
+    let exporters = owner
+        .reexport_modules
+        .iter()
+        .filter_map(|module| init_files.get(module))
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    for init in exporters {
+        // A package of another project (or of none) is not importable by a
+        // project-relative name from this owner's project.
+        if nearest_project_root(&init, has_marker).as_deref() != Some(owner_root) {
+            continue;
+        }
+        let known = owner_module_paths(&init);
+        for module in project_relative_module_names(&init, owner_root) {
+            if known.contains(&module)
+                || owner.reexport_modules.contains(&module)
+                || owner
+                    .ambiguous_src_modules
+                    .iter()
+                    .any(|ambiguous| ambiguous.module == module)
+            {
+                continue;
+            }
+            let init_file = normalized_path(&init);
+            let rival_roots = rival_roots_for(files_by_module, &module, |file, _| {
+                normalized_path(file) == init_file
+            });
+            if rival_roots.iter().any(|root| root == owner_root) {
+                continue;
+            }
+            owner.ambiguous_src_modules.push(AmbiguousSrcModule {
+                module: module.clone(),
+                owner_root: owner_root.to_path_buf(),
+                rival_roots,
+                shadowed: false,
+            });
+            owner.reexport_modules.push(module);
         }
     }
 }

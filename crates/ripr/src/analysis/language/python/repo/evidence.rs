@@ -54,8 +54,8 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    PythonRelatedCandidate, apply_class_facts, find_related_tests, owner_module_paths,
-    related_test_candidates, related_tests_for_candidates,
+    PythonRelatedCandidate, apply_class_facts, apply_project_module_names, find_related_tests,
+    owner_module_paths, related_test_candidates, related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -435,6 +435,28 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         .flat_map(|(facts, _)| facts.owners)
         .collect();
 
+    // Every selected non-test source file, for project-relative module names
+    // (#13737). A capped or incompletely discovered run cannot rule out a
+    // same-named module of another project, so it records none.
+    let discovery_complete = input.counts.capped == 0
+        && !matches!(
+            &input.status,
+            PythonRepoRunStatus::Capped
+                | PythonRepoRunStatus::Partial {
+                    reason: PartialRunReason::DiscoveryIncomplete { .. }
+                }
+        );
+    let project_source_files: Vec<PathBuf> = if discovery_complete {
+        input
+            .production_files
+            .iter()
+            .chain(&input.ambiguous_files)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     for relative in &input.production_files {
         match load_facts_with_source(root, relative).and_then(|(facts, source)| {
             let context = super::super::PythonIdentityContext::new(&source)
@@ -467,6 +489,13 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             .map(|(_, init_source)| init_source.as_str())
                     },
                 );
+                // Project-relative names follow the re-export pass, as in diff
+                // mode, so a nested project's package gets its own name too.
+                if discovery_complete {
+                    apply_project_module_names(&mut facts.owners, project_source_files.iter(), |path| {
+                        root.join(path).exists()
+                    });
+                }
                 // Class facts are file-local, so the single shared owner of
                 // them runs here, before the owner inventory and finding
                 // projection read them, exactly as diff mode orders it

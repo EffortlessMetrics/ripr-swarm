@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python repository scans: project-relative module names of nested projects (`from core import limit`) now count in repository scans as they do in diff checks, and a nested project's re-exporting package is known by its project-relative name (`from pkg import limit`), only for tests under that project (#13737).

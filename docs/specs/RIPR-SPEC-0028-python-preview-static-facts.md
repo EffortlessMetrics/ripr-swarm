@@ -368,7 +368,10 @@ matches its project-relative dotted path, so `from core import f` in
 owner only for a test under the same project root; the repository-root `lib/`
 import root is not applied inside a project, and a name another file of the
 same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
-neither. Bare file stems and arbitrary path suffixes never count as module
+neither. The same names apply in repository scans as in diff checks, and a
+package `__init__.py` of the owner's own project that re-exports the owner is
+also known by its project-relative name (`from pkg import f` for
+`svc/b/pkg/__init__.py`), under the same project-root gate (#13737). Bare file stems and arbitrary path suffixes never count as module
 identity.
 A src-layout short name that a plain module of the same project also produces
 (a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
