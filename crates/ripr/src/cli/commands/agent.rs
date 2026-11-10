@@ -1110,7 +1110,10 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), AgentVerifyError>
 }
 
 /// Deliberate named refusals from `render_agent_verify`; exit mapping reads
-/// this type, not message prefixes (#12102).
+/// this type, not message prefixes (#12102). The no-movement refusal is
+/// classified from the producer's typed `AgentVerifyMovementError` (#14021),
+/// so a reworded rendering can no longer flip its class; drift and gap-binding
+/// stay prose-keyed (#12102) until their producers carry types too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AgentVerifyRefusalKind {
     InputDrift,
@@ -1175,14 +1178,17 @@ pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyErro
     }
 }
 
-pub(super) fn classify_verify_movement_error(error: String) -> AgentVerifyError {
-    if error.contains("no repository movement") {
-        AgentVerifyError::Refusal {
-            kind: AgentVerifyRefusalKind::NoMovement,
-            message: format!("agent verify {error}"),
-        }
-    } else {
-        AgentVerifyError::Operational(format!("agent verify {error}"))
+/// #14021: the no-movement refusal classifies from the producer's typed
+/// `AgentVerifyMovementError`, not a substring of the rendered message. The
+/// producer carries exactly one variant, so every movement error it reports
+/// is the named refusal; the rendered text stays byte-identical to the prose
+/// the old `format!` added.
+pub(super) fn classify_verify_movement_error(
+    error: crate::agent::artifact::AgentVerifyMovementError,
+) -> AgentVerifyError {
+    AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: format!("agent verify {error}"),
     }
 }
 
@@ -3134,6 +3140,9 @@ fn run_agent_repair_phase(
                 Err(error) => {
                     // Deliberate named refusals are typed (exit 3) from
                     // [`AgentVerifyError`], not message-prefix matching (#12102).
+                    // The no-movement arm is producer-typed (#14021): the
+                    // class rides on `AgentVerifyMovementError`, so a reworded
+                    // rendering cannot reroute this narration.
                     if let AgentVerifyError::Refusal { kind, message } = &error {
                         match kind {
                             AgentVerifyRefusalKind::InputDrift => {
