@@ -75,7 +75,20 @@ Every normal swarm slice should finish the same way:
 
 ## Runner Posture
 
-The first routed lane should be Rust-only:
+The final queue source selects owned `em-ci-build` heavy/control capabilities
+for actual native G and has no ordinary hosted fallback. The
+[CI runner placement](CI.md#self-hosted-runner-placement) describes its callable
+portfolio. Source alone does not establish live activation or installed capacity.
+
+### Historical host-label bootstrap
+
+The host-label posture and proof runbook below describe the installed
+predecessor, retained for interpreting its receipts. They are not instructions
+to restore retired label/main subscriptions or to request ordinary CI. A
+separately selected activation-owner bootstrap must use the actual installed
+interface and protections; after verified activation use the native procedure.
+
+The original routed lane was Rust-only:
 
 ```text
 Ripr Rust Small Result:
@@ -129,7 +142,7 @@ label inventories.
 The VS Code lane should remain hosted until a separate Node 24 / VS Code / Xvfb
 runner image is proven.
 
-## Self-Hosted Proof Runbook
+## Historical Self-Hosted Proof Runbook
 
 An org-visible operator should use this runbook to close the remaining
 self-hosted cutover proof. Do not expose runner registration tokens, runner

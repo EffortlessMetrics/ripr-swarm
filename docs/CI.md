@@ -266,14 +266,16 @@ denominator remains intact, alongside the Windows/macOS shell lanes, Ubuntu
 22.04 wheel ABI and extension/Xvfb platform obligations. These are named
 platform requirements, not an automatic hosted recovery route.
 
-The current main-scope writer stays intact in this preparation. Removing it is
-a source/settings activation, gated by actual installed heavy and separate
-control capacity, image identity, two distinct compatible G subjects showing
-cache reuse, meaningful toolchain/lock/feature/target/profile invalidation,
-cold/corrupt/unavailable cache behavior and cleanup isolation. Queue-ref caches
-are not claimed reusable across unrelated refs. Explicit hosted recovery may
-be cold or restore-only; it is not an ordinary fallback and must not write a
-normal protected success under a different resource/trust contract.
+The installed predecessor retains its main-scope cache writer until coordinated
+activation; this final source retires that writer. Activating the replacement
+requires actual installed heavy and separate control capacity, image identity,
+two distinct compatible G subjects showing cache reuse, meaningful
+toolchain/lock/feature/target/profile invalidation, cold/corrupt/unavailable cache
+behavior and cleanup isolation. Queue-ref caches are not claimed reusable
+across unrelated refs. Explicit hosted recovery may be cold or restore-only;
+it is not an ordinary fallback and must not write a normal protected success
+under a different resource/trust contract. Source retirement does not establish
+installed cutover or cache continuity.
 
 This final source removes label subscriptions, ordinary main push, label
 recovery and the every-main hard-cut observer; protected G/cut enforcement and
@@ -340,9 +342,10 @@ workflow behavior documented in [Current Workflows](#current-workflows).
     replacement;
   - synchronize-cancel favors the latest commit and may abandon near-complete
     work;
-  - Request-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
-    only on a `merge-ready` label event and cancels only when a repeated
-    request replaces it; ordinary labels use a unique group and cannot cancel it.
+  - The historical request-cancel route (`routed-rust.yml`, #4986) ran PR qualification
+    only on a `merge-ready` label event and cancelled only when a repeated
+    request replaced it; ordinary labels used a unique group. This describes
+    the predecessor, not a retained label subscription in the final source.
 - Any switch to or from `cancel-in-progress` must document the affected
   workflows, rollback path, cost tradeoff, and review impact.
 - Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
@@ -380,23 +383,25 @@ lane:
 - hardware/GPU/receipt-only -> syntax/receipt validation only;
 - mixed or unknown -> Rust-small, not full CI.
 
-Full CI is opt-in by policy trigger (label/manual dispatch/main push/release/
-schedule/merge queue), not the default PR path.
+This older planner proposal does not authorize event subscriptions or narrow the
+native queue portfolio. The final source uses native-G qualification for the
+selected candidate; release, incident and deep proof retain their separately
+named callable/manual/scheduled authorities. Ordinary PR publication, labels
+and main pushes do not request CI.
 
 ### 4) Hosted fallback boundary
 
-- Do **not** remove, narrow, or relabel the current protected GitHub-hosted
-  Rust-small fallback without updating the routed-runner docs and the
-  branch-protection contract in the same PR (the retired active-goal state
-  left with the `.ripr/goals/` scheduler in #1701 and has no successor to
-  update).
-- The current routed Rust-small workflow may select GitHub-hosted when a PR is
-  untrusted, runner state cannot be read, or no idle image-ready CX53/CX43
-  runner is available. That result remains a valid protected-path success while
-  the CX53/CX43 proof closeout is blocked.
-- Do **not** replace a targeted Rust-small fallback with broader hosted full CI
-  unless the PR names the cost, proof obligation, and explicit trigger such as
-  `full-ci`, `release-check`, or `ci-budget-ack`.
+The installed predecessor's CX43/CPX42/CX53 router could select GitHub-hosted
+Rust-small and produce a protected result under that earlier contract. This
+final source removes ordinary label/main admission and that automatic fallback;
+its native-G caller selects owned heavy and separate control capabilities.
+
+Keep the predecessor's actual protections in force until coordinated activation
+and verified replacement evidence. Missing owned capacity or unreadable runner
+state must not silently select a different trust/resource contract. Any hosted
+recovery is a separately named, explicitly authorized manual diagnostic, never
+an ordinary fallback or normal protected-path success. It cannot widen into full
+hosted CI without a named proof purpose, cost and authorized trigger.
 
 ### 5) Artifact policy
 
@@ -1594,23 +1599,24 @@ the allowlist budget row.
 
 ### Self-Hosted Runner Placement
 
-The everyday required Rust gate routes through `routed-rust.yml`
-(`CX43 -> CPX42 -> CX53 -> GitHub-hosted` fallback, shared `/mnt/ci-cache`, disk guards,
-and scratch cleanup) and exposes the single branch-protection check
-`Ripr Rust Small Result`. That lane is the migrated reference and is not changed
-by routine runner-placement edits.
+The final `routed-rust.yml` caller admits actual native merge groups only. It
+selects `em-ci-build` / `rust-heavy` for Rust work and `em-ci-build` / `ci-control`
+for intake and result work, exposing `Ripr Rust Small Result`. The older
+CX43/CPX42/CX53 router, `/mnt/ci-*` scratch/cache contract and automatic hosted
+fallback describe the installed predecessor, not this source generation.
 
-The auxiliary placement below reflects current workflow declarations, not the
-older shared-runner migration plan. PR-label predicates left in some jobs do not
-create subscriptions. The protected routed caller above retains its narrow
-bootstrap label/main-push routes and merge-group support; this table does not
-establish queue activation, installed runner capacity, or execution within a
-20-minute qualification budget.
+The placement below reflects checked-in declarations. Dormant PR-label
+predicates do not create subscriptions. For callable `ci.yml`, the native caller
+supplies the owned runner configurations; `ubuntu-latest` is the leaf's manual
+or unspecified-caller default, not evidence that native work executes hosted.
+This table establishes no installed capacity, queue activation or 20-minute
+qualification result.
 
 | Workflow / job | Declared runner | Current admission |
 | --- | --- | --- |
-| `ci.yml` release, Rust-only and MSRV jobs | `ubuntu-latest` | Manual dispatch or frozen-subject callable selection |
-| `ci.yml` identity and result jobs | `ubuntu-latest` | Frozen-subject callable path only |
+| `ci.yml` release, Rust-only and MSRV jobs | Caller `runner_config`; native caller selects `em-ci-build` / `rust-heavy`; default `ubuntu-latest` | Manual dispatch or frozen-subject callable selection |
+| `ci.yml` source identity | Caller `runner_config`; native caller selects `em-ci-build` / `rust-heavy`; default `ubuntu-latest` | Frozen-subject callable path only |
+| `ci.yml` result | Caller `control_runner_config`; native caller selects `em-ci-build` / `ci-control`; default `ubuntu-latest` | Frozen-subject callable path only |
 | `ci.yml` `vscode` via `vscode-e2e.yml` | `ubuntu-latest` | Manual dispatch or callable `run_vscode` selection |
 | `coverage.yml`, `test-analytics.yml` | `ubuntu-latest` | Manual dispatch only |
 | `future-clippy.yml` both jobs | `ubuntu-latest` | Manual dispatch only |
