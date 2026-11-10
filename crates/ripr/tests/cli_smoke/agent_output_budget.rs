@@ -245,7 +245,9 @@ fn ripr_repair_start_does_not_repeat_the_summary_in_the_card() -> TestResult {
         &["repair", super::REPAIR_ROUTE_SEAM, "--root", &root_arg],
         &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
     );
-    let stdout = String::from_utf8(output.stdout)?.replace(&root_arg, "<root>");
+    // The binary prints `/` separators on Windows, so fold the root the same way
+    // it is printed instead of replacing the backslash spelling of the argument.
+    let stdout = String::from_utf8(output.stdout)?.replace(&printed_path(&root), "<root>");
     let stderr = String::from_utf8(output.stderr)?;
     assert!(output.status.success(), "{stdout}\n{stderr}");
     // Positive: the summary and the card's own lines are both present.

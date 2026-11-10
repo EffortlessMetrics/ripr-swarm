@@ -26,25 +26,6 @@ pub(crate) fn agent_card_plain_lines(
     start_summary: Option<&str>,
 ) -> Vec<String> {
     let mut lines = vec!["Repair brief for this gap".to_string()];
-    // `start_summary` is only meaningful for a started, ready attempt: every
-    // other state keeps the full brief, since the start summary then did not
-    // carry these lines.
-    let started_for_dedupe = card
-        .attempt
-        .as_ref()
-        .is_some_and(|attempt| attempt.state == "awaiting_edit")
-        && card.readiness.repair_ready
-        && hold.is_none();
-    let skip_repeats = start_summary.is_some() && started_for_dedupe;
-    // A line is only left out when the summary printed that exact text: the
-    // card prefers a matched finding's expression and a route-specific
-    // assertion, which the packet-derived summary may not carry.
-    let summary_has = |needle: &str| {
-        start_summary.is_some_and(|text| text.lines().any(|line| line.trim() == needle))
-    };
-    if !(skip_repeats && summary_has(&format!("changed behavior: {}", card.changed_behavior))) {
-        lines.push(format!("  Changed behavior: {}", card.changed_behavior));
-    }
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
     // would also start (#11397, #11381).
@@ -62,6 +43,23 @@ pub(crate) fn agent_card_plain_lines(
         && card.readiness.repair_ready
         && !refused;
     let ready = card.readiness.repair_ready && !refused;
+    // `start_summary` is only meaningful for a started, ready attempt whose
+    // id the summary actually printed (inside its continue command): every
+    // other case keeps the full brief, since the summary then did not carry
+    // the continue command, attempt id and packet path these lines repeat.
+    let skip_repeats = started
+        && start_summary
+            .zip(card.attempt.as_ref())
+            .is_some_and(|(text, attempt)| text.contains(attempt.attempt_id.as_str()));
+    // A line is only left out when the summary printed that exact text: the
+    // card prefers a matched finding's expression and a route-specific
+    // assertion, which the packet-derived summary may not carry.
+    let summary_has = |needle: &str| {
+        start_summary.is_some_and(|text| text.lines().any(|line| line.trim() == needle))
+    };
+    if !(skip_repeats && summary_has(&format!("changed behavior: {}", card.changed_behavior))) {
+        lines.push(format!("  Changed behavior: {}", card.changed_behavior));
+    }
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
     } else if let Some(attempt) = card
@@ -263,7 +261,7 @@ pub(crate) fn agent_card_plain_lines(
     // actionable lines, next to the machine-readable route that takes it.
     lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
-    // The start summary prints the packet path and `--json` route already.
+    // The start summary prints the packet file path already.
     if !skip_repeats {
         lines.push(format!(
             "  Machine-readable details (JSON): {packet_command}"

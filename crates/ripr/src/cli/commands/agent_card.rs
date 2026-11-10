@@ -1130,13 +1130,13 @@ mod tests {
                 .join("\n")
         };
         let same = render(Some(
-            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n",
+            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n  Next: ripr continue --attempt repair-attempt-1\n",
         ));
         if same.contains("Changed behavior") || same.contains("Suggested assertion") {
             return Err(format!("printed facts repeated:\n{same}"));
         }
         let differing = render(Some(
-            "  changed behavior: other\n  assertion shape: other\n",
+            "  changed behavior: other\n  assertion shape: other\n  Next: ripr continue --attempt repair-attempt-1\n",
         ));
         if !differing.contains("Changed behavior: expr")
             || !differing.contains("Suggested assertion: assert_eq!(f(1), 2)")
@@ -1146,12 +1146,24 @@ mod tests {
         // A longer summary line that merely starts with the card's text is a
         // different fact: the card keeps its own line.
         let prefix_only = render(Some(
-            "  changed behavior: expression changed\n  assertion shape: assert_eq!(f(1), 2) && more\n",
+            "  changed behavior: expression changed\n  assertion shape: assert_eq!(f(1), 2) && more\n  Next: ripr continue --attempt repair-attempt-1\n",
         ));
         if !prefix_only.contains("Changed behavior: expr")
             || !prefix_only.contains("Suggested assertion: assert_eq!(f(1), 2)")
         {
             return Err(format!("prefix match dropped card facts:\n{prefix_only}"));
+        }
+        // A summary that never printed this attempt's id (an unreadable
+        // packet, say) is not a start the card may lean on: full brief.
+        let no_attempt_id = render(Some(
+            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n",
+        ));
+        if !no_attempt_id.contains("Repair attempt: repair-attempt-1")
+            || !no_attempt_id.contains("Changed behavior: expr")
+        {
+            return Err(format!(
+                "brief lost lines without the attempt id:\n{no_attempt_id}"
+            ));
         }
         let full = render(None);
         if !full.contains("Changed behavior") || !full.contains("Suggested assertion") {
