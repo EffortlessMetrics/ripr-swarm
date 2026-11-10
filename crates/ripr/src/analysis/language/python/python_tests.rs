@@ -2151,7 +2151,6 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         reexport_modules: vec!["core".to_string()],
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
-        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
