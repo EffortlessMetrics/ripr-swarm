@@ -16,7 +16,8 @@ tests = [
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::semantic_digest_is_order_and_relocation_invariant",
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::digest_sorted_lists_reject_duplicate_keys",
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::dependency_order_does_not_change_substrate_compatibility",
-  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::external_helper_fallback_must_name_a_syntax_only_variant",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::external_helper_fallback_must_be_a_registered_syntax_only_fallback",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::external_helper_missing_or_blank_fallback_is_missing_field",
 ]
 fixtures = [
   "fixtures/adapter-substrate-qualification-corpus/corpus.json",
