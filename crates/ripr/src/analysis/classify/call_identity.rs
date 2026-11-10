@@ -3319,9 +3319,13 @@ fn qualified_call_names_owner(
 /// test's file that defines the rival, a bare call bound to it by a simple
 /// `use`, a `use m::*` glob, and the test's own `use` items, which shadow the
 /// module's. Cases that still keep the production relation although Rust
-/// would resolve to the local rival: grouped or chained `use` items and a
-/// renamed bare import (shared call identity, #10240). A wrapper module that delegates to the
-/// library is withheld too, because its call names the wrapper.
+/// would resolve to the local rival: grouped or chained `use` items, a
+/// renamed bare import (shared call identity, #10240), and a rival fn at the
+/// file root reached from a nested test module (`use super::*`, `use
+/// super::name`, `use crate::name`), because root-level rivals are not
+/// representable in the module table (#10855). A bare call in the rival's own
+/// module is withheld. A wrapper module that delegates to the library is
+/// withheld too, because its call names the wrapper.
 pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     index: &RustIndex,
     owner: &FunctionSummary,
