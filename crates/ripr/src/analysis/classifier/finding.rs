@@ -700,6 +700,32 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
     fn is_ident_byte(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_'
     }
+    fn record_pattern_bindings(pattern: &str, events: &mut Vec<(String, bool)>) {
+        // In a struct pattern `field: binding` only the name after the colon is
+        // bound; the field label is not a shadow. Classify each occurrence by
+        // its own position. `let` and `for` share this rule.
+        let pattern_bytes = pattern.as_bytes();
+        let mut index = 0;
+        while index < pattern_bytes.len() {
+            if !is_ident_byte(pattern_bytes[index]) {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            while index < pattern_bytes.len() && is_ident_byte(pattern_bytes[index]) {
+                index += 1;
+            }
+            let word = &pattern[start..index];
+            if matches!(word, "mut" | "ref") {
+                continue;
+            }
+            let after_word = pattern[index..].trim_start();
+            let label = after_word.starts_with(':') && !after_word.starts_with("::");
+            if !label {
+                events.push((word.to_string(), false));
+            }
+        }
+    }
     // Quoted text and comments are not code: mask them before every scan.
     let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
     let body = masked.as_str();
@@ -746,32 +772,7 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             Some(name) => {
                 events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
             }
-            None => {
-                // In a struct pattern `field: binding` only the name after the
-                // colon is bound; the field label is not a shadow. Classify
-                // each occurrence by its own position.
-                let pattern_bytes = pattern.as_bytes();
-                let mut index = 0;
-                while index < pattern_bytes.len() {
-                    if !is_ident_byte(pattern_bytes[index]) {
-                        index += 1;
-                        continue;
-                    }
-                    let start = index;
-                    while index < pattern_bytes.len() && is_ident_byte(pattern_bytes[index]) {
-                        index += 1;
-                    }
-                    let word = &pattern[start..index];
-                    if matches!(word, "mut" | "ref") {
-                        continue;
-                    }
-                    let after_word = pattern[index..].trim_start();
-                    let label = after_word.starts_with(':') && !after_word.starts_with("::");
-                    if !label {
-                        events.push((word.to_string(), false));
-                    }
-                }
-            }
+            None => record_pattern_bindings(pattern, &mut events),
         }
     }
     // A `for <pattern> in` loop variable and a plain `<ident> = ...`
@@ -781,12 +782,7 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         let after = &rest[offset + "for ".len()..];
         let word_start = offset == 0 || !is_ident_byte(rest.as_bytes()[offset - 1]);
         if word_start && let Some(end) = after.find(" in ") {
-            for word in after[..end]
-                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
-                .filter(|word| !word.is_empty())
-            {
-                events.push((word.to_string(), false));
-            }
+            record_pattern_bindings(&after[..end], &mut events);
         }
         rest = after;
     }
@@ -1844,6 +1840,23 @@ mod tests {
             "let amount = tax(100);",
             Some("tax")
         ));
+    }
+
+    #[test]
+    fn owner_binding_scan_distinguishes_for_loop_field_labels_from_bindings() {
+        let bound = |body: &str| bound_identifiers_from_owner_calls(body, "tax");
+        assert!(
+            bound("let amount = tax(100); for Record { amount: amount } in records { assert_eq!(amount, 0); }")
+                .is_empty(),
+            "a same-named field binding in a for-loop pattern rebinds the owner result"
+        );
+        assert_eq!(
+            bound(
+                "let amount = tax(100); for Record { amount: other } in records { assert_eq!(amount, 90); }"
+            ),
+            vec!["amount".to_string()],
+            "a struct field label in a for-loop pattern does not rebind the owner result"
+        );
     }
 
     #[test]
