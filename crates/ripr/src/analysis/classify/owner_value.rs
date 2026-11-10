@@ -937,6 +937,7 @@ fn lower_tuple_owner(definition: &str, name: &str, tuple: &TupleOwner<'_>) -> Op
     }
     let mut body = masked[open + 1..close].to_string();
     let mut lowered = Vec::new();
+    let mut lowered_names: Vec<&str> = Vec::new();
     for parameter in signature[params_open + 1..params_close].split(',') {
         let parameter = parameter.trim();
         if parameter.is_empty() {
@@ -959,6 +960,12 @@ fn lower_tuple_owner(definition: &str, name: &str, tuple: &TupleOwner<'_>) -> Op
             (parameter_name, parameter_name)
         };
         body = replace_word(&body, parameter_name, ".0", replacement);
+        // `self` lowers to `self_`: a parameter already named `self_`, or a
+        // repeated name, would alias two operands.
+        if parameter_name == "self_" || lowered_names.contains(&replacement) {
+            return None;
+        }
+        lowered_names.push(replacement);
         lowered.push(format!("{replacement}: {}", tuple.inner));
     }
     body = replace_word(&body, "Self", "(", "(");

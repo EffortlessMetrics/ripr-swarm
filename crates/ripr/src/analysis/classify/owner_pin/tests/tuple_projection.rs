@@ -299,3 +299,23 @@ fn operand_order_decides_whether_the_versions_agree() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_parameter_named_like_the_lowered_receiver_is_not_lowered() -> Result<(), String> {
+    // `self_` would alias the receiver in the lowered owner, so the owner is
+    // outside the subset and the discriminating pin keeps its credit.
+    let lib = "#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\n\nimpl Money {\n    pub fn mix(self, self_: Money) -> Money {\n        Self(self_.0 * self.0)\n    }\n}\n";
+    let tests = test_file(
+        "",
+        "    let r = Money(2).mix(Money(0));\n    assert_eq!(r.0, 0);",
+    );
+    let admitted = admitted_with_before(
+        lib,
+        "mix",
+        "Self(self_.0 * self.0)",
+        "Self(self_.0 + self.0)",
+        &tests,
+    )?;
+    assert_eq!(admitted, 1);
+    Ok(())
+}
