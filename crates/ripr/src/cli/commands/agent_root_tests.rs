@@ -638,7 +638,6 @@ fn cli_non_git_patch_snapshots_refuse_missing_git_revision_provenance() -> Resul
         json: true,
     })
     .err()
-    .map(|error| error.to_string())
     .ok_or("non-Git verify was admitted")?;
     assert!(
         refusal.message().contains("agent verify before artifact")
