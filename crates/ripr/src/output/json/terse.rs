@@ -484,13 +484,19 @@ mod tests {
         with_basis[4]["basis"] = serde_json::json!([{"code": "C1", "summary": "cap"}]);
         let mut wrong_state = rows.clone();
         wrong_state[1]["state"] = serde_json::json!("yes");
+        let mut wrong_confidence = rows.clone();
+        wrong_confidence[2]["confidence"] = serde_json::json!("low");
+        let mut wrong_name = rows.clone();
+        wrong_name[3]["stage"] = serde_json::json!("reach");
         let gap = serde_json::json!({"id": "gap:a", "owner": "f"});
         let full = serde_json::json!({"findings": [
             {"ripr": ripr, "evidence_stages": rows,
              "canonical_gap": gap, "canonical_gap_id": "gap:a"},
             {"ripr": ripr, "evidence_stages": with_basis,
              "canonical_gap": gap, "canonical_gap_id": "gap:b"},
-            {"ripr": ripr, "evidence_stages": wrong_state}
+            {"ripr": ripr, "evidence_stages": wrong_state},
+            {"ripr": ripr, "evidence_stages": wrong_confidence},
+            {"ripr": ripr, "evidence_stages": wrong_name}
         ]});
         let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
         let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
@@ -501,9 +507,11 @@ mod tests {
         );
         assert!(terse["findings"][0].get("evidence_stages").is_none());
         assert!(terse["findings"][0].get("canonical_gap_id").is_none());
-        // Basis rows, a different gap id and a state mismatch are all kept.
-        assert_eq!(terse["findings"][1], full["findings"][1]);
-        assert_eq!(terse["findings"][2], full["findings"][2]);
+        // Basis rows, a different gap id, and a state, confidence or stage-name
+        // mismatch are all kept verbatim.
+        for kept in 1..=4 {
+            assert_eq!(terse["findings"][kept], full["findings"][kept]);
+        }
         Ok(())
     }
 
