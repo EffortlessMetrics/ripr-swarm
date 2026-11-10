@@ -507,7 +507,7 @@ jobs = ["windows-advisory-subset"]
 commands = []
 estimated_lem = 5
 artifact_families = []
-description = "Reusable native Windows subset: the supported native merge-group profile requires successful subset verdicts as well as source/status/log/receipt and nonempty execution evidence. Legacy qualification and explicit diagnostics retain advisory test outcomes. This support stage does not select or activate the native caller."
+description = "Reusable native Windows subset: the supported native merge-group profile requires successful subset verdicts as well as source/status/log/receipt and nonempty execution evidence. Legacy qualification and explicit diagnostics retain advisory test outcomes. The prepared native caller selects this mandatory profile; source preparation alone does not establish installed queue activation."
 
 [[lane]]
 id = "completions-smoke"
