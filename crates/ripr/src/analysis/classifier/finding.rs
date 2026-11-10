@@ -757,6 +757,14 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         }
         text
     }
+    /// Whether an initializer's value is the owner's result. A block whose
+    /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
+    /// `;`) cannot be read as the owner's value, so it fails closed.
+    fn value_from_owner(initializer: &str, owner_name: &str) -> bool {
+        let opens = initializer.matches(['(', '[', '{']).count();
+        let closes = initializer.matches([')', ']', '}']).count();
+        opens == closes && !initializer.contains(';') && text_calls_owner(initializer, owner_name)
+    }
     // Quoted text and comments are not code: mask them before every scan.
     let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
     let body = masked.as_str();
@@ -806,7 +814,7 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         });
         match simple {
             Some(name) => {
-                events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
+                events.push((name.to_string(), value_from_owner(initializer, owner_name)))
             }
             None => record_pattern_bindings(pattern, &mut events),
         }
@@ -891,19 +899,11 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             if !assign.starts_with('=') || assign.starts_with("==") || assign.starts_with("=>") {
                 continue;
             }
-            if at > 0 && bytes[at - 1] == b'.' {
-                continue;
-            }
             if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
                 continue;
             }
-            // Stop at the first `;` even inside a block: a call before it is
-            // discarded, not the assigned value (fail closed).
-            let initializer = statement_prefix(&assign[1..])
-                .split(';')
-                .next()
-                .unwrap_or_default();
-            events.push((name.clone(), text_calls_owner(initializer, owner_name)));
+            let initializer = statement_prefix(&assign[1..]);
+            events.push((name.clone(), value_from_owner(initializer, owner_name)));
         }
     }
     let mut bound: Vec<String> = Vec::new();
@@ -1889,6 +1889,14 @@ mod tests {
                 "let mut amount = tax(100); amount.a.b = 1; assert_eq!(amount.a.b, 1);",
             ),
             (
+                "block with a leading discarded owner call",
+                "let mut amount = tax(1); amount = { tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "let block with a leading discarded owner call",
+                "let amount = { tax(1); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
                 "block initializer discarding the owner call",
                 "let mut amount = tax(1); amount = { let x = 0; tax(2); 0 }; assert_eq!(amount, 0);",
             ),
@@ -1919,6 +1927,18 @@ mod tests {
             (
                 "nested field of another receiver",
                 "let amount = tax(100); other.amount.value = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "field comparison and method call on the local",
+                "let amount = tax(100); assert!(amount.value <= 3 && amount.value == 1 && amount.len() > 0);",
+            ),
+            (
+                "compound write on another receiver",
+                "let amount = tax(100); other.amount += 1; assert_eq!(amount, 90);",
+            ),
+            (
+                "block tail is the owner call",
+                "let amount = { tax(100) }; assert_eq!(amount, 90);",
             ),
             (
                 "quoted loop",
