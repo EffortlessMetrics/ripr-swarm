@@ -689,10 +689,10 @@ fn text_calls_owner(text: &str, owner_name: &str) -> bool {
 
 /// Identifiers bound only to owner results in `body`. A `let <ident> = ...`
 /// whose initializer (to the next `;`) calls `owner_name` binds the name; the
-/// name is dropped as soon as the body also rebinds it from anything else:
+/// name is dropped when the body binds it through a covered non-owner form:
 /// another `let` of the same name, a destructuring pattern that mentions it,
 /// a `for` loop variable, or a plain `<ident> = ...` reassignment. The scan is
-/// position-blind, so any rebinding fails closed (RIPR-SPEC-0001): an
+/// position-blind, so each covered rebinding fails closed (RIPR-SPEC-0001): an
 /// assertion after `let amount = tax(100); let amount = 0;` is not credited as
 /// observing `tax`. Uppercase single-name patterns (`let Some(x) = ...`) and
 /// tuple destructuring cannot name an owner result, so they only shadow.
@@ -705,9 +705,17 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         // bound; the field label is not a shadow. Classify each occurrence by
         // its own position. `let` and `for` share this rule.
         let pattern_bytes = pattern.as_bytes();
+        let mut brackets = Vec::new();
         let mut index = 0;
         while index < pattern_bytes.len() {
             if !is_ident_byte(pattern_bytes[index]) {
+                match pattern_bytes[index] {
+                    b'(' | b'[' | b'{' => brackets.push(pattern_bytes[index]),
+                    b')' | b']' | b'}' => {
+                        brackets.pop();
+                    }
+                    _ => {}
+                }
                 index += 1;
                 continue;
             }
@@ -720,7 +728,9 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 continue;
             }
             let after_word = pattern[index..].trim_start();
-            let label = after_word.starts_with(':') && !after_word.starts_with("::");
+            let label = brackets.last() == Some(&b'{')
+                && after_word.starts_with(':')
+                && !after_word.starts_with("::");
             if !label {
                 events.push((word.to_string(), false));
             }
@@ -746,6 +756,10 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             continue;
         };
         if assign >= terminator {
+            // A type annotation may contain the first semicolon, for example
+            // `[u8; 3]`. The binding still exists even though the initializer
+            // delimiter has not appeared yet.
+            record_pattern_bindings(&body[cursor..cursor + terminator], &mut events);
             continue;
         }
         let pattern = &body[cursor..cursor + assign];
@@ -1736,8 +1750,8 @@ mod tests {
 
     #[test]
     fn owner_binding_scan_drops_a_name_the_body_rebinds() {
-        // #6973: every rebinding of the name fails closed, whatever its form;
-        // each control keeps the name when nothing rebinds it.
+        // #6973: the covered rebinding forms fail closed; controls keep the
+        // owner binding when no covered form rebinds it.
         let bound = |body: &str| bound_identifiers_from_owner_calls(body, "tax");
         assert_eq!(
             bound("let amount = tax(100); assert_eq!(amount, 90);"),
@@ -1771,6 +1785,14 @@ mod tests {
             (
                 "for variable",
                 "let amount = tax(100); for amount in 0..3 { assert_eq!(amount, 0); }",
+            ),
+            (
+                "reference type ascription",
+                "let amount = tax(100); let &amount: &u32 = &0; assert_eq!(amount, 0);",
+            ),
+            (
+                "type annotation containing semicolon",
+                "let amount = tax(100); let amount: [u8; 3] = [0; 3]; assert_eq!(amount, 0);",
             ),
         ] {
             assert!(bound(body).is_empty(), "{label}: {body}");
