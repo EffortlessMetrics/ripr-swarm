@@ -1,10 +1,11 @@
 # Coming from cargo-mutants
 
 You already run cargo-mutants and want to know what to use in ripr, and where
-it differs. Short version: ripr does not run mutants. It reads the diff and
-tells you, without building or running tests, which changed lines have no test
-that would notice a wrong value. Use it as the fast inner loop; keep
-cargo-mutants as the occasional runtime check where the cost is worth it.
+it differs. Short version: ripr does not run mutants. `ripr check` reads the
+diff and reports changed lines where it cannot find a test that appears to
+notice a wrong value. That is static evidence, not a runtime result. Use it as
+the fast inner loop; keep cargo-mutants as the occasional runtime check where
+the cost is worth it.
 
 | | cargo-mutants | ripr |
 | --- | --- | --- |
@@ -27,7 +28,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | `--file src/foo.rs` / `-f` | `--path src/foo.rs` | Repeatable; file, directory or glob. |
 | `--exclude 'src/gen/**'` / `-e` | `--exclude 'src/gen/**'` | Repeatable; wins over `--path`. |
 | `-p <pkg>` / `--package` | `--path crates/<pkg>` | There is no `-p`; select the package by its directory. Running from inside a member still analyzes the whole workspace. |
-| `--workspace` | `ripr check` | The default already covers every changed file in the workspace. |
+| `--workspace` | `ripr check` | The default considers every changed file in the workspace; configured exclusions and analysis budgets can leave disclosed omissions or a partial result. |
 | `--re REGEX` / `--exclude-re REGEX` | none | Selection is by file path and by diff, not by mutant name. |
 | `--list` / `--list-files` | `ripr check --format json` | Lists probes and findings without any test run (the only mode). |
 | `--check` (compile only) | not applicable | Nothing is built. |
@@ -170,8 +171,12 @@ bare clone as `origin`:
   attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
   enough memory; the limit is an input cap, not a memory bound, and its memory
   cost on large workspaces is not measured here. Separately, `ripr check`
-  analyzes a diff over 1,000 changed lines partially unless you raise
-  `RIPR_PARTIAL_DIFF_LINE_BUDGET`. See [Configuration](CONFIGURATION.md).
+  can return a partial result when the diff exceeds the 200-file or
+  1,000-changed-line budget. Raise `RIPR_PARTIAL_DIFF_FILE_BUDGET` and/or
+  `RIPR_PARTIAL_DIFF_LINE_BUDGET` as needed. The effective line budget is
+  capped by `RIPR_MAX_DIFF_CHANGED_RUST_LINES` (2,000 by default), and the
+  first selected file is analyzed whole even when it alone exceeds the line
+  budget. See [Configuration](CONFIGURATION.md).
 
 ### Minimal GitHub Actions steps
 
