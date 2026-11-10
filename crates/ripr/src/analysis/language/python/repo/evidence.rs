@@ -54,9 +54,9 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    ProjectNameIndex, PythonRelatedCandidate, apply_class_facts, apply_project_module_names_with,
-    apply_test_local_shadows, find_related_tests, owner_module_paths, related_test_candidates,
-    related_tests_for_candidates,
+    ProjectNameIndex, PythonRelatedCandidate, TestLocalShadowIndex, apply_class_facts,
+    apply_project_module_names_with, find_related_tests, owner_module_paths,
+    related_test_candidates, related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -467,6 +467,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         .chain(&input.ambiguous_files)
         .cloned()
         .collect();
+    let shadow_index = TestLocalShadowIndex::build(all_selected_files.iter());
 
     for relative in &input.production_files {
         match load_facts_with_source(root, relative).and_then(|(facts, source)| {
@@ -507,7 +508,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         root.join(path).exists()
                     });
                 }
-                apply_test_local_shadows(&mut facts.owners, all_selected_files.iter());
+                shadow_index.apply(&mut facts.owners);
                 // Class facts are file-local, so the single shared owner of
                 // them runs here, before the owner inventory and finding
                 // projection read them, exactly as diff mode orders it

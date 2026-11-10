@@ -543,3 +543,46 @@ fn a_project_root_init_reexport_does_not_relate_a_repo_root_test() -> Result<(),
     ];
     assert_not_exposed_both_modes("project-root-init", &files, "svc/a/core.py")
 }
+
+#[test]
+fn one_shadow_index_reused_across_owner_slices_matches_the_per_slice_wrapper() -> Result<(), String>
+{
+    use super::related_tests::{TestLocalShadowIndex, apply_test_local_shadows};
+    use super::source_facts::extract_source_facts;
+    let files: Vec<PathBuf> = ["core.py", "other.py", "tests/core.py", "tests/test_core.py"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let owners_of = |path: &str| extract_source_facts(Path::new(path), CORE_PY).owners;
+    let (mut shadowed_wrapper, mut plain_wrapper) = (owners_of("core.py"), owners_of("other.py"));
+    apply_test_local_shadows(&mut shadowed_wrapper, files.iter());
+    apply_test_local_shadows(&mut plain_wrapper, files.iter());
+    let index = TestLocalShadowIndex::build(files.iter());
+    let (mut shadowed_index, mut plain_index) = (owners_of("core.py"), owners_of("other.py"));
+    index.apply(&mut shadowed_index);
+    index.apply(&mut plain_index);
+    if shadowed_wrapper
+        .iter()
+        .all(|owner| owner.test_local_shadows.is_empty())
+    {
+        return Err("fixture: `core.py` was not shadowed by `tests/core.py`".to_string());
+    }
+    if plain_wrapper
+        .iter()
+        .any(|owner| !owner.test_local_shadows.is_empty())
+    {
+        return Err("fixture: `other.py` was shadowed".to_string());
+    }
+    let shadows = |owners: &[PythonOwner]| {
+        owners
+            .iter()
+            .map(|owner| owner.test_local_shadows.clone())
+            .collect::<Vec<_>>()
+    };
+    if shadows(&shadowed_wrapper) != shadows(&shadowed_index)
+        || shadows(&plain_wrapper) != shadows(&plain_index)
+    {
+        return Err("a reused index disagrees with the per-slice wrapper".to_string());
+    }
+    Ok(())
+}

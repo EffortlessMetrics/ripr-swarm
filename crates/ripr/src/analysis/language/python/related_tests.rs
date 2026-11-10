@@ -29,7 +29,9 @@ pub(super) use project_names::{
     owner_import_modules_for,
 };
 use test_local_shadow::test_local_module_shadows;
-pub(super) use test_local_shadow::{TestLocalShadow, apply_test_local_shadows};
+pub(super) use test_local_shadow::{
+    TestLocalShadow, TestLocalShadowIndex, apply_test_local_shadows,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
