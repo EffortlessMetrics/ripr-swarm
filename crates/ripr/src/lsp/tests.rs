@@ -33948,6 +33948,7 @@ fn incomplete_marker_limitations_match_the_human_check_output() -> Result<(), St
         partial_scope: None,
         analyzed_revisions: None,
         owner_opt_outs: Vec::new(),
+        file_fact_cache: None,
     };
     output.analysis_outcome = Some(outcome);
     let canonical = outcome_scoping_kinds(&output);

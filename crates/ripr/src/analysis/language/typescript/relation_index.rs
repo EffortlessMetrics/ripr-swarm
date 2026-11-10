@@ -250,6 +250,7 @@ mod tests {
             default_member_only_locals_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
