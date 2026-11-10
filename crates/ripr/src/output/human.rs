@@ -9004,6 +9004,39 @@ mod tests {
         assert!(!rendered.contains("(observation_unverified)"), "{rendered}");
     }
 
+    /// #14038: the literal evidence lines are skipped once flow, related-test
+    /// or source-value rows exist, which used to drop the one line saying why
+    /// an assertion was not credited from the full report and `explain`.
+    #[test]
+    fn evidence_path_keeps_the_assertion_not_credited_reason_beside_flow_rows() {
+        let note = format!(
+            "{}`assert_eq!` in checks_weight at tests/w.rs:3: the assertion is inside an `if` branch",
+            crate::domain::ASSERTION_NOT_CREDITED_PREFIX
+        );
+        let mut finding = sample_finding();
+        assert!(!finding.flow_sinks.is_empty(), "fixture has a flow sink");
+        let path = |finding: &Finding| {
+            super::evidence_lines::evidence_path_lines(
+                finding,
+                super::evidence_lines::JsonPointerWording::CheckFlag,
+            )
+        };
+        assert!(!path(&finding).iter().any(|line| line == &note));
+        finding.evidence = vec!["unrelated literal evidence".to_string(), note.clone()];
+        let lines = path(&finding);
+        assert_eq!(
+            lines.iter().filter(|line| *line == &note).count(),
+            1,
+            "{lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line == "unrelated literal evidence"),
+            "only the not-credited reason is kept beside the other rows: {lines:?}"
+        );
+    }
+
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
