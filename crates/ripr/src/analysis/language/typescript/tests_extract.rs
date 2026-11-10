@@ -321,6 +321,13 @@ fn extract_tests_expanding_suite_factories(
                 test.member_replacements_in_file = replacements.clone();
             }
         }
+        let loads = dynamic_load_specifiers(source);
+        if !loads.is_empty() {
+            let loads: Shared<_> = loads.into();
+            for test in &mut tests {
+                test.dynamic_load_specifiers_in_file = loads.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             let factories: Shared<_> = factories.into();
@@ -2010,6 +2017,31 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
 /// `local.member(` (one pair per distinct called member; axios `utils.merge`
 /// beside `utils.extend`, #6653). Any other use (assignment, `spyOn`, alias,
 /// argument) withholds every pair of that local, wherever it sits in the file.
+/// Literal specifiers of dynamic `import(`, `require(`, `requireActual(` and
+/// `importActual(` calls anywhere in the file (#13750). Textual and
+/// whole-file, so it over-collects (comments, strings) and never misses a
+/// literal load; non-literal arguments are not recorded.
+fn dynamic_load_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers: Vec<String> = Vec::new();
+    for needle in ["import(", "require(", "requireActual(", "importActual("] {
+        for (at, _) in source.match_indices(needle) {
+            if source[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            if let Some(specifier) = quoted_literal_after(source, at + needle.len())
+                && !specifiers.contains(&specifier)
+            {
+                specifiers.push(specifier);
+            }
+        }
+    }
+    specifiers
+}
+
 fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
     if file_is_opaque(code) {
         return Vec::new();
@@ -3448,6 +3480,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's

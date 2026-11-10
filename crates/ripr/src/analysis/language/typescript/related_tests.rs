@@ -4148,7 +4148,7 @@ fn dynamic_import_member_call(
 
 /// The quoted literal (single, double, or backtick) starting at `from`,
 /// allowing whitespace between the paren and the quote (`import( "./x" )`).
-fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
+pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
     let rest = body.get(from..)?.trim_start();
     let quote = rest.chars().next()?;
     if !matches!(quote, '"' | '\'' | '`') {
@@ -4773,43 +4773,27 @@ pub(crate) fn default_object_second_binding(
         && (test.imports_in_file.iter().any(|other| {
             !std::ptr::eq(other, import)
                 && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
-        }) || body_loads_owner_module(test, owner, alias_map, workspace_root))
+        }) || file_loads_owner_module(test, owner, alias_map, workspace_root))
 }
 
 /// A dynamic `import("...")`, `require("...")`, `requireActual("...")` or
-/// `importActual("...")` inside the test body whose literal specifier
-/// resolves to the owner's module is a second binding that produces no static
-/// import record (#13750). Detection is textual (comments and strings are not
-/// excluded), so it can only over-withhold.
-fn body_loads_owner_module(
+/// `importActual("...")` anywhere in the test file (body, hooks, describe
+/// bodies, top level, sibling tests) whose literal specifier resolves to the
+/// owner's module is a second binding that produces no static import record
+/// (#13750). Detection is textual and whole-file, so it can only
+/// over-withhold; a non-literal or `${}` template argument is not detected.
+fn file_loads_owner_module(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let body = &test.body_text;
     let owner_module = normalized_module_path(&owner.file);
-    ["import(", "require(", "requireActual(", "importActual("]
+    test.dynamic_load_specifiers_in_file
         .iter()
-        .any(|needle| {
-            body.match_indices(needle).any(|(at, _)| {
-                if body[..at]
-                    .chars()
-                    .next_back()
-                    .is_some_and(is_javascript_identifier_char)
-                {
-                    return false;
-                }
-                quoted_literal_after(body, at + needle.len()).is_some_and(|specifier| {
-                    normalized_relative_import_module(
-                        &test.file,
-                        &specifier,
-                        alias_map,
-                        workspace_root,
-                    )
-                    .is_some_and(|module| module == owner_module)
-                })
-            })
+        .any(|specifier| {
+            normalized_relative_import_module(&test.file, specifier, alias_map, workspace_root)
+                .is_some_and(|module| module == owner_module)
         })
 }
 

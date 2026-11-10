@@ -1034,7 +1034,7 @@ A test file that calls any unsafe sibling of the owner
 through `local` gets no rule-5 relation for that owner; a test that never
 calls one keeps it. When the owner has any unsafe sibling, a second binding of
 the owner's module in the test file (another default local, a named or
-namespace import, `import { default as u2 }`, a `require()`, or a dynamic `import()`/`require()`/`requireActual()`/`importActual()` of the owner's module string in the test body) also withholds
+namespace import, `import { default as u2 }`, a `require()`, or a dynamic `import()`/`require()`/`requireActual()`/`importActual()` of the owner's module string anywhere in the test file, hooks and top level included; a non-literal or `${}` template argument is not detected) also withholds
 the relation, since it could reach the sibling outside `local.member(` calls
 (`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
 fail-closed rule, not a check of which names the second binding uses (#13750).

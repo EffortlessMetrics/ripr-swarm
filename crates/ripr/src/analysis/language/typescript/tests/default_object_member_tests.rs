@@ -626,6 +626,40 @@ fn a_dynamic_load_of_the_module_in_the_test_body_withholds() -> Result<(), Strin
             "{label}"
         );
     }
+    // The whole file counts: a load in a hook, a describe body, or at file
+    // level (outside the test body) withholds too.
+    for (label, test) in [
+        (
+            "before-each",
+            format!(
+                "import {{ it, expect, beforeEach }} from 'vitest';\nimport utils from '../src/utils';\n\nbeforeEach(async () => {{\n  (await import('../src/utils')).default.extend();\n}});\n\nit('merges', () => {{\n{CALL}\n}});\n"
+            ),
+        ),
+        (
+            "describe-body",
+            format!(
+                "import {{ it, expect, describe }} from 'vitest';\nimport utils from '../src/utils';\n\ndescribe('d', () => {{\n  require('../src/utils').default.extend();\n  it('merges', () => {{\n{CALL}\n  }});\n}});\n"
+            ),
+        ),
+        (
+            "file-level",
+            format!(
+                "import {{ it, expect }} from 'vitest';\nimport utils from '../src/utils';\n\nconst m = await import('../src/utils');\nm.default.extend();\n\nit('merges', () => {{\n{CALL}\n}});\n"
+            ),
+        ),
+        (
+            "sibling-test",
+            format!(
+                "import {{ it, expect }} from 'vitest';\nimport utils from '../src/utils';\n\nit('other', async () => {{\n  (await import('../src/utils')).default.extend();\n}});\n\nit('merges', () => {{\n{CALL}\n}});\n"
+            ),
+        ),
+    ] {
+        assert_ne!(
+            class_of(&format!("{label}-unsafe"), &unsafe_owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
     // Controls: the same test with no second load stays credited, and a load
     // of an unrelated module does not withhold.
     let plain = test_with(CALL);
