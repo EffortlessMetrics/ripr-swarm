@@ -59,12 +59,40 @@ fn run(script: &str, overrides: &[(&str, &str)]) -> TestResult<Output> {
     run_with_shell(WorkflowShell::ImplicitBash, script, overrides)
 }
 
+struct ShellScratch(std::path::PathBuf);
+
+impl ShellScratch {
+    fn new() -> TestResult<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent)?;
+        let path = parent.join(format!(
+            "ripr-ci-leaf-shell-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for ShellScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn run_with_shell(
     shell: WorkflowShell,
     script: &str,
     overrides: &[(&str, &str)],
 ) -> TestResult<Output> {
+    // Workflow blocks can contain real redirections even when commands such as
+    // cd are stubbed. Keep those writes away from the source checkout.
+    let scratch = ShellScratch::new()?;
     let mut cmd = Command::new("timeout");
+    cmd.current_dir(&scratch.0);
     cmd.args(["--kill-after=1s", "5s", "bash"]);
     match shell {
         WorkflowShell::ImplicitBash => {
@@ -123,6 +151,19 @@ fn run_with_shell(
     );
     Ok(output)
 }
+#[test]
+fn shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged() -> TestResult {
+    let before = std::fs::read("Cargo.toml").ok();
+    let output = run(
+        "printf 'owned shell fixture\\n' >> Cargo.toml; cat Cargo.toml",
+        &[],
+    )?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "owned shell fixture\n");
+    assert_eq!(std::fs::read("Cargo.toml").ok(), before);
+    Ok(())
+}
+
 fn mapping<'a>(scope: &'a str, indent: usize, key: &str) -> Option<&'a str> {
     let marker = format!("{}{key}:\n", " ".repeat(indent));
     let offset = scope
@@ -569,17 +610,67 @@ fn pr_owned_step_allowance_is_exact_and_job_scoped() {
         vec![step]
     );
 }
+// #13201/#13212: the editor host must be verified before compilation and packaging.
+const VSCODE_PAYLOAD: &[&str] = &[
+    "npm ci",
+    "sudo apt-get update && sudo apt-get install -y xvfb",
+    "xvfb-run -a npm run setup:verify-editor",
+    "npm run compile",
+    "npm run package",
+    "xvfb-run -a npm run test:e2e",
+];
+
+fn is_exact_vscode_payload(scripts: &[String]) -> bool {
+    scripts.len() == VSCODE_PAYLOAD.len()
+        && scripts
+            .iter()
+            .zip(VSCODE_PAYLOAD)
+            .all(|(actual, expected)| actual.as_str() == *expected)
+}
+
+#[test]
+fn vscode_payload_requires_every_command_in_order() {
+    let actual = run_blocks(payload_job("vscode"));
+    assert!(is_exact_vscode_payload(&actual));
+    for (index, script) in actual.iter().enumerate() {
+        let mut removed = actual.clone();
+        removed.remove(index);
+        assert!(!is_exact_vscode_payload(&removed), "removed {index}");
+
+        let mut altered = actual.clone();
+        altered[index].push_str(" --extra");
+        assert!(!is_exact_vscode_payload(&altered), "altered {index}");
+
+        let mut duplicated = actual.clone();
+        duplicated.insert(index, script.clone());
+        assert!(!is_exact_vscode_payload(&duplicated), "duplicated {index}");
+    }
+    for index in 0..actual.len() - 1 {
+        let mut reordered = actual.clone();
+        reordered.swap(index, index + 1);
+        assert!(!is_exact_vscode_payload(&reordered), "reordered {index}");
+    }
+}
+
 #[test]
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
-        assert_eq!(
-            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
-            run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
-                "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
-                "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
-            )).collect::<Vec<_>>(),
-            "payload {name}"
-        );
+        if *name == "vscode" {
+            let actual = run_blocks(payload_job(name));
+            assert!(
+                is_exact_vscode_payload(&actual),
+                "payload {name}: actual {actual:?}; expected {VSCODE_PAYLOAD:?}"
+            );
+        } else {
+            assert_eq!(
+                without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
+                run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
+                    "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
+                    "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
+                )).collect::<Vec<_>>(),
+                "payload {name}"
+            );
+        }
         let actions = |s: &str| {
             s.lines()
                 .filter(|l| l.trim_start().starts_with("- uses:"))
@@ -669,6 +760,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
 fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     let stub = "cargo() { return \"$NATIVE_STATUS\"; }; npm() { return \"$NATIVE_STATUS\"; }; xvfb-run() { shift; \"$@\"; };\n";
     let mut count = 0;
+    let mut early_host_checked = false;
     for (name, _) in JOBS {
         for script in run_blocks(payload_job(name)) {
             if script.starts_with("cargo ") && !script.contains('\n')
@@ -685,9 +777,16 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
                         "masked {script}"
                     );
                 }
+                if *name == "vscode" && script == "xvfb-run -a npm run setup:verify-editor" {
+                    early_host_checked = true;
+                }
             }
         }
     }
+    assert!(
+        early_host_checked,
+        "early editor host was not failure-injected"
+    );
     assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
@@ -803,9 +902,9 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
     "#;
     for (name, commands) in [
         (
-            "Unlocked install resolution",
+            "Publish dry-run",
             &[
-                "cargo-package",
+                "cargo-xtask",
                 "cargo-pkgid",
                 "tar",
                 "cd",
@@ -847,14 +946,20 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
             );
             let trace = String::from_utf8(output.stderr)?;
             assert!(trace.contains("reached:cargo-pkgid"));
-            for downstream in [
-                "reached:tar",
-                "reached:cd",
-                "reached:rm",
-                "reached:cargo-generate-lockfile",
-                "reached:cargo-check",
-                "reached:cargo-xtask",
-            ] {
+            // Commands after the pkgid call in this step. The publish step's
+            // own xtask rehearsal runs before pkgid, so it is not downstream.
+            let downstream_commands: &[&str] = if name == "Publish dry-run" {
+                &[
+                    "reached:tar",
+                    "reached:cd",
+                    "reached:rm",
+                    "reached:cargo-generate-lockfile",
+                    "reached:cargo-check",
+                ]
+            } else {
+                &["reached:cargo-xtask"]
+            };
+            for downstream in downstream_commands {
                 assert!(
                     !trace.contains(downstream),
                     "ran {downstream} after pkgid failed: {name}"
@@ -935,11 +1040,11 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
         cd() { return 0; }
         rm() { return 0; }
     "#;
-    // Main's unlocked-install form assigns `cargo pkgid` directly, so even
-    // the implicit shell fails closed there; the readiness pipeline through
-    // `sed` still masks a pkgid failure without pipefail.
+    // The publish step's unlocked-install tail assigns `cargo pkgid`
+    // directly, so even the implicit shell fails closed there; the readiness
+    // pipeline through `sed` still masks a pkgid failure without pipefail.
     for (name, downstream, masked) in [
-        ("Unlocked install resolution", "reached:check", false),
+        ("Publish dry-run", "reached:check", false),
         ("Release readiness", "reached:xtask", true),
     ] {
         let step = named_step(&implicit, "release-proof", name);
@@ -991,7 +1096,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
             }
         }
     }
-    assert_eq!(count, 5, "four release steps and receipt upload");
+    assert_eq!(count, 4, "three release steps and receipt upload");
     Ok(())
 }
 

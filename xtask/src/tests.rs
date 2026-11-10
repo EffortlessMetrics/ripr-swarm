@@ -11,6 +11,7 @@ mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
 mod packaged_repair_receipt;
+mod perl_threshold_receiver_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -64,6 +65,14 @@ use super::run::{
 };
 use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
+
+#[cfg(windows)]
+use super::{
+    check_allow_attributes, check_droid_review_config, check_executable_files, check_file_policy,
+    check_local_context, check_no_panic_family, check_process_policy, check_static_language,
+    check_workflows,
+};
+
 use super::{
     ArtifactRouterInput, BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob,
     BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown,
@@ -111,32 +120,29 @@ use super::{
     badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
     badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
     build_lsp_cockpit_report, build_repo_exposure_latency_report,
-    build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts,
-    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
-    check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
-    check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
-    cockpit_markdown, command_catalog, command_catalog_ci_drift_violations,
-    command_catalog_violations, commands_report_json, commands_report_markdown, critic_findings,
-    days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
-    dogfood_bun_ub_cross_language_run, dogfood_bun_ub_cross_language_scenarios,
-    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
-    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
-    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_finding_alignment_run,
-    dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
-    dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
-    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_python_no_action_eval_run, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_repair_routing_quality_summary, dogfood_python_static_limit_eval_run,
-    dogfood_python_static_limit_eval_scenarios, dogfood_real_repair_attempt_run,
-    dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    build_targeted_test_outcome_report, check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_network_policy, check_support_tiers,
+    ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+    command_catalog, command_catalog_ci_drift_violations, command_catalog_violations,
+    commands_report_json, commands_report_markdown, critic_findings, days_from_civil,
+    doc_artifact_kind_matches_path, doc_artifact_violations, dogfood_bun_ub_cross_language_run,
+    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
+    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
+    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
+    dogfood_finding_alignment_run, dogfood_finding_alignment_scenarios, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_python_no_action_eval_run,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_real_repo_eval_run,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
+    dogfood_python_static_limit_eval_run, dogfood_python_static_limit_eval_scenarios,
+    dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios, dogfood_report_json,
+    dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
     dogfood_typescript_preview_repair_loop_run, dogfood_typescript_preview_repair_loop_scenarios,
     dogfood_user_surface_projection_run, dogfood_user_surface_projection_scenarios,
@@ -6553,10 +6559,153 @@ fn non_rust_programming_policy_requires_retention_rule() {
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust-extra.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust-extra.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/run.py")
+            .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/other.py")
+            .is_none()
+    );
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+}
+
+#[test]
+fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
+    let path = "editors/vscode/test/developerSetup.cjs";
+    assert!(is_non_rust_programming_candidate(path));
+    assert!(non_rust_programming_retention_reason(path).is_some());
+    let Some(bootstrap) = super::non_rust_source_conversion_candidate(path) else {
+        return Err("Node setup entrypoint should be assessed".to_string());
+    };
+    assert_eq!(bootstrap.priority, "retained");
+    assert_eq!(bootstrap.kind, "retained_external_runtime");
+
+    for path in [
+        "editors/vscode/test/developerSetup-extra.cjs",
+        "editors/vscode/test/developerSetup.cjs.extra.cjs",
+        "editors/vscode/test/other.cjs",
+        "editors/vscode/src/developerSetup.cjs",
+        "editors/vscode/test/developerSetup.js",
+        "tools/developerSetup.cjs",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Result<(), String> {
+    for path in ["tools/provision-dev.cjs", "tools/provision-dev.test.cjs"] {
+        assert!(is_non_rust_programming_candidate(path));
+        assert!(non_rust_programming_retention_reason(path).is_some());
+        assert!(super::is_process_policy_candidate(path));
+        assert!(is_network_policy_candidate(path));
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("Provisioning source should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained");
+    }
+    for path in [
+        "tools/provision-dev-extra.cjs",
+        "tools/provision-dev.test-extra.cjs",
+        "tools/provision-dev.cjs.extra.cjs",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_none());
+        assert!(!super::is_process_policy_candidate(path));
+        assert!(!is_network_policy_candidate(path));
+    }
+    with_temp_cwd("provisioning-side-effect-policy", |root| {
+        write(&root.join("policy/process_allowlist.txt"), "");
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl';\n"
+            ),
+        );
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["add", "policy", "tools/provision-dev.cjs"],
+        ] {
+            let status = run("git", &args)?;
+            if !status.success() {
+                return Err(format!("temporary git setup failed: {status}"));
+            }
+        }
+        let Err(process) = super::check_process_policy_impl() else {
+            return Err("unallowlisted provisioning process launch was accepted".to_string());
+        };
+        let Err(network) = super::check_network_policy_impl() else {
+            return Err("unallowlisted provisioning downloader was accepted".to_string());
+        };
+        assert!(process.contains("tools/provision-dev.cjs"));
+        assert!(process.contains(concat!("child", "_process")));
+        assert!(process.contains(concat!("cp.", "spawn")));
+        assert!(network.contains("tools/provision-dev.cjs"));
+        assert!(network.contains(concat!("cu", "rl")));
+
+        write(
+            &root.join("policy/process_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|child",
+                "_process|1|rust/setup|fixture import\n",
+                "tools/provision-dev.cjs|cp.",
+                "spawn|1|rust/setup|fixture launch\n"
+            ),
+        );
+        write(
+            &root.join("policy/network_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|cu",
+                "rl|1|rust/setup|fixture download\n"
+            ),
+        );
+        super::check_process_policy_impl()?;
+        super::check_network_policy_impl()?;
+
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl'; cp.",
+                "spawn('extra-launch', []);\n"
+            ),
+        );
+        let Err(extra_launch) = super::check_process_policy_impl() else {
+            return Err("an extra launch using the existing import was accepted".to_string());
+        };
+        assert!(extra_launch.contains(concat!("cp.", "spawn")));
+        assert!(extra_launch.contains("2 time(s), allowed 1"));
+        Ok(())
+    })
 }
 
 #[test]
@@ -6604,6 +6753,99 @@ fn rust_conversion_candidates_retain_the_portable_consumer_python_runtime() -> R
 
     assert_eq!(consumer.priority, "retained");
     assert_eq!(consumer.kind, "retained_external_runtime");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Result<(), String> {
+    // #13290 removal control: the advisory inventory's generic fallback must
+    // consult the enforced `non_rust_programming_retention_reason` owner, so
+    // every approved runtime boundary reports as retained with the enforced
+    // reason verbatim instead of diverging into a second, incomplete list.
+    for path in [
+        ".ci/contabo-result.sh",
+        ".ci/contabo-product.sh",
+        "packaging/npm/launcher/bin/ripr.cjs",
+        "packaging/npm/launcher/lib/launcher.cjs",
+        "packaging/npm/launcher/test/launcher.test.cjs",
+        ".agents/skills/finish-pr/scripts/guarded_merge.py",
+        ".agents/skills/finish-pr/tests/test_guarded_merge.py",
+        "tools/python/installed-provider-recovery/run.py",
+        ".github/actions/pr-candidate-admission/candidate_admission.py",
+        ".github/actions/pr-candidate-admission/release_cut_admission.py",
+        "tools/activate-rust.sh",
+        "tools/test-activate-rust.sh",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("approved boundary should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_external_runtime", "{path}");
+        assert_eq!(
+            candidate.reason, enforced_reason,
+            "{path}: advisory reason must come from the enforced retention owner"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_muse_fixture_inputs_distinct() -> Result<(), String> {
+    // Muse evaluation fixtures stay in the retained-fixture-input bucket so
+    // the report keeps distinguishing analyzed inputs from runtime adapters.
+    for path in [
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.ts",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.test.ts",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("muse fixture must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("muse fixture should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_fixture_input", "{path}");
+        assert_eq!(candidate.reason, enforced_reason, "{path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> Result<(), String> {
+    // Nearby paths outside every approved retention rule must remain
+    // actionable at the existing high priority (acceptance: arbitrary
+    // unapproved implementation/automation stays actionable).
+    for path in [
+        ".ci/arbitrary.sh",
+        "tools/arbitrary.sh",
+        "packaging/npm/launcher/bin/other.cjs",
+        "packaging/npm/launcher/test/other.cjs",
+        // The merge-guard retains its whole bounded scripts/ + tests/ Python
+        // directory, so a nearby unapproved neighbor must use another
+        // programming extension.
+        ".agents/skills/finish-pr/scripts/other.rb",
+        "tools/python/installed-provider-recovery/other.py",
+        "tools/python/other.py",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
+        "scripts/check.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
     Ok(())
 }
 
@@ -7926,6 +8168,95 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
     Ok(())
 }
 
+/// The package family the rehearsal builds (#5378) stays read-only: it is only
+/// reachable from the rehearsal, holds no write or OIDC permission, reads no
+/// secret, and has no registry upload, release or publish step.
+#[test]
+fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/package-family-qualification.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let caller_path = root.join(".github/workflows/release-server-binaries.yml");
+    let caller = fs::read_to_string(&caller_path)
+        .map_err(|error| format!("failed to read {}: {error}", caller_path.display()))?;
+    // Only the `packages` job body (lines indented deeper than job keys).
+    let calls_after_archives = |candidate: &str| {
+        let job: String = candidate
+            .split("\n  packages:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        job.contains("uses: ./.github/workflows/package-family-qualification.yml")
+            && job.contains("needs: rehearse")
+    };
+    if !calls_after_archives(&caller) {
+        return Err("the rehearsal must call the package family after the archives".to_string());
+    }
+    if calls_after_archives(&caller.replace("    needs: rehearse\n", "")) {
+        return Err("package-family caller negative control was accepted".to_string());
+    }
+    let validate = |candidate: &str| -> Result<(), String> {
+        let on_block = candidate
+            .split("\non:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\npermissions:").next())
+            .unwrap_or_default();
+        if !candidate.contains("permissions:\n  contents: read")
+            || on_block
+                .lines()
+                .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+                .ne(["  workflow_call:"])
+            || candidate.contains(": write")
+            || candidate.contains("id-token")
+            || candidate.contains("secrets.")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("NODE_AUTH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("registry-url")
+            || candidate.contains("npm publish")
+            || candidate.contains("twine")
+            || candidate.contains("gh-action-pypi-publish")
+            || candidate.contains("gh release")
+            || candidate.contains("release-upload-assets")
+            || !candidate.contains("persist-credentials: false")
+        {
+            return Err(
+                "package-family qualification must stay a read-only, called-only build and install proof"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        workflow.replace("contents: read", "contents: read\n  id-token: write"),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_dispatch:\n  workflow_call:",
+        ),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_call:\n  schedule:\n    - cron: '0 0 * * *'",
+        ),
+        format!("{workflow}\n      - run: npm publish --tag next ./pkg.tgz\n"),
+        format!("{workflow}\n      - run: python -m twine upload wheels/*\n"),
+        format!("{workflow}\n        env:\n          TOKEN: ${{{{ secrets.NPM_TOKEN }}}}\n"),
+        workflow.replace("persist-credentials: false", "persist-credentials: true"),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("package-family publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
@@ -8021,7 +8352,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 5
+            != 6
             || candidate
                 .matches("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
                 .count()
@@ -29672,6 +30003,10 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
     })
 }
 
+// Native Windows retains this exact facade for the #5044/#13012 evidence
+// admission consumer. Other hosts run its policy checks once through ci-policy;
+// the packet invariant now belongs to fresh check-file-policy acceptance.
+#[cfg(windows)]
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "linux")))]
@@ -29684,7 +30019,7 @@ fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     policy_checker_facade_in_subprocess()
 }
 
-#[cfg(not(all(unix, not(target_os = "linux"))))]
+#[cfg(windows)]
 fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
     const COMPLETED: &str = "policy facade child checks completed";
@@ -29724,10 +30059,7 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         "isolated policy facade checks",
     )?
     .output;
-    let diagnostic = format!(
-        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
-        output.status, output.timed_out, output.stdout, output.stderr
-    );
+    let diagnostic = policy_facade_child_diagnostic(&output);
     if output.timed_out
         || !output.status.is_some_and(|status| status.success())
         || !output.stdout.lines().any(|line| line == "running 1 test")
@@ -29744,6 +30076,17 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn policy_facade_child_diagnostic(output: &crate::run::TimedOutput) -> String {
+    // Quote captured streams so their libtest rows remain diagnostic data.
+    // Replaying raw newlines would make the retained log count the child's
+    // result again as a second observation of the parent facade test.
+    format!(
+        "policy facade child status={:?}, timed_out={}, stdout={:?}, stderr={:?}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    )
+}
+
+#[cfg(windows)]
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     // Each phase is announced on stderr before it starts. When the child outlives
     // its tool-build deadline the parent's diagnostic carries this stream, so a
@@ -29772,92 +30115,10 @@ fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
 
 fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
-    let common = report
-        .lines()
-        .find(|line| {
-            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
-        })
-        .ok_or("common packet coverage is absent from the policy report")?;
-    let common_tests = packet_coverage_selected_tests(common)?;
-    for subject in [
-        "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
-        "portable_consumer::tests::packet_digest_matches_the_producer_formula",
-    ] {
-        if !common_tests.contains(&subject) || !common.contains("declared=all; applicable;") {
-            return Err(format!(
-                "common packet subject not selected: {subject}: {common}"
-            ));
-        }
-    }
-    let native = report
-        .lines()
-        .find(|line| {
-            line.ends_with(
-                "`cargo test -p ripr --locked --offline --test portable_consumer_packet`",
-            )
-        })
-        .ok_or("native packet coverage is absent from the policy report")?;
-    if packet_coverage_selected_count(common)? < 2 {
-        return Err(format!(
-            "common packet selection lost required subjects: {common}"
-        ));
-    }
-    if cfg!(windows) {
-        if !common.contains("host=windows; declared=all; applicable;")
-            || !native
-                .contains("host=windows; declared=unix; not_applicable; selected=not_enumerated;")
-            || native.contains("tests=[")
-        {
-            return Err(format!(
-                "Windows packet applicability drifted: {common}\n{native}"
-            ));
-        }
-    } else {
-        let native_tests = packet_coverage_selected_tests(native)?;
-        if !native.contains("host=unix; declared=unix; applicable;")
-            || packet_coverage_selected_count(native)? < 2
-        {
-            return Err(format!(
-                "Unix native packet selector was not retained: {native}"
-            ));
-        }
-        for subject in [
-            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
-            "native_packet_pilot_consumes_the_summary_artifact",
-        ] {
-            if !native_tests.contains(&subject) {
-                return Err(format!(
-                    "Unix native packet subject missing: {subject}: {native}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
-    row.split_once("; selected=")
-        .and_then(|(_, rest)| rest.split_once(';'))
-        .ok_or_else(|| format!("selected count absent from coverage row: {row}"))?
-        .0
-        .parse()
-        .map_err(|error| format!("invalid selected count in {row}: {error}"))
-}
-
-fn packet_coverage_selected_tests(row: &str) -> Result<Vec<&str>, String> {
-    let tests = row
-        .rsplit_once("; `")
-        .and_then(|(fields, _)| fields.split_once("; tests=["))
-        .and_then(|(_, tests)| tests.strip_suffix(']'))
-        .ok_or_else(|| format!("selected tests field missing or malformed: {row}"))?;
-    let selected: Vec<_> = tests.split(", ").collect();
-    if selected.iter().any(|test| {
-        test.is_empty() || test.contains([',', '[', ']', ';']) || test.contains(char::is_whitespace)
-    }) || selected.len() != packet_coverage_selected_count(row)?
-    {
-        return Err(format!("selected identities and count disagree: {row}"));
-    }
-    Ok(selected)
+    crate::policy::file_policy_retained_evidence::validate_packet_coverage_report(
+        &report,
+        crate::policy::file_policy_retained_evidence::host_label(),
+    )
 }
 
 fn packet_coverage_report_fixture() -> String {
@@ -49743,21 +50004,21 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
             .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
-    assert!(
-        !boundary_gap
-            .action_titles
-            .contains(&"Write targeted test: copy brief".to_string()),
-        "repair-packet brief is gated on fix_site_ready (#1663)"
-    );
+    // #13716: the boundary seam passes the repair-packet flip, so the real
+    // seam diagnostic offers the brief and the repair start.
+    for title in [
+        "Write targeted test: copy brief",
+        "Start repair: copy repair command",
+    ] {
+        assert!(
+            boundary_gap.action_titles.contains(&title.to_string()),
+            "boundary_gap must offer {title}: {:?}",
+            boundary_gap.action_titles
+        );
+    }
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(
-        !boundary_gap.context.targeted_test_brief_available,
-        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
-    );
-    assert!(
-        !boundary_gap.context.agent_repair_command_available,
-        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
-    );
+    assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49788,14 +50049,10 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(
-        !editor_fixture.context.targeted_test_brief_available,
-        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
-    );
-    assert!(
-        !editor_fixture.context.agent_repair_command_available,
-        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
-    );
+    // #13716: the seam passes the repair-packet flip, so the brief and the
+    // repair start are offered on the real seam diagnostic.
+    assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -52438,7 +52695,7 @@ fn mutation_calibration_reports_are_advisory_and_structured() -> Result<(), Stri
 }
 
 #[test]
-fn parse_workspace_lints_section_extracts_clippy_levels() {
+fn parse_workspace_lints_section_extracts_clippy_levels() -> Result<(), String> {
     let cargo = r#"
 [workspace]
 members = ["crates/ripr"]
@@ -52455,7 +52712,7 @@ allow_attributes_without_reason = "deny" # trailing comment
 [profile.release]
 lto = true
 "#;
-    let clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     assert_eq!(clippy.get("panic").map(String::as_str), Some("deny"));
     assert_eq!(clippy.get("todo").map(String::as_str), Some("deny"));
     assert_eq!(
@@ -52466,9 +52723,10 @@ lto = true
     );
     assert!(!clippy.contains_key("unsafe_code"));
 
-    let rust = super::parse_workspace_lints_section(cargo, "rust");
+    let rust = super::parse_workspace_lints_section(cargo, "rust")?;
     assert_eq!(rust.get("unsafe_code").map(String::as_str), Some("forbid"));
     assert!(!rust.contains_key("panic"));
+    Ok(())
 }
 
 #[test]
@@ -52782,8 +53040,8 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
-required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release surfaces pay the full release proof."
@@ -53000,7 +53258,7 @@ fn proof_pack_command_known_set_accepts_xtask_roots_and_repo_commands() {
 }
 
 #[test]
-fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() {
+fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "deny"
@@ -53014,7 +53272,7 @@ level = "deny"
 name = "clippy::map_err_ignore"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, parse_violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(parse_violations.is_empty());
     let mut violations = Vec::new();
@@ -53025,10 +53283,11 @@ level = "deny"
         }
     }
     assert_eq!(violations, vec!["clippy::map_err_ignore".to_string()]);
+    Ok(())
 }
 
 #[test]
-fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() {
+fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 indexing_slicing = "deny"
@@ -53039,7 +53298,7 @@ name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut leaks = Vec::new();
     for entry in entries.iter().filter(|entry| entry.is_planned) {
@@ -53049,6 +53308,7 @@ activate_when_msrv = "1.93"
         }
     }
     assert_eq!(leaks, vec!["clippy::indexing_slicing".to_string()]);
+    Ok(())
 }
 
 #[test]
@@ -53264,7 +53524,7 @@ rust-version = '1.95'
 }
 
 #[test]
-fn check_lint_policy_detects_level_drift() {
+fn check_lint_policy_detects_level_drift() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "warn"
@@ -53274,7 +53534,7 @@ panic = "warn"
 name = "clippy::panic"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut drift = Vec::new();
     for entry in entries.iter().filter(|entry| !entry.is_planned) {
@@ -53292,6 +53552,7 @@ level = "deny"
             "warn".to_string()
         )]
     );
+    Ok(())
 }
 
 #[test]

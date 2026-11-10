@@ -117,10 +117,11 @@ pub use probe::{
     row_exact_discriminator_fact,
 };
 pub use probe::{
-    ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
-    FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
-    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
+    ActivationEvidence, AnalysisScope, DeltaKind, DiscriminatorShape, DraftedBoundaryAssertion,
+    Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+    ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest, RelatedTestMiss,
+    RelatedTestMissSupport, RelatedTestRole, SOURCE_CURRENTNESS_VALUES, SourceCurrentness,
+    StopReason, ValueContext, ValueFact,
 };
 pub use refusal_remedy::RefusalRemedy;
 // Public so the `ripr` facade can re-export it; not part of a product API (ADR 0027).

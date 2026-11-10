@@ -35,7 +35,9 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::resource_cost::trace_latency_phase;
@@ -1364,6 +1366,9 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
+    // #13702: an async owner whose only reaching tests create its future and
+    // drop it unpolled is not reached; name that before any oracle-side limit.
+    classify::withhold_unpolled_future_gap(finding, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
@@ -2173,7 +2178,20 @@ impl RustAdapter {
                 ..LanguageDiffResult::default()
             });
         }
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        let (rust_files, unreadable_dirs) =
+            workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        let changed_paths = changed_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let (rust_files, unreadable_files) =
+            workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
+        unreadable_unchanged_paths.extend(unreadable_files);
+        unreadable_unchanged_paths.sort();
         let analyzable_rust_files = rust_files
             .into_iter()
             .filter(|path| !generated_sources.contains(path))
@@ -2494,6 +2512,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_files = origin_sources(loaded_files, &index);
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
@@ -2572,7 +2593,11 @@ impl RustAdapter {
         // to cover every analyzable file, the equality genuinely holds and
         // the index really does span the workspace; when an unrelated crate
         // stays out, the index stays partial and the bypass stays off.
-        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let workspace_index_complete = workspace_index_spans_workspace(
+            index_files.len(),
+            analyzable_rust_files.len(),
+            !unreadable_unchanged_paths.is_empty(),
+        );
 
         // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
@@ -2747,7 +2772,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2803,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -3137,6 +3163,9 @@ impl RustAdapter {
                 parser_spans: &parser_spans,
             },
         );
+        // #13819: the changed owner's own `#[mutants::skip]` is an explicit
+        // opt-out; the app layer withholds and discloses these findings.
+        let owner_opt_outs = crate::analysis::owner_opt_out::rust_owner_opt_outs(&index, &findings);
 
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
@@ -3157,6 +3186,9 @@ impl RustAdapter {
             limitations: limitations
                 .into_iter()
                 .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(workspace::limitations_for_unreadable_unchanged_paths(
+                    &unreadable_unchanged_paths,
+                )?)
                 .chain(unreached_module_limitations(
                     changed_rust_paths.iter().filter(|path| {
                         layout_seeded_rust_paths.contains(*path)
@@ -3175,8 +3207,20 @@ impl RustAdapter {
             rust_diagnostic_origins,
             rust_consumed_sources,
             preview_fact_cache: Default::default(),
+            owner_opt_outs,
         })
     }
+}
+
+/// Whether the index spans the whole workspace. A skipped unreadable path may
+/// hold a competing owner or a test, so the inventory is never complete then:
+/// the uniqueness-based related-test admits must stay off (fail closed).
+fn workspace_index_spans_workspace(
+    indexed: usize,
+    analyzable: usize,
+    skipped_unreadable: bool,
+) -> bool {
+    indexed == analyzable && !skipped_unreadable
 }
 
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
@@ -3443,16 +3487,22 @@ fn lexical_fallback_limitations<'a>(
         let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
             (
                 crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
-                "Save the file as UTF-8, then re-run the analysis.",
+                crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
-            (
-                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+            match crate::analysis::syntax::rust_nesting_refusal(&facts.source) {
+                // A typed static-limit decline of valid Rust is not a syntax
+                // error: its recovery names the budget, not a parse fix (#13660).
+                Some(reason) => (
+                    reason,
+                    crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+                ),
+                None => (
                     "the Rust parser reported syntax errors, so the file was read lexically"
-                        .to_string()
-                }),
-                "Fix the file so it parses as Rust, then re-run the analysis.",
-            )
+                        .to_string(),
+                    crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                ),
+            }
         };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,
@@ -3588,6 +3638,14 @@ impl LanguageAdapter for RustAdapter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skipped_unreadable_path_keeps_the_workspace_index_incomplete() {
+        use super::workspace_index_spans_workspace as spans;
+        assert!(spans(3, 3, false));
+        assert!(!spans(3, 3, true), "an unreadable competitor may exist");
+        assert!(!spans(2, 3, false));
+    }
+
     use super::{
         DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
         DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
@@ -4038,52 +4096,59 @@ mod tests {
 
     #[test]
     fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
-        let root = temp_root("generator-repo-gap")?;
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
-        )?;
-        write(
-            &root.join("src/lib.rs"),
-            "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
-        )?;
-        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            result.findings.iter().all(|f| f.probe.location.line != 5),
-            "generator evidence is not a repo-wide production subject: {:?}",
-            result.findings
-        );
-        let product: Vec<_> = result
-            .findings
-            .iter()
-            .filter(|f| f.probe.location.line == 9)
-            .collect();
-        assert!(
-            !product.is_empty(),
-            "product subject must be seeded: {:?}",
-            result.findings
-        );
-        assert!(
-            product.iter().any(|f| f.canonical_gap.is_some()),
-            "ordinary product retains a canonical gap: {product:?}"
-        );
-        // The same source must be probeable when provider identity is not verified.
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
-        )?;
-        let unverified =
-            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            unverified
-                .findings
-                .iter()
-                .any(|f| f.probe.location.line == 5),
-            "unverified generator expression must be probeable: {:?}",
-            unverified.findings
-        );
-        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
-        Ok(())
+        crate::testing::compiler_environment::plain(
+            module_path!(),
+            "repo_omits_generator_stimulus_but_keeps_product_gap",
+            || {
+                let root = temp_root("generator-repo-gap")?;
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+                )?;
+                write(
+                    &root.join("src/lib.rs"),
+                    "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+                )?;
+                let result =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    result.findings.iter().all(|f| f.probe.location.line != 5),
+                    "generator evidence is not a repo-wide production subject: {:?}",
+                    result.findings
+                );
+                let product: Vec<_> = result
+                    .findings
+                    .iter()
+                    .filter(|f| f.probe.location.line == 9)
+                    .collect();
+                assert!(
+                    !product.is_empty(),
+                    "product subject must be seeded: {:?}",
+                    result.findings
+                );
+                assert!(
+                    product.iter().any(|f| f.canonical_gap.is_some()),
+                    "ordinary product retains a canonical gap: {product:?}"
+                );
+                // The same source must be probeable when provider identity is not verified.
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+                )?;
+                let unverified =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    unverified
+                        .findings
+                        .iter()
+                        .any(|f| f.probe.location.line == 5),
+                    "unverified generator expression must be probeable: {:?}",
+                    unverified.findings
+                );
+                fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        )
     }
 
     fn repo_options(root: &Path) -> AnalysisOptions {
@@ -5153,10 +5218,15 @@ mod tests {
                     assert!(test.oracle.is_none());
                     assert_eq!(test.oracle_kind, OracleKind::Unknown);
                     assert_eq!(test.oracle_strength, OracleStrength::None);
-                    assert_eq!(
-                        test.miss,
-                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-                    );
+                    // The full scope resolves the shadowing macro (inert); the
+                    // name-admitted scope cannot read it, an analyzer limit
+                    // (RIPR-SPEC-0221).
+                    let expected_miss = if std::ptr::eq(finding, &full) {
+                        crate::domain::RelatedTestMiss::AssertionInert
+                    } else {
+                        crate::domain::RelatedTestMiss::AssertionAdmissionUnproven
+                    };
+                    assert_eq!(test.miss, Some(expected_miss));
                 }
             } else {
                 for finding in [&full, &named] {
@@ -7999,12 +8069,12 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 12,
             end_line: 18,
             body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
@@ -10398,14 +10468,14 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 1,
             end_line: 5,
             body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -10425,7 +10495,7 @@ fn absent_delimiter_boundary_returns_head() {
         ffi_finding.static_limit_kind = None;
         ffi_finding.evidence.clear();
         let mut ffi_owner = rust_owner;
-        ffi_owner.attrs = vec!["#[no_mangle]".to_string()];
+        ffi_owner.attrs = vec!["#[no_mangle]".to_string()].into();
         let ffi_index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![ffi_owner],
             ..Default::default()
@@ -10440,6 +10510,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod cfg_kani_module_tests;
 #[cfg(test)]
 mod classify_panic_tests;
 #[cfg(test)]

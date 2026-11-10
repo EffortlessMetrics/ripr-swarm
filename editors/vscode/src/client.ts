@@ -14,6 +14,7 @@ import {
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
 import {
+  compareReportedVersions,
   requestedServerVersion,
   resolveServer,
   ResolveFailure,
@@ -606,6 +607,8 @@ export class RiprClientController {
   private startingPromise: Promise<void> | undefined;
   /** In-flight start-failure toast; coalesced while `start()` awaits `startOnce`. (#5315) */
   private startFailureNotification: Promise<void> | undefined;
+  /** Stale-server warnings already shown this session, so restarts do not repeat them (#13638). */
+  private readonly shownServerVersionWarnings = new Set<string>();
   /**
    * Monotonic generation counter bumped by every stop(). startOnce() captures
    * the generation at entry and checks it again before assigning this.client.
@@ -635,6 +638,7 @@ export class RiprClientController {
       getServer: () => this.server,
       getWorkspaceRoot: () => this.workspaceRoot,
       getStartGeneration: () => this.startGeneration,
+      sessionRootBlocker: () => this.sessionRootBlocker(),
       getStatusKind: () => this.status.kind,
       getSetupStatus: () => this.setupStatus,
       statusContext: () => this.statusContext(),
@@ -664,6 +668,18 @@ export class RiprClientController {
   /** Resolves once the in-flight start-failure toast finishes or was never shown. (#5315) */
   settleStartFailureNotification(): Promise<void> {
     return this.startFailureNotification ?? Promise.resolve();
+  }
+
+  private notifyServerVersionWarningOnce(message: string): void {
+    if (this.shownServerVersionWarnings.has(message)) {
+      return;
+    }
+    this.shownServerVersionWarnings.add(message);
+    // Fire and forget: start() must not wait on a toast nobody answers (#9526).
+    Promise.resolve(this.runtime.showWarningMessage(message)).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr server version warning failed: ${detail}`);
+    });
   }
 
   private notifyStartFailureOnce(message: string): void {
@@ -809,6 +825,9 @@ export class RiprClientController {
       return;
     }
     this.server = server;
+    if (server.versionWarning) {
+      this.notifyServerVersionWarningOnce(server.versionWarning);
+    }
     this.updateStatus({
       kind: 'starting',
       summary: 'Starting ripr language server.',
@@ -1609,7 +1628,8 @@ export class RiprClientController {
     }
     const generation = this.startGeneration;
     const redirectRoots = await workspaceRedirectRoots(this.workspaceRoot);
-    if (!validatedAgentLoopCommand(loopTarget, redirectRoots)) {
+    const beforeCommand = validatedAgentLoopCommand(loopTarget, redirectRoots);
+    if (!beforeCommand) {
       return false;
     }
     const seamId = seamIdFromAgentRepairTarget(rawTarget);
@@ -1677,6 +1697,18 @@ export class RiprClientController {
     this.rememberAttempt(root, started.attemptId);
     for (const line of started.summaryLines) {
       this.output.appendLine(line);
+    }
+    if (started.baselineAmbiguous) {
+      // The published attempt remains inspectable, but its next_command is
+      // still the after phase. Preserve the validated before route for recovery
+      // instead of opening a test or re-advertising after through generic status.
+      this.clearAttemptStatusBar();
+      this.output.appendLine(`Restart from a clean state: ${beforeCommand}`);
+      this.runtime.showInformationMessage(
+        `ripr repair attempt ${started.attemptId} has an ambiguous baseline and cannot be scored. Resolve the workspace condition and rerun the before command from a clean state; see ripr output.`
+      );
+      this.showOutput();
+      return true;
     }
     this.runtime.showInformationMessage(
       `ripr repair attempt ${started.attemptId} is awaiting an external test edit (not complete).`
@@ -3446,65 +3478,14 @@ function riprServerVersionState(context: RiprStatusContext): { state: RiprSetupS
   if (!version || version.trim() === '') {
     return { state: 'ripr_version_unknown', detail: 'server did not report --version output' };
   }
-  const actual = parseVersion(version);
-  const expected = parseVersion(context.expectedServerVersion);
-  if (!actual || !expected) {
+  const order = compareReportedVersions(version, context.expectedServerVersion);
+  if (order === undefined) {
     return { state: 'ripr_version_unknown', detail: `reported ${version}` };
   }
-  if (compareVersions(actual, expected) < 0) {
+  if (order < 0) {
     return { state: 'ripr_version_too_old', detail: `reported ${version}; expected ${context.expectedServerVersion}` };
   }
   return { state: 'ripr_version_ok', detail: version };
-}
-
-function parseVersion(value: string): [number, number, number] | undefined {
-  for (let index = 0; index < value.length; index += 1) {
-    if (!isAsciiDigit(value.charCodeAt(index))) {
-      continue;
-    }
-    const major = readVersionNumber(value, index);
-    if (!major || value.charAt(major.nextIndex) !== '.') {
-      continue;
-    }
-    const minor = readVersionNumber(value, major.nextIndex + 1);
-    if (!minor || value.charAt(minor.nextIndex) !== '.') {
-      continue;
-    }
-    const patch = readVersionNumber(value, minor.nextIndex + 1);
-    if (!patch) {
-      continue;
-    }
-    return [major.value, minor.value, patch.value];
-  }
-  return undefined;
-}
-
-function readVersionNumber(value: string, startIndex: number): { value: number; nextIndex: number } | undefined {
-  let nextIndex = startIndex;
-  while (nextIndex < value.length && isAsciiDigit(value.charCodeAt(nextIndex))) {
-    nextIndex += 1;
-  }
-  if (nextIndex === startIndex) {
-    return undefined;
-  }
-  return {
-    value: Number(value.slice(startIndex, nextIndex)),
-    nextIndex
-  };
-}
-
-function isAsciiDigit(code: number): boolean {
-  return code >= 48 && code <= 57;
-}
-
-function compareVersions(left: [number, number, number], right: [number, number, number]): number {
-  for (let index = 0; index < left.length; index += 1) {
-    const diff = left[index] - right[index];
-    if (diff !== 0) {
-      return diff;
-    }
-  }
-  return 0;
 }
 
 function setupFileLine(prefix: string, file: RiprSetupFileStatus): string {

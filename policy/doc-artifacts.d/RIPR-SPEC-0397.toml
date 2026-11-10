@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0397"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0397-beam-shared-application-facts-and-actor-test-contracts.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Epic #5594 spec leaf #5875 defines BEAM shared application facts and separate Elixir/Erlang actor-test contracts before adapter implementation."

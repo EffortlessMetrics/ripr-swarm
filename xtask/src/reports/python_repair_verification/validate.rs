@@ -677,6 +677,15 @@ pub(crate) fn validate_receipt(
     // producer can record for them.
     match movement_state.as_str() {
         "closed" | "improved" | "unchanged" | "regressed" => {
+            if after_run_status != "complete" {
+                return Err(verification_fail(
+                    display,
+                    "movement.after_run_status",
+                    format!(
+                        "a confident `{movement_state}` movement requires a complete after analysis, got `{after_run_status}`; a partial or evidence-failed analysis is `limited`, never a confident classification"
+                    ),
+                ));
+            }
             if !before_complete || !after_complete {
                 return Err(verification_fail(
                     display,
@@ -734,7 +743,7 @@ pub(crate) fn validate_receipt(
                 return Err(verification_fail(
                     display,
                     "movement.state",
-                    "a `limited` movement requires a partial after analysis (`seam_limit_applied` or `limited_declined_files`); a complete analysis resolves the join or fails closed to `uncertain`",
+                    "a `limited` movement requires a partial after analysis (`seam_limit_applied`, `limited_declined_files` or `limited_seam_evidence`); a complete analysis resolves the join or fails closed to `uncertain`",
                 ));
             }
             if !before_absent || !after_absent {

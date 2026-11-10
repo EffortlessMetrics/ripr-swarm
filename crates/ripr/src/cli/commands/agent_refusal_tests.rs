@@ -32,6 +32,8 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        external_test_file_target: false,
+        new_test_proposal: None,
     })
 }
 
@@ -46,43 +48,59 @@ fn require_contains(haystack: &str, fragments: &[&str]) -> Result<(), String> {
 
 #[test]
 fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
-    assert!(agent_verify_error_is_typed_refusal(
-        AGENT_VERIFY_INPUT_DRIFT_ERROR
+    assert!(matches!(
+        classify_incomparable_pair_error("analysis input identities differ".to_string()),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            ..
+        }
     ));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_NO_MOVEMENT_PREFIX}: nothing changed"
-    )));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{}: gap `g` is still open",
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
-    )));
-    // A path-bearing operational error that merely echoes refusal text must
-    // stay a failure, as must a drift message with trailing text.
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "failed to read agent verify --before snapshot dir/{AGENT_VERIFY_INPUT_DRIFT_ERROR}"
-    )));
-    for prefix in [
-        AGENT_VERIFY_NO_MOVEMENT_PREFIX,
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX,
-    ] {
-        assert!(!agent_verify_error_is_typed_refusal(&format!(
-            "failed to read agent verify --before snapshot dir/{prefix}"
-        )));
-    }
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_INPUT_DRIFT_ERROR} (extra)"
-    )));
-    assert!(!agent_verify_error_is_typed_refusal(
-        "agent verify artifacts are incomparable: repository heads differ"
+    assert!(matches!(
+        classify_verify_movement_error(
+            "no repository movement between before and after artifacts: still at abc".to_string()
+        ),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::NoMovement,
+            ..
+        }
     ));
-    assert!(!agent_verify_error_is_typed_refusal(""));
+    assert!(matches!(
+        classify_gap_binding_error(format!(
+            "{}: gap `g` is still open",
+            crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
+        )),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            ..
+        }
+    ));
+    assert!(matches!(
+        classify_incomparable_pair_error("repository heads differ".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
+    assert!(matches!(
+        classify_verify_movement_error("unexpected movement shape".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
 }
 
 #[test]
-fn after_refusal_reason_folds_narration_into_sentences() {
+fn verify_exit_class_follows_refusal_kind_not_reworded_message() {
+    let operational = AgentVerifyError::Operational("failed to read snapshot".to_string());
+    assert_eq!(operational.into_command_error().exit_code(), 2);
+
+    let reworded = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded.into_command_error().exit_code(), 3);
+}
+
+#[test]
+fn after_refusal_reason_preserves_narration_case_and_lines() {
     assert_eq!(
         after_refusal_reason("  refused here.  ", &[]),
-        "refused here"
+        "refused here."
     );
     let narration = vec![
         "attempt `a` stays open.".to_string(),
@@ -92,7 +110,7 @@ fn after_refusal_reason_folds_narration_into_sentences() {
     ];
     assert_eq!(
         after_refusal_reason("refused here.", &narration),
-        "refused here. Attempt `a` stays open. To recover: rerun"
+        "refused here.\nattempt `a` stays open.\nto recover: rerun."
     );
 }
 
@@ -318,6 +336,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
                 authority: None,
             },
             verify_rollback: false,
+            test_result: None,
             store: None,
             json: false,
             quiet: false,
@@ -639,4 +658,78 @@ fn agent_packet_unknown_seam_is_a_decision_not_a_failure() -> Result<(), String>
         Err(CommandError::Decision(message)) if message.contains("0000000000000000") => Ok(()),
         other => Err(format!("an unknown seam id must be a decision: {other:?}")),
     }
+}
+
+/// The cross-namespace seam-id gate: only `probe:`/`repo-probe:`/`gap:` ids and
+/// a `file:line` location (non-empty file, positive decimal line) are
+/// translated; everything else reaches normal seam lookup untouched.
+#[test]
+fn cross_namespace_seam_id_recognizes_only_translatable_shapes() {
+    for translated in [
+        "probe:abc",
+        "repo-probe:abc",
+        "gap:abc",
+        "src/lib.rs:12",
+        "a:1",
+    ] {
+        assert!(
+            names_cross_namespace_id(translated),
+            "{translated} must be translated"
+        );
+    }
+    for passthrough in [
+        "f3c9e4d21a0b7c88",
+        "seam:sample",
+        "src/lib.rs:0",
+        "src/lib.rs:000",
+        ":12",
+        "src/lib.rs:",
+        "src/lib.rs:1x",
+        "src/lib.rs:-1",
+        "",
+    ] {
+        assert!(
+            !names_cross_namespace_id(passthrough),
+            "{passthrough:?} must pass through untouched"
+        );
+    }
+}
+
+/// `agent status --out` lexical equality is only sound when no `..` follows a
+/// symlink (#10624): the helper must flag a symlink popped by `..` and stay
+/// quiet for real directories and for `.` segments.
+#[cfg(unix)]
+#[test]
+fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(), String> {
+    let root = unique_command_test_dir("parent-dir-symlink");
+    let real = root.join("real");
+    std::fs::create_dir_all(real.join("sub")).map_err(|error| format!("create dirs: {error}"))?;
+    // The link targets a nested directory, so filesystem `link/..` (root/real)
+    // differs from the lexical `link/..` (root): the case the guard exists for.
+    std::os::unix::fs::symlink(real.join("sub"), root.join("link"))
+        .map_err(|error| format!("create symlink: {error}"))?;
+    let fs_parent = std::fs::canonicalize(root.join("link/.."))
+        .map_err(|error| format!("canonicalize link/..: {error}"))?;
+    let lexical_parent =
+        std::fs::canonicalize(&root).map_err(|error| format!("canonicalize root: {error}"))?;
+    if fs_parent == lexical_parent {
+        return Err("fixture must make filesystem and lexical `..` differ".to_string());
+    }
+
+    let through_symlink = parent_dir_follows_symlink(&root.join("link/../x"));
+    let through_real_dir = parent_dir_follows_symlink(&root.join("real/sub/../x"));
+    let curdir_only = parent_dir_follows_symlink(&root.join("./real/./sub"));
+    let symlink_leaf_no_dotdot = parent_dir_follows_symlink(&root.join("link/sub"));
+    let leading_relative_dotdot = parent_dir_follows_symlink(Path::new("../x"));
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(through_symlink, "`link/..` must be flagged");
+    assert!(!through_real_dir, "`real/sub/..` is a real directory");
+    assert!(!curdir_only, "`.` segments are lexically exact");
+    assert!(!symlink_leaf_no_dotdot, "a symlink without `..` is exact");
+    assert!(
+        leading_relative_dotdot,
+        "an unprovable leading `..` is flagged"
+    );
+    Ok(())
 }

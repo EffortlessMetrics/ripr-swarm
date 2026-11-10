@@ -30,6 +30,7 @@ case "$all" in
   *"/pulls/"*)
     n="${all#*/pulls/}"; n="${n%% *}"
     if [ -f "$FAKE_DIR/pull.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    if [ -f "$FAKE_DIR/pull.$n.later.fail" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then echo "HTTP 502" >&2; exit 1; fi
     # A `.later.json` fixture answers every read after the first (lazy mergeability).
     if [ -f "$FAKE_DIR/pull.$n.later.json" ] && [ -f "$FAKE_DIR/pull.$n.seen" ]; then
       serve "$FAKE_DIR/pull.$n.later.json" '{}'
@@ -70,6 +71,9 @@ struct Pr {
     late_run: Option<&'static str>,
     late_fail: bool,
     renewed: bool,
+    withdrawn: Option<&'static str>,
+    late_withdrawn: Option<&'static str>,
+    late_pull_fail: bool,
     head_of: Option<u32>,
     status_fail: bool,
     pull_fail: bool,
@@ -94,6 +98,9 @@ impl Pr {
             late_run: None,
             late_fail: false,
             renewed: false,
+            withdrawn: None,
+            late_withdrawn: None,
+            late_pull_fail: false,
             head_of: None,
             status_fail: false,
             pull_fail: false,
@@ -168,11 +175,16 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(dir.join(format!("pull.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
+        if pr.late_pull_fail {
+            fs::write(dir.join(format!("pull.{}.later.fail", pr.number)), "")
+                .map_err(|e| e.to_string())?;
+        }
         fs::write(
             dir.join(format!("pull.{}.json", pr.number)),
             // `moved` models a push between the list call and the live read.
             format!(
-                r#"{{"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                r#"{{"state":"{}","mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                if pr.withdrawn == Some("closed") { "closed" } else { "open" },
                 if pr.state == "null" {
                     "null".to_string()
                 } else {
@@ -185,8 +197,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 },
                 pr.repo,
                 // `renewed` models the label or ready state coming back after the list call.
-                pr.draft && !pr.renewed,
-                if pr.labeled || pr.renewed {
+                (pr.draft && !pr.renewed) || pr.withdrawn == Some("draft"),
+                if (pr.labeled || pr.renewed) && pr.withdrawn != Some("unlabeled") {
                     r#"[{"name":"merge-ready"}]"#
                 } else {
                     "[]"
@@ -236,8 +248,49 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join(format!("pull.{}.later.json", pr.number)),
                 format!(
-                    r#"{{"mergeable_state":"{later}","head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
-                    pr.sha()
+                    r#"{{"state":"open","draft":false,"labels":[{{"name":"merge-ready"}}],"mergeable_state":"{later}","head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}}}}"#,
+                    pr.sha(),
+                    pr.repo
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if let Some(withdrawn) = pr.late_withdrawn {
+            fs::write(
+                dir.join(format!("pull.{}.later.json", pr.number)),
+                format!(
+                    r#"{{"state":"{}","draft":{},"labels":{},"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"{}"}}}}"#,
+                    if withdrawn == "closed" {
+                        "closed"
+                    } else {
+                        "open"
+                    },
+                    withdrawn == "draft",
+                    if withdrawn == "unlabeled" {
+                        "[]"
+                    } else {
+                        r#"[{"name":"merge-ready"}]"#
+                    },
+                    if pr.state == "null" {
+                        "null".to_string()
+                    } else {
+                        format!("\"{}\"", pr.state)
+                    },
+                    if withdrawn == "moved" {
+                        format!("{:040x}", pr.number + 1000)
+                    } else {
+                        pr.sha()
+                    },
+                    if withdrawn == "fork" {
+                        "fork/r"
+                    } else {
+                        pr.repo
+                    },
+                    if withdrawn == "retargeted" {
+                        "release"
+                    } else {
+                        "main"
+                    }
                 ),
             )
             .map_err(|e| e.to_string())?;
@@ -827,5 +880,117 @@ fn a_failure_on_a_head_shared_with_a_merge_ready_pr_is_kept_in_either_scan_order
     let (requested, withdrawn) = pair();
     let outcome = run(&[withdrawn, requested], "shared-withdrawn-first")?;
     assert_eq!(outcome.successes, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn a_request_withdrawn_since_listing_receives_no_new_status_or_notice() -> Result<(), String> {
+    for (index, withdrawn) in ["unlabeled", "draft", "closed"].iter().enumerate() {
+        for state in ["dirty", "clean"] {
+            let pr = Pr {
+                withdrawn: Some(withdrawn),
+                state,
+                ..Pr::dirty(900 + index as u32)
+            };
+            let outcome = run(&[pr], &format!("withdrawn-{withdrawn}-{state}"))?;
+            if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0) {
+                return Err(format!(
+                    "withdrawn {withdrawn} request ({state}) received writes: {}",
+                    outcome.log
+                ));
+            }
+            if !outcome.summary.contains("request withdrawn") {
+                return Err(format!(
+                    "missing withdrawn-request summary: {}",
+                    outcome.summary
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() -> Result<(), String>
+{
+    for (index, transition) in [
+        "unlabeled",
+        "draft",
+        "closed",
+        "moved",
+        "retargeted",
+        "fork",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for (state, prior_statuses) in [("dirty", "[]"), ("clean", "[]"), ("clean", OURS_FAILURE)] {
+            let pr = Pr {
+                late_withdrawn: Some(transition),
+                state,
+                prior_statuses,
+                ..Pr::dirty(950 + index as u32)
+            };
+            let case = format!(
+                "late-withdrawn-{transition}-{state}-{}",
+                if prior_statuses == "[]" {
+                    "new"
+                } else {
+                    "flagged"
+                }
+            );
+            let outcome = run(&[pr], &case)?;
+            if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0) {
+                return Err(format!(
+                    "late transition {transition} ({state}) received writes: {}",
+                    outcome.log
+                ));
+            }
+            if !outcome
+                .summary
+                .contains("skip: request withdrawn or moved before write")
+                || !outcome
+                    .summary
+                    .contains("dark merge-ready heads reported: 0; conflicts reported on the PR: 0; conflict statuses cleared: 0; re-apply notices: 0.")
+            {
+                return Err(format!(
+                    "unexpected summary for late transition {transition} ({state}): {}",
+                    outcome.summary
+                ));
+            }
+        }
+    }
+    let failed_recheck = Pr {
+        late_pull_fail: true,
+        ..Pr::dirty(960)
+    };
+    let outcome = run(&[failed_recheck], "late-pull-fail-dirty")?;
+    if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
+        || !outcome.summary.contains("conflict report failed")
+    {
+        return Err(format!(
+            "failed write-boundary recheck wrote or misreported: {}",
+            outcome.summary
+        ));
+    }
+    for (case, covered, in_flight) in [("covered", true, false), ("in-flight", false, true)] {
+        let pr = Pr {
+            late_withdrawn: Some("unlabeled"),
+            covered,
+            in_flight,
+            ..Pr::dirty(970)
+        };
+        let outcome = run(&[pr], &format!("late-withdrawn-dirty-{case}"))?;
+        if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
+            || !outcome.summary.contains(
+                "in-flight qualifications: 0; dark merge-ready heads reported: 0; conflicts reported on the PR: 0; conflict statuses cleared: 0; re-apply notices: 0.",
+            )
+        {
+            return Err(format!(
+                "dirty {case} late withdrawal miscounted summary: {}",
+                outcome.summary
+            ));
+        }
+    }
     Ok(())
 }

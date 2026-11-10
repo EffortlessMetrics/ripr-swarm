@@ -246,7 +246,8 @@ pub(crate) fn gather_seam_inventory(
                 crate::app::task_first::inventory_for_repair(root, config)
                     .map(|(_, limit_info)| limit_info),
             ),
-        };
+        }
+        .with_evidence_limitations(&scoped.evidence_limitations);
         consumed_sources = scoped.consumed_sources;
         candidate_seams = scoped.classified;
     }
@@ -883,6 +884,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
@@ -976,6 +978,67 @@ mod tests {
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
         Ok(std::env::temp_dir().join(format!("ripr-mcp-repair-card-{nanos}")))
+    }
+
+    /// A committed repository whose one production file holds a boundary seam.
+    fn refresh_repo() -> Result<PathBuf, String> {
+        let root = temp_root()?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let git = crate::testing::fixture_git::fixture_git_ok;
+        git(&root, &["init", "-q"])?;
+        git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        git(&root, &["config", "user.name", "RIPR Test"])?;
+        git(&root, &["add", "."])?;
+        git(&root, &["commit", "-q", "--no-gpg-sign", "-m", "fixture"])?;
+        Ok(root)
+    }
+
+    fn refresh_completeness(
+        root: &Path,
+    ) -> Result<super::super::repair_admission::InventoryCompleteness, String> {
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.probe.location.file = root.join("src/foo.rs");
+        let inventory = gather_seam_inventory(root, &RiprConfig::default(), &[finding])
+            .map_err(|failure| format!("refresh inventory failed: {}", failure.code))?;
+        Ok(inventory.completeness)
+    }
+
+    /// #13340: a refresh whose scoped evidence pass failed closed (the
+    /// shared-table warm panicked) must not report a complete inventory; the
+    /// healthy control on a separate root stays complete.
+    #[test]
+    fn failed_evidence_warm_makes_the_refresh_inventory_unverified() -> Result<(), String> {
+        use super::super::repair_admission::InventoryCompleteness;
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let control = refresh_repo()?;
+        let healthy = refresh_completeness(&control);
+        let _ = std::fs::remove_dir_all(&control);
+        assert_eq!(healthy?, InventoryCompleteness::Complete);
+
+        for point in [1, 2] {
+            let root = refresh_repo()?;
+            let armed = {
+                let _armed = WarmPanicGuard::arm(point);
+                refresh_completeness(&root)
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            match armed? {
+                InventoryCompleteness::Unverified(detail) => assert!(
+                    detail.contains("seam evidence pass failed"),
+                    "arm({point}): {detail}"
+                ),
+                other => return Err(format!("arm({point}) must be Unverified: {other:?}")),
+            }
+        }
+        Ok(())
     }
 
     #[test]

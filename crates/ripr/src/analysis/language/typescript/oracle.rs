@@ -81,7 +81,7 @@ pub(crate) fn weak_oracle_missing_summary(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "Related test reaches `{owner_name}` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet."
+            "Related test reaches `{owner_name}` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed behavior before routing a repair packet."
         ),
         OracleKind::SmokeOnly => format!(
             "Related test reaches `{owner_name}` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet."
@@ -3254,7 +3254,8 @@ pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
     .unwrap_or(fallback)
 }
 
-/// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
+/// `<path>.mock.callCount()`, `<path>.mock.calls.length` or a sinon-style
+/// `<path>.callCount` / `.callCount()` / `.getCalls().length` on a plain
 /// identifier path (no optional chaining, indexing or alias). Used only
 /// when the parse worker refuses, so a worker failure cannot restore the
 /// exact argument credit this demotion exists to withhold.
@@ -3263,6 +3264,9 @@ fn is_mock_call_count_expression(text: &str) -> bool {
     let Some(path) = text
         .strip_suffix(".mock.callCount()")
         .or_else(|| text.strip_suffix(".mock.calls.length"))
+        .or_else(|| text.strip_suffix(".callCount()"))
+        .or_else(|| text.strip_suffix(".callCount"))
+        .or_else(|| text.strip_suffix(".getCalls().length"))
     else {
         return false;
     };
@@ -3463,6 +3467,15 @@ fn mock_count_suffix(path: &[MockCountPart]) -> bool {
     use MockCountPart::{Call, Property};
     matches!(path, [.., Property(mock), Property(calls), Property(length)] if mock == "mock" && calls == "calls" && length == "length")
         || matches!(path, [.., Property(mock), Property(count), Call] if mock == "mock" && count == "callCount")
+        // Sinon-style spies (#10174) record the count on the spy itself, so
+        // there is no `.mock` segment to bind a receiver to. Fail closed: any
+        // receiver whose final member is `callCount` (read or called) or whose
+        // `getCalls()` length is taken is treated as a mock count. A plain
+        // counter named `callCount` loses argument credit, which is a miss;
+        // crediting a spy count as an exact value would be wrong credit.
+        || matches!(path, [.., Property(count)] if count == "callCount")
+        || matches!(path, [.., Property(count), Call] if count == "callCount")
+        || matches!(path, [.., Property(calls), Call, Property(length)] if calls == "getCalls" && length == "length")
 }
 
 /// Retain a bounded suffix, rather than refusing long receiver paths and

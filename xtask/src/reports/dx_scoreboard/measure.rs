@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+mod diagnostics;
 pub(crate) use check_admission::typed_cause_of_static_limit;
 mod editor_refresh;
 
@@ -108,8 +109,10 @@ pub(super) fn measure(
     let scratch = std::env::current_dir()
         .map_err(|err| format!("current dir: {err}"))?
         .join("target/ripr/dx-scoreboard")
-        .join(format!("run-{stamp}"));
-    fs::create_dir_all(&scratch)
+        .join(format!("run-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(scratch.parent().ok_or("scoreboard scratch has no parent")?)
+        .map_err(|err| format!("create scoreboard scratch parent: {err}"))?;
+    fs::create_dir(&scratch)
         .map_err(|err| format!("create scoreboard scratch {}: {err}", scratch.display()))?;
     let result = measure_in(config, options, &binary, &scratch, samples, &mut context);
     let _ = fs::remove_dir_all(&scratch);
@@ -127,8 +130,9 @@ fn measure_in(
     let wants = |board: &str| options.boards.iter().any(|b| b == board);
     let timeout = Duration::from_millis(options.timeout_ms);
     if wants("speed") || wants("trust") {
-        for entry in selected_corpus(config, options)? {
-            let corpus = measure_corpus_entry(entry, options, binary, scratch, timeout, samples);
+        for (index, entry) in selected_corpus(config, options)?.into_iter().enumerate() {
+            let corpus =
+                measure_corpus_entry(entry, options, binary, scratch, index, timeout, samples);
             context.corpus.push(corpus);
         }
     }
@@ -169,11 +173,12 @@ fn selected_corpus<'a>(
 
 // ------------------------------------------------------------- corpus ----
 
-fn measure_corpus_entry(
+pub(super) fn measure_corpus_entry(
     entry: &CorpusEntry,
     options: &Options,
     binary: &Path,
     scratch: &Path,
+    index: usize,
     timeout: Duration,
     samples: &mut Vec<Sample>,
 ) -> Value {
@@ -197,16 +202,14 @@ fn measure_corpus_entry(
         "trust.editor_resilience_failures",
         "trust.self_contradictions",
     ];
-    let checkout = match prepare_checkout(entry, options) {
+    let destination = scratch.join(format!("checkout-{index}"));
+    let checkout = match prepare_measured_checkout(entry, options, &destination) {
         Ok(path) => path,
-        Err(reason) => {
-            // With --clone the run promised a checkout, so losing it is a
-            // broken instrument the gate must see; without it, the corpus
-            // was simply not fetched.
-            let (outcome, status) = if options.clone {
-                (SampleOutcome::Failed, "failed")
-            } else {
+        Err((missing, reason)) => {
+            let (outcome, status) = if missing {
                 (SampleOutcome::NotMeasured, "not_measured")
+            } else {
+                (SampleOutcome::Failed, "failed")
             };
             for metric in corpus_metrics {
                 samples.push(sample(metric, outcome.clone(), reason.clone()));
@@ -240,7 +243,10 @@ fn measure_corpus_entry(
     }
     let _ = fs::remove_dir_all(checkout.join("target/ripr"));
     let cache_text = cache.display().to_string();
-    let envs = [(CACHE_ENV, cache_text.as_str())];
+    let mut envs = vec![(CACHE_ENV, cache_text.as_str())];
+    envs.extend(crate::repo_exposure_latency_envs(
+        crate::repo_exposure_receipt_token(),
+    ));
     let root = checkout.display().to_string();
 
     let pilot_args = vec![
@@ -258,25 +264,39 @@ fn measure_corpus_entry(
     let mut contradictions: Option<(usize, Vec<String>)> = None;
     // Both documents must be scanned; one alone would undercount.
     let mut missing_sources: Vec<&str> = Vec::new();
-    match capture_output_measured(
+    // Hash only a bounded regular executable; an invalid --ripr-bin must
+    // not turn diagnostic identity into an unbounded FIFO/device read.
+    // This observation does not qualify concurrent filesystem mutation.
+    let binary_sha256 = fs::metadata(binary)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() <= 256 * 1024 * 1024)
+        .and_then(|_| crate::reports::release_server::sha256_file_io(binary).ok());
+    let mut invocations = Vec::new();
+    let pilot = capture_output_measured(
         &binary.display().to_string(),
         &pilot_args,
         None,
         &envs,
         timeout,
         "dx-scoreboard cold pilot",
-    ) {
+    );
+    let summary = read_json_file(&out.join("pilot-summary.json"));
+    invocations.push(diagnostics::record("pilot", &pilot, summary.as_ref(), None));
+    match pilot {
         Ok(measured) => {
-            let summary = read_json_file(&out.join("pilot-summary.json"));
-            let status = summary
-                .as_ref()
-                .and_then(|summary| summary["status"].as_str().map(str::to_string))
-                .unwrap_or_else(|| "missing".to_string());
+            let status = diagnostics::pilot_status(summary.as_ref());
             let complete = exited_zero(&measured) && status == "complete";
             let ms = duration_ms(&measured);
+            // Only the bounded vocabulary reaches the retained detail; an
+            // arbitrary producer string is never copied into the report.
+            let reason = match diagnostics::pilot_reason(summary.as_ref()) {
+                "not_reported" => None,
+                reason => Some(reason),
+            };
             let detail = format!(
-                "exit {}, pilot status `{status}`{}",
+                "exit {}, pilot status `{status}`{}{}",
                 exit_label(&measured),
+                pilot_reason_suffix(reason),
                 if measured.output.timed_out {
                     ", harness deadline reached"
                 } else {
@@ -320,6 +340,7 @@ fn measure_corpus_entry(
         }
     }
 
+    drop(summary);
     let base = entry
         .base_sha
         .clone()
@@ -336,7 +357,10 @@ fn measure_corpus_entry(
     // The contradiction scan reads every finding, so the measured check
     // renders the full set instead of the byte-bounded prefix that a large
     // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
-    let check_envs = warm_check_envs(&cache_text);
+    let mut check_envs = warm_check_envs(&cache_text).to_vec();
+    check_envs.extend(crate::repo_exposure_latency_envs(
+        crate::repo_exposure_receipt_token(),
+    ));
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
     // before the measured population may be described as warm.
@@ -351,18 +375,33 @@ fn measure_corpus_entry(
     // N measured runs follow the warm-up. The first run that is not an
     // admitted success ends the series: the rest would only repeat a failure,
     // and `record_warm_check` reports the series as incomplete.
+    invocations.push(diagnostics::record(
+        "check_warmup",
+        &warmup,
+        None,
+        Some(&subject),
+    ));
     let mut measured_runs = Vec::new();
+    let mut attempted = 0;
     let mut measured_error = None;
     if matches!(&warmup, Ok(warmup) if !warmup.output.timed_out) {
         for _ in 0..options.samples.max(1) {
-            match capture_output_measured(
+            let captured = capture_output_measured(
                 &binary.display().to_string(),
                 &check_args,
                 None,
                 &check_envs,
                 timeout,
                 "dx-scoreboard warm check",
-            ) {
+            );
+            invocations.push(diagnostics::record(
+                "check_measured",
+                &captured,
+                None,
+                Some(&subject),
+            ));
+            attempted += 1;
+            match captured {
                 Ok(run) => {
                     let stop = run.output.timed_out || !exited_zero(&run);
                     measured_runs.push(run);
@@ -376,6 +415,9 @@ fn measure_corpus_entry(
                 }
             }
         }
+    }
+    for _ in attempted..options.samples.max(1) {
+        invocations.push(diagnostics::not_run("check_measured"));
     }
     let measured = match measured_error {
         Some(err) => Err(err),
@@ -506,12 +548,32 @@ fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
+    let mut row = measured_corpus_entry(entry, &editor_base);
+    row["terminal_evidence"] = json!({
+        "schema_version": "1",
+        "commands": ["pilot", "check"],
+        "binary_identity_limitation": binary_sha256.is_none().then_some("binary_sha256_unavailable"),
+        "binary_sha256_before_pilot": binary_sha256,
+        "root_identity_sha256": crate::blind_journey::sha256_hex(subject.root.as_bytes()),
+        "base": subject.base,
+        "pilot_mode": "ready",
+        "check_mode": WARM_CHECK_MODE,
+        "invocations": invocations,
+    });
+    row
+}
+
+/// Retain the workload actually selected by the corpus producer. The effective
+/// base is shared with the check/editor argv, not recovered from a later config.
+pub(super) fn measured_corpus_entry(entry: &CorpusEntry, base: &str) -> Value {
     json!({
         "id": entry.id,
         "sha": entry.sha,
         "url": entry.url,
         "language": entry.language(),
-                "size_tier": entry.size_tier,
+        "base": base,
+        "expected_partial": entry.expected_partial,
+        "size_tier": entry.size_tier,
         "status": "measured",
     })
 }
@@ -836,33 +898,12 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
             .map_err(|err| format!("create {}: {err}", options.corpus_dir.display()))?;
         git(
             None,
-            &[
-                "clone",
-                "--quiet",
-                "--filter=blob:none",
-                &entry.url,
-                &dir.display().to_string(),
-            ],
+            &["clone", "--quiet", &entry.url, &dir.display().to_string()],
         )?;
     }
     let dir = fs::canonicalize(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     verify_own_checkout(&dir)?;
-    let head = git(Some(&dir), &["rev-parse", "HEAD"])?;
-    if head.trim() != entry.sha {
-        let checkout = git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha]);
-        if checkout.is_err() {
-            if !options.clone {
-                return Err(format!(
-                    "{} lacks pin {}; rerun with --clone to fetch it",
-                    dir.display(),
-                    entry.sha
-                ));
-            }
-            git(Some(&dir), &["fetch", "--quiet", "origin", &entry.sha])?;
-            git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha])?;
-        }
-    }
-    let dirty = git(
+    let dirty = git_no_lazy(
         Some(&dir),
         &["status", "--porcelain", "--untracked-files=no"],
     )?;
@@ -872,14 +913,144 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
             dir.display()
         ));
     }
+    if git_no_lazy(
+        Some(&dir),
+        &["cat-file", "-e", &format!("{}^{{commit}}", entry.sha)],
+    )
+    .is_err()
+    {
+        if !options.clone {
+            return Err(format!(
+                "{} lacks pin {}; rerun with --clone to fetch it",
+                dir.display(),
+                entry.sha
+            ));
+        }
+        git(Some(&dir), &["fetch", "--quiet", "origin", &entry.sha])?;
+    }
+    let default_base = format!("{}~1", entry.sha);
+    let base = entry.base_sha.as_deref().unwrap_or(&default_base);
+    if let Err(reason) = verify_objects(&dir, &entry.sha, base) {
+        if !options.clone {
+            return Err(reason);
+        }
+        let mut args = vec![
+            "fetch",
+            "--quiet",
+            "--refetch",
+            "--no-filter",
+            "origin",
+            &entry.sha,
+        ];
+        if let Some(base_sha) = entry.base_sha.as_deref() {
+            args.push(base_sha);
+        }
+        git(Some(&dir), &args)?;
+        verify_objects(&dir, &entry.sha, base)?;
+    }
     Ok(dir)
+}
+
+/// The producer and tests share this boundary; only an absent optional source
+/// is not measured. Every failure after finding a source is an instrument failure.
+pub(crate) fn prepare_measured_checkout(
+    entry: &CorpusEntry,
+    options: &Options,
+    destination: &Path,
+) -> Result<PathBuf, (bool, String)> {
+    let source = prepare_checkout(entry, options).map_err(|reason| {
+        let missing = !options.clone
+            && matches!(
+                fs::symlink_metadata(options.corpus_dir.join(&entry.id)),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound
+            );
+        (missing, reason)
+    })?;
+    isolated_checkout(&source, &entry.sha, entry.base_sha.as_deref(), destination)
+        .map_err(|reason| (false, reason))
+}
+
+fn verify_objects(dir: &Path, sha: &str, base: &str) -> Result<(), String> {
+    git_no_lazy(
+        Some(dir),
+        &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
+    )
+    .map_err(|err| format!("cannot resolve base {base}: {err}"))?;
+    let objects = git_no_lazy(
+        Some(dir),
+        &[
+            "rev-list",
+            "--objects",
+            "--no-walk",
+            "--missing=print",
+            sha,
+            base,
+        ],
+    )?;
+    if objects.lines().any(|line| line.starts_with('?')) {
+        return Err("checkout is missing objects required by its pin or base".to_string());
+    }
+    Ok(())
+}
+
+/// Path text safe to pass as a `git` argument. Windows `fs::canonicalize`
+/// yields verbatim paths (`\\?\H:\...`, `\\?\UNC\server\...`); git parses
+/// those as a remote host and refuses the clone, so strip the verbatim
+/// prefix for argument use. Non-verbatim text passes through unchanged.
+pub(crate) fn git_path_text(path: &Path) -> String {
+    // Strict conversion first: the verbatim prefix is ASCII, so stripping
+    // it from a UTF-8 path is exact. A non-UTF-8 path cannot be passed to
+    // git as a text argument either way; keep the display text unchanged.
+    let Some(text) = path.to_str().map(str::to_string) else {
+        return path.display().to_string();
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    }
+}
+
+/// Copy Git objects and materialize only the pinned tree in run-owned scratch.
+/// No worktree registration or shared checkout mutation survives this run.
+fn isolated_checkout(
+    source: &Path,
+    sha: &str,
+    base: Option<&str>,
+    destination: &Path,
+) -> Result<PathBuf, String> {
+    git_no_lazy(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            "--dissociate",
+            "--",
+            &git_path_text(source),
+            &git_path_text(destination),
+        ],
+    )?;
+    if destination.join(".git/objects/info/alternates").exists() {
+        return Err("isolated checkout retains an external object store".to_string());
+    }
+    git_no_lazy(Some(destination), &["checkout", "--quiet", "--detach", sha])?;
+    if !git_no_lazy(Some(destination), &["rev-parse", "HEAD"])?
+        .trim()
+        .eq_ignore_ascii_case(sha)
+    {
+        return Err(format!("isolated checkout did not resolve to pin {sha}"));
+    }
+    verify_objects(destination, sha, base.unwrap_or("HEAD~1"))?;
+    fs::canonicalize(destination).map_err(|err| format!("{}: {err}", destination.display()))
 }
 
 /// Refuse a corpus directory that is not the root of its own repository.
 /// A `.git` left empty or partial (an interrupted clone, or a CI cache that
 /// restored `target/` without the object store) makes git walk up to the
-/// enclosing repository, and the pin checkout below would then detach the
-/// caller's own working tree.
+/// enclosing repository and use it as the corpus object source.
 pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
     let output = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
     // Strip only git's line ending; a directory name may end in spaces.
@@ -935,6 +1106,13 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+fn git_no_lazy(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut guarded = Vec::with_capacity(args.len() + 1);
+    guarded.push("--no-lazy-fetch");
+    guarded.extend_from_slice(args);
+    git(cwd, &guarded)
 }
 
 /// Self-contradiction rules over one pilot `repo-exposure.json`:
@@ -1848,4 +2026,14 @@ pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("-");
     (!slug.is_empty()).then_some(slug)
+}
+
+/// A partial pilot summary names why it stopped (`reason`, for example
+/// `timeout`); carrying it in the sample detail keeps a budget cut apart from
+/// a failure in the row.
+pub(super) fn pilot_reason_suffix(reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) if !reason.is_empty() => format!(" (reason `{reason}`)"),
+        _ => String::new(),
+    }
 }
