@@ -25,6 +25,7 @@ pub mod probe;
 pub mod project_facts;
 #[cfg(any(test, kani))]
 mod proof_domains;
+pub mod python_changed_headline_row;
 pub mod refusal_remedy;
 pub mod resource_dependency;
 pub mod summary;
@@ -132,6 +133,9 @@ pub use probe::declared_const_name;
 pub use project_facts::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
     SourceUnitFactV1, TestEnvironmentFactV1,
+};
+pub use python_changed_headline_row::{
+    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, python_headline_related_test,
 };
 pub use resource_dependency::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,

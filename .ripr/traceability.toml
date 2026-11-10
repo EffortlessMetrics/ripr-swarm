@@ -2097,6 +2097,7 @@ tests = [
   "crates/ripr/src/cli/commands/task_first.rs::tests::none_available_detail_names_the_trust_bound_route",
   "crates/ripr/src/cli/commands/task_first.rs::tests::facade_holds_stdout_until_the_card_renders",
   "crates/ripr/src/cli/commands/agent.rs::tests::after_phase_refusal_recording_routes_trusted_surface_to_the_terminal_authority",
+  "crates/ripr/src/cli/commands/agent.rs::tests::after_phase_refusal_recording_reads_the_typed_class_not_the_message",
   "crates/ripr/tests/agentic_bench_cage.rs::b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_runs",
   "crates/ripr/src/app/agent_status.rs::tests::agent_status_legacy_manifest_does_not_reconstruct_a_superseded_receipt",
   "crates/ripr/src/app/agent_workflow.rs::tests::workflow_manifest_extracts_seam_and_commands",

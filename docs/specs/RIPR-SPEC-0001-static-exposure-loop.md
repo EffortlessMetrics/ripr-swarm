@@ -22,7 +22,7 @@ are not guaranteed. A finding-level `observed_values` or `missing_discriminators
 array is omitted only when it is non-empty and equal to the same array in that
 finding's `activation`, and each omitted alias name is listed once in
 `dropped_aliases` so the value is restored from `activation`; unequal, empty or
-activation-less copies stay verbatim. The precise fields, alias behavior, and decoding rules are
+activation-less copies stay verbatim. `canonical_gap_id` is likewise omitted when it equals `canonical_gap.id`, and `evidence_stages` when it is exactly the basis-free five rows `ripr` yields; both are listed in `dropped_aliases`. The precise fields, alias behavior, and decoding rules are
 specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
 
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,

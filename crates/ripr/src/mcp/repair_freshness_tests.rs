@@ -434,7 +434,8 @@ fn issue_terminal_receipt_with_grip(
     let mut receipt: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
     // Exactly the CLI producer binding path, before immutable retention.
     receipt["repair_attempt"] =
-        receipt_binding_from(root, None, "seam:freshness", packet, Some(id.as_str()))?;
+        receipt_binding_from(root, None, "seam:freshness", packet, Some(id.as_str()))
+            .map_err(|error| error.message())?;
     write(&root.join(receipt_path), &receipt.to_string())?;
     retain_terminal_evidence(
         root,
