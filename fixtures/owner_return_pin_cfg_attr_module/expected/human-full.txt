@@ -41,6 +41,7 @@ Evidence
   - source assertion argument value 12 at line 2
   - source function argument value input = 4 at line 2
   - source function argument value input = 4 at line 3
+  - assertion not credited: `assert_eq!` in inner at tests/weight_tests.rs:2: an enclosing module carries `#[r#cfg_attr(test, r#cfg_attr(all(), r#cfg(any())))]`, which ripr cannot evaluate for test builds
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
