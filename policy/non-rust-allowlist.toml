@@ -1259,3 +1259,12 @@ surface = "repo"
 classification = "metadata"
 reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
 covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-python-mutmut.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned Python package list (full SHAs, mutmut version, module paths, test dirs, pytest args) read by the mutmut job of .github/workflows/mutation-spot-check-python.yml for the mutmut real-mutant spot check (#13842); declarative data, no logic."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
