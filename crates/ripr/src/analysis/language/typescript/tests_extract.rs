@@ -2013,13 +2013,14 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
 }
 
 /// Literal specifiers of dynamic `import(`, `require(`, `requireActual(` and
-/// `importActual(` calls anywhere in the file (#13750). Textual and
-/// whole-file, so it over-collects (comments, strings) and never misses a
-/// literal load; non-literal arguments are not recorded.
+/// `importActual(` calls anywhere in the file (#13750), with optional ASCII
+/// whitespace between the callee and `(`. Textual and whole-file, so it
+/// over-collects (comments, strings, the literal prefix of a concatenation)
+/// and never misses a literal load; non-literal arguments are not recorded.
 fn dynamic_load_specifiers(source: &str) -> Vec<String> {
     let mut specifiers: Vec<String> = Vec::new();
-    for needle in ["import(", "require(", "requireActual(", "importActual("] {
-        for (at, _) in source.match_indices(needle) {
+    for callee in ["import", "require", "requireActual", "importActual"] {
+        for (at, _) in source.match_indices(callee) {
             if source[..at]
                 .chars()
                 .next_back()
@@ -2027,7 +2028,14 @@ fn dynamic_load_specifiers(source: &str) -> Vec<String> {
             {
                 continue;
             }
-            if let Some(specifier) = quoted_literal_after(source, at + needle.len())
+            let after = at + callee.len();
+            let rest = &source[after..];
+            let trimmed = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+            if !trimmed.starts_with('(') {
+                continue;
+            }
+            let open = after + (rest.len() - trimmed.len()) + 1;
+            if let Some(specifier) = quoted_literal_after(source, open)
                 && !specifiers.contains(&specifier)
             {
                 specifiers.push(specifier);

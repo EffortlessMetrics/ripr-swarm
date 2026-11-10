@@ -615,6 +615,14 @@ fn a_dynamic_load_of_the_module_in_the_test_body_withholds() -> Result<(), Strin
             "require('../src/utils').default.extend();",
         ),
         (
+            "require-spaced",
+            "require ('../src/utils').default.extend();",
+        ),
+        (
+            "import-spaced",
+            "(await import\n  ('../src/utils')).default.extend();",
+        ),
+        (
             "require-actual",
             "vi.importActual('../src/utils');\n  jest.requireActual('../src/utils').default.extend();",
         ),
