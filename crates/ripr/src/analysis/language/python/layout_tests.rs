@@ -487,17 +487,36 @@ fn a_capped_repo_run_records_no_project_names() -> Result<(), String> {
         for (path, contents) in flat_scan_files(test_project) {
             super::reexport_tests::write_file(&root.join(path), contents)?;
         }
+        // Production files take cap priority, so the limit of 3 selects both
+        // `core.py` files and the one evidence file that sorts first, the
+        // project's `test_core.py`; this extra test file sorts last and is
+        // capped. The selected test would credit its own project's `core` if
+        // the cap did not withhold project-relative names.
+        super::reexport_tests::write_file(
+            &root.join("zz/test_extra.py"),
+            "def test_extra():\n    assert True\n",
+        )?;
         let input = repo::select_repo_input_with_limit(
             &root,
             repo::RepoWorkingSetLimit {
-                limit: 2,
+                limit: 3,
                 source: repo::RepoWorkingSetCapSource::Default,
             },
         );
         let evidence = repo::build_repo_evidence(&input, &root);
         let _ = std::fs::remove_dir_all(&root);
-        if input.counts.capped == 0 {
-            return Err("fixture did not cap the run".to_string());
+        if input.counts.capped != 1 || input.counts.selected != 3 {
+            return Err(format!(
+                "fixture did not select the project test and cap the extra file: {:?}",
+                input.counts
+            ));
+        }
+        if !input
+            .test_files
+            .iter()
+            .any(|file| normalized_path(file) == format!("svc/{test_project}/tests/test_core.py"))
+        {
+            return Err("the project's test file was not selected".to_string());
         }
         if evidence
             .findings

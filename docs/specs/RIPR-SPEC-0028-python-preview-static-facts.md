@@ -368,7 +368,7 @@ matches its project-relative dotted path, so `from core import f` in
 owner only for a test under the same project root; the repository-root `lib/`
 import root is not applied inside a project, and a name another file of the
 same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
-neither. Repository scans record the same project-relative names and test-local module shadows as diff checks (not the src-layout ambiguity pass), except that a capped or discovery-incomplete scan records no project-relative names, and a
+neither. Repository scans record the same project-relative names and test-local module shadows as diff checks (they do not run the src-layout ambiguity or rival-definition passes, so a rival root's module is withheld there by the project-root gate alone), except that a capped or discovery-incomplete scan records no project-relative names, and a
 package `__init__.py` of the owner's own project that re-exports the owner is
 also known by its project-relative name (`from pkg import f` for
 `svc/b/pkg/__init__.py`), under the same project-root gate (#13737). Bare file stems and arbitrary path suffixes never count as module
