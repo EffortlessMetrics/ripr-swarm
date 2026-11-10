@@ -113,7 +113,9 @@ cargo xtask check-pr
 ```
 
 For target repositories, use the repository's own workflow and policy checks,
-then run the live smoke path from [Droid smoke tests](droid-smoke-tests.md).
+then run only the retained scheduled/manual security-scan smoke path from
+[Droid smoke tests](droid-smoke-tests.md). The mention-review procedure there is
+historical, not a live rollout step.
 
 ## Non-Goals
 

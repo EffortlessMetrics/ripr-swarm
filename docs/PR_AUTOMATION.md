@@ -66,12 +66,13 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
-`merge-ready`-requested `Ripr Rust Small Result` qualification:
+below apply to candidate preparation. Ordinary development does not request
+label CI. After verified queue activation, use
+[the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
+for qualification and conditional landing authorization. Until then retain the
+reviewed candidate and evidence. The installed predecessor's label request is
+only an explicitly selected activation-owner bootstrap, never an ordinary
+fallback. The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
    substantive review through `review-pr` inline in the owning session's main
@@ -112,13 +113,14 @@ route, the delivery owner completes this order before spending the
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
-   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   `REVIEW_INCOMPLETE` may retain that evidence gap pending the applicable
+   authorized qualification route; unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
-   and subject before acting. The `merge-ready` label requests qualification;
-   Ready alone requests nothing;
-   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+   missing claim-essential native proof. After Ready, inspect the existing
+   native request and runs for the exact head and subject before acting. Ready
+   alone requests nothing; `REVIEW_READY` and required proof still govern merge
+   under `finish-pr`. Only the activation owner may use the separately selected
+   legacy bootstrap described below.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
 the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
@@ -128,7 +130,13 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+repair/proof/review wave. Preserve unaffected evidence.
+
+### Historical label bootstrap reconciliation
+
+These predecessor details apply only to an explicitly selected activation-owner
+bootstrap while that route is still installed. They are not an ordinary request
+path and cannot restore a retired subscriber. Before that bootstrap label request,
 read the current head, label and admitted run state, including the run subject:
 
 - Preserve a queued or running current-subject run and its link; reapplying the

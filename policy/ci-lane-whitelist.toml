@@ -397,7 +397,7 @@ jobs = ["paste"]
 commands = ["cargo test -p ripr --test printed_command_paste"]
 estimated_lem = 18
 artifact_families = []
-description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly, on pull requests touching ripr source or the harness, and on dispatch. A shell the platform should provide but lacks fails the job."
+description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly and on explicit dispatch; the ordinary PR subscription is retired under #4842. A shell the platform should provide but lacks fails the job."
 
 [[lane]]
 id = "kani"
@@ -507,7 +507,7 @@ jobs = ["windows-advisory-subset"]
 commands = []
 estimated_lem = 5
 artifact_families = []
-description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."
+description = "Reusable native Windows subset: the supported native merge-group profile requires successful subset verdicts as well as source/status/log/receipt and nonempty execution evidence. Legacy qualification and explicit diagnostics retain advisory test outcomes. This support stage does not select or activate the native caller."
 
 [[lane]]
 id = "completions-smoke"
