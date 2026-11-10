@@ -74,8 +74,8 @@ jobs:
 
       # Record native exit statuses next to the logs; the judge step decides.
       # A probe failure must reach the judge as evidence, not vanish in a pipe.
-      # A probe terminated at its timeout must still reach the judge, which reads
-      # the missing status files as 124.
+      # When the judge executes after a probe timeout, missing status files
+      # read as 124. Cancellation or a whole-job timeout can skip the judge.
       - name: Probe main build and one focused binary smoke test
         timeout-minutes: 20
         continue-on-error: true
@@ -165,12 +165,11 @@ jobs:
             esac
           done < "$d/gates.tsv"
 
-      # Missing evidence is a verdict, not a skip: a step terminated at its
-      # timeout (a hanging build or test is a plausible broken-main mode)
-      # leaves no status file, so it reads as 124 and classifies red with a
-      # tracker record. Only a failure before this step (checkout, toolchain,
-      # cache) leaves no verdict: the job is red and visible, but no main
-      # verdict is claimed.
+      # When this judge executes, a missing status reads as 124 and makes the
+      # probe red. A probe-step timeout can leave that missing evidence. A
+      # preceding setup failure, cancellation or whole-job timeout may prevent
+      # judging or tracker recording; the run is visible but does not establish
+      # a probe verdict or durable tracker update.
       - name: Judge probe evidence
         id: judge
         run: |

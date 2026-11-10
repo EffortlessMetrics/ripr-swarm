@@ -1404,8 +1404,11 @@ outside main does not judge another branch as main health.
 
 The retained probe runs `cargo check --locked -p ripr` and the exact
 `cli_smoke version_is_exact_and_precedes_help_or_output_flags` test with the
-existing 20-minute probe and 30-minute job bounds. Native exit statuses, missing
-logs and zero executed tests remain observable failures. Its subject is the
+existing 20-minute probe and 30-minute job bounds. When the judge executes,
+nonzero native statuses, missing logs/statuses and zero executed tests fail it.
+Setup failure, cancellation or whole-job timeout may prevent judging or tracker
+recording; a failed run alone does not establish that either happened.
+Its subject is the
 invocation's full `GITHUB_SHA`, the selected main commit, even if main advances
 during the run. A passing job means only that this bounded compile/smoke probe
 passed, not full main health or incident recovery. The probe neither qualifies
