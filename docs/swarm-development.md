@@ -142,7 +142,9 @@ label inventories.
 The VS Code lane should remain hosted until a separate Node 24 / VS Code / Xvfb
 runner image is proven.
 
-## Historical Self-Hosted Proof Runbook
+## Self-Hosted Proof Runbook
+
+Historical predecessor procedure only, subject to the bootstrap boundary above.
 
 An org-visible operator should use this runbook to close the remaining
 self-hosted cutover proof. Do not expose runner registration tokens, runner
