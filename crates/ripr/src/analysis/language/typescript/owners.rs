@@ -934,7 +934,8 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
 /// A declaration is unsafe when it contains `this`, `import(...)`,
 /// `import.meta`, a reference to `require`, `module`, `exports`,
 /// `globalThis`, `global`, `window`, `self`, `eval`, `Function`,
-/// `arguments` or `define`, a reference to a binding imported from a
+/// `arguments`, `define`, `process`, `__filename` or `__dirname`, a reference to
+/// a binding imported from a
 /// module (possibly the module itself; any source), or a reference to another
 /// unsafe top-level name (fixpoint). References are matched by name, so a
 /// shadowing local only over-approximates. A member that is not a top-level
@@ -964,6 +965,9 @@ fn unsafe_top_level_names(
         "Function",
         "arguments",
         "define",
+        "process",
+        "__filename",
+        "__dirname",
     ];
     #[derive(Default)]
     struct Scan {

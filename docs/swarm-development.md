@@ -61,11 +61,14 @@ make-work campaign.
 
 Every normal swarm slice should finish the same way:
 
-- open a same-repo PR as Draft with one clear purpose, and mark it Ready once
-  the head is final, then apply `merge-ready` (only that label starts
-  `Ripr Rust Small Result`; a push after the request needs it re-applied, see
-  `docs/CI.md`);
-- wait for `Ripr Rust Small Result` and any touched-surface checks;
+- open a same-repo PR as Draft with one clear purpose, then finish focused proof
+  and substantive review before marking the composed head Ready; Ready requests
+  no Actions run;
+- after verified activation, use the [native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
+  for the selected candidate and inspect its required exact-subject results;
+  until then retain the reviewed candidate and evidence. The installed legacy
+  label route is reserved for an explicitly selected activation-owner bootstrap,
+  not ordinary development or an automatic fallback;
 - merge only when clean and current;
 - remove generated residue, isolated targets, and stale local branches or
   worktrees that are no longer needed.
