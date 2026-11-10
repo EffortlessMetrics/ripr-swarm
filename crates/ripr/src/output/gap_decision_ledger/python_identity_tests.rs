@@ -129,6 +129,8 @@ fn check_output(layout: Layout) -> Result<Value, String> {
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     serde_json::from_str(&crate::output::json::render(&output)).map_err(|error| error.to_string())

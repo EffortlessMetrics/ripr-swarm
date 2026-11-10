@@ -322,12 +322,7 @@ fn reuse_cached_index(
                     })
             }))
     {
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     let kept: std::collections::BTreeSet<&Path> =
         files.iter().map(|(path, _)| path.as_path()).collect();
@@ -385,13 +380,7 @@ fn reuse_cached_index(
     if retracts || rebases_includes {
         #[cfg(test)]
         index_build_probe::record_include_rebase();
-        drop(cached);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     for path in &dropped {
         cached.index.remove_file(path);
@@ -400,20 +389,7 @@ fn reuse_cached_index(
         let stats = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
-        cached.file_fact_cache.hits += stats.hits;
-        cached.file_fact_cache.misses += stats.misses;
-        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
-        cached.file_fact_cache.stores += stats.stores;
-        cached.file_fact_cache.store_errors += stats.store_errors;
-        cached
-            .file_fact_cache
-            .invalidated_files
-            .extend(stats.invalidated_files);
-        cached
-            .file_fact_cache
-            .store_failures
-            .extend(stats.store_failures);
-        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+        cached.file_fact_cache.merge_from(&stats);
         // An added file that makes module composition unknowable (lexical
         // fallback emits no `mod` declarations; an unknown `#[path]` target
         // may compile any file) flips workspace-wide `outside_module_tree`
@@ -429,13 +405,7 @@ fn reuse_cached_index(
             })
         });
         if unknowable {
-            drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
@@ -444,6 +414,33 @@ fn reuse_cached_index(
     }
     cached.files_content_hash = hash.finish();
     post_process_cached_index(cached, root, registrations)
+}
+
+/// Fresh build over exactly `files` after a reuse that cannot be extended in
+/// place. The discarded same-run core keeps its analysis facts out of the
+/// result, but the file-fact cache work it already did (lookups, stores and
+/// store failures) is real and stays in the receipt (#4975).
+fn fresh_build_keeping_run_stats(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    same_run: bool,
+) -> Result<build::CachedRustIndex, String> {
+    let prior = same_run.then(|| cached.file_fact_cache.clone());
+    drop(cached);
+    let mut fresh = build_cached_index_with_test_harnesses(
+        root,
+        files,
+        registrations,
+        MissAttribution::Skipped,
+    )?;
+    if let Some(mut merged) = prior {
+        // Earlier work first, so the capped store-failure rows keep run order.
+        merged.merge_from(&fresh.file_fact_cache);
+        fresh.file_fact_cache = merged;
+    }
+    Ok(fresh)
 }
 
 fn build_cached_index_with_test_harnesses(
