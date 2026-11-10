@@ -674,6 +674,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  combined-tree-check:
+    # #9085: admission pins an exact base SHA, so the routed gates can pass on a
+    # head whose base main has since left. A squash merge then lands that head
+    # on newer main commits the gate never saw; #9015/#9034 broke main exactly
+    # this way, and the 2026-11-10 E0062/E0063 rounds were the same class.
+    # Fail closed here instead: when the head does not already contain the
+    # current main tip, compile the true combined tree before the required
+    # context can be earned. A merge_group head is GitHub's own test merge, so
+    # the routed gates already compile that tree and this job passes trivially.
+    name: Ripr Combined Tree Check
+    needs: [admission, detect-docs-only]
+    if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.admission.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: ripr-combined-tree
+      - name: Compile the admitted head combined with current main
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            echo "merge_group: the queued head is GitHub's test merge; the routed gates already compile the combined tree"
+            exit 0
+          fi
+          git fetch --no-tags origin main
+          main_tip="$(git rev-parse FETCH_HEAD)"
+          if git merge-base --is-ancestor "$main_tip" HEAD; then
+            echo "admitted head already contains main tip $main_tip; the routed gates compile the combined tree"
+            exit 0
+          fi
+          merge_base="$(git merge-base HEAD "$main_tip")"
+          behind_count="$(git rev-list --count "$main_tip" ^HEAD)"
+          echo "admitted head is $behind_count commit(s) behind main tip $main_tip (merge base $merge_base); compiling the true combined tree"
+          if ! git merge --no-edit --no-commit "$main_tip"; then
+            echo "::error::the admitted head does not merge cleanly with current main ($main_tip); merge main into the branch and re-request merge-ready"
+            exit 1
+          fi
+          cargo check --workspace --all-targets --locked
+
   result:
     # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
@@ -684,7 +733,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, combined-tree-check, docs-gate, vscode-select, vscode-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -964,6 +1013,7 @@ jobs:
           DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
           DOCS_ONLY: ${{ needs.admission.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
+          COMBINED_TREE_RESULT: ${{ needs.combined-tree-check.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
           VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
@@ -988,6 +1038,9 @@ jobs:
               status=fail
               message="docs-gate result was $DOCS_GATE_RESULT on a docs-only PR"
             fi
+          elif { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$DOCS_ONLY" != "true" ] && [ "$COMBINED_TREE_RESULT" != "success" ]; then
+            status=fail
+            message="combined-tree check result was $COMBINED_TREE_RESULT: the admitted head does not compile when combined with current main (#9085); merge main into the branch and re-request merge-ready"
           elif [ "$ROUTE_RESULT" != "success" ]; then
             status=fail
             message="route job result was $ROUTE_RESULT"
@@ -1054,7 +1107,7 @@ jobs:
           done
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "admission head:$ADMISSION_HEAD" "history-sync:$ADMISSION_HISTORY_SYNC" "history-sync detail:$ADMISSION_HISTORY_SYNC_DETAIL" "history-sync source:$ADMISSION_HISTORY_SYNC_SOURCE" "history-sync destination base:$ADMISSION_HISTORY_SYNC_BASE" "cx43 pr evidence:$CX43_PR_EVIDENCE" "cpx42 pr evidence:$CPX42_PR_EVIDENCE" "cx53 pr evidence:$CX53_PR_EVIDENCE" "github pr evidence:$GITHUB_PR_EVIDENCE" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "admission head:$ADMISSION_HEAD" "history-sync:$ADMISSION_HISTORY_SYNC" "history-sync detail:$ADMISSION_HISTORY_SYNC_DETAIL" "history-sync source:$ADMISSION_HISTORY_SYNC_SOURCE" "history-sync destination base:$ADMISSION_HISTORY_SYNC_BASE" "cx43 pr evidence:$CX43_PR_EVIDENCE" "cpx42 pr evidence:$CPX42_PR_EVIDENCE" "cx53 pr evidence:$CX53_PR_EVIDENCE" "github pr evidence:$GITHUB_PR_EVIDENCE" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "combined_tree:$COMBINED_TREE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]
