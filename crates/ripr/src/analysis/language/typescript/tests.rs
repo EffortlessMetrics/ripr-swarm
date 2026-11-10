@@ -21192,6 +21192,7 @@ mod catch_arm_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
 mod class_entry_tests;
+mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
 mod committed_snapshot_tests;
 mod commonjs_default_function_tests;

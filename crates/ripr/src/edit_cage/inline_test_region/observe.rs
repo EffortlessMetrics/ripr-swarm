@@ -175,6 +175,38 @@ pub(crate) struct BodyElement {
     pub(crate) text: String,
 }
 
+/// Top-level items and trivia of a Rust source file, in source order. Used
+/// for pure-insertion validation of external test-surface files (#8710).
+pub(crate) fn source_file_body(source: &str) -> Result<Vec<BodyElement>, InlineTestRegionError> {
+    let Some(parse) = crate::analysis::parse_clean_source_file(source) else {
+        return Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::Unparseable,
+        });
+    };
+    Ok(file_body_elements(parse.tree().syntax()))
+}
+
+fn file_body_elements(file: &SyntaxNode) -> Vec<BodyElement> {
+    file.children_with_tokens()
+        .map(|element| match element {
+            NodeOrToken::Node(node) => BodyElement {
+                kind: ast::Item::cast(node.clone()).map_or(BodyElementKind::Other, |item| {
+                    BodyElementKind::Item(item_kind(&item))
+                }),
+                text: node.text().to_string(),
+            },
+            NodeOrToken::Token(token) => BodyElement {
+                kind: match token.kind() {
+                    SyntaxKind::WHITESPACE => BodyElementKind::Whitespace,
+                    SyntaxKind::COMMENT => BodyElementKind::Comment,
+                    _ => BodyElementKind::Other,
+                },
+                text: token.text().to_string(),
+            },
+        })
+        .collect()
+}
+
 pub(crate) fn named_module_body(
     source: &str,
     expected_module_path: &str,

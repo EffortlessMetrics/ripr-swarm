@@ -168,3 +168,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — member_reexport_foreign_trait_keeps_dispatch_allowance (14)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless member_reexport_foreign_trait_keeps_dispatch_allowance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

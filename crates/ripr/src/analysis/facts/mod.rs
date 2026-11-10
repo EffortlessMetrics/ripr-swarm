@@ -17,6 +17,24 @@ pub(crate) mod index_build_probe {
         BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
 
+    thread_local! {
+        static INCLUDE_REBASES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Reuse fell back to a fresh build because an added file may re-parent
+    /// function identities (a retraction counts too).
+    pub(super) fn record_include_rebase() {
+        INCLUDE_REBASES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Run `work` and return its result plus how many reuses fell back to a
+    /// fresh build for the reasons above.
+    pub(crate) fn observe_rebase_fallbacks<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        INCLUDE_REBASES.with(|count| count.set(0));
+        let result = work();
+        (result, INCLUDE_REBASES.with(Cell::get))
+    }
+
     /// Run `work` with a zeroed counter and return its result plus the
     /// number of index-build phases it started.
     pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
@@ -40,6 +58,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod invisible_owners;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
@@ -355,10 +374,17 @@ fn reuse_cached_index(
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
-    let rebases_includes = extras
-        .iter()
-        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
+    let rebases_includes = extras.iter().any(|(path, bytes)| {
+        includes::added_file_may_rebase_includes(
+            path,
+            &build::rust_source_text(bytes).text,
+            &kept,
+            includes::index_holds_include_state(&cached.index),
+        )
+    });
     if retracts || rebases_includes {
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
         drop(cached);
         return build_cached_index_with_test_harnesses(
             root,

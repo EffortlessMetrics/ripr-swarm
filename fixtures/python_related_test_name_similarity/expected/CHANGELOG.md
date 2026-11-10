@@ -696,3 +696,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_related_test_name_similarity (35)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless python_related_test_name_similarity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

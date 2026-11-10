@@ -9,9 +9,14 @@
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
 //!    exact original strings, in order.
-//! 2. The known `suggested_next_action` alias is omitted when it equals
-//!    `recommended_next_step`; the document records the alias once in
-//!    `dropped_aliases`. Other fields remain verbatim even when values match.
+//! 2. Known aliases are omitted when they equal their owner:
+//!    `suggested_next_action` (owner `recommended_next_step`), and the
+//!    finding-level `observed_values` / `missing_discriminators` (owner: the
+//!    same-named arrays inside `activation`, #13673), `canonical_gap_id` (owner
+//!    `canonical_gap.id`) and basis-free `evidence_stages` (owner: the `ripr`
+//!    stage objects, in reach..discriminate order). The document records each
+//!    dropped alias once in `dropped_aliases`. Other fields remain verbatim even
+//!    when values match.
 //!
 //! What terse does *not* do: it never drops a finding, never changes a
 //! verdict/classification/severity/confidence, and never touches nested
@@ -39,6 +44,29 @@ const RENDERING_MODE_KEY: &str = "rendering";
 const RENDERING_MODE_VALUE: &str = "terse";
 const LEGEND_KEY: &str = "evidence_legend";
 const DROPPED_ALIASES_KEY: &str = "dropped_aliases";
+/// Every alias terse may omit, in `dropped_aliases` emission order.
+const KNOWN_ALIASES: [&str; 5] = [
+    "suggested_next_action",
+    "observed_values",
+    "missing_discriminators",
+    "canonical_gap_id",
+    "evidence_stages",
+];
+/// Indices into [`KNOWN_ALIASES`]; the const block below pins them to the names.
+const GAP_ID_ALIAS: usize = 3;
+const STAGES_ALIAS: usize = 4;
+const _: () = {
+    assert!(matches!(
+        KNOWN_ALIASES[GAP_ID_ALIAS].as_bytes(),
+        b"canonical_gap_id"
+    ));
+    assert!(matches!(
+        KNOWN_ALIASES[STAGES_ALIAS].as_bytes(),
+        b"evidence_stages"
+    ));
+};
+/// The `ripr` stage keys in the order `evidence_stages` rows are emitted.
+const STAGE_ORDER: [&str; 5] = ["reach", "infect", "propagate", "observe", "discriminate"];
 // Entry costs include a comma each. The outer comma replaces the final one,
 // leaving the field's key quotes, colon and braces as shared overhead.
 const LEGEND_FIELD_OVERHEAD: usize = LEGEND_KEY.len() + 5;
@@ -86,11 +114,14 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
         }
         root.insert(LEGEND_KEY.to_string(), Value::Object(legend));
     }
-    if coder.dropped_next_action_alias {
-        root.insert(
-            DROPPED_ALIASES_KEY.to_string(),
-            Value::Array(vec![Value::String("suggested_next_action".to_string())]),
-        );
+    let mut dropped = Vec::new();
+    for (alias, was_dropped) in KNOWN_ALIASES.iter().zip(coder.dropped_aliases) {
+        if was_dropped {
+            dropped.push(Value::String((*alias).to_string()));
+        }
+    }
+    if !dropped.is_empty() {
+        root.insert(DROPPED_ALIASES_KEY.to_string(), Value::Array(dropped));
     }
     root.insert(
         RENDERING_MODE_KEY.to_string(),
@@ -113,8 +144,9 @@ struct LegendCoder {
     counts: HashMap<String, usize>,
     /// Distinct templates in first-appearance order, independent of map order.
     order: Vec<String>,
-    /// The known alias is recorded once, regardless of the finding count.
-    dropped_next_action_alias: bool,
+    /// Each known alias (indexed like [`KNOWN_ALIASES`]) is recorded once,
+    /// regardless of the finding count.
+    dropped_aliases: [bool; KNOWN_ALIASES.len()],
 }
 
 impl LegendCoder {
@@ -199,19 +231,72 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
     drop_same_value_aliases(finding, coder);
 }
 
-/// Omit only the documented alias: equal text in unrelated fields does not
+/// Omit only the documented aliases: equal values in unrelated fields do not
 /// establish an alias relationship. The kept field is the decoding authority,
-/// independent of map order or other coincidentally identical string values.
+/// independent of map order or other coincidentally identical values.
 fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: &mut LegendCoder) {
-    let Some(action) = finding.get("suggested_next_action").and_then(Value::as_str) else {
-        return;
-    };
-    if action.len() >= MIN_LEGEND_TEXT_LEN
+    if let Some(action) = finding.get("suggested_next_action").and_then(Value::as_str)
+        && action.len() >= MIN_LEGEND_TEXT_LEN
         && finding.get("recommended_next_step").and_then(Value::as_str) == Some(action)
     {
         finding.remove("suggested_next_action");
-        coder.dropped_next_action_alias = true;
+        coder.dropped_aliases[0] = true;
     }
+    // #13673: the finding-level arrays repeat `activation` verbatim. An empty
+    // array costs less than its legend entry, so only non-empty copies drop.
+    for (index, key) in [(1, "observed_values"), (2, "missing_discriminators")] {
+        let owner = finding
+            .get("activation")
+            .and_then(|activation| activation.get(key));
+        let alias = finding.get(key);
+        if let (Some(owner), Some(alias)) = (owner, alias)
+            && owner == alias
+            && alias.as_array().is_some_and(|items| !items.is_empty())
+        {
+            finding.remove(key);
+            coder.dropped_aliases[index] = true;
+        }
+    }
+    // #13673: `canonical_gap_id` is the same string as `canonical_gap.id`.
+    let gap_id = finding.get("canonical_gap_id").and_then(Value::as_str);
+    let owner_id = finding
+        .get("canonical_gap")
+        .and_then(|gap| gap.get("id"))
+        .and_then(Value::as_str);
+    if gap_id.is_some() && gap_id == owner_id {
+        finding.remove("canonical_gap_id");
+        coder.dropped_aliases[GAP_ID_ALIAS] = true;
+    }
+    // #13673: `evidence_stages` rows restate `ripr` (stage, state, confidence).
+    // A row carrying `basis` (or any extra key) is not a pure restatement, so
+    // the whole array stays inline then.
+    if finding
+        .get("evidence_stages")
+        .is_some_and(|rows| stage_rows_restate_ripr(rows, finding.get("ripr")))
+    {
+        finding.remove("evidence_stages");
+        coder.dropped_aliases[STAGES_ALIAS] = true;
+    }
+}
+
+/// True only when `rows` is exactly the five `{stage,state,confidence}` rows
+/// rebuilt from `ripr` in [`STAGE_ORDER`], so restoring is lossless.
+fn stage_rows_restate_ripr(rows: &Value, ripr: Option<&Value>) -> bool {
+    let (Some(rows), Some(ripr)) = (rows.as_array(), ripr) else {
+        return false;
+    };
+    rows.len() == STAGE_ORDER.len()
+        && rows.iter().zip(STAGE_ORDER).all(|(row, stage)| {
+            let owner = ripr.get(stage);
+            row.as_object().is_some_and(|obj| {
+                obj.len() == 3
+                    && obj.get("stage").and_then(Value::as_str) == Some(stage)
+                    && obj.get("state").is_some()
+                    && obj.get("state") == owner.and_then(|o| o.get("state"))
+                    && obj.get("confidence").is_some()
+                    && obj.get("confidence") == owner.and_then(|o| o.get("confidence"))
+            })
+        })
 }
 
 /// Test-only: expands every terse-coded string back to its full template, so
@@ -340,6 +425,92 @@ mod tests {
         }
         for index in [2, 3] {
             assert_eq!(terse["findings"][index], full["findings"][index]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn terse_drops_finding_activation_copies_only_when_equal_and_non_empty() -> Result<(), String> {
+        let values =
+            serde_json::json!([{"line": 8, "value": "age = 30", "context": "function_argument"}]);
+        let missing = serde_json::json!([{"value": "age == 18", "reason": "no input at 18"}]);
+        let other =
+            serde_json::json!([{"line": 9, "value": "age = 31", "context": "function_argument"}]);
+        let full = serde_json::json!({"findings": [
+            {"activation": {"observed_values": values, "missing_discriminators": missing},
+             "observed_values": values, "missing_discriminators": missing},
+            {"activation": {"observed_values": values, "missing_discriminators": []},
+             "observed_values": other, "missing_discriminators": []},
+            {"observed_values": values, "missing_discriminators": missing}
+        ]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            terse["dropped_aliases"],
+            serde_json::json!(["observed_values", "missing_discriminators"])
+        );
+        // Equal non-empty copies drop; the activation owner keeps the value.
+        assert!(terse["findings"][0].get("observed_values").is_none());
+        assert!(terse["findings"][0].get("missing_discriminators").is_none());
+        assert_eq!(
+            terse["findings"][0]["activation"],
+            full["findings"][0]["activation"]
+        );
+        // A differing copy, an empty copy and a finding without an owner stay.
+        assert_eq!(terse["findings"][1], full["findings"][1]);
+        assert_eq!(terse["findings"][2], full["findings"][2]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_drops_gap_id_and_stage_rows_only_when_they_restate_their_owner() -> Result<(), String>
+    {
+        let ripr = serde_json::json!({
+            "reach": {"state": "yes", "confidence": "high", "summary": "r"},
+            "infect": {"state": "weak", "confidence": "medium", "summary": "i"},
+            "propagate": {"state": "yes", "confidence": "medium", "summary": "p"},
+            "observe": {"state": "yes", "confidence": "medium", "summary": "o"},
+            "discriminate": {"state": "no", "confidence": "low", "summary": "d"}
+        });
+        let rows = serde_json::json!([
+            {"stage": "reach", "state": "yes", "confidence": "high"},
+            {"stage": "infect", "state": "weak", "confidence": "medium"},
+            {"stage": "propagate", "state": "yes", "confidence": "medium"},
+            {"stage": "observe", "state": "yes", "confidence": "medium"},
+            {"stage": "discriminate", "state": "no", "confidence": "low"}
+        ]);
+        let mut with_basis = rows.clone();
+        with_basis[4]["basis"] = serde_json::json!([{"code": "C1", "summary": "cap"}]);
+        let mut wrong_state = rows.clone();
+        wrong_state[1]["state"] = serde_json::json!("yes");
+        let mut wrong_confidence = rows.clone();
+        wrong_confidence[2]["confidence"] = serde_json::json!("low");
+        let mut wrong_name = rows.clone();
+        wrong_name[3]["stage"] = serde_json::json!("reach");
+        let gap = serde_json::json!({"id": "gap:a", "owner": "f"});
+        let full = serde_json::json!({"findings": [
+            {"ripr": ripr, "evidence_stages": rows,
+             "canonical_gap": gap, "canonical_gap_id": "gap:a"},
+            {"ripr": ripr, "evidence_stages": with_basis,
+             "canonical_gap": gap, "canonical_gap_id": "gap:b"},
+            {"ripr": ripr, "evidence_stages": wrong_state},
+            {"ripr": ripr, "evidence_stages": wrong_confidence},
+            {"ripr": ripr, "evidence_stages": wrong_name}
+        ]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            terse["dropped_aliases"],
+            serde_json::json!(["canonical_gap_id", "evidence_stages"])
+        );
+        assert!(terse["findings"][0].get("evidence_stages").is_none());
+        assert!(terse["findings"][0].get("canonical_gap_id").is_none());
+        // Basis rows, a different gap id, and a state, confidence or stage-name
+        // mismatch are all kept verbatim.
+        for kept in 1..=4 {
+            assert_eq!(terse["findings"][kept], full["findings"][kept]);
         }
         Ok(())
     }

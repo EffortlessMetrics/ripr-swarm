@@ -1,0 +1,12 @@
+diff --git a/coarse/fees.py b/coarse/fees.py
+--- a/coarse/fees.py
++++ b/coarse/fees.py
+@@ -3,7 +3,7 @@
+ 
+ 
+ def residue_fee(x):
+-    return x * 2
++    return x * 3
+ 
+ 
+ def length_fee(x):

@@ -143,6 +143,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// (#12796). The test side still checks that `T` is a plain
     /// single-integer-field struct.
     tuple_projection: Option<String>,
+    /// #12808: what the closed subset needs to lower the tuple-struct owner
+    /// and read both of its versions, when `tuple_projection` is set.
+    tuple_change: Option<TupleChange>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -169,6 +172,15 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// #13005: set only while [`Self::literal_check_withholds`] asks whether
     /// the current-owner literal check is the one gate refusing an assertion.
     skip_current_literal_check: Cell<bool>,
+}
+
+/// The tuple-struct owner's text, changed line and old text, and whether
+/// `Self` names the returned tuple struct (#12808).
+struct TupleChange {
+    definition: String,
+    changed_line: usize,
+    before: String,
+    self_is_type: bool,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -2418,9 +2430,7 @@ impl OwnerPinSyntax {
                 .is_some_and(|assertions| assertions.file_binds_test())
             {
                 return Some(AssertionRefusal::Syntax(
-                    AssertionContextRefusal::TestAttribute(
-                        "#[test] (the file may rebind `test`)".to_string(),
-                    ),
+                    AssertionContextRefusal::TestRebound,
                 ));
             }
         }
@@ -3468,6 +3478,7 @@ impl AssertionRefusal {
                 AssertionContextRefusal::UnparsedFile
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
+                | AssertionContextRefusal::TestRebound
                 | AssertionContextRefusal::DuplicateSpelling
                 | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::ModelCheckClosure
@@ -3538,6 +3549,9 @@ impl AssertionRefusal {
                 }
                 AssertionContextRefusal::AsyncTest => {
                     "the test is `async`, and ripr does not model its executor".into()
+                }
+                AssertionContextRefusal::TestRebound => {
+                    "an import in this file may rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and may change whether or how the test runs".into()
                 }
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     format!(
@@ -4960,6 +4974,19 @@ impl OwnerReturnPin {
         let tuple_projection = matches!(path, ReturnPathGate::Any)
             .then(|| tuple_projection_type(owner, probe))
             .flatten();
+        let tuple_change = tuple_projection
+            .as_deref()
+            .zip(probe.before.as_deref())
+            .map(|(type_name, before)| TupleChange {
+                definition: owner.body.to_string(),
+                changed_line,
+                before: before.to_string(),
+                self_is_type: matches!(
+                    &owner.item.container,
+                    FunctionContainer::Inherent { self_ty } | FunctionContainer::TraitImpl { self_ty, .. }
+                        if path_base_name(self_ty) == Some(type_name)
+                ),
+            });
         let closed_owner = probe
             .before
             .as_deref()
@@ -4989,6 +5016,7 @@ impl OwnerReturnPin {
                 &probe.expression,
             ),
             tuple_projection,
+            tuple_change,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5125,6 +5153,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_change: None,
             closed_owner: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
@@ -5261,6 +5290,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_change: None,
             closed_owner: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
@@ -5365,6 +5395,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_change: None,
             closed_owner: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
@@ -5483,6 +5514,49 @@ impl OwnerReturnPin {
         })?;
         field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
         Some(stripped)
+    }
+
+    /// #12808: whether both versions of a tuple-struct owner provably return
+    /// the same value for the literal operands `call` passes, so no assertion
+    /// on that call can tell the change apart, while some other operands do
+    /// (a rewrite equal on every input keeps its reading). The owner and its operands are
+    /// lowered to the closed integer subset; anything outside it answers
+    /// `false` and keeps the reading.
+    fn tuple_versions_agree(&self, call: &str, index: &RustIndex, syntax: &OwnerPinSyntax) -> bool {
+        let (Some(type_name), Some(change)) =
+            (self.tuple_projection.as_deref(), &self.tuple_change)
+        else {
+            return false;
+        };
+        let Some(owner) = index.functions().iter().find(|function| {
+            function.file == self.owner_file
+                && function.name == self.name
+                && function.start_line == self.owner_start_line
+        }) else {
+            return false;
+        };
+        let Some(inner) = field_builtin_integer_of(owner, type_name, "0", true, index, syntax)
+        else {
+            return false;
+        };
+        let tuple = super::owner_value::TupleOwner {
+            type_name,
+            inner,
+            self_is_type: change.self_is_type,
+        };
+        let (Some(closed), Some(lowered)) = (
+            super::owner_value::ClosedChange::read_tuple(
+                &change.definition,
+                &self.name,
+                change.changed_line,
+                &change.before,
+                &tuple,
+            ),
+            super::owner_value::lower_tuple_call(call, &self.name, type_name),
+        ) else {
+            return false;
+        };
+        closed.versions_agree(&self.name, &lowered) && closed.versions_differ_somewhere()
     }
 
     fn awaited_call_shape<'a>(
@@ -6309,6 +6383,15 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #12808: a tuple-struct owner whose two versions return the same
+        // value for the call's literal operands is invisible to the call.
+        if helper.is_none()
+            && self.tuple_change.is_some()
+            && let Some(call) = call_text
+            && self.tuple_versions_agree(call, index, syntax)
         {
             return false;
         }
@@ -13267,7 +13350,35 @@ fn parameter_annotation(test: &TestSummary, receiver: &str) -> Option<String> {
 /// test body (the optional annotation and the initializer), or `None` when
 /// the name may be bound some other way ripr does not read.
 fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Vec<&'a str>> {
-    let masked = mask_comments_and_strings(&test.body);
+    use crate::analysis::syntax::run_memo::{Product, memoize_with};
+    // A pure function of the body text and the receiver name, asked again for
+    // every seam and every expected operand of a naming test, so the run scope
+    // reads each pair once and the per-call work is a digest lookup (#13577).
+    let ranges = memoize_with(
+        Product::ReceiverLetBindings,
+        0,
+        receiver,
+        &test.body,
+        || receiver_let_binding_ranges(&test.body, receiver),
+    )?;
+    ranges
+        .into_iter()
+        .map(|(start, end)| test.body.get(start..end))
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times [`receiver_let_binding_ranges`] actually scanned on this thread.
+    static RECEIVER_LET_SCANS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// [`receiver_let_bindings`] as byte ranges of `body`, so the answer can be
+/// stored for the run without borrowing the test.
+fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize, usize)>> {
+    #[cfg(test)]
+    RECEIVER_LET_SCANS.with(|n| n.set(n.get() + 1));
+    let masked = mask_comments_and_strings(body);
     if binds_outside_let(&masked, receiver) {
         return None;
     }
@@ -13313,8 +13424,7 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
         let name_at = whole_word_offsets(&statement[..pattern_end], receiver)
             .first()
             .copied()?;
-        let binding = &test.body[pattern_start..statement_end];
-        bindings.push(&binding[name_at + receiver.len()..]);
+        bindings.push((pattern_start + name_at + receiver.len(), statement_end));
     }
     Some(bindings)
 }
