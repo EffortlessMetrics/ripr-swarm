@@ -13,7 +13,9 @@ use super::{
     GeneratedRustSources, LanguageId, RustAdapter, apply_repo_classified_finding, oracles,
     positive_limit_from_env, probe_shape, push_retained_finding,
 };
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::config::OraclePolicy;
 use crate::domain::SourceCurrentness;
 use std::collections::{BTreeMap, BTreeSet};
@@ -109,10 +111,7 @@ impl RustAdapter {
             &loaded_rust_files,
             &options.test_harnesses,
         )?;
-        #[cfg(test)]
-        {
-            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
-        }
+        rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -124,6 +123,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_rust_files = origin_sources(loaded_rust_files, &index);
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
@@ -136,7 +138,9 @@ impl RustAdapter {
         let manifest_dir_prefixes =
             crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
         let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-            &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+            &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(
+                &options.root,
+            ),
         );
         let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
@@ -167,6 +171,7 @@ impl RustAdapter {
                         &transitive_reach,
                         None,
                         Some(&value_origins),
+                        None,
                     );
                 finding.language = Some(LanguageId::Rust);
                 finding.source_currentness = SourceCurrentness::CandidateCurrent;

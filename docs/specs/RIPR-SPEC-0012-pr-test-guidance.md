@@ -391,8 +391,13 @@ The JSON report uses schema version `0.1`:
 - `summary.unchanged_tests` - `true` when the pull request did not change a
   nearby test for the selected recommendations. Diff-backed disclosure includes
   removals in default Cargo test layouts and edits inside locally resolved direct/inline
-  Rust test/helper function spans. Added lines use head-source spans; removed lines use
-  reconstructed old-source spans and old coordinates. These disclosure paths
+  Rust test/helper function spans, including an added module-level `#[crate::test]`
+  function whose wrapper alias lives in an unchanged crate root and path-bound
+  proc-macro crate (#10141). Companion crate-root and wrapper functions loaded
+  for alias authority do not match changed-file line numbers; wrapper identity
+  is the consumer `Cargo.toml` blob at the requested head. Added lines use
+  head-source spans; removed lines use reconstructed old-source spans and old
+  coordinates. These disclosure paths
   never become current-line placement targets or evidence of discrimination.
   Resolved diff attribution owns this flag, including a resolved empty test set;
   filename-based display grouping cannot add changed tests to that result.
@@ -457,7 +462,9 @@ annotations`, `ripr reports ci-packet`, the check renderer, and `cargo xtask
 ripr-annotations`) omits `file=` and `line=` for such a path and leads the
 message with `Location (file name has control characters, so not placed):
 <escaped path>:<line>.` The escaped form prints each character as `\u{XX}`
-(#6309).
+(#6309). A path with non-UTF-8 bytes (stable `%XX` text, which GitHub does
+not decode) is treated the same way and leads with `Location (file name is not
+valid UTF-8, so not placed): <stable path>:<line>.` (#13961).
 
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments
@@ -587,6 +594,15 @@ whole-test deletion with a surviving related test and shifted-coordinate control
 test-file and production-file deletions: uncertainty is explicit, the surviving
 recommendation and complete causal receipt remain, and the fourteen surviving-file
 controls above continue to require resolved attribution.
+`analysis/test_changes.rs::added_module_crate_test_is_a_test_edit` pins an added
+module-level `#[crate::test]` wrapper-alias function as a test edit; the sibling
+controls refuse a missing alias, a `#[crate::tests]` lookalike, and a foreign
+import, while ordinary `#[test]` still credits without companions.
+`overlapping_companion_test_line_does_not_credit_production_edit` refuses
+false credit from an unchanged crate-root test at the same line number.
+`dirty_worktree_missing_path_still_credits_head_wrapper` and
+`dirty_worktree_valid_path_does_not_credit_when_head_path_missing` pin
+head-blob wrapper identity against a dirty worktree manifest.
 
 Initial implementation should add tests for:
 

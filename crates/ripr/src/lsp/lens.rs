@@ -1,4 +1,3 @@
-use super::uri::{file_uri_for_path, file_uris_match};
 /// Advisory LSP codeLens for changed symbols.
 ///
 /// RIPR-SPEC-0100: emits one advisory `CodeLens` per distinct line and title
@@ -18,11 +17,13 @@ use super::uri::{file_uri_for_path, file_uris_match};
 ///   confirmed by a static discriminator.
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
+use super::actions::related_test_navigation_route;
+use super::client_features::ClientFeatureProfile;
+use super::uri::{file_uri_for_path, file_uris_match};
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
-use crate::analysis_outcome::{
-    AnalysisLimitationKind, AnalysisStage, normalize_portable_analysis_path,
+use crate::domain::{
+    ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTest, RelationConfidence,
 };
-use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
 use tower_lsp_server::ls_types::{CodeLens, Command, Position, Range, Uri};
@@ -71,6 +72,9 @@ struct LensViewItem {
     document_uri: String,
     line: u32,
     related_test_count: usize,
+    /// The related test a navigating lens opens, so a changed target is a
+    /// lens-view change (`workspace/codeLens/refresh`).
+    navigation_target: Option<(String, usize, String)>,
     class: String,
     preview: bool,
     static_limit_kind: Option<String>,
@@ -97,26 +101,52 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
                 Ok(uri) => uri.as_str().to_string(),
                 Err(_) => absolute.display().to_string(),
             };
+            let parse_failed = file_parse_failed(snapshot, finding);
             LensViewItem {
-                finding_id: finding.id.clone(),
+                finding_id: if parse_failed {
+                    String::new()
+                } else {
+                    finding.id.clone()
+                },
                 document_uri,
                 line: lens_line(snapshot, finding),
-                related_test_count: finding.related_tests.len(),
-                class: finding.class.as_str().to_string(),
-                preview: finding
-                    .language_status
-                    .as_ref()
-                    .is_some_and(|status| *status == LanguageStatus::Preview),
-                static_limit_kind: finding
-                    .static_limit_kind
-                    .as_ref()
-                    .map(|kind| kind.as_str().to_string()),
+                related_test_count: if parse_failed {
+                    0
+                } else {
+                    finding.related_tests.len()
+                },
+                navigation_target: lens_navigation_test(snapshot, finding).map(|test| {
+                    (
+                        test.file.to_string_lossy().into_owned(),
+                        test.line,
+                        test.name.clone(),
+                    )
+                }),
+                class: if parse_failed {
+                    "file_parse_failed".to_string()
+                } else {
+                    finding.class.as_str().to_string()
+                },
+                preview: !parse_failed
+                    && finding
+                        .language_status
+                        .as_ref()
+                        .is_some_and(|status| *status == LanguageStatus::Preview),
+                static_limit_kind: if parse_failed {
+                    None
+                } else {
+                    finding
+                        .static_limit_kind
+                        .as_ref()
+                        .map(|kind| kind.as_str().to_string())
+                },
             }
         })
         .collect();
     // Sort so a findings-order change that does not alter the visible set
     // does not read as a lens-view change.
     items.sort();
+    items.dedup();
     LensViewIdentity {
         input_identity: snapshot.input_identity_id(),
         items,
@@ -128,14 +158,18 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
 ///
 /// Returns an empty Vec when `snapshot` is `None` — absence of an analysis
 /// snapshot is not the same as confirmed absence of related tests.
-pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>) -> Vec<CodeLens> {
+pub(super) fn code_lens_response(
+    uri: &Uri,
+    snapshot: Option<&AnalysisSnapshot>,
+    client_features: &ClientFeatureProfile,
+) -> Vec<CodeLens> {
     let Some(snapshot) = snapshot else {
         return Vec::new();
     };
     let age = snapshot.refresh.age();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    for lens in
-        lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(snapshot, finding, age))
+    for lens in lens_findings(uri, snapshot)
+        .map(|finding| finding_to_code_lens(snapshot, finding, age, client_features))
     {
         // Several probes on one line (a predicate and its returned value) often
         // read identically; one lens per distinct line and title keeps the
@@ -175,6 +209,9 @@ pub(super) fn lens_findings_at_line<'a>(
     line: u32,
 ) -> Vec<&'a Finding> {
     lens_findings(uri, snapshot)
+        // A file-level uncertainty marker is not a positional summary of
+        // raw findings. Do not move their ordinary hover claims to row zero.
+        .filter(|finding| !file_parse_failed(snapshot, finding))
         .filter(|finding| lens_line(snapshot, finding) == line)
         .collect()
 }
@@ -190,6 +227,9 @@ pub(super) fn lens_findings_at_line<'a>(
 /// that captured none) the fallback is the analyzer row; no text search is
 /// performed and no exact span is claimed. A lens is always zero-width.
 fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
+    if file_parse_failed(snapshot, finding) {
+        return 0;
+    }
     match snapshot.rust_diagnostic_origins.for_finding(finding) {
         Some(origin) => origin.line,
         None => finding.probe.location.line.saturating_sub(1) as u32,
@@ -198,43 +238,144 @@ fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
 
 /// Build one `CodeLens` for a single finding.
 ///
-/// The resolved command refreshes saved-workspace analysis through the existing
-/// registered server command. Its title keeps the cached advisory distinct from
-/// the explicit action. No arguments or resolve round-trip are needed.
+/// A row with an honest related-test target opens it through the negotiated
+/// navigation command; every other row refreshes saved-workspace analysis
+/// through the registered server command. The title keeps the cached advisory
+/// distinct from the action. No resolve round-trip is needed.
 /// Honest advisory when the Rust adapter recorded a parse failure for this file.
 const PARSE_FAILED_LENS_TITLE: &str =
     "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
 
-fn finding_portable_path(finding: &Finding, root: &Path) -> Option<String> {
-    let file = &finding.probe.location.file;
-    let relative = if file.is_absolute() {
-        file.strip_prefix(root).ok()?.to_path_buf()
-    } else {
-        file.clone()
-    };
-    normalize_portable_analysis_path(relative.to_string_lossy().as_ref()).ok()
-}
+/// Advisory for a file the nesting budget declined: not a syntax error claim
+/// (#13660).
+const NESTING_BUDGET_LENS_TITLE: &str = "ripr: related tests unknown, this file is over the parse nesting budget · split the deeply nested expression and save";
 
 /// True when `snapshot.analysis_outcome` carries a language-adapter producer
 /// failure limitation for the same portable path as `finding`.
 fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
-    let Some(finding_path) = finding_portable_path(finding, &snapshot.root) else {
-        return false;
-    };
-    let Some(outcome) = snapshot.analysis_outcome.as_ref() else {
-        return false;
-    };
-    outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::ProducerFailure
-            && limitation.producer_stage == AnalysisStage::LanguageAdapter
-            && limitation.path.as_deref() == Some(finding_path.as_str())
-    })
+    super::diagnostics::file_has_parse_failure(
+        &snapshot.root,
+        &finding.probe.location.file,
+        snapshot.analysis_outcome.as_ref(),
+    )
+}
+
+/// The related test a lens click may open, or `None` when the row has no
+/// honest target. Fail closed: a finding with no static path, no related test,
+/// or a file that did not parse never navigates, and neither does a test that
+/// is not an existing file inside the workspace root (the same check
+/// `ripr.showRelatedTest` applies). Selection mirrors the navigate code
+/// action's `best_related_test_for_editor` over the finding's own
+/// `related_tests` (the list the title count comes from, so count and target
+/// agree): a strong-oracle test first, else the lowest relation-confidence
+/// rank, ties to the earliest listed.
+///
+/// Containment and `is_file` are filesystem reads, so they run only for the
+/// one selected test per lens, never for every related test.
+fn lens_navigation_test<'a>(
+    snapshot: &AnalysisSnapshot,
+    finding: &'a Finding,
+) -> Option<&'a RelatedTest> {
+    if matches!(finding.class, ExposureClass::NoStaticPath) || file_parse_failed(snapshot, finding)
+    {
+        return None;
+    }
+    let test = finding
+        .related_tests
+        .iter()
+        .find(|test| test.oracle_strength == OracleStrength::Strong)
+        .or_else(|| {
+            finding
+                .related_tests
+                .iter()
+                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+        })?;
+    let path = related_test_path(snapshot, test);
+    (super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file())
+        .then_some(test)
+}
+
+fn relation_confidence_rank(confidence: Option<RelationConfidence>) -> u8 {
+    match confidence {
+        Some(RelationConfidence::High) => 0,
+        Some(RelationConfidence::Medium) => 1,
+        Some(RelationConfidence::Low) => 2,
+        Some(RelationConfidence::Opaque) => 3,
+        None => 4,
+    }
+}
+
+fn related_test_path(snapshot: &AnalysisSnapshot, test: &RelatedTest) -> std::path::PathBuf {
+    if test.file.is_absolute() {
+        test.file.clone()
+    } else {
+        snapshot.root.join(&test.file)
+    }
+}
+
+/// Words no codeLens title may contain (RIPR-SPEC-0100; `check-static-language`
+/// enforces the same vocabulary over tracked prose). The single list for the
+/// title name guard and the test vocabulary guard.
+const FORBIDDEN_LENS_WORDS: [&str; 7] = [
+    "killed",   // ripr-allow: static-language: vocabulary guard list, never emitted
+    "survived", // ripr-allow: static-language: vocabulary guard list, never emitted
+    "proven",   // ripr-allow: static-language: vocabulary guard list, never emitted
+    "adequate", // ripr-allow: static-language: vocabulary guard list, never emitted
+    "covered",  // ripr-allow: static-language: vocabulary guard list, never emitted
+    "passing",  // ripr-allow: static-language: vocabulary guard list, never emitted
+    "untested", // ripr-allow: static-language: vocabulary guard list, never emitted
+];
+
+const LENS_TEST_NAME_MAX_CHARS: usize = 48;
+
+/// The label for the opened test: whitespace and control characters collapse
+/// to single spaces and the name is cut at a fixed cap with an ellipsis. A name
+/// containing forbidden vocabulary (for example `test_passing_case`) is not
+/// echoed; the neutral `related test` stands in, and the target is unchanged.
+fn lens_test_label(name: &str) -> String {
+    let collapsed = name
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lowered = collapsed.to_lowercase();
+    if collapsed.is_empty()
+        || FORBIDDEN_LENS_WORDS
+            .iter()
+            .any(|word| lowered.contains(word))
+    {
+        return "related test".to_string();
+    }
+    if collapsed.chars().count() > LENS_TEST_NAME_MAX_CHARS {
+        let cut: String = collapsed.chars().take(LENS_TEST_NAME_MAX_CHARS).collect();
+        return format!("{}…", cut.trim_end());
+    }
+    collapsed
+}
+
+/// The navigation command for `test`, routed by the shared owner
+/// (`related_test_navigation_route`, RIPR-SPEC-0129). `None` when the client
+/// has no route or the snapshot cannot bind the server route.
+fn lens_navigation_command(
+    snapshot: &AnalysisSnapshot,
+    test: &RelatedTest,
+    client_features: &ClientFeatureProfile,
+) -> Option<(&'static str, serde_json::Value)> {
+    let uri = file_uri_for_path(&related_test_path(snapshot, test)).ok()?;
+    let target = serde_json::json!({
+        "uri": uri.as_str(),
+        "line": test.line,
+        "test_name": test.name.as_str(),
+    });
+    related_test_navigation_route(target, Some(snapshot), client_features)
+        .map(|(command, _action, target)| (command, target))
 }
 
 fn finding_to_code_lens(
     snapshot: &AnalysisSnapshot,
     finding: &Finding,
     age: Option<Duration>,
+    client_features: &ClientFeatureProfile,
 ) -> CodeLens {
     let line = lens_line(snapshot, finding);
     let range = Range {
@@ -242,18 +383,36 @@ fn finding_to_code_lens(
         end: Position { line, character: 0 },
     };
     let body = if file_parse_failed(snapshot, finding) {
-        PARSE_FAILED_LENS_TITLE.to_string()
+        if super::diagnostics::file_parse_failure_is_nesting_budget(
+            &snapshot.root,
+            &finding.probe.location.file,
+            snapshot.analysis_outcome.as_ref(),
+        ) {
+            NESTING_BUDGET_LENS_TITLE.to_string()
+        } else {
+            PARSE_FAILED_LENS_TITLE.to_string()
+        }
     } else {
         related_test_lens_title(finding, age)
     };
-    let title = format!("{body} · refresh saved workspace");
-    CodeLens {
-        range,
-        command: Some(Command {
-            title,
+    let navigation = lens_navigation_test(snapshot, finding).and_then(|test| {
+        lens_navigation_command(snapshot, test, client_features).map(|route| (test, route))
+    });
+    let command = match navigation {
+        Some((test, (command, target))) => Command {
+            title: format!("{body} · open {}", lens_test_label(&test.name)),
+            command: command.to_string(),
+            arguments: Some(vec![target]),
+        },
+        None => Command {
+            title: format!("{body} · refresh saved workspace"),
             command: REFRESH_COMMAND.to_string(),
             arguments: None,
-        }),
+        },
+    };
+    CodeLens {
+        range,
+        command: Some(command),
         data: None,
     }
 }
@@ -352,17 +511,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
 /// static-language vocabulary terms. Used by tests.
 #[cfg(test)]
 pub(super) fn lens_title_is_static_language_clean(title: &str) -> bool {
-    // These string literals are test guards checking that the words do not
-    // appear in production output — the strings themselves are not output.
-    let forbidden = [
-        "killed", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "survived", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "proven", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "adequate", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "covered", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "passing", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "untested", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-    ];
+    let forbidden = FORBIDDEN_LENS_WORDS;
     !forbidden.iter().any(|word| title.contains(word))
 }
 
@@ -382,6 +531,7 @@ mod tests {
     };
     use crate::lsp::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
     use crate::lsp::state::{AnalysisSnapshot, RefreshMetadata};
+    use crate::lsp::{OPEN_RELATED_TEST_COMMAND, SHOW_RELATED_TEST_COMMAND};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use tower_lsp_server::ls_types::{Diagnostic, Position, Range};
@@ -472,7 +622,7 @@ mod tests {
     ) -> Result<AnalysisLimitation, String> {
         let recovery = AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
-            "Fix the syntax error and save the file.",
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
         )?;
         AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,
@@ -713,7 +863,8 @@ mod tests {
             let finding = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 2, status);
             let snapshot = make_snapshot_with_findings("/workspace", vec![finding]);
             let uri = parse_uri("file:///workspace/src/lib.rs")?;
-            let lenses = code_lens_response(&uri, Some(&snapshot));
+            let lenses =
+                code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
             if lenses.len() != 1 {
                 return Err(format!(
                     "wire control must emit exactly one lens: {lenses:?}"
@@ -771,7 +922,8 @@ mod tests {
             make_snapshot_with_findings("/workspace", vec![first, twin, other_line, different]);
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
 
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
         // Twin on the same line with the same title collapses; a distinct line
         // and a distinct title on the same line both survive.
@@ -812,7 +964,8 @@ mod tests {
         let snapshot = make_snapshot_with_findings(root, vec![finding]);
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
 
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
         if lenses.len() != 1 {
             return Err(format!("expected exactly 1 lens, got {}", lenses.len()));
@@ -844,7 +997,8 @@ mod tests {
         let snapshot = make_snapshot_with_findings(root, vec![finding]);
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
 
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
         if lenses.len() != 1 {
             return Err(format!("expected 1 lens, got {}", lenses.len()));
@@ -933,7 +1087,8 @@ mod tests {
         let snapshot = make_snapshot_with_findings(root, vec![finding]);
         let uri = parse_uri("file:///workspace/src/service.ts")?;
 
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
         if lenses.len() != 1 {
             return Err(format!("expected 1 lens, got {}", lenses.len()));
@@ -959,7 +1114,8 @@ mod tests {
         let snapshot = make_snapshot_with_findings(root, vec![finding]);
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
 
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
         if lenses.len() != 1 {
             return Err(format!("expected 1 lens, got {}", lenses.len()));
@@ -986,7 +1142,7 @@ mod tests {
     #[test]
     fn code_lens_response_no_snapshot_emits_nothing() -> Result<(), String> {
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
-        let lenses = code_lens_response(&uri, None);
+        let lenses = code_lens_response(&uri, None, &ClientFeatureProfile::unsupported());
         if !lenses.is_empty() {
             return Err(
                 "no snapshot must produce empty Vec, not a fabricated 0-count lens".to_string(),
@@ -1003,7 +1159,11 @@ mod tests {
         let snapshot = make_snapshot_with_findings(root, vec![finding_a, finding_b]);
 
         let uri_a = parse_uri("file:///workspace/src/a.rs")?;
-        let lenses = code_lens_response(&uri_a, Some(&snapshot));
+        let lenses = code_lens_response(
+            &uri_a,
+            Some(&snapshot),
+            &ClientFeatureProfile::unsupported(),
+        );
 
         if lenses.len() != 1 {
             return Err(format!(
@@ -1025,6 +1185,388 @@ mod tests {
         Ok(())
     }
 
+    fn navigating_client(
+        commands: &[&str],
+        show_document: bool,
+    ) -> Result<ClientFeatureProfile, String> {
+        let params: tower_lsp_server::ls_types::InitializeParams =
+            serde_json::from_value(serde_json::json!({
+                "capabilities": {
+                    "window": { "showDocument": { "support": show_document } },
+                    "experimental": {
+                        "riprEditor": {
+                            "version": "0.10.0",
+                            "commands": commands,
+                            "guardedTestEdit": false
+                        }
+                    }
+                }
+            }))
+            .map_err(|err| format!("fixture params must parse: {err}"))?;
+        Ok(ClientFeatureProfile::from_initialize_params(&params))
+    }
+
+    /// A real workspace directory holding the files a navigating lens may
+    /// open (`tests/lib.rs`, `tests/other.rs`) so the existing-file check runs.
+    fn navigation_root(name: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lens-nav-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create fixture dirs failed: {err}"))?;
+        for file in ["tests/lib.rs", "tests/other.rs"] {
+            std::fs::write(root.join(file), "fn t() {}\n")
+                .map_err(|err| format!("write fixture failed: {err}"))?;
+        }
+        Ok(root)
+    }
+
+    fn root_str(root: &Path) -> Result<&str, String> {
+        root.to_str()
+            .ok_or_else(|| "non-utf8 temp root".to_string())
+    }
+
+    fn lenses_for(
+        snapshot: &AnalysisSnapshot,
+        file: &str,
+        client: &ClientFeatureProfile,
+    ) -> Result<Vec<CodeLens>, String> {
+        let uri = file_uri_for_path(&snapshot.root.join(file))
+            .map_err(|err| format!("fixture uri failed: {err}"))?;
+        Ok(code_lens_response(&uri, Some(snapshot), client))
+    }
+
+    fn only_lens(
+        snapshot: &AnalysisSnapshot,
+        file: &str,
+        client: &ClientFeatureProfile,
+    ) -> Result<Command, String> {
+        let mut lenses = lenses_for(snapshot, file, client)?;
+        if lenses.len() != 1 {
+            return Err(format!("expected exactly one lens, got {lenses:?}"));
+        }
+        lenses
+            .remove(0)
+            .command
+            .ok_or_else(|| "lens carries no command".to_string())
+    }
+
+    fn target_of(command: &Command) -> Result<&serde_json::Value, String> {
+        command
+            .arguments
+            .as_ref()
+            .and_then(|args| args.first())
+            .ok_or_else(|| format!("navigation lens must carry its target: {command:?}"))
+    }
+
+    fn exposed_finding(tests: usize) -> Finding {
+        make_finding("src/lib.rs", 10, ExposureClass::Exposed, tests, None)
+    }
+
+    #[test]
+    fn lens_click_opens_the_related_test_when_the_row_has_a_target() -> Result<(), String> {
+        let root = navigation_root("open")?;
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![exposed_finding(2)]);
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if command.command != OPEN_RELATED_TEST_COMMAND {
+            return Err(format!("expected navigation, got {}", command.command));
+        }
+        let target = target_of(&command)?;
+        let expected_uri = file_uri_for_path(&root.join("tests/lib.rs"))
+            .map_err(|err| format!("uri failed: {err}"))?;
+        if target.get("uri").and_then(|v| v.as_str()) != Some(expected_uri.as_str())
+            || target.get("line").and_then(|v| v.as_u64()) != Some(10)
+            || target.get("test_name").and_then(|v| v.as_str()) != Some("test_0")
+        {
+            return Err(format!("unexpected navigation target: {target}"));
+        }
+        if !command.title.ends_with("· open test_0") || command.title.contains("refresh") {
+            return Err(format!(
+                "title must name the opened test: {}",
+                command.title
+            ));
+        }
+        if !lens_title_is_static_language_clean(&command.title) {
+            return Err(format!("forbidden vocabulary: {}", command.title));
+        }
+        // Navigation only: no repair or actionability data on the wire.
+        if target.get("input_identity").is_some() || target.get("repair").is_some() {
+            return Err(format!("client-side target must stay minimal: {target}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_uses_server_navigation_for_show_document_clients() -> Result<(), String> {
+        let root = navigation_root("show")?;
+        let mut snapshot = make_snapshot_with_findings(
+            root_str(&root)?,
+            vec![make_finding(
+                "src/lib.rs",
+                10,
+                ExposureClass::WeaklyExposed,
+                1,
+                None,
+            )],
+        );
+        let config = crate::lsp::config::LspAnalysisConfig::default();
+        snapshot.input_identity = Some(
+            crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
+                root.clone(),
+                7,
+                &config,
+            ),
+        );
+        let client = navigating_client(&[], true)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if command.command != SHOW_RELATED_TEST_COMMAND {
+            return Err(format!(
+                "expected server navigation, got {}",
+                command.command
+            ));
+        }
+        let bound = target_of(&command)?
+            .get("input_identity")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        if bound != snapshot.input_identity_id() || bound.is_none() {
+            return Err("server navigation must bind the snapshot input identity".to_string());
+        }
+        // Without an identity the server route cannot bind: refresh, not a stale target.
+        snapshot.input_identity = None;
+        let fallback = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if fallback.command != REFRESH_COMMAND || fallback.arguments.is_some() {
+            return Err(format!("unbound snapshot must refresh: {fallback:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_falls_back_to_refresh_without_an_honest_target() -> Result<(), String> {
+        let root = navigation_root("fallback")?;
+        let root_text = root_str(&root)?;
+        let navigating = navigating_client(&[OPEN_RELATED_TEST_COMMAND], true)?;
+        let refreshes = |snapshot: &AnalysisSnapshot,
+                         client: &ClientFeatureProfile,
+                         label: &str|
+         -> Result<(), String> {
+            let command = only_lens(snapshot, "src/lib.rs", client)?;
+            if command.command != REFRESH_COMMAND || command.arguments.is_some() {
+                return Err(format!("{label} must refresh, got {command:?}"));
+            }
+            if !command.title.ends_with("· refresh saved workspace") {
+                return Err(format!("{label} lost the refresh title: {}", command.title));
+            }
+            Ok(())
+        };
+        let case = |class, tests| {
+            make_snapshot_with_findings(
+                root_text,
+                vec![make_finding("src/lib.rs", 10, class, tests, None)],
+            )
+        };
+        refreshes(
+            &case(ExposureClass::ReachableUnrevealed, 0),
+            &navigating,
+            "no related tests",
+        )?;
+        // No static path never navigates, even if related tests are listed.
+        refreshes(
+            &case(ExposureClass::NoStaticPath, 2),
+            &navigating,
+            "no_static_path",
+        )?;
+        // A related test outside the workspace root is never a target.
+        let mut outside = exposed_finding(1);
+        outside.related_tests[0].file = PathBuf::from("/elsewhere/tests/lib.rs");
+        refreshes(
+            &make_snapshot_with_findings(root_text, vec![outside]),
+            &navigating,
+            "outside-root test",
+        )?;
+        // A deleted test file keeps refresh (the file must still exist).
+        let mut gone = exposed_finding(1);
+        gone.related_tests[0].file = PathBuf::from("tests/deleted.rs");
+        refreshes(
+            &make_snapshot_with_findings(root_text, vec![gone]),
+            &navigating,
+            "deleted test file",
+        )?;
+        // A generic client that advertised neither route keeps refresh.
+        refreshes(
+            &case(ExposureClass::Exposed, 2),
+            &ClientFeatureProfile::unsupported(),
+            "generic client",
+        )?;
+        // Parse-failed file: related tests are unknown, so nothing to open.
+        let parse_failed = snapshot_with_parse_failure_limitation(
+            root_text,
+            vec![exposed_finding(2)],
+            language_adapter_producer_failure_limitation("src/lib.rs")?,
+        )?;
+        refreshes(&parse_failed, &navigating, "parse-failed file")
+    }
+
+    #[test]
+    fn lens_click_prefers_a_strong_oracle_then_the_best_confidence() -> Result<(), String> {
+        let root = navigation_root("select")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let opened = |finding: Finding| -> Result<String, String> {
+            let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+            let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+            target_of(&command)?
+                .get("test_name")
+                .and_then(|name| name.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| "target lost its test name".to_string())
+        };
+        // Strong beats an earlier-listed weak test.
+        let mut strong = exposed_finding(3);
+        strong.related_tests[2].oracle_strength = OracleStrength::Strong;
+        if opened(strong)? != "test_2" {
+            return Err("a strong-oracle test must be opened over the first listed".to_string());
+        }
+        // Without a strong test the highest relation confidence wins, not order.
+        let mut ranked = exposed_finding(3);
+        ranked.related_tests[0].relation_confidence = Some(RelationConfidence::Low);
+        ranked.related_tests[1].relation_confidence = Some(RelationConfidence::Opaque);
+        ranked.related_tests[2].relation_confidence = Some(RelationConfidence::High);
+        if opened(ranked)? != "test_2" {
+            return Err("the highest-confidence test must be opened".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_joins_a_relative_test_file_to_the_workspace_root() -> Result<(), String> {
+        let root = navigation_root("relative")?;
+        let mut finding = exposed_finding(1);
+        finding.related_tests[0].file = PathBuf::from("tests/other.rs");
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        let expected = file_uri_for_path(&root.join("tests/other.rs"))
+            .map_err(|err| format!("uri failed: {err}"))?;
+        let uri = target_of(&command)?.get("uri").and_then(|v| v.as_str());
+        if uri != Some(expected.as_str()) {
+            return Err(format!("relative path was not rooted: {uri:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_preview_tier_findings_navigate_with_the_softened_title() -> Result<(), String> {
+        let root = navigation_root("preview")?;
+        let finding = make_finding(
+            "src/lib.rs",
+            10,
+            ExposureClass::WeaklyExposed,
+            1,
+            Some(LanguageStatus::Preview),
+        );
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if command.command != OPEN_RELATED_TEST_COMMAND || !command.title.starts_with("preview:") {
+            return Err(format!("preview lens must navigate softly: {command:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_title_names_a_sanitized_bounded_test_or_a_neutral_stand_in() -> Result<(), String> {
+        let root = navigation_root("label")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let title_for = |name: &str| -> Result<(String, String), String> {
+            let mut finding = exposed_finding(1);
+            finding.related_tests[0].name = name.to_string();
+            let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+            let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+            let target_name = target_of(&command)?
+                .get("test_name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok((command.title, target_name))
+        };
+        let (title, target_name) = title_for("test_a\n\t  b\r\nc")?;
+        if !title.ends_with("· open test_a b c") || title.contains(['\n', '\r', '\t']) {
+            return Err(format!("whitespace and controls must collapse: {title:?}"));
+        }
+        if target_name != "test_a\n\t  b\r\nc" {
+            return Err("sanitising the title must not change the target".to_string());
+        }
+        let long = "t".repeat(200);
+        let (title, _) = title_for(&long)?;
+        let label = title.rsplit("· open ").next().unwrap_or_default();
+        if !label.ends_with('…') || label.chars().count() > LENS_TEST_NAME_MAX_CHARS + 1 {
+            return Err(format!("a long name must be cut with an ellipsis: {label}"));
+        }
+        for name in ["test_passing_case", "covered_branch", "Test_Killed_Path"] {
+            let (title, target_name) = title_for(name)?;
+            if !title.ends_with("· open related test") || target_name != name {
+                return Err(format!("{name} must use the neutral label, got {title}"));
+            }
+            if !lens_title_is_static_language_clean(&title.to_lowercase()) {
+                return Err(format!("forbidden vocabulary leaked: {title}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_dedup_keeps_distinct_targets_and_collapses_identical_rows() -> Result<(), String> {
+        let root = navigation_root("dedup")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        // Same test name in different files on one row: same title, different
+        // target. Both lenses stay so neither click lands on an arbitrary file.
+        let mut first = exposed_finding(1);
+        first.related_tests[0].name = "shared".to_string();
+        let mut second = first.clone();
+        second.id = format!("{}-b", first.id);
+        second.related_tests[0].file = PathBuf::from("tests/other.rs");
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![first.clone(), second]);
+        let lenses = lenses_for(&snapshot, "src/lib.rs", &client)?;
+        if lenses.len() != 2 {
+            return Err(format!(
+                "distinct targets must not collapse: {} lenses",
+                lenses.len()
+            ));
+        }
+        // Two findings on one row that resolve to the same target and title collapse.
+        let mut twin = first.clone();
+        twin.id = format!("{}-c", first.id);
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![first, twin]);
+        let lenses = lenses_for(&snapshot, "src/lib.rs", &client)?;
+        if lenses.len() != 1 {
+            return Err(format!(
+                "identical rows must collapse: {} lenses",
+                lenses.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_view_identity_tracks_the_navigation_target() -> Result<(), String> {
+        let root = navigation_root("identity")?;
+        let first = exposed_finding(2);
+        let mut second = first.clone();
+        second.related_tests[0].name = "other_test".to_string();
+        let a = lens_view_identity(&make_snapshot_with_findings(root_str(&root)?, vec![first]));
+        let b = lens_view_identity(&make_snapshot_with_findings(root_str(&root)?, vec![second]));
+        if a == b {
+            return Err("a changed navigation target must change the lens view".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn code_lens_response_static_language_clean() -> Result<(), String> {
         let root = "/workspace";
@@ -1041,7 +1583,8 @@ mod tests {
             let finding = make_finding(&format!("src/file{i}.rs"), 10, class.clone(), *count, None);
             let snapshot = make_snapshot_with_findings(root, vec![finding]);
             let uri = parse_uri(&format!("file:///workspace/src/file{i}.rs"))?;
-            let lenses = code_lens_response(&uri, Some(&snapshot));
+            let lenses =
+                code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
             for lens in &lenses {
                 if let Some(cmd) = &lens.command
                     && !lens_title_is_static_language_clean(&cmd.title)
@@ -1064,7 +1607,8 @@ mod tests {
         );
         let snapshot = make_snapshot_with_findings(root, vec![preview_finding]);
         let uri = parse_uri("file:///workspace/src/preview.ts")?;
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
         for lens in &lenses {
             if let Some(cmd) = &lens.command
                 && !lens_title_is_static_language_clean(&cmd.title)
@@ -1085,7 +1629,8 @@ mod tests {
         let snapshot =
             snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
         let title = lenses
             .first()
             .and_then(|lens| lens.command.as_ref())
@@ -1105,13 +1650,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_failure_lens_identity_is_one_file_marker() -> Result<(), String> {
+        let first = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let second = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
+        let limitation = language_adapter_producer_failure_limitation("src/lib.rs")?;
+        let mut snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![first, second], limitation)?;
+        let identity = lens_view_identity(&snapshot);
+        assert_eq!(identity.rows(), vec![0]);
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        assert!(lens_findings_at_line(&uri, &snapshot, 0).is_empty());
+        snapshot.findings.reverse();
+        snapshot.findings[0].related_tests.clear();
+        assert_eq!(identity, lens_view_identity(&snapshot));
+        snapshot.analysis_outcome = None;
+        assert_ne!(identity, lens_view_identity(&snapshot));
+        Ok(())
+    }
+
+    #[test]
     fn parse_failed_limitation_on_other_file_leaves_lens_unchanged() -> Result<(), String> {
         let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
         let limitation = language_adapter_producer_failure_limitation("src/other.rs")?;
         let snapshot =
             snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
         let title = lenses
             .first()
             .and_then(|lens| lens.command.as_ref())
@@ -1153,7 +1718,8 @@ mod tests {
             snapshot_with_parse_failure_limitation("/workspace", vec![finding], wrong_kind)?;
         let uri = parse_uri("file:///workspace/src/lib.rs")?;
         for snapshot in [snapshot_wrong_stage, snapshot_wrong_kind] {
-            let lenses = code_lens_response(&uri, Some(&snapshot));
+            let lenses =
+                code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
             let title = lenses
                 .first()
                 .and_then(|lens| lens.command.as_ref())
@@ -1164,6 +1730,163 @@ mod tests {
                     "non-matching limitation must keep zero-count lens: {title}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_declined_file_gets_its_own_lens_title_and_real_parse_failure_keeps_its_own()
+    -> Result<(), String> {
+        let title_for = |recovery_text: &str| -> Result<String, String> {
+            let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+            let limitation = AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery_text)?,
+            )
+            .with_path("src/lib.rs")?;
+            let snapshot =
+                snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+            let uri = parse_uri("file:///workspace/src/lib.rs")?;
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported())
+                .first()
+                .and_then(|lens| lens.command.as_ref())
+                .map(|command| command.title.clone())
+                .ok_or_else(|| "expected one lens".to_string())
+        };
+        let nesting = title_for(crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY)?;
+        assert!(nesting.contains(NESTING_BUDGET_LENS_TITLE), "{nesting}");
+        assert!(!nesting.contains("syntax error"), "{nesting}");
+        let parse = title_for(crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY)?;
+        assert!(parse.contains(PARSE_FAILED_LENS_TITLE), "{parse}");
+        assert!(lens_title_is_static_language_clean(
+            NESTING_BUDGET_LENS_TITLE
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn real_parse_failure_wins_over_a_nesting_decline_on_the_same_path_in_either_order()
+    -> Result<(), String> {
+        let limitation = |text: &str| -> Result<AnalysisLimitation, String> {
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, text)?,
+            )
+            .with_path("src/lib.rs")
+        };
+        let nesting = crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY;
+        let parse = crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY;
+        for order in [[nesting, parse], [parse, nesting]] {
+            let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+            let mut snapshot = snapshot_with_parse_failure_limitation(
+                "/workspace",
+                vec![finding],
+                limitation(order[0])?,
+            )?;
+            let outcome = snapshot
+                .analysis_outcome
+                .as_mut()
+                .ok_or("outcome must be present")?;
+            outcome.limitations.push(limitation(order[1])?);
+            assert!(
+                !super::super::diagnostics::file_parse_failure_is_nesting_budget(
+                    &snapshot.root,
+                    std::path::Path::new("src/lib.rs"),
+                    snapshot.analysis_outcome.as_ref(),
+                ),
+                "{order:?}"
+            );
+            let uri = parse_uri("file:///workspace/src/lib.rs")?;
+            let title =
+                code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported())
+                    .first()
+                    .and_then(|lens| lens.command.as_ref())
+                    .map(|command| command.title.clone())
+                    .ok_or("expected one lens")?;
+            assert!(
+                title.contains(PARSE_FAILED_LENS_TITLE),
+                "{order:?}: {title}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_budget_recovery_is_named_but_lookalike_text_is_not() -> Result<(), String> {
+        // #13660: the nesting-budget decline has its own recovery text; the
+        // editor still discloses the file, but only on exact producer text.
+        let limitation = |text: &str| -> Result<AnalysisLimitation, String> {
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, text)?,
+            )
+            .with_path("src/lib.rs")
+        };
+        let named = |text: &str| -> Result<bool, String> {
+            Ok(super::super::diagnostics::limitation_is_file_parse_failure(
+                &limitation(text)?,
+            ))
+        };
+        assert!(named(
+            crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        )?);
+        assert!(named(crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY)?);
+        assert_ne!(
+            crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+        );
+        assert!(!crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY.contains("parses as Rust"));
+        assert!(!named("Split the expression below the nesting budget.")?);
+        Ok(())
+    }
+
+    #[test]
+    fn per_file_producer_failure_that_is_not_a_parse_failure_keeps_the_lens() -> Result<(), String>
+    {
+        // `classification_incomplete`: a per-file language-adapter failure that
+        // is an internal error, not a parse failure (#11799).
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Report the failure with the file and diff, then re-run.",
+        )?;
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let title = code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported())
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one lens")?;
+        if title.contains("did not parse") {
+            return Err(format!(
+                "not a parse failure, lens must not say so: {title}"
+            ));
+        }
+        let origins = crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
+        let diagnostics = super::super::diagnostics::finding_diagnostics_by_uri_with_profile(
+            &snapshot.root,
+            &snapshot.findings,
+            &crate::config::SeverityConfig::default(),
+            false,
+            super::super::diagnostics::FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                &tower_lsp_server::ls_types::PositionEncodingKind::UTF16,
+                &origins,
+            )
+            .with_analysis_outcome(snapshot.analysis_outcome.as_ref()),
+        )?;
+        if diagnostics.values().map(Vec::len).sum::<usize>() != 1 {
+            return Err("a non-parse limitation must not withhold the finding diagnostic".into());
         }
         Ok(())
     }
@@ -1193,7 +1916,8 @@ mod tests {
         deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
         let current = make_finding("src/lib.rs", 3, ExposureClass::NoStaticPath, 1, None);
         let snapshot = make_snapshot_with_findings("/ws", vec![deleted, current]);
-        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
         let lines: Vec<u32> = lenses.iter().map(|lens| lens.range.start.line).collect();
         assert!(
             !lines.contains(&(29 - 1)),

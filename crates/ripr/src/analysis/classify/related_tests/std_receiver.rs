@@ -109,7 +109,7 @@ fn visit_executable_sites(
     for node in syntax.descendants().filter(executable) {
         visit(node.clone(), None);
         if let Some(call) = ast::MacroCall::cast(node) {
-            assertion_arguments_resolve(&call, Some(index), visit);
+            assertion_arguments_resolve(&call, Some(index), false, visit);
         }
     }
 }
@@ -449,7 +449,12 @@ fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> boo
                     && (last_segment_name(strip_reference_prefix(self_ty)) == head
                         || impl_self_reaches_std(self_ty)))
     });
-    indexed || source_may_implement_for_std(index, trait_name, head)
+    indexed
+        || index
+            .call_identity_memos
+            .std_impl_source(trait_name, head, || {
+                source_may_implement_for_std(index, trait_name, head)
+            })
 }
 
 /// `std::vec::Vec<u32>` -> `Vec`: the final path segment before any generics.

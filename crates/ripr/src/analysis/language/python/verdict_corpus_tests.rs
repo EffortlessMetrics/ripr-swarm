@@ -70,6 +70,62 @@ fn test_module(imports: &str, body: &str) -> String {
     format!("{imports}\n\n\n{body}")
 }
 
+const GUARDED_VALUE_OWNER: &str = "def label(deprecated, text):\n    if deprecated:\n        text = f\"{text} (deprecated)\"\n    return text\n";
+const GUARDED_VALUE_TEST: &str = "from src.shop import label\n\n\ndef test_label():\n    assert label(True, \"x\") == \"x (deprecated)\"\n";
+
+#[test]
+fn a_value_edit_inside_an_unchanged_guard_is_value_shaped_not_a_predicate() -> Result<(), String> {
+    // #13587: the guard `if deprecated:` is untouched; only the assigned value
+    // changed. The finding must not say a condition changed.
+    let finding = classify_finding(
+        GUARDED_VALUE_OWNER,
+        3,
+        "        text = f\"{_(text)} (deprecated)\"",
+        GUARDED_VALUE_TEST,
+    )?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue
+    );
+    assert_eq!(finding.probe.delta, crate::domain::DeltaKind::Value);
+    let gap = finding
+        .canonical_gap
+        .ok_or_else(|| "the value edit must carry a canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "return_value");
+    assert!(!gap.id.contains("predicate_boundary"), "{}", gap.id);
+    // The local value is not yet at the owner output boundary, so the shape
+    // alone never establishes propagation.
+    assert_eq!(
+        finding.ripr.propagate.state,
+        crate::domain::StageState::Weak
+    );
+    Ok(())
+}
+
+#[test]
+fn the_guard_line_edit_itself_stays_a_predicate() -> Result<(), String> {
+    // Negative control for #13587: editing the guard keeps the predicate shape.
+    let owner = "def label(deprecated, text):\n    if not deprecated:\n        text = f\"{text} (deprecated)\"\n    return text\n";
+    let finding = classify_finding(owner, 2, "    if deprecated:", GUARDED_VALUE_TEST)?;
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    assert_eq!(finding.probe.delta, crate::domain::DeltaKind::Control);
+    let gap = finding
+        .canonical_gap
+        .ok_or_else(|| "the guard edit must carry a canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "predicate_boundary");
+    Ok(())
+}
+
+#[test]
+fn a_guarded_assignment_that_compares_stays_a_predicate() -> Result<(), String> {
+    // Fail closed: a right side that carries a comparison is not a plain value.
+    let owner =
+        "def label(deprecated, n):\n    if deprecated:\n        flag = n > 3\n    return flag\n";
+    let finding = classify_finding(owner, 3, "        flag = n > 2", GUARDED_VALUE_TEST)?;
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    Ok(())
+}
+
 const FEE: &str = "def fee(amount):\n    return amount * 3\n\n\ndef charge(amount):\n    return amount + fee(amount)\n";
 const FEE_OLD: &str = "    return amount * 2";
 const FEE_IMPORT: &str = "from src.shop import charge, fee";
@@ -2530,5 +2586,213 @@ fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), Stri
             "{owner}"
         );
     }
+    Ok(())
+}
+
+const SHADOW_OWNER: &str = "def price(x):\n    return x + 2\n";
+const SHADOW_OLD: &str = "    return x + 1";
+const SHADOW_TEST: &str =
+    "from core import price\n\n\ndef test_price():\n    assert price(1) == 3\n";
+
+/// Classify a change to `svc/a/src/core.py` with the workspace's source files
+/// given to the src-module ambiguity pass, as the workspace analysis does.
+fn shadow_class(workspace_sources: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+    let files = workspace_sources
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        2,
+        "    return x + 2",
+        Some(SHADOW_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13745: `from core import price` cannot be told apart from a plain `core`
+/// module of the same project, so the src-layout owner is not credited.
+#[test]
+fn a_src_short_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), String> {
+    // Unshadowed control: the strong test pins the change and credits.
+    assert_eq!(
+        shadow_class(&["svc/a/src/core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A different project's `core` does not shadow this one.
+    assert_eq!(
+        shadow_class(&["svc/a/src/core.py", "svc/b/core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A module beside `src/`, or a repo-root one, shadows the short name.
+    assert_ne!(
+        shadow_class(&["svc/a/src/core.py", "svc/a/core.py"])?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        shadow_class(&["svc/a/src/core.py", "core.py"])?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+/// Classify a change to `svc/a/src/core.py` for a test in `svc/a/tests/`, with
+/// every workspace file (test files included) given to the module passes.
+fn test_local_shadow_class(workspace_files: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        2,
+        "    return x + 2",
+        Some(SHADOW_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13706: under pytest prepend import mode a helper `core.py` in the test's
+/// own directory answers `from core import price`, so the project module of
+/// that name is not credited.
+#[test]
+fn a_test_local_module_shadowing_the_owner_name_is_not_exposed() -> Result<(), String> {
+    // Unshadowed control: the strong test pins the change and credits.
+    assert_eq!(
+        test_local_shadow_class(&["svc/a/src/core.py", "svc/a/tests/test_core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A helper module of another project's tests does not shadow this one.
+    assert_eq!(
+        test_local_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/b/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        ExposureClass::Exposed
+    );
+    // A helper module beside the test shadows the bare name.
+    assert_eq!(
+        test_local_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/a/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        SHADOWED_CLASS
+    );
+    Ok(())
+}
+
+const SHADOWED_CLASS: ExposureClass = ExposureClass::WeaklyExposed;
+
+const SHADOW_METHOD_OWNER: &str = "class Calc:\n    def add(self, x):\n        return x + 2\n";
+const SHADOW_METHOD_OLD: &str = "        return x + 1";
+const SHADOW_METHOD_TEST: &str =
+    "from core import Calc\n\n\ndef test_add():\n    assert Calc().add(1) == 3\n";
+
+fn method_shadow_class(workspace_files: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_METHOD_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_METHOD_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        3,
+        "        return x + 2",
+        Some(SHADOW_METHOD_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13706: method owners use the rival-module guard as their only module
+/// identity check, so a test-local module defining its own class of the same
+/// name must withhold the credit there too.
+#[test]
+fn a_test_local_module_shadowing_a_method_owner_class_is_not_exposed() -> Result<(), String> {
+    assert_eq!(
+        method_shadow_class(&["svc/a/src/core.py", "svc/a/tests/test_core.py"])?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        method_shadow_class(&[
+            "svc/a/src/core.py",
+            "svc/a/tests/core.py",
+            "svc/a/tests/test_core.py"
+        ])?,
+        SHADOWED_CLASS
+    );
+    Ok(())
+}
+
+/// #13786: a package re-export (`svc/a/src/core/__init__.py` re-exports `price`
+/// from `impl.py`) is shadowed by a same-project plain `core` module the same
+/// way, so `from core import price` credits neither.
+#[test]
+fn a_reexported_package_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), String> {
+    let reexport_class = |workspace_sources: &[&str]| -> Result<ExposureClass, String> {
+        let owner_file = Path::new("svc/a/src/core/impl.py");
+        let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+        for owner in &mut owners {
+            owner.reexport_modules = vec!["core".to_string()];
+        }
+        let files = workspace_sources
+            .iter()
+            .map(|file| std::path::PathBuf::from(*file))
+            .collect::<Vec<_>>();
+        related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
+        let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+        classify::classify_change_with_context(
+            owner_file,
+            2,
+            "    return x + 2",
+            Some(SHADOW_OLD),
+            &owners,
+            &tests,
+            classify::PythonNoBehaviorContext::default(),
+            None,
+        )
+        .map(|finding| finding.class)
+        .ok_or_else(|| "changed line should classify".to_string())
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Unshadowed control credits the re-export.
+    assert_eq!(reexport_class(&package)?, ExposureClass::Exposed);
+    let shadowed = [package[0], package[1], "svc/a/core.py"];
+    assert_ne!(reexport_class(&shadowed)?, ExposureClass::Exposed);
     Ok(())
 }

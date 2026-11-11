@@ -223,9 +223,15 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
     else {
         return false;
     };
-    let Some(body) = first.parent().filter(is_brace_token_tree) else {
+    // A struct body is a `{ .. }` tree; a fn parameter list is a `( .. )` tree
+    // (#13983). Each has its own header and trailer rule below.
+    let Some(body) = first
+        .parent()
+        .filter(|node| is_brace_token_tree(node) || is_paren_token_tree(node))
+    else {
         return false;
     };
+    let is_fn_params = is_paren_token_tree(&body);
     let in_span = |range: ra_ap_syntax::TextRange| {
         (u32::from(range.start()) as usize) >= span.start
             && (u32::from(range.end()) as usize) <= span.end
@@ -363,6 +369,9 @@ fn macro_struct_field_line(root: &SyntaxNode, span: &Range<usize>) -> bool {
         .is_some_and(|owner| owner.kind() == SyntaxKind::MACRO_CALL);
     if !direct_in_macro_call {
         return false;
+    }
+    if is_fn_params {
+        return macro_fn_param_header(&body);
     }
     // Whatever follows the struct body must be another item or the end of the
     // tree; stray tokens make the whole input ambiguous.
@@ -518,6 +527,60 @@ fn literal_or_path_array_length(open: &ra_ap_syntax::SyntaxToken) -> bool {
         }
     }
     element_parts > 0 && (!after_semicolon || length_parts > 0)
+}
+
+fn is_paren_token_tree(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::TOKEN_TREE
+        && node
+            .first_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::L_PAREN)
+}
+
+/// Whether a paren token tree is the parameter list of a `fn` item written
+/// directly in a macro call: `fn name (..)` or `fn name<..> (..)` immediately
+/// before it, so a fn-pointer type (`fn(..)`), a call or a tuple never
+/// qualifies (#13983). Fails closed on anything else in the header.
+fn macro_fn_param_header(params: &SyntaxNode) -> bool {
+    let significant = |element: &ra_ap_syntax::SyntaxElement| {
+        !matches!(element.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT)
+    };
+    let mut previous = params.prev_sibling_or_token();
+    while previous.as_ref().is_some_and(|e| !significant(e)) {
+        previous = previous.and_then(|e| e.prev_sibling_or_token());
+    }
+    // Optional generic parameters between the name and the list.
+    if previous
+        .as_ref()
+        .is_some_and(|e| e.kind() == SyntaxKind::R_ANGLE)
+    {
+        let mut depth = 0usize;
+        while let Some(element) = previous {
+            match element.kind() {
+                SyntaxKind::R_ANGLE => depth += 1,
+                SyntaxKind::L_ANGLE => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        previous = element.prev_sibling_or_token();
+                        break;
+                    }
+                }
+                SyntaxKind::SEMICOLON | SyntaxKind::EQ => return false,
+                _ => {}
+            }
+            previous = element.prev_sibling_or_token();
+        }
+    }
+    while previous.as_ref().is_some_and(|e| !significant(e)) {
+        previous = previous.and_then(|e| e.prev_sibling_or_token());
+    }
+    let Some(name) = previous.filter(|e| e.kind() == SyntaxKind::IDENT) else {
+        return false;
+    };
+    let mut before = name.prev_sibling_or_token();
+    while before.as_ref().is_some_and(|e| !significant(e)) {
+        before = before.and_then(|e| e.prev_sibling_or_token());
+    }
+    before.is_some_and(|e| e.kind() == SyntaxKind::FN_KW)
 }
 
 fn is_brace_token_tree(node: &SyntaxNode) -> bool {
@@ -682,11 +745,33 @@ mod tests {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations,
             unresolved_property_macros: facts.unresolved_property_macros,
+            verus_guard_facts: facts.verus_guard_facts,
             role_provenance: facts.role_provenance,
             source: facts.source,
             item_scopes: facts.item_scopes,
             macro_candidates: facts.macro_candidates,
         })
+    }
+
+    /// #13983: parameters of a `fn` written directly in a macro call are type
+    /// declarations; fn pointers, calls and non-type values are not.
+    #[test]
+    fn macro_wrapped_fn_parameter_is_a_declaration_but_a_call_argument_is_not() -> Result<(), String>
+    {
+        let source = "feature! {\n    pub fn mul3<T: Copy>(\n        a: u32,\n        cb: fn(u8) -> u8,\n        d: u32 = 1,\n    ) -> u32 {\n        a\n    }\n}\nwrap! {\n    make(\n        a: u32,\n    )\n    type F = fn(\n        b: u32,\n    );\n}\n";
+        let facts = declaration_facts(source)?;
+        for (line, text) in [(3, "a: u32,"), (4, "cb: fn(u8) -> u8,")] {
+            let shape = declaration_shape(&facts, line, text)
+                .ok_or_else(|| format!("macro fn parameter not a declaration: {text}"))?;
+            assert_eq!(shape.family, ProbeFamily::StaticUnknown);
+        }
+        for (line, text) in [(5, "d: u32 = 1,"), (12, "a: u32,"), (15, "b: u32,")] {
+            assert!(
+                declaration_shape(&facts, line, text).is_none(),
+                "not a fn parameter list: {text}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

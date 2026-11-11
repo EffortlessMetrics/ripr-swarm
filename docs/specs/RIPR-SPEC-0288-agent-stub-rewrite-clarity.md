@@ -108,6 +108,22 @@ On the stub path, the grip-class disclosure names the real reason:
   seam stays `state: "ready"` / exit 0 (RIPR-SPEC-0003-family scaffold
   semantics, #7290).
 
+### Return-value stubs assert on the owner call inline (#13602)
+
+A return-value stub whose return type is `PartialEq + Debug` and that has no
+error-variant shape asserts on the owner call directly:
+`assert_eq!(find_sku(skus, name), expected);`. It does not bind the call to
+`let actual` first. The `reveal` stage confirms observation of a returned value
+by matching the owner call's argument tokens in the assertion operand; a
+let-bound `actual` carries none, so the filled stub's own assertion read as
+`miss=observation_unconfirmed` and the stub never closed the gap it was written
+for. Error-variant (`matches!`) and non-`PartialEq` shapes keep the
+`let actual` binding, because their assertion is not an equality on the call.
+An owner that can mutate its inputs (`&mut self` or a `&mut` argument) also
+keeps the binding, made once before `expected`, so an expected value derived
+from post-call state still reads that state after the call.
+This changes the emitted stub only; classifier credit rules are unchanged.
+
 ## Required Evidence
 
 - A second `--write` for the same seam leaves the file with exactly one

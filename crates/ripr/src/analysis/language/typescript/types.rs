@@ -59,6 +59,12 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// Other members of the same default object whose declaration could
+    /// replace this owner before the test calls it (uses `this`, `require`,
+    /// `exports`, a relative import, ...). A test that calls any of them as
+    /// `local.sibling(...)` gets no rule-5 credit for this owner.
+    #[serde(default)]
+    pub(crate) default_object_unsafe_siblings: Vec<String>,
     /// `true` when the owner is the whole value of a CommonJS
     /// `module.exports = <function>` assignment (an anonymous or named
     /// function expression, an arrow, or a plain reference to a top-level
@@ -72,6 +78,14 @@ pub(crate) struct TypeScriptOwner {
     /// import or member of such a module (`const { f } = require(...)`,
     /// `k.f`) is a property of the function, never the owner.
     pub(crate) commonjs_whole_function: bool,
+    /// `true` for a `ModuleFunction` owner whose declarator initializer is a
+    /// call with a function-valued argument (`export const X =
+    /// factory("X", (inst, def) => { ... })`). The callback body runs when the
+    /// constructed value is used, not as a module-level constant, so a
+    /// constant observer cannot reach it (#13588). Wording-only fact: it never
+    /// changes classification.
+    #[serde(default)]
+    pub(crate) constructor_callback: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -175,7 +189,8 @@ pub(crate) struct TypeScriptTest {
     /// `(local, member)` pairs for default imports of the containing test
     /// file whose local appears nowhere in the whole file (setup hooks and
     /// file-level code included) except as its own import binding and as
-    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// direct calls `local.member(`; one pair per directly called member, so
+    /// calls of several members credit each of them (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
     /// Names the containing test file writes more than once (their
@@ -196,6 +211,13 @@ pub(crate) struct TypeScriptTest {
     /// anything but an identifier path, an index assignment, or an argument
     /// list past 8 KB. Populated once per file by `extract_tests`.
     pub(crate) member_replacements_in_file: Shared<String>,
+    /// Literal specifiers of every `import("...")`, `require("...")`,
+    /// `requireActual("...")` or `importActual("...")` anywhere in the
+    /// containing test file (hooks, describe bodies, top level and sibling
+    /// tests included). Textual, so it can only over-collect; a non-literal
+    /// or `${}` template argument is not recorded. Populated once per file by
+    /// `extract_tests` (RIPR-SPEC-0243 rule 5, #13750).
+    pub(crate) dynamic_load_specifiers_in_file: Shared<String>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -479,6 +501,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.written_locals_in_file);
         test.member_replacements_in_file
             .share_with(&previous.member_replacements_in_file);
+        test.dynamic_load_specifiers_in_file
+            .share_with(&previous.dynamic_load_specifiers_in_file);
         test.mock_factories_in_file
             .share_with(&previous.mock_factories_in_file);
         test.mock_spread_sources_in_file
@@ -951,6 +975,11 @@ pub(crate) struct TypeScriptRelatedCandidate<'a> {
     /// Set only by `related_tests::related_candidate`, from the same gates
     /// that assigned `relation`.
     owner_path: TypeScriptOwnerPathDisposition,
+    /// For a module-entry candidate: the owner's `module_entries` positions
+    /// the test reaches, as a bit set, recorded once when it was related so
+    /// per-line classification never rescans every entry (#13592). `None`
+    /// when not recorded; consumers then recompute through the same gates.
+    reached_entries: Option<u64>,
 }
 
 impl<'a> TypeScriptRelatedCandidate<'a> {
@@ -963,7 +992,17 @@ impl<'a> TypeScriptRelatedCandidate<'a> {
             test,
             relation,
             owner_path,
+            reached_entries: None,
         }
+    }
+
+    pub(super) fn with_reached_entries(mut self, reached_entries: Option<u64>) -> Self {
+        self.reached_entries = reached_entries;
+        self
+    }
+
+    pub(crate) fn reached_entries(&self) -> Option<u64> {
+        self.reached_entries
     }
 
     /// What this candidate establishes about the changed owner (#5523).

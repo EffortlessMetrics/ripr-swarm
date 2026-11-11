@@ -77,6 +77,16 @@ type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pi
 
 type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
+type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
+
+/// Memo key for the local-rival answer: owner id, test file, name and start
+/// line, and a hash of the test body.
+type LocalRivalKey = (String, std::path::PathBuf, String, usize, u64);
+
+/// Memo key for the item bindings of one test body read for one owner: the
+/// owner's id, the test's file, start line and name, and a hash of the body.
+pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -129,6 +139,10 @@ pub(crate) struct CallIdentityMemos {
     /// #10701: every indexed source with comments and strings masked, built
     /// once per index for the repair-start Drop-type gate.
     masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #11870: how many times each identifier appears in the raw text of every
+    /// indexed source, a `fn <name>` definition not counted. Built once per
+    /// index for the weak-read start's "no other mention of the owner" gate.
+    identifier_mentions: std::sync::OnceLock<BTreeMap<String, usize>>,
     /// #10701: per type name, whether a `type` alias declares it and which
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
@@ -146,9 +160,150 @@ pub(crate) struct CallIdentityMemos {
     rebound_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
+    /// Exact-source, requested-name binding scans used by the closed assertion
+    /// value check. Different source bytes or trusted names never share a result;
+    /// the whole memo expires with this analysis index, including on clone.
+    pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
+    /// #13525: per (test file, type name), whether the file imports that name
+    /// from a crate outside the workspace. The answer depends on the file's
+    /// syntax alone, so the per-(probe, test) receiver check reads it once.
+    external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per (owner, test, source), the item bindings read from the test body
+    /// (#13868). The tree walk depends on the body text, the owner name and
+    /// the owner's call identity against that test, never on the seam or
+    /// the assertion, so the per-(seam, related test, assertion) shadow check
+    /// reads it once instead of re-walking a large test file each time.
+    item_bindings:
+        Mutex<BTreeMap<ItemBindingsKey, std::sync::Arc<super::indirect_owner::ItemBindings>>>,
+    /// Per (owner, test), whether the test calls the owner's name only through a
+    /// module of its own file that defines a rival (#13868). The answer scans
+    /// every indexed function and lexes the test file, and depends on the
+    /// index, owner and test alone, so the per-(seam, related test) check
+    /// pays it once.
+    local_rival_modules: Mutex<BTreeMap<LocalRivalKey, bool>>,
+    /// Per (trait name, receiver head), whether some indexed source may
+    /// implement the trait for a std-headed type. The answer reads every
+    /// indexed file's syntax and depends on the index alone, so the
+    /// per-related-test receiver check pays one workspace pass per pair
+    /// instead of one per test (and does not cycle the bounded file-snapshot
+    /// memo once per test).
+    std_impl_sources: Mutex<BTreeMap<(String, String), bool>>,
+    /// Per type name, the one indexed file that declares it (`None` when no
+    /// file or several files do). The answer depends only on the indexed
+    /// sources, so the per-(seam, test) enum-variant check reads it once
+    /// instead of masking every file that mentions the name each time.
+    sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// #12886: the cross-file resolver for assertion-forwarding workspace
+    /// macros, built on first use by a gap that needs it.
+    assertion_wrapper_visibility:
+        std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
 }
 
 impl CallIdentityMemos {
+    /// The memoized item bindings for `key`, computed by `compute` on first
+    /// use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn item_bindings(
+        &self,
+        key: ItemBindingsKey,
+        compute: impl FnOnce() -> super::indirect_owner::ItemBindings,
+    ) -> std::sync::Arc<super::indirect_owner::ItemBindings> {
+        if let Ok(cache) = self.item_bindings.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return std::sync::Arc::clone(found);
+        }
+        let bindings = std::sync::Arc::new(compute());
+        if let Ok(mut cache) = self.item_bindings.lock() {
+            cache.insert(key, std::sync::Arc::clone(&bindings));
+        }
+        bindings
+    }
+
+    /// The memoized local-rival answer for `key`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    fn local_rival_module(&self, key: LocalRivalKey, compute: impl FnOnce() -> bool) -> bool {
+        if let Ok(cache) = self.local_rival_modules.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.local_rival_modules.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized answer for (`file`, `name`), computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn external_import(
+        &self,
+        file: &std::path::Path,
+        name: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (file.to_path_buf(), name.to_string());
+        if let Ok(cache) = self.external_imports.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.external_imports.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized std-impl source answer for (`trait_name`, `head`),
+    /// computed by `compute` on first use (recomputed, not cached, if the
+    /// lock is poisoned).
+    pub(in crate::analysis) fn std_impl_source(
+        &self,
+        trait_name: &str,
+        head: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (trait_name.to_string(), head.to_string());
+        if let Ok(cache) = self.std_impl_sources.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.std_impl_sources.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized sole declaring file for `name`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn sole_type_declarer(
+        &self,
+        name: &str,
+        compute: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        if let Ok(cache) = self.sole_type_declarers.lock()
+            && let Some(found) = cache.get(name)
+        {
+            return found.clone();
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.sole_type_declarers.lock() {
+            cache.insert(name.to_string(), answer.clone());
+        }
+        answer
+    }
+
+    /// The memoized assertion-wrapper resolver, built by `build` on first use.
+    pub(super) fn assertion_wrapper_visibility(
+        &self,
+        build: impl FnOnce() -> crate::analysis::facts::macro_visibility::MacroVisibility,
+    ) -> &crate::analysis::facts::macro_visibility::MacroVisibility {
+        self.assertion_wrapper_visibility.get_or_init(build)
+    }
+
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
         self.hidden_impls
             .get_or_init(|| super::implicit_call::HiddenImpls::build(index))
@@ -159,6 +314,14 @@ impl CallIdentityMemos {
     #[cfg(test)]
     pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
         self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
+    /// The memoized identifier mention counts, built by `build` on first use.
+    pub(in crate::analysis) fn identifier_mentions(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.identifier_mentions.get_or_init(build)
     }
 
     /// The memoized masked sources, built by `build` on first use.
@@ -1479,7 +1642,7 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 /// A syntactic data declaration cannot establish an import's kind if a cfg,
 /// rewriting attribute or another declaration/import can select a trait there.
 fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast};
     if !crate::analysis::syntax::supported_targeted_item_context(node)
         || node.ancestors().any(|ancestor| {
             ancestor
@@ -1490,6 +1653,13 @@ fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> boo
     {
         return false;
     }
+    data_declaration_name_is_unambiguous(node)
+}
+
+/// Same-scope declaration/import authority only. Callers separately establish
+/// whether this item's attributes and enclosing context preserve its kind.
+pub(super) fn data_declaration_name_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
         return false;
     };
@@ -2349,7 +2519,7 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') {
+        if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
                 calls.push((Some(Vec::new()), true));
             }
@@ -2361,6 +2531,25 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         calls.push((qualifier_before(head), false));
     }
     calls
+}
+
+/// Whether a call of this name may have the function's container kind (#12234).
+/// This only separates bare calls from receiver calls. A qualified or unread
+/// path may be a free call or UFCS, and an unknown container stays uncertain.
+/// Matching shape does not resolve the receiver or grant owner-call credit.
+pub(super) fn text_may_call_function_kind(text: &str, function: &FunctionSummary) -> bool {
+    call_sites(text, &function.name, true)
+        .into_iter()
+        .any(|(qualifier, is_method)| match qualifier {
+            Some(segments) if segments.is_empty() => match function.item.container {
+                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Unknown => true,
+            },
+            _ => true,
+        })
 }
 
 /// `module` without its leading crate segment when that segment names the
@@ -2482,6 +2671,7 @@ pub(in crate::analysis) fn production_text_calls_owner(
         attrs: caller.attrs.clone(),
         nested_fn_names: caller.nested_fn_names.clone(),
         let_bindings: caller.let_bindings.clone(),
+        generated: None,
     };
     let text = caller.body.as_ref();
     if let Some(identity) = shared_owner_call_identity(index, owner) {
@@ -3125,11 +3315,17 @@ fn qualified_call_names_owner(
 ///
 /// `true` withholds the owner; `false` keeps the production relation. The
 /// reading is lexical and keeps the production relation whenever it is
-/// unsure. Documented cases that therefore still keep it although Rust would
-/// resolve to the local rival: a bare `use local::f; f()`, `use local::*`, a
-/// rival module nested inside another module, a `mod tests` calling a
-/// top-level rival without `super::`, a wrapper module that delegates to the
-/// library, and a fn-body `use` shadowing a file-level alias.
+/// unsure. It reads a qualified call through a module (at any nesting) of the
+/// test's file that defines the rival, a bare call bound to it by a simple
+/// `use`, a `use m::*` glob, and the test's own `use` items, which shadow the
+/// module's. Cases that still keep the production relation although Rust
+/// would resolve to the local rival: grouped or chained `use` items, a
+/// renamed bare import (shared call identity, #10240), and a rival fn at the
+/// file root reached from a nested test module (`use super::*`, `use
+/// super::name`, `use crate::name`), because root-level rivals are not
+/// representable in the module table (#10855). A bare call in the rival's own
+/// module is withheld. A wrapper module that delegates to the library is
+/// withheld too, because its call names the wrapper.
 pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -3138,6 +3334,31 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     if test.file == owner.file {
         return false;
     }
+    // Two inline sibling modules can put a same-named test on one physical
+    // line, so the body is part of the test's identity here.
+    let body_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        test.body.as_str().hash(&mut hasher);
+        hasher.finish()
+    };
+    let key = (
+        owner.id.0.clone(),
+        test.file.clone(),
+        test.name.clone(),
+        test.start_line,
+        body_hash,
+    );
+    index
+        .call_identity_memos
+        .local_rival_module(key, || local_rival_module_reading(index, owner, test))
+}
+
+fn local_rival_module_reading(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
     let defines_rival = index.functions().iter().any(|function| {
         function.file == test.file
             && function.name == owner.name
@@ -3152,7 +3373,7 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     };
     let source = &facts.data().source;
     let integration_crate = under_tests_dir(&test.file);
-    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line);
+    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line, &test.body);
     let through_local_module = |qualifier: &Option<Vec<String>>| {
         qualifier
             .as_deref()
@@ -3170,15 +3391,98 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     !qualifiers.is_empty() && qualifiers.iter().all(through_local_module)
 }
 
+/// One simple `use` item: `use a::b;`, `use a::b as c;` or `use a::*;`.
+/// Grouped, raw-identifier and `::`-rooted items are not read.
+#[derive(Clone)]
+struct UseItem {
+    path: Vec<String>,
+    alias: Option<String>,
+    glob: bool,
+}
+
+impl UseItem {
+    /// Reads the text between a `use` keyword and its `;`.
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts: Vec<&str> = text.split("::").map(str::trim).collect();
+        let last = parts.pop()?;
+        let simple = |word: &str| !word.is_empty() && word.chars().all(is_ident_char);
+        if !parts.iter().all(|part| simple(part)) {
+            return None;
+        }
+        let mut path: Vec<String> = parts.iter().map(|part| (*part).to_string()).collect();
+        let words: Vec<&str> = last.split_whitespace().collect();
+        let (name, alias) = match words.as_slice() {
+            ["*"] => {
+                return (!path.is_empty()).then_some(Self {
+                    path,
+                    alias: None,
+                    glob: true,
+                });
+            }
+            [name] => (*name, None),
+            [name, "as", alias] => (*name, Some((*alias).to_string())),
+            _ => return None,
+        };
+        if !simple(name) || alias.as_deref().is_some_and(|alias| !simple(alias)) {
+            return None;
+        }
+        path.push(name.to_string());
+        Some(Self {
+            path,
+            alias,
+            glob: false,
+        })
+    }
+
+    /// The name this explicit import binds, if any.
+    fn bound_name(&self) -> Option<&str> {
+        if self.glob {
+            return None;
+        }
+        let name = self
+            .alias
+            .as_deref()
+            .or_else(|| self.path.last().map(String::as_str))?;
+        (name != "_" && name != "self").then_some(name)
+    }
+}
+
+/// How an explicit import binds a name at the test.
+enum Binding {
+    Unbound,
+    Path(Vec<String>),
+    Conflict,
+}
+
 /// Lexical module facts of one test file for the local-rival predicate
-/// (#10855): which file-top-level `mod M { .. }` bodies directly define a
-/// body-ful `fn <owner>`, which top-level `use [self::]M as A;` aliases name
-/// such a module, and the module path enclosing the test. Anything nested,
-/// grouped, glob-imported or otherwise unreadable is not local, which keeps
-/// the production relation (fail closed).
+/// (#10855): which `mod M { .. }` bodies (at any nesting) directly define a
+/// body-ful `fn <owner>`, the simple `use` items of each module and of the
+/// test body, and the module path enclosing the test. Anything grouped,
+/// chained or otherwise unreadable is not local, which keeps the production
+/// relation (fail closed).
 struct LocalModules {
-    rivals: BTreeSet<String>,
-    aliases: BTreeMap<String, String>,
+    owner: String,
+    rivals: BTreeSet<Vec<String>>,
+    /// Module-level `use` items with the module path that declares them.
+    file_uses: Vec<(Vec<String>, UseItem)>,
+    /// `use` items inside the test body. They shadow module-level ones.
+    body_uses: Vec<UseItem>,
+    /// `use` items inside nested blocks of the test body: they bind only
+    /// part of it, so a name they bind is a conflict.
+    nested_uses: Vec<UseItem>,
+    /// Modules (the file root is the empty path) directly defining a
+    /// body-ful `fn <owner>`; such a definition shadows a glob import.
+    defining: BTreeSet<Vec<String>>,
+    /// The rivals declared `pub`, the only ones a glob import reaches.
+    public_rivals: BTreeSet<Vec<String>>,
+    /// A `use` mentioning the owner's name that the reader could not parse.
+    unreadable_owner_use: bool,
+    /// Text of every top-level `use` the reader could not parse. A qualifier
+    /// it mentions may be rebound by it, so that call is not settled.
+    unreadable_uses: Vec<String>,
+    /// A nested-block `use` that is a glob or unreadable: it may bind any
+    /// name, so no call is settled.
+    nested_blocked: bool,
     scope: Vec<String>,
 }
 
@@ -3191,7 +3495,13 @@ enum LexToken {
 }
 
 impl LocalModules {
-    fn scan(source: &str, owner: &str, test_name: &str, test_start_line: usize) -> Self {
+    fn scan(
+        source: &str,
+        owner: &str,
+        test_name: &str,
+        test_start_line: usize,
+        body: &str,
+    ) -> Self {
         let masked = mask_comments_and_strings(source);
         let test_offset = match test_start_line.checked_sub(2) {
             Some(newlines) => masked
@@ -3222,9 +3532,27 @@ impl LocalModules {
             Some((_, LexToken::Word(word))) => Some(word.as_str()),
             _ => None,
         };
+        // A raw-identifier test (`fn r#match`) lexes as `r` then `match`.
+        let plain_name = test_name.strip_prefix("r#").unwrap_or(test_name);
+        let names_test = |index: usize| {
+            word_at(index) == Some(plain_name)
+                || (word_at(index) == Some("r")
+                    && word_at(index + 1) == Some(plain_name)
+                    && tokens.get(index).zip(tokens.get(index + 1)).is_some_and(
+                        |((first, _), (second, _))| masked.get(first + 1..*second) == Some("#"),
+                    ))
+        };
         let mut found = Self {
+            owner: owner.to_string(),
             rivals: BTreeSet::new(),
-            aliases: BTreeMap::new(),
+            file_uses: Vec::new(),
+            body_uses: Vec::new(),
+            nested_uses: Vec::new(),
+            defining: BTreeSet::new(),
+            public_rivals: BTreeSet::new(),
+            unreadable_owner_use: false,
+            unreadable_uses: Vec::new(),
+            nested_blocked: false,
             scope: Vec::new(),
         };
         let mut scope_set = false;
@@ -3237,7 +3565,7 @@ impl LocalModules {
             // same line.
             let at_test_fn = *offset >= test_offset
                 && matches!(token, LexToken::Word(word) if word == "fn")
-                && word_at(index + 1) == Some(test_name);
+                && names_test(index + 1);
             if !scope_set && at_test_fn {
                 found.scope = stack.iter().map(|(name, _)| name.clone()).collect();
                 scope_set = true;
@@ -3266,62 +3594,239 @@ impl LocalModules {
                         .iter()
                         .skip(index + 2)
                         .find(|(_, token)| matches!(token, LexToken::Open | LexToken::Semi));
-                    if let ([(module, inner)], Some((_, LexToken::Open))) = (stack.as_slice(), body)
-                        && *inner == depth
-                    {
-                        found.rivals.insert(module.clone());
-                    }
-                }
-                LexToken::Word(word) if word == "use" && depth == 0 => {
-                    let mut words = Vec::new();
-                    for (_, token) in tokens.iter().skip(index + 1) {
-                        match token {
-                            LexToken::Word(word) => words.push(word.as_str()),
-                            LexToken::Semi => break,
-                            _ => {
-                                words.clear();
-                                break;
+                    let in_module = stack
+                        .last()
+                        .map_or(depth == 0, |(_, inner)| *inner == depth);
+                    if let (true, Some((_, LexToken::Open))) = (in_module, body) {
+                        let module: Vec<String> =
+                            stack.iter().map(|(name, _)| name.clone()).collect();
+                        found.defining.insert(module.clone());
+                        if !module.is_empty() {
+                            // Importable by a glob from anywhere only as plain
+                            // `pub` or `pub(crate)`; any other restriction
+                            // (`pub(self)`, `pub(super)`, `pub(in ..)`) is
+                            // treated as private.
+                            let mut words: Vec<&str> =
+                                (0..index).rev().map_while(&word_at).take(8).collect();
+                            words.reverse();
+                            let is_pub =
+                                words
+                                    .iter()
+                                    .rposition(|word| *word == "pub")
+                                    .is_some_and(|at| {
+                                        let tail: Vec<&str> = words[at + 1..]
+                                            .iter()
+                                            .copied()
+                                            .filter(|word| {
+                                                !matches!(*word, "const" | "async" | "unsafe")
+                                            })
+                                            .collect();
+                                        tail.is_empty() || tail == ["crate"]
+                                    });
+                            if is_pub {
+                                found.public_rivals.insert(module.clone());
                             }
+                            found.rivals.insert(module);
                         }
                     }
-                    if let [first, "as", alias] | ["self", first, "as", alias] = words.as_slice() {
-                        found
-                            .aliases
-                            .insert((*alias).to_string(), (*first).to_string());
+                }
+                LexToken::Word(word)
+                    if word == "use" && depth == stack.last().map_or(0, |(_, inner)| *inner) =>
+                {
+                    let end = tokens
+                        .iter()
+                        .skip(index + 1)
+                        .find(|(_, token)| matches!(token, LexToken::Semi))
+                        .map(|(at, _)| *at);
+                    let text = end.and_then(|end| masked.get(offset + 3..end));
+                    if let Some(item) = text.and_then(UseItem::parse) {
+                        let module = stack.iter().map(|(name, _)| name.clone()).collect();
+                        found.file_uses.push((module, item));
+                    } else if let Some(text) = text {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    } else {
+                        found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
             }
         }
+        let body_masked = mask_comments_and_strings(body);
+        for range in use_item_ranges(&body_masked) {
+            let text = body_masked.get(range.start + 3..range.end.saturating_sub(1));
+            let top_block = body_masked.get(..range.start).is_some_and(|before| {
+                before.matches('{').count() == before.matches('}').count() + 1
+            });
+            match (text.and_then(UseItem::parse), top_block) {
+                (Some(item), true) => found.body_uses.push(item),
+                (Some(item), false) => {
+                    found.nested_blocked |= item.glob;
+                    found.nested_uses.push(item);
+                }
+                (None, true) => match text {
+                    Some(text) => {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    }
+                    None => {
+                        found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
+                    }
+                },
+                (None, false) => found.nested_blocked = true,
+            }
+        }
         found
     }
 
-    /// Whether the module path `segments` (the qualifier of a call) names a
-    /// top-level module of this file that defines the rival, as spelled from
-    /// the test's own module.
-    fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
-        let mut scope = self.scope.clone();
-        let mut rest = segments;
+    /// The module path `path` spells from module `base`, following leading
+    /// `self`, `super` and (in an integration crate) `crate` segments.
+    /// Returns the remaining segments and the module they start from.
+    fn strip_keywords<'a>(
+        base: &[String],
+        path: &'a [String],
+        integration_crate: bool,
+    ) -> Option<(Vec<String>, &'a [String])> {
+        let mut scope = base.to_vec();
+        let mut rest = path;
         while let Some((first, tail)) = rest.split_first() {
             match first.as_str() {
                 "self" => {}
                 "crate" if integration_crate => scope.clear(),
                 "super" => {
-                    if scope.pop().is_none() {
-                        return false;
-                    }
+                    scope.pop()?;
                 }
                 _ => break,
             }
             rest = tail;
         }
-        let [module] = rest else {
+        Some((scope, rest))
+    }
+
+    fn absolute(base: &[String], path: &[String], integration_crate: bool) -> Option<Vec<String>> {
+        let (mut scope, rest) = Self::strip_keywords(base, path, integration_crate)?;
+        scope.extend(rest.iter().cloned());
+        Some(scope)
+    }
+
+    /// What an explicit import binds `name` to at the test. The test's own
+    /// `use` items shadow its module's; two different bindings of one name
+    /// (for example in separate nested blocks) are a conflict, which keeps
+    /// the production relation.
+    fn binding(&self, name: &str, integration_crate: bool) -> Binding {
+        let resolve = |items: Vec<&UseItem>| {
+            let mut paths: Vec<Vec<String>> = Vec::new();
+            for item in items
+                .into_iter()
+                .filter(|item| item.bound_name() == Some(name))
+            {
+                match Self::absolute(&self.scope, &item.path, integration_crate) {
+                    Some(path) if !paths.contains(&path) => paths.push(path),
+                    Some(_) => {}
+                    None => return Binding::Conflict,
+                }
+            }
+            match paths.len() {
+                0 => Binding::Unbound,
+                1 => Binding::Path(paths.remove(0)),
+                _ => Binding::Conflict,
+            }
+        };
+        if self
+            .nested_uses
+            .iter()
+            .any(|item| item.bound_name() == Some(name))
+        {
+            return Binding::Conflict;
+        }
+        match resolve(self.body_uses.iter().collect()) {
+            Binding::Unbound => resolve(
+                self.file_uses
+                    .iter()
+                    .filter(|(module, _)| *module == self.scope)
+                    .map(|(_, item)| item)
+                    .collect(),
+            ),
+            bound => bound,
+        }
+    }
+
+    /// Whether a bare call of the owner's name is bound, by an explicit
+    /// import or a glob import, to a function of a local rival module.
+    fn bare_names_rival(&self, integration_crate: bool) -> bool {
+        // An import the reader could not parse may bind the owner's name.
+        if self.unreadable_owner_use {
+            return false;
+        }
+        match self.binding(&self.owner, integration_crate) {
+            Binding::Path(path) => {
+                return path.split_last().is_some_and(|(last, module)| {
+                    *last == self.owner && self.rivals.contains(module)
+                });
+            }
+            Binding::Conflict => return false,
+            Binding::Unbound => {}
+        }
+        let module_uses = self
+            .file_uses
+            .iter()
+            .filter(|(module, _)| *module == self.scope)
+            .map(|(_, item)| item);
+        // No `use` binds the name here, so a body-ful definition of it in the
+        // test's own module is what a bare call reaches: an item shadows any
+        // glob import, and the owner in another file is not in scope without
+        // an import (#10855).
+        if self.defining.contains(&self.scope) {
+            return true;
+        }
+        // A glob that brings a public rival into scope. Two globs providing
+        // one name would not compile, so another glob cannot be the source
+        // of this call.
+        self.body_uses.iter().chain(module_uses).any(|item| {
+            item.glob
+                && Self::absolute(&self.scope, &item.path, integration_crate)
+                    .is_some_and(|module| self.public_rivals.contains(&module))
+        })
+    }
+
+    /// Whether the module path `segments` (the qualifier of a call) names a
+    /// module that defines the rival, as spelled from the test's own module.
+    /// An empty path is a bare call.
+    fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
+        if self.nested_blocked {
+            return false;
+        }
+        if segments.is_empty() {
+            return self.bare_names_rival(integration_crate);
+        }
+        let Some((base, rest)) = Self::strip_keywords(&self.scope, segments, integration_crate)
+        else {
             return false;
         };
-        scope.is_empty()
-            && self
-                .rivals
-                .contains(self.aliases.get(module).unwrap_or(module))
+        let Some((first, tail)) = rest.split_first() else {
+            return false;
+        };
+        if self
+            .unreadable_uses
+            .iter()
+            .any(|text| mentions_word(text, first))
+        {
+            return false;
+        }
+        let mut module = base.clone();
+        if base == self.scope {
+            match self.binding(first, integration_crate) {
+                Binding::Path(path) => module = path,
+                Binding::Conflict => return false,
+                Binding::Unbound => module.push(first.clone()),
+            }
+        } else {
+            module.push(first.clone());
+        }
+        module.extend(tail.iter().cloned());
+        self.rivals.contains(&module)
     }
 }
 
@@ -3452,6 +3957,27 @@ mod tests {
     use crate::analysis::rust_index::summarize_file;
 
     #[test]
+    fn std_impl_source_computes_each_trait_and_head_once() {
+        let memos = CallIdentityMemos::default();
+        let calls = std::cell::Cell::new(0);
+        let ask = |trait_name: &str, head: &str, answer: bool| {
+            memos.std_impl_source(trait_name, head, || {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+        assert!(ask("Display", "Widget", true));
+        // A repeat returns the stored answer without computing again, even
+        // when the new closure would answer differently.
+        assert!(ask("Display", "Widget", false));
+        assert_eq!(calls.get(), 1);
+        // Either half of the key changing is a separate question.
+        assert!(!ask("Display", "Gadget", false));
+        assert!(!ask("Debug", "Widget", false));
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
     fn a_non_ascii_qualifier_is_read_whole_without_slicing_inside_a_char() {
         assert_eq!(head_word("assert_eq!(crate::módulo"), "módulo");
         assert_eq!(
@@ -3520,6 +4046,55 @@ mod tests {
         assert_eq!(withheld("tests/boundary.rs"), Some(true));
         // `crate::` is the library root elsewhere: the production relation stays.
         assert_eq!(withheld("src/boundary.rs"), Some(false));
+    }
+
+    /// #13868: the memo key names the test body, so two same-named tests that
+    /// share one physical line (inline sibling modules) keep their own answer
+    /// whichever is asked first.
+    #[test]
+    fn same_line_sibling_tests_keep_their_own_local_rival_answer() {
+        let prod = "pub fn score() -> i32 { 1 }\n";
+        let tests = "mod a { pub fn score() -> i32 { 0 } #[test] fn t() { assert_eq!(crate::a::score(), 0); } } mod b { #[test] fn t() { assert_eq!(modules::score(), 1); } }\n";
+        let files = [("src/lib.rs", prod), ("tests/edge.rs", tests)];
+        let answers = |order: [usize; 2]| {
+            let index = index(&files);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"));
+            let mut found = [None, None];
+            if let Some(owner) = owner {
+                let ts: Vec<&TestSummary> = index
+                    .tests()
+                    .iter()
+                    .filter(|test| test.file == Path::new("tests/edge.rs") && test.name == "t")
+                    .collect();
+                assert_eq!(ts.len(), 2, "both same-line tests are indexed");
+                assert_eq!(ts[0].start_line, ts[1].start_line);
+                for slot in order {
+                    found[slot] = Some(test_calls_only_through_local_rival_module(
+                        &index, owner, ts[slot],
+                    ));
+                }
+            }
+            found
+        };
+        let forward = answers([0, 1]);
+        let reverse = answers([1, 0]);
+        assert_eq!(
+            forward, reverse,
+            "the answer never depends on the ask order"
+        );
+        assert_eq!(
+            forward[0],
+            Some(true),
+            "the first test calls the local rival"
+        );
+        assert_eq!(
+            forward[1],
+            Some(false),
+            "the second test keeps the owner relation"
+        );
     }
 
     fn strings(segments: &[&str]) -> Vec<String> {
@@ -5046,5 +5621,90 @@ mod tests {
         assert!(!resolves(&root, "assert!(rival::root(1));"));
         assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
         assert!(!resolves(&thr, "assert!(super::thr(1));"));
+    }
+
+    /// #12320: a macro-generated test borrows the module scopes at its
+    /// invocation, except when its expansion declares its own import, which
+    /// could rebind the callee. End to end through the production index and
+    /// the call-identity consumer, with a rival owner.
+    #[test]
+    fn macro_generated_test_credit_follows_invocation_scopes_and_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! plain {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! closure_rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            let apply = |render: fn(i32) -> i32| render(1);\n            assert_eq!(apply(modules::b::render), 3);\n        }\n    };\n}\n\nmacro_rules! rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            use modules::b::render;\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmacro_rules! external_binding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            helpers::bind!();\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    external_binding!(external_case);\n    plain!(plain_case);\n    rebinding!(rebinding_case);\n    closure_rebinding!(closure_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: the invocation-site `use crate::a::render` credits
+        // `a::render` and rules out the rival.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "plain_case"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            settle(&index, "/b.rs::render", "plain_case"),
+            Some(CallTarget::Other)
+        );
+        // Rival control: the expansion imports `b::render` locally. No owner
+        // may be credited from the invocation-site import of `a::render`.
+        assert_ne!(
+            settle(&index, "/a.rs::render", "rebinding_case"),
+            Some(CallTarget::Owner)
+        );
+        // An external macro in the body may expand to `use modules::b::render;`
+        // invisibly; the expansion must not borrow the invocation-site scopes.
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "external_case"),
+            "the external-macro case must be indexed, or the assertion below is vacuous"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "external_case"),
+            Some(CallTarget::Owner)
+        );
+        // A closure parameter named `render` shadows the import without a
+        // `let`; the expansion must not borrow the invocation-site scopes.
+        assert!(
+            index.tests().iter().any(|test| test.name == "closure_case"),
+            "the closure case must be indexed, or the assertion below is vacuous"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "closure_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }

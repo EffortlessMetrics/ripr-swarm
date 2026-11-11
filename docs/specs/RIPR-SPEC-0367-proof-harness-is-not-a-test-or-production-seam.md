@@ -176,7 +176,7 @@ dialects are out of scope here.
   `harness_only_edit_seeds_no_probe_and_names_the_limitation`,
   `lookalike_attribute_path_is_not_a_proof_harness`,
   `a_test_path_wins_over_the_harness`.
-- `crates/ripr/src/domain/limit_guidance.rs`:
+- `crates/ripr-contract/src/domain/limit_guidance.rs`:
   `static_limit_kinds_all_is_a_gap_free_ordinal_sequence`.
 - `fixtures/rust-verdict-corpus/cases/proof-harness-calls-owner-no-test.json`.
 
@@ -189,7 +189,7 @@ dialects are out of scope here.
   limitation, the harness pointer and the finding disclosure.
 - `crates/ripr/src/analysis/language/rust/mod.rs`: wiring after the reach
   witnesses and in the changed-file loop.
-- `crates/ripr/src/domain/language.rs`, `crates/ripr/src/domain/limit_guidance.rs`:
+- `crates/ripr-contract/src/domain/language.rs`, `crates/ripr-contract/src/domain/limit_guidance.rs`:
   the `proof_harness_not_evaluated` limit kind, gloss and next step.
 - `crates/ripr/src/analysis/test_changes.rs`: a harness edit is not a test edit.
 

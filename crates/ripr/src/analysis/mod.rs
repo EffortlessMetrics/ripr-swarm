@@ -1,4 +1,4 @@
-pub(crate) mod cancellation;
+pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
@@ -27,12 +27,16 @@ pub(crate) use input_facts::{
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
+pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
 pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attribute_end};
+// A long-lived server keeps unchanged files' parse facts in memory across
+// refreshes; one-shot commands leave this off.
+pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -52,6 +56,7 @@ pub(crate) mod repair_route;
 pub(crate) mod resource_cost;
 mod rust_index;
 pub(crate) mod rust_snapshot_files;
+pub(crate) mod scip;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
@@ -64,6 +69,7 @@ mod sync_memo;
 mod syntax;
 mod test_changes;
 mod trybuild_fixtures;
+pub(crate) mod verus;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
@@ -127,14 +133,18 @@ pub use language::{
     PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use language::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::DeclinedRustFile;
+pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -145,6 +155,7 @@ pub(crate) fn retention_fixture_finding(
 ) -> crate::domain::Finding {
     classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
 }
+pub(crate) use rust_index::SecondaryPassGuard;
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -155,16 +166,19 @@ pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
+pub(crate) use seam_inventory::hold_seam_limit_mutators;
+#[cfg(test)]
+#[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, announce_seam_facts_cache_misses,
-    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
-    classify_seams_in_files_at_with_config, diff_only_rust_files,
-    evaluate_diff_scoped_classified_seams_from_prepared,
+    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    announce_seam_facts_cache_misses, apply_pilot_seam_budget,
+    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
@@ -178,12 +192,39 @@ pub(crate) use seam_inventory::{
     workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
+pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+/// Module-qualified executable test functions defined in one Rust file, from
+/// parser-backed facts. Ambiguous duplicate symbol identities fail closed.
+pub(crate) fn executable_test_function_names(
+    path: &Path,
+    source: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    let prefix = format!("{}::", stable_path_text(path));
+    Ok(facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.source_role.registers_executable_test()
+                && matches!(function.item.container, facts::FunctionContainer::Free)
+                && function.item.has_body
+                && !function
+                    .id
+                    .0
+                    .ends_with(&format!("{}#L{}", function.name, function.start_line))
+        })
+        .filter_map(|function| function.id.0.strip_prefix(&prefix))
+        .map(str::to_string)
+        .collect())
+}
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
@@ -605,6 +646,26 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_native_path_text(path).replace('\\', "/")
+}
+
+/// Retain native source identity before display normalization. On Unix a
+/// backslash is a literal filename byte, so reserve `%5C` for it; a literal
+/// percent spelling has already been escaped by the shared native encoder.
+/// On Windows backslashes remain native separators and render as slashes.
+pub(crate) fn stable_source_path_text(path: &Path) -> String {
+    let encoded = stable_native_path_text(path);
+    #[cfg(unix)]
+    {
+        encoded.replace('\\', "%5C")
+    }
+    #[cfg(not(unix))]
+    {
+        encoded.replace('\\', "/")
+    }
+}
+
+fn stable_native_path_text(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -631,14 +692,14 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        output.replace('\\', "/")
+        output
     }
 
     #[cfg(not(unix))]
     {
         let mut output = String::new();
         push_stable_path_text(&mut output, &path.to_string_lossy());
-        output.replace('\\', "/")
+        output
     }
 }
 
@@ -884,6 +945,11 @@ pub struct PreviewLanguageAdvisory {
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+    /// Root-relative (forward-slash) Python package roots below an analysis
+    /// root that has no Python markers of its own, so a not-enabled Python
+    /// note can suggest `--root <package>` (#13618). Empty for every other
+    /// language and when the root is already a Python, Rust or TS/JS project.
+    pub nested_packages: Vec<String>,
 }
 
 /// Prose names `(adapter, files)` for a preview language (#4908). The
@@ -1002,65 +1068,7 @@ impl PreviewLanguageAdvisory {
     }
 }
 
-/// Per-language run status for one language adapter invocation.
-///
-/// A `LanguageRun` is recorded for every language that was *attempted* but
-/// did not complete successfully. Languages that ran to completion are
-/// omitted (their findings speak for themselves). This keeps the field
-/// conditional on non-success so the common single-language-success case
-/// stays silent and no golden re-bless is needed.
-///
-/// This is the non-abort contract (Campaign 31 PR 10, ripr-swarm#1403): a
-/// single language's failure (e.g. a Perl preview adapter that returns
-/// `Err`, or a packet-ingestion rejection) must not abort the whole report.
-/// Instead the failed language is recorded here and the other languages'
-/// findings still emit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LanguageRun {
-    /// Stable language wire string (e.g. `"rust"`, `"perl"`).
-    pub language: String,
-    /// Outcome of the run.
-    pub status: LanguageRunStatus,
-    /// Human-readable reason for a non-ok status (absent for `Ok`).
-    pub reason: Option<String>,
-}
-
-/// Outcome of one language adapter invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LanguageRunStatus {
-    /// The adapter completed (findings, if any, are in `result.findings`).
-    /// Recorded only when the caller explicitly asks for full accounting;
-    /// the pipeline omits `Ok` runs by default to keep the field conditional.
-    Ok,
-    /// The adapter was invoked but returned a named limitation (e.g. a Perl
-    /// preview adapter that is scaffold-only and returns `Err`).
-    Unavailable,
-    /// The adapter ran but produced a partial result (e.g. a packet was
-    /// rejected by ingestion checks; some findings may still be present).
-    Partial,
-    /// The adapter could not run at all (e.g. required Cargo feature is off,
-    /// or the producer binary is missing).
-    Invalid,
-    /// A *configured* managed fact producer was invoked and failed (spawn
-    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
-    /// (nothing configured) so the typed limitation and `language_runs`
-    /// reason carry the real exporter failure instead of re-advising a
-    /// configuration the user already made (#6828).
-    Failed,
-}
-
-impl LanguageRunStatus {
-    /// Stable wire string for JSON / human output.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Unavailable => "unavailable",
-            Self::Partial => "partial",
-            Self::Invalid => "invalid",
-            Self::Failed => "failed",
-        }
-    }
-}
+pub use ripr_contract::analysis::language_run::{LanguageRun, LanguageRunStatus};
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
@@ -1126,6 +1134,10 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Findings whose changed owner opted out (#13819). The app layer
+    /// withholds them from actionable output and discloses the withholding;
+    /// empty when no owner opted out.
+    pub(crate) owner_opt_outs: Vec<owner_opt_out::OwnerOptOut>,
     /// Crate-private mixed-language completeness view of this run's sealed
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
@@ -1396,6 +1408,37 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stable_source_path_text_preserves_literal_backslashes_before_display() {
+        for (native, encoded) in [
+            ("src/odd\\receipt.rs", "src/odd%5Creceipt.rs"),
+            ("src/odd/receipt.rs", "src/odd/receipt.rs"),
+            ("src/odd%5Creceipt.rs", "src/odd%255Creceipt.rs"),
+        ] {
+            assert_eq!(stable_source_path_text(Path::new(native)), encoded);
+            assert_eq!(decode_stable_path_text(encoded), PathBuf::from(native));
+        }
+        assert_ne!(
+            stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_source_path_text(Path::new("src/odd/receipt.rs"))
+        );
+        assert_eq!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs")),
+            "display normalization still collapses backslashes for stable_path_text"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_source_path_text_normalizes_native_separators_on_windows() {
+        assert_eq!(
+            stable_source_path_text(Path::new(r"tests\receipt.rs")),
+            "tests/receipt.rs"
+        );
+    }
+
     /// The decoder inverts the encoder's `%` layer on every platform: a
     /// literal `%` round-trips, while lowercase hex and stray `%` — spellings
     /// the encoder never emits — stay literal instead of manufacturing bytes
@@ -1434,6 +1477,121 @@ mod tests {
             decode_stable_path_text("pricing_%25FF.rs"),
             decode_stable_path_text("pricing_%FF.rs")
         );
+    }
+
+    fn path_text_config() -> proptest::test_runner::Config {
+        proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn native_path(bytes: Vec<u8>) -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+
+    /// #13949: every `%` the encoder emits starts a `%XX` spelling with
+    /// uppercase hex, the only spelling the decoder reads back.
+    fn percent_spellings_are_canonical(encoded: &str) -> bool {
+        let upper_hex = |byte: &u8| matches!(byte, b'0'..=b'9' | b'A'..=b'F');
+        let bytes = encoded.as_bytes();
+        bytes.iter().enumerate().all(|(at, byte)| {
+            *byte != b'%'
+                || matches!(
+                    bytes.get(at + 1..at + 3),
+                    Some([high, low]) if upper_hex(high) && upper_hex(low)
+                )
+        })
+    }
+
+    /// A small alphabet that keeps the percent layer's hazards in play: `%`,
+    /// hex digits of both cases, separators, a backslash, invalid and
+    /// multi-byte UTF-8 lead bytes, and plain text.
+    #[cfg(unix)]
+    fn hazard_bytes() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                b'%', b'5', b'C', b'2', b'A', b'F', b'f', b'c', b'8', b'0', b'\\', b'/', b'a',
+                0x80, 0xC3, 0xA9, 0xFF,
+            ]),
+            0..16,
+        )
+    }
+
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: the display form round-trips every path without a
+        /// backslash (which display normalization folds into `/` by design,
+        /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
+        /// whatever percent signs, hex digits, spaces or non-ASCII text it
+        /// carries. The comparison is on the exact OS string, so a decoder
+        /// that normalized repeated or trailing separators would fail.
+        #[test]
+        fn proptest_stable_path_text_round_trips_paths_without_backslashes(
+            text in "[%0-9A-Fa-f/ a-z\u{e9}]{0,24}"
+        ) {
+            let path = PathBuf::from(&text);
+            let encoded = stable_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: on Unix the source-identity encoding round-trips native
+        /// bytes exactly over a small hazard alphabet (see `hazard_bytes`):
+        /// invalid UTF-8, valid multi-byte sequences, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes. It does
+        /// not sample the whole byte range.
+        #[test]
+        fn proptest_stable_source_path_text_round_trips_hazard_bytes(
+            bytes in hazard_bytes()
+        ) {
+            let path = native_path(bytes);
+            let encoded = stable_source_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+
+        /// #13949: distinct native paths never share a source-identity
+        /// spelling, so a literal `%80` or `%5C` cannot merge with an invalid
+        /// byte or a backslash. The second path is a one-edit mutation of the
+        /// first, so near-collisions are the common case.
+        #[test]
+        fn proptest_stable_source_path_text_is_injective(
+            left in hazard_bytes(),
+            edit in proptest::sample::select(vec![0u8, 1, 2]),
+            at in 0usize..16,
+            replacement in proptest::sample::select(vec![b'%', b'5', b'C', b'8', b'0', b'\\', 0x80, 0xFF]),
+        ) {
+            let mut right = left.clone();
+            let at = at.min(right.len());
+            match edit {
+                0 if at < right.len() => right[at] = replacement,
+                1 => right.insert(at, replacement),
+                _ if at < right.len() => {
+                    right.remove(at);
+                }
+                _ => {}
+            }
+            proptest::prop_assume!(left != right);
+            proptest::prop_assert_ne!(
+                stable_source_path_text(&native_path(left)),
+                stable_source_path_text(&native_path(right))
+            );
+        }
     }
 
     /// #5996: one finding, one location string. The verbatim-root MCP form

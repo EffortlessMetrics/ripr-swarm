@@ -89,6 +89,11 @@ Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
 fixtures/perl-verdict-corpus/packets/** linguist-generated
+# Repo-exposure captures written by `ripr check --format repo-exposure-json` and
+# bound by the honesty gate (content_sha256 plus regeneration from the Cargo
+# subject). The case file that carries their provenance stays counted.
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated
 
 # The CRLF hostile-input case stores carriage returns on purpose; the subject
 # file and the diff that edits it must reach the working tree byte for byte.
@@ -102,3 +107,12 @@ fixtures/ts_noop_trailing_whitespace/input/src/pricing.ts whitespace=-blank-at-e
 fixtures/ts_trailing_whitespace_in_template/input/src/pricing.ts whitespace=-blank-at-eol
 fixtures/ts_noop_trailing_whitespace/diff.patch whitespace=-blank-at-eol
 fixtures/ts_trailing_whitespace_in_template/diff.patch whitespace=-blank-at-eol
+
+# The agent-discrimination captured contexts are verbatim recorded evidence
+# (issue #13113 encoding). The ripr stdout captures legitimately end with a
+# blank line, and the vanilla captures embed a unified diff whose empty
+# context lines are single spaces -- that byte is patch syntax, not source
+# trailing whitespace (same rule as the fixtures diff.patch carve-out).
+# Rewriting these bytes would falsify the byte counts pinned in
+# benchmarks/agent-discrimination/scenarios/<scenario>/scenario.json.
+benchmarks/agent-discrimination/contexts/** whitespace=-blank-at-eol,-blank-at-eof
