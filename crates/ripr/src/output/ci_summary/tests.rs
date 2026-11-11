@@ -331,7 +331,7 @@ fn complete_artifacts_render_every_section_in_order() -> TestResult {
     // its own fold; every other full report is only named.
     assert!(
         summary.contains(
-            "<details><summary>Full report: target/ripr/review/comment-publish-plan.md</summary>\n\n# Plan\n"
+            "<details><summary>Full report: ripr/review/comment-publish-plan.md</summary>\n\n# Plan\n"
         ),
         "{summary}"
     );
@@ -584,7 +584,7 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     fixture.write("target/ripr/workflow/agent-review-summary.md", "# Review\n")?;
     let summary = fixture.render(&[])?;
     assert!(block(&summary, "### Agent review packet").starts_with(
-        "- Full report: `target/ripr/workflow/agent-review-summary.md` in the `ripr-reports` artifact\n"
+        "- Full report: `ripr/workflow/agent-review-summary.md` in the `ripr-reports` artifact\n"
     ));
     Ok(())
 }
@@ -804,9 +804,7 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
     let top = block(&summary, "### Top recommendation");
     assert!(!top.contains(&verify), "{top}");
     assert!(
-        top.contains(
-            "- Full report: `target/ripr/pilot/pilot-summary.md` in the `ripr-reports` artifact"
-        ),
+        top.contains("- Full report: `ripr/pilot/pilot-summary.md` in the `ripr-reports` artifact"),
         "{top}"
     );
     Ok(())
@@ -930,7 +928,7 @@ fn preview_promotion_packets_follow_the_shell_glob() -> TestResult {
     let b = packets.find("- `python`/`b`").ok_or("no b")?;
     assert!(a < b, "{packets}");
     assert!(!packets.contains("skip"));
-    assert!(packets.contains("- Full report: `target/ripr/reports/preview-promotion-python-a.md` in the `ripr-reports` artifact\n"), "{packets}");
+    assert!(packets.contains("- Full report: `ripr/reports/preview-promotion-python-a.md` in the `ripr-reports` artifact\n"), "{packets}");
     assert!(
         !packets.contains("# A"),
         "a report is named, not inlined: {packets}"

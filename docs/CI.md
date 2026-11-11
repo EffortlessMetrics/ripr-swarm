@@ -1804,7 +1804,8 @@ recommendation, the agent review packet when present, artifact links,
 SARIF and badge status, known limits, and PR guidance annotation counts when
 `target/ripr/review/comments.json` exists. Each section keeps its at-a-glance
 lines and names its full Markdown report as a file in the `ripr-reports`
-artifact (`- Full report: ... in the ripr-reports artifact`) rather than
+artifact (`- Full report: ripr/... in the ripr-reports artifact`, the path
+inside the downloaded artifact, which drops the `target/` prefix) rather than
 inlining it; a three-line pull request's summary went from about 50 KB to
 13 KB (#14301). On pull
 requests, the generated workflow writes that report before emitting

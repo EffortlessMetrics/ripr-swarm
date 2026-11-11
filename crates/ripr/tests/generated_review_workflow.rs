@@ -278,6 +278,9 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             && summary.contains("` in the `ripr-reports` artifact"),
         "summary names no full report:\n{summary}"
     );
+    // The artifact is rooted at `target/` (it uploads `target/ripr` and
+    // `target/ci`), so a named report drops that prefix.
+    assert!(!summary.contains("- Full report: `target/"), "{summary}");
     assert!(
         !summary.contains("<details><summary>Full report: "),
         "{summary}"

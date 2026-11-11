@@ -28,6 +28,15 @@ pub(crate) fn effective_comment_mode(raw: &str) -> &str {
         mode => mode,
     }
 }
+
+/// A report's path inside the `ripr-reports` artifact. The generated
+/// workflow uploads `target/ripr` and `target/ci`, and `upload-artifact`
+/// roots the archive at their common parent, so `target/ripr/x.md` is
+/// `ripr/x.md` in the downloaded artifact.
+fn artifact_path(path: &str) -> &str {
+    path.strip_prefix("target/").unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -236,7 +245,10 @@ impl Summary {
     /// One report kept inline, collapsed, as every report was before
     /// #14301; only the comment publish plan uses it.
     fn collapsed_report(&mut self, path: &str) {
-        self.line(&format!("<details><summary>Full report: {path}</summary>"));
+        self.line(&format!(
+            "<details><summary>Full report: {}</summary>",
+            artifact_path(path)
+        ));
         self.blank();
         let bytes = fs::read(self.root.join(path)).unwrap_or_default();
         self.out.extend(bytes);
@@ -251,7 +263,7 @@ impl Summary {
     fn full_report(&mut self, path: &str) {
         self.line(&format!(
             "- Full report: {} in the `ripr-reports` artifact",
-            code_span(path)
+            code_span(artifact_path(path))
         ));
     }
 
