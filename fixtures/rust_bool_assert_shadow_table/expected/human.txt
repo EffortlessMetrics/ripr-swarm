@@ -36,7 +36,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach can_ship: ships
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 11 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

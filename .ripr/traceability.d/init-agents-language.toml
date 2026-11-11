@@ -6,10 +6,16 @@ tests = [
   "crates/ripr/src/cli/commands/init_agents.rs::tests::python_block_names_pytest_and_does_not_promise_guided_repair",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::typescript_block_names_jest_and_vitest_and_globs_cover_ts_and_js",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::mixed_rust_and_python_keeps_the_rust_block_and_adds_the_preview_note",
+  "crates/ripr/src/cli/commands/init_agents.rs::tests::preview_blocks_verify_from_the_same_compact_report",
+  "crates/ripr/src/cli/commands/init_agents.rs::tests::mixed_language_blocks_do_not_reintroduce_json_completion_fields",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::detect_reads_the_root_markers",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::detected_but_not_enabled_languages_are_not_promised",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter",
   "crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions",
+  "crates/ripr/tests/cli_smoke.rs::init_agents_appends_marked_section_idempotently_and_never_clobbers",
+  "crates/ripr/tests/cli_smoke.rs::init_mcp_without_cursor_still_offers_the_cursor_route",
+  "crates/ripr/tests/cli_smoke.rs::init_agents_without_mcp_keeps_the_register_mcp_follow_up",
+  "crates/ripr/tests/cli_smoke.rs::init_mcp_with_existing_entry_keeps_the_register_mcp_follow_up",
 ]
 code = [
   "crates/ripr/src/cli/commands/init_agents.rs",
