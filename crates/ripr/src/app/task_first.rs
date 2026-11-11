@@ -2430,7 +2430,19 @@ fn start_refusal_with_next(reason: &str, next: &str) -> String {
 /// `ripr repair`, the agent card and the MCP admission so every surface names
 /// the same cause (#11397).
 pub(crate) fn held_inline_reason(file: &str) -> String {
-    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+    format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
+}
+
+const HELD_INLINE_OPENING: &str = "the inline test target `";
+const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
+
+impl RepairStartRefusal {
+    /// Whether the start is held only because its inline test target has
+    /// uncommitted changes ([`held_inline_reason`]). Undoing or committing
+    /// those changes lifts this hold, unlike a refusal about the gap itself.
+    pub(crate) fn held_by_uncommitted_target(&self) -> bool {
+        self.reason.starts_with(HELD_INLINE_OPENING) && self.reason.ends_with(HELD_INLINE_CLOSING)
+    }
 }
 
 /// What the human agent card says when the shared start gate holds a seam
@@ -5358,6 +5370,19 @@ pub(crate) mod tests {
             refused.reason
         );
         Ok(())
+    }
+
+    /// Only the uncommitted-target hold is one that undoing a change lifts.
+    #[test]
+    fn held_by_uncommitted_target_reads_only_the_held_inline_reason() {
+        let refusal = |reason: String| RepairStartRefusal {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        assert!(refusal(held_inline_reason("src/lib.rs")).held_by_uncommitted_target());
+        assert!(!refusal(GRIPPED_SPOT_REASON.to_string()).held_by_uncommitted_target());
+        assert!(!refusal(NO_TEST_TARGET_REASON.to_string()).held_by_uncommitted_target());
     }
 
     /// An opaque seam is still refused (class and eligibility unchanged), but
