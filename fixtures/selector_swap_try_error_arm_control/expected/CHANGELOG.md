@@ -194,3 +194,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — selector_swap_try_error_arm_control (16)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step in plain words (#14173); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless selector_swap_try_error_arm_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

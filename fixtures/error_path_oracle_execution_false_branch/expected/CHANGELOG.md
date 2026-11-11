@@ -554,3 +554,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_false_branch (42)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step in plain words (#14173); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_false_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

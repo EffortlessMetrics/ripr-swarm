@@ -15,6 +15,7 @@ use crate::domain::{
     NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
+use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
 use crate::output::preview_actionability::{
     preview_actionability_for, repo_scope_no_repair_reason,
@@ -291,6 +292,73 @@ pub(crate) fn select_human_triage<'a>(
     }
 }
 
+/// True when the run is the all-clear a reader can act on: the shared
+/// verification owner (`CheckOutput::verification`, the same decision the
+/// agent format's `verify=complete` line prints) accepts it, and every
+/// finding, shown or not, reads as noticed by a test. Fail-closed: an
+/// incomplete or absent outcome, an unanalyzed or partial scope, untracked
+/// source left out of the diff, a withheld finding, or one finding of any
+/// other class keeps the narrower "no gap selected" wording, so the all-clear
+/// sentence is never printed over something it does not cover.
+fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
+    output.verification().is_complete()
+        && !output.findings.is_empty()
+        && output.withheld_finding_ids().is_empty()
+        && output
+            .findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::Exposed)
+}
+
+/// The `Safe next action` line when the selected finding already reads as
+/// noticed by a test. It answers the reader's question first (is there
+/// anything to do?) and only then states the static-evidence boundary. When
+/// other findings are not noticed (a base-side or lower-ranked one), it says
+/// how many, so "none" is never read as a verdict on the whole diff.
+fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool) -> String {
+    const BOUNDARY: &str = "This is a static reading of the code, not a test run";
+    if all_noticed {
+        return format!(
+            "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. {BOUNDARY}\n"
+        );
+    }
+    let others = triage
+        .omitted
+        .iter()
+        .filter(|finding| finding.class != ExposureClass::Exposed)
+        .count();
+    if others == 0 {
+        return format!(
+            "  Safe next action: none for this change; a test appears to notice it. {BOUNDARY}\n"
+        );
+    }
+    format!(
+        "  Safe next action: none for this change; a test appears to notice it. {} did not read as noticed; see below. {BOUNDARY}\n",
+        count_noun(others, "other finding", "other findings")
+    )
+}
+
+/// True when a rendered finding digest carries a `Next step` line (either
+/// prefix form the digest uses).
+fn digest_prints_next_step(digest: &str) -> bool {
+    digest
+        .lines()
+        .any(|line| line.starts_with("  Next step: ") || line.starts_with("  Next step — "))
+}
+
+/// The `Safe next action` line for a selected test gap (#14173). The digest
+/// below already states the concrete instruction as `Next step`, so the line
+/// points there instead of repeating the State line in internal words. When
+/// the digest prints no `Next step`, it names the digest lines a reader can
+/// act from (the `Why` reason and the related test). The static advisory boundary stays on both.
+fn top_gap_safe_action_line(digest_has_next_step: bool) -> &'static str {
+    if digest_has_next_step {
+        "  Safe next action: follow the Next step below; this is static advisory evidence only\n"
+    } else {
+        "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only\n"
+    }
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -302,20 +370,33 @@ pub(crate) fn render_human_triage(
     out.push_str("Start here:\n");
     // #8165: the default (bounded) human render speaks plain language only;
     // the `HumanTriageState` schema token stays in machine surfaces.
-    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
-    // The canonical decision (#6304) selects the line family; the prose
-    // below is unchanged, so the decision has one authority while rendered
-    // bytes stay put.
+    // The canonical decision (#6304) selects the line family, so the decision
+    // has one authority.
     let check_case = check_case_or_fallback(triage, output, drill_in, provenance);
+    let all_noticed =
+        check_case == NextActionCheckCase::NoDiffFinding && every_finding_reads_noticed(output);
+    out.push_str(&format!(
+        "  State: {}\n",
+        if all_noticed {
+            "no test gap found"
+        } else {
+            triage.state.plain_label()
+        }
+    ));
     // #10709: the one recommended route is stated only when the Safe next
     // action line and the `Next` block can both name it, so they cannot
     // disagree about which command is recommended.
     let recommend_start = check_case == NextActionCheckCase::PreviewAdvisory
         && recommends_gap_repair_start(triage.selected, drill_in);
+    // #14173: the digest is rendered once, before the action line, so that
+    // line can point at the `Next step` only when the digest prints one.
+    let digest = triage
+        .selected
+        .map(|finding| render_finding_digest_with_config(finding, config, &output.root));
     match check_case {
-        NextActionCheckCase::TopGap => out.push_str(
-            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
-        ),
+        NextActionCheckCase::TopGap => out.push_str(top_gap_safe_action_line(
+            digest.as_deref().is_some_and(digest_prints_next_step),
+        )),
         NextActionCheckCase::CandidateFilterHidAll => {
             // #4320: findings exist but the #3281 candidate filter hid
             // every one — the run is not a policy suppression. Claiming
@@ -342,9 +423,7 @@ pub(crate) fn render_human_triage(
             });
         }
         NextActionCheckCase::NoDiffFinding => {
-            out.push_str(
-                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation\n",
-            );
+            out.push_str(&no_diff_finding_safe_action_line(triage, all_noticed));
         }
         NextActionCheckCase::StaticLimited => {
             let plain_no_path = triage.selected.is_some_and(|finding| {
@@ -508,12 +587,8 @@ pub(crate) fn render_human_triage(
             }
         }
     }
-    if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(
-            finding,
-            config,
-            &output.root,
-        ));
+    if let (Some(finding), Some(digest)) = (triage.selected, digest) {
+        out.push_str(&digest);
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             // #13502: a candidate-tree subject cannot be replayed by `explain`.
             if !navigation.finding_routes_withheld() {
@@ -3310,6 +3385,248 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    const TOP_GAP_POINTER: &str =
+        "  Safe next action: follow the Next step below; this is static advisory evidence only";
+    const TOP_GAP_NO_POINTER: &str = "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only";
+
+    /// #14173: a selected gap whose digest prints a `Next step` gets an action
+    /// line that points at it; the old internal phrase is gone.
+    #[test]
+    fn top_gap_action_points_at_the_next_step_the_digest_prints() {
+        let mut gap = finding_at("finding:gap", "src/lib.rs", ExposureClass::WeaklyExposed);
+        gap.recommended_next_step =
+            Some("Add an exact assertion for the changed value".to_string());
+        let output = test_output(vec![gap]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(digest_prints_next_step(&out), "{out}");
+        assert_eq!(
+            out.lines()
+                .find(|line| line.starts_with("  Safe next action: ")),
+            Some(TOP_GAP_POINTER),
+            "{out}"
+        );
+        assert!(!out.contains("non-exposed"), "{out}");
+    }
+
+    /// #14173 negative control: the pointer wording is chosen from the
+    /// rendered digest, so a digest with no `Next step` line never gets it,
+    /// and either prefix form of the line counts.
+    #[test]
+    fn top_gap_action_never_points_at_an_absent_next_step() {
+        assert_eq!(
+            top_gap_safe_action_line(false).trim_end_matches('\n'),
+            TOP_GAP_NO_POINTER
+        );
+        assert_eq!(
+            top_gap_safe_action_line(true).trim_end_matches('\n'),
+            TOP_GAP_POINTER
+        );
+        assert!(!digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Related test: tests/a.rs:4 t\n  Evidence: reach yes\n"
+        ));
+        // A `Next step` mention inside another line is not the line itself.
+        assert!(!digest_prints_next_step(
+            "  no repair start offered: follow the Next step above\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Next step: Add an exact assertion\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  Next step — Static limit: inspect the helper\n"
+        ));
+    }
+
+    /// #14080: a complete-with-findings outcome for `finding_count` findings.
+    fn complete_outcome(
+        finding_count: u64,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: finding_count,
+                candidate_line_count: finding_count,
+                probe_count: finding_count,
+                finding_count,
+            },
+            Vec::new(),
+        )
+    }
+
+    /// #14080: the `Start here` State and Safe next action lines of `output`.
+    fn start_here_lines(output: &CheckOutput) -> (String, String) {
+        let triage = select_human_triage(output, &RiprConfig::default());
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        let line = |prefix: &str| {
+            out.lines()
+                .find(|line| line.starts_with(prefix))
+                .unwrap_or_default()
+                .to_string()
+        };
+        (line("  State: "), line("  Safe next action: "))
+    }
+
+    const ALL_CLEAR_STATE: &str = "  State: no test gap found";
+    const ALL_CLEAR_ACTION: &str = "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run";
+    const NARROW_STATE: &str = "  State: no gap selected for repair";
+    const NARROW_ACTION: &str = "  Safe next action: none for this change; a test appears to notice it. This is a static reading of the code, not a test run";
+
+    /// #14080: a complete run whose every finding reads `exposed` answers the
+    /// reader in plain words: no gap, nothing needed, static evidence only.
+    #[test]
+    fn all_clear_start_here_says_no_gap_and_nothing_needed() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:b", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, ALL_CLEAR_STATE);
+        assert_eq!(action, ALL_CLEAR_ACTION);
+        Ok(())
+    }
+
+    /// #14080 negative control: one finding of another class, even one that is
+    /// never selected (base-side evidence), withholds the all-clear wording
+    /// and is counted on the action line.
+    #[test]
+    fn all_clear_wording_is_withheld_when_another_finding_is_not_noticed() -> Result<(), String> {
+        let mut base_side = finding_at(
+            "finding:base",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut unknown_base = finding_at(
+            "finding:base-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        unknown_base.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            base_side,
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 1 other finding did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+
+        output.findings.push(unknown_base);
+        output.analysis_outcome = Some(complete_outcome(3)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 2 other findings did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording needs a complete
+    /// analysis outcome. An absent or incomplete one keeps the narrow wording
+    /// even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_needs_a_complete_analysis_outcome() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        let mut incomplete = complete_outcome(1)?;
+        incomplete.kind = crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations;
+        output.analysis_outcome = Some(incomplete);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording follows the shared
+    /// verification owner, so a working tree ripr did not analyze withholds
+    /// it even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_follows_the_shared_verification_verdict() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        output.unanalyzed_working_tree = true;
+        assert!(!output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        output.unanalyzed_working_tree = false;
+        assert!(output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: a finding withheld by an owner opt-out was not
+    /// judged, so the run is not an all-clear even when every finding class
+    /// reads `exposed`.
+    #[test]
+    fn all_clear_wording_is_withheld_when_a_finding_is_withheld() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:withheld", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        output.owner_opt_outs = vec![crate::analysis::owner_opt_out::OwnerOptOut {
+            finding_id: "finding:withheld".to_string(),
+            owner: "shipping_cents".to_string(),
+            reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+        }];
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        Ok(())
     }
 
     /// #9346: the same preference covers a weak production gap.

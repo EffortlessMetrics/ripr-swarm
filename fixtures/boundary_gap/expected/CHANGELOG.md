@@ -1566,3 +1566,16 @@ The per-byte slice-counter boundary credit bumps the analyzer cache schema to
 commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing
 remain unchanged. No other fixture output is regenerated.
+
+## Pending — boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step in plain words (#14173); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -193,3 +193,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_twin_collection_read_self_computed (16)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step in plain words (#14173); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_twin_collection_read_self_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

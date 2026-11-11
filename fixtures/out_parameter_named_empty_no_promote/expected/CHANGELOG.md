@@ -143,3 +143,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_named_empty_no_promote (13)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step in plain words (#14173); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

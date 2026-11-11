@@ -95,3 +95,38 @@ Provenance: local build of the PR head tree, regenerated with the same
 commands the CLI-control test executes, with `--root` relative to the
 workspace root. As above, these are provisional local bytes; the routed
 hosted run on the same head is the binding byte-compare.
+
+## 2026-11-11 refresh — all-clear Start here wording (#14080)
+
+The four `human.txt` reports for the exact/guarded asserting wrappers
+(`wrapped-exact-original`, `wrapped-exact-wrong`, `wrapped-guarded-original`,
+`wrapped-guarded-wrong`) changed because #14080 changes two `Start here`
+lines on purpose. When a complete run's every finding reads `exposed`, the
+state reads `no test gap found` and the safe next action says none is
+needed, followed by the static-evidence boundary. The diff is exactly those
+two lines in each of the four files. The other ten `human.txt` reports,
+every `check.json` and every `human-full.txt` are byte-identical to the
+previous bytes, so classifications, counts, probe families, oracle
+kinds/strengths and consumers are unchanged.
+
+Provenance: local build of the PR head tree; the CLI-control test re-runs the
+same source/diff pairs and compares these bytes. As above, these are
+provisional local bytes; the routed hosted run on the same head is the
+binding byte-compare.
+
+## 2026-11-11 refresh — top-gap Safe next action wording (#14173)
+
+The ten `human.txt` reports whose selected finding is a test gap (every
+`bare-*` and `bound-*` case and the two `wrapped-wildcard-*` cases) changed
+because #14173 changes one `Start here` line on purpose: the safe next
+action now reads `follow the Next step below` in place of the internal
+phrase about the selected gap. The diff is exactly that one line in each of
+the ten files. The other four `human.txt` reports, every `check.json` and
+every `human-full.txt` are byte-identical to the previous bytes, so
+classifications, counts, probe families, oracle kinds/strengths and
+consumers are unchanged.
+
+Provenance: local build of the PR head tree; the CLI-control test re-runs the
+same source/diff pairs and compares these bytes. As above, these are
+provisional local bytes; the routed hosted run on the same head is the
+binding byte-compare.
