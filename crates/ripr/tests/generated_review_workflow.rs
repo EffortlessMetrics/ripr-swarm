@@ -802,9 +802,11 @@ fn doctor_packet_refresh_and_first_check_preserve_physical_root_identity()
                 .lines()
                 .find_map(|line| line.strip_prefix("- Recommended first command: "))
                 .ok_or("doctor emitted no recommended check")?;
+            // The fixture's only remote branch is `origin/trunk`, so no
+            // default base resolves and the check names an explicit one.
             assert_eq!(
                 recommended,
-                format!("ripr check --root '{}'", selected.display())
+                format!("ripr check --root '{}' --base REF", selected.display())
             );
             let after = paths.iter().map(fs::read).collect::<Result<Vec<_>, _>>()?;
             assert_eq!(
@@ -959,7 +961,10 @@ fn doctor_packet_refresh_uses_lossless_alias_for_non_utf8_physical_root()
             refresh,
             format!("ripr first-pr --root '{}' --head HEAD", absolute.display())
         );
-        assert_eq!(check, format!("ripr check --root '{}'", absolute.display()));
+        assert_eq!(
+            check,
+            format!("ripr check --root '{}' --base REF", absolute.display())
+        );
         assert!(!refresh.contains('\u{fffd}') && !check.contains('\u{fffd}'));
     }
     // Here both the physical spelling and the absolute original spelling

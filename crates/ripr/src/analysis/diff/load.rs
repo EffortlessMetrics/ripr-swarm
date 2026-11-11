@@ -1341,6 +1341,23 @@ fn resolve_default_base(root: &Path, git_timeout: Option<Duration>) -> Result<St
     ))
 }
 
+/// The check-time default-base failure, for doctor: `Some(message)` when a
+/// bare `ripr check` here would stop because no default base resolves (a
+/// shallow CI checkout that fetched only its own commit, a repository whose
+/// default branch is neither `main` nor `master` and has no `origin/HEAD`).
+/// The message is the one `ripr check` prints, from the same candidate
+/// search, so doctor can never name a different base than the loader uses.
+///
+/// Callers establish first that `HEAD` resolves: a probe Git never answered
+/// reads here as "no candidate", which is only evidence once Git is known to
+/// answer for this root.
+pub(crate) fn default_base_unresolved_message(
+    root: &Path,
+    git_timeout: Option<Duration>,
+) -> Option<String> {
+    resolve_default_base(root, git_timeout).err()
+}
+
 /// A quiet failed HEAD lookup is not enough to establish an unborn branch:
 /// loose-ref damage and inaccessible ref targets can also return silent exit 1.
 /// Git's recursive symbolic lookup distinguishes those without assuming a ref
