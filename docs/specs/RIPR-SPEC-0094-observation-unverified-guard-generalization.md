@@ -659,7 +659,10 @@ destructuring pattern, a `for` variable or an assignment drops it (#6973), so
 the assertion is not credited. A wildcard `let _ = tax(..)` discards the
 result and binds no identifier: an unrelated `Some(_)` pattern in an assertion
 cannot stand for that result. Named underscore bindings such as `_amount`
-remain ordinary identifiers. Effect families keep their existing token rule.
+remain ordinary identifiers. A wildcard's type annotation cannot shadow a
+value binding: `let _: amount = ...` preserves an earlier owner-result local
+named `amount`, even when a type alias uses the same spelling. Effect families
+keep their existing token rule.
 
 Proof for the wildcard distinction:
 `owner_binding_scan_never_treats_a_wildcard_as_a_bound_name` and

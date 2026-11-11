@@ -13812,19 +13812,27 @@ return Err(\"typed pin\".into());
         );
         assert!(discriminate.summary.contains("observation_unverified"));
 
-        // A named underscore binding can still carry a real owner result.
-        let bound = test_with_body_assertions(
-            "bound_tax",
-            "let _amount = tax(1250); assert_eq!(_amount, 100);",
-            vec![exact("assert_eq!(_amount, 100);")],
-        );
-        let (discriminate, _) = tax_reveal("amount * 8 / 100", &bound, &[], &|_, _| false);
-        assert_eq!(
-            discriminate.state,
-            StageState::Yes,
-            "{}",
-            discriminate.summary
-        );
+        // A named underscore binding can carry a real owner result. A
+        // discarded call's type annotation cannot shadow that result either.
+        for (body, assertion) in [
+            (
+                "let _amount = tax(1250); assert_eq!(_amount, 100);",
+                "assert_eq!(_amount, 100);",
+            ),
+            (
+                "let amount = tax(1250); let _: amount = tax(2500); assert_eq!(amount, 100);",
+                "assert_eq!(amount, 100);",
+            ),
+        ] {
+            let bound = test_with_body_assertions("bound_tax", body, vec![exact(assertion)]);
+            let (discriminate, _) = tax_reveal("amount * 8 / 100", &bound, &[], &|_, _| false);
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{}",
+                discriminate.summary
+            );
+        }
     }
 
     /// RIPR-SPEC-0035 / #5830: the expected side `subtotal + tax(subtotal)`
