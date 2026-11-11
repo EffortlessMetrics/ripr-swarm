@@ -129,7 +129,7 @@ fn score_one(scenario: &Scenario, root: &Path, target_dir: &Path) -> Result<Valu
     let lib_path = root.join("src/lib.rs");
     let current = fs::read_to_string(&lib_path)
         .map_err(|err| format!("failed to read {}: {err}", lib_path.display()))?;
-    let scored = score_against_head(scenario, root, target_dir, &current == scenario.head_lib);
+    let scored = score_against_head(scenario, root, target_dir, current == scenario.head_lib);
     let restored = write_file(&lib_path, &current);
     match (scored, restored) {
         (Ok(row), Ok(())) => Ok(row),

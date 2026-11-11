@@ -43,11 +43,11 @@ use std::time::Duration;
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
 const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
-/// A route regresses when its token total grows by more than this fraction
+/// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
-const REGRESSION_FRACTION: f64 = 0.10;
+const REGRESSION_DIVISOR: u64 = 10;
 const REGRESSION_SLACK_TOKENS: u64 = 20;
-const STEP_TIMEOUT: Duration = Duration::from_secs(300);
+const STEP_TIMEOUT: Duration = Duration::from_mins(5);
 const MAX_FOLLOWED_STEPS: usize = 8;
 const GIT_IDENTITY: [(&str, &str); 6] = [
     ("GIT_AUTHOR_NAME", "ripr agent eval"),
@@ -891,8 +891,7 @@ pub(crate) fn compare(
                 let (Some(now), Some(then)) = (cell[metric].as_u64(), old[metric].as_u64()) else {
                     continue;
                 };
-                let limit =
-                    (then as f64 * (1.0 + REGRESSION_FRACTION)) as u64 + REGRESSION_SLACK_TOKENS;
+                let limit = then + then / REGRESSION_DIVISOR + REGRESSION_SLACK_TOKENS;
                 if now > limit {
                     regressions.push(format!("{id} {route}: {metric} {then} -> {now}"));
                 } else if now != then {
@@ -1371,16 +1370,14 @@ verify=refused|outcome=complete_with_findings\n";
 
     #[test]
     fn options_reject_unknown_scenarios_and_partial_baselines() {
-        assert!(parse_options(&strings(&["--scenario", "nope"])).is_err());
-        assert!(
-            parse_options(&strings(&[
-                "--scenario",
-                "boundary_threshold",
-                "--write-baseline"
-            ]))
-            .is_err()
-        );
-        assert!(parse_options(&strings(&["--write-baseline", "--skip-cargo"])).is_err());
+        let refused = |args: &[&str]| parse_options(&strings(args)).is_err();
+        assert!(refused(&["--scenario", "nope"]));
+        assert!(refused(&[
+            "--scenario",
+            "boundary_threshold",
+            "--write-baseline"
+        ]));
+        assert!(refused(&["--write-baseline", "--skip-cargo"]));
         let options = parse_options(&strings(&[
             "--scenario",
             "boundary_threshold",
