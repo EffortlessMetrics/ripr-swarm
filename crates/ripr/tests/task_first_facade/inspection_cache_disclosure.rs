@@ -142,9 +142,23 @@ fn inspection_discovery_discloses_observed_cache_writes() -> Result<(), String> 
         // New entries outside the declared cache output are writes too; the
         // cache-presence assertion above must not excuse them. The cache
         // writer may create the `target` / `target/ripr` directory chain on
-        // the way to its declared output directory.
+        // the way to its declared output directory, and marks a tree it
+        // created with ripr's own self-ignore file (#14315), which must hold
+        // exactly ripr's marker text.
         for path in after.keys() {
             if !before.contains_key(path) {
+                if path == Path::new("target/ripr/.gitignore") {
+                    let marker = after
+                        .get(path)
+                        .and_then(|bytes| bytes.as_ref())
+                        .ok_or("the self-ignore marker must be a file")?;
+                    assert_eq!(
+                        String::from_utf8_lossy(marker),
+                        "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n",
+                        "fresh inspection wrote an unexpected target/ripr/.gitignore"
+                    );
+                    continue;
+                }
                 assert!(
                     path == Path::new("target")
                         || path == Path::new("target/ripr")

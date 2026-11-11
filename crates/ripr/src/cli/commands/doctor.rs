@@ -5524,6 +5524,14 @@ mod tests {
         ] {
             crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
+        // With no output yet, the default root needs no chore: ripr marks the
+        // tree it creates as self-ignoring (#14315).
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // An older, unmarked tree is still uncovered and gets the note.
+        std::fs::create_dir_all(root.join("target/ripr/reports"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("target/ripr/reports/old.json"), "{}")
+            .map_err(|error| error.to_string())?;
         let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
         assert!(note.contains("/target/ripr/"), "{note}");
         // Nothing under the roots is tracked here, so the note must not name
