@@ -379,12 +379,31 @@ pub(crate) fn no_finding_matched_fresh_run(
     };
     // #14384: a location miss names where this scope's findings are, so the
     // next selector needs no separate listing run.
-    if let Some(hint) = super::selector::location_miss_hint(&output.findings, root, selector) {
+    if let Some(hint) = super::selector::location_miss_hint(
+        &output.findings,
+        root,
+        selector,
+        fresh_run_incomplete(output),
+    ) {
         message.push('.');
         message.push_str(&hint);
     }
     append_fresh_run_language_limits(&mut message, output);
     message
+}
+
+/// Whether a fresh run left part of its scope unanalyzed: a language run
+/// that did not complete, or preview-language files no adapter analyzed.
+/// The same conditions `append_fresh_run_language_limits` reports (#14406).
+fn fresh_run_incomplete(output: &CheckOutput) -> bool {
+    output
+        .language_runs
+        .iter()
+        .any(|run| run.status != crate::analysis::LanguageRunStatus::Ok)
+        || output
+            .preview_language_advisories
+            .iter()
+            .any(|advisory| !advisory.analyzed(&output.language_runs))
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
@@ -531,7 +550,7 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
                 None,
             );
             if let Some(hint) =
-                super::selector::location_miss_hint(&findings, &input.root, selector)
+                super::selector::location_miss_hint(&findings, &input.root, selector, false)
             {
                 message.push('.');
                 message.push_str(&hint);
