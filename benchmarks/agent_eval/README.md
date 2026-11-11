@@ -62,8 +62,8 @@ report a test result (for example a revert that breaks the build) is
 recorded as not established and never counts as a catch. A run that cannot be
 measured at all (cargo missing, a timeout, a signal), a missing repository or
 a scoring error leaves that repository at zero caught, still in the
-denominator, and makes the command exit nonzero. `src/lib.rs` is restored to what the
-agent left on every path. Controls: a fresh setup scores 0/6, and the
+denominator, and makes the command exit nonzero. `src/lib.rs` is restored
+to what the agent left on every path. Controls: a fresh setup scores 0/6, and the
 reference tests score 6/6.
 
 Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in

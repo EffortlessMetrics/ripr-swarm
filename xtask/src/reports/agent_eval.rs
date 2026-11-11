@@ -891,7 +891,9 @@ pub(crate) fn compare(
                 let (Some(now), Some(then)) = (cell[metric].as_u64(), old[metric].as_u64()) else {
                     continue;
                 };
-                let limit = then + then / REGRESSION_DIVISOR + REGRESSION_SLACK_TOKENS;
+                let limit = then
+                    .saturating_add(then / REGRESSION_DIVISOR)
+                    .saturating_add(REGRESSION_SLACK_TOKENS);
                 if now > limit {
                     regressions.push(format!("{id} {route}: {metric} {then} -> {now}"));
                 } else if now != then {
@@ -1029,11 +1031,12 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
             cargo_flag(checks, "reference_key_valid"),
             cargo_flag(checks, "weak_key_valid"),
         ));
-        if let Some(reason) = checks["cargo_not_established"].as_str() {
-            out.push_str(&format!(
-                "\nINSTRUMENT FAILURE {}: cargo key check not established: {reason}\n\n",
-                scenario["id"].as_str().unwrap_or_default()
-            ));
+    }
+    let failures = instrument_failures(report);
+    if !failures.is_empty() {
+        out.push('\n');
+        for line in &failures {
+            out.push_str(&format!("- INSTRUMENT FAILURE {line}\n"));
         }
     }
     if let Some((regressions, notes)) = comparison {
@@ -1142,14 +1145,7 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     // An eval that could not measure fails in every mode, and never
     // becomes a baseline that silently stops guarding the cargo keys.
     let failures = instrument_failures(&report);
-    if !failures.is_empty() {
-        return Err(format!(
-            "agent-eval: {} instrument failure(s); nothing was written to the baseline:\n{}",
-            failures.len(),
-            failures.join("\n")
-        ));
-    }
-    if options.write_baseline {
+    if options.write_baseline && failures.is_empty() {
         write_file(Path::new(BASELINE_PATH), &format!("{pretty}\n"))?;
         println!("agent-eval: wrote baseline {BASELINE_PATH}");
     }
@@ -1158,13 +1154,32 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
         normalize_path(&json_path),
         normalize_path(&markdown_path)
     );
-    match comparison {
-        Some((regressions, _)) if !regressions.is_empty() => Err(format!(
-            "agent-eval: {} regression(s) against the baseline:\n{}",
+    let mut problems = Vec::new();
+    if !failures.is_empty() {
+        let baseline_note = if options.write_baseline {
+            "; the baseline was not written"
+        } else {
+            ""
+        };
+        problems.push(format!(
+            "{} instrument failure(s){baseline_note}:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ));
+    }
+    if let Some((regressions, _)) = &comparison
+        && !regressions.is_empty()
+    {
+        problems.push(format!(
+            "{} regression(s) against the baseline:\n{}",
             regressions.len(),
             regressions.join("\n")
-        )),
-        _ => Ok(()),
+        ));
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("agent-eval: {}", problems.join("\nagent-eval: ")))
     }
 }
 
@@ -1327,6 +1342,10 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(instrument_failures(&skipped).is_empty());
         let checks = &broken["scenarios"][0]["loop"];
         assert_eq!(cargo_flag(checks, "reference_key_valid"), "not established");
+        let markdown = render_markdown(&broken, None);
+        assert!(markdown.ends_with(
+            "\n- INSTRUMENT FAILURE s: cargo key check not established: no toolchain\n"
+        ));
         assert_eq!(
             cargo_flag(&json!({"reference_key_valid": null}), "reference_key_valid"),
             "-"
