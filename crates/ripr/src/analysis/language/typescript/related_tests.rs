@@ -5001,6 +5001,71 @@ pub(crate) fn normalized_relative_import_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
+    // The answer depends on the importer and specifier, never on the owner
+    // being matched, but the owners x tests x imports walk asks it once per
+    // owner. Memoized per run (#14364): a hit borrows the importer path and
+    // specifier, so it allocates nothing.
+    let alias_digest = alias_map.map(TsAliasMap::cache_digest);
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        let cache = cache.try_borrow().ok()?;
+        cache
+            .as_ref()?
+            .import_modules
+            .iter()
+            .find(|table| {
+                table.alias_digest == alias_digest
+                    && table.root.as_deref().map(Path::as_os_str)
+                        == workspace_root.map(Path::as_os_str)
+            })?
+            .by_importer
+            .get(test_file.as_os_str())?
+            .get(source)
+            .cloned()
+    });
+    if let Some(resolved) = cached {
+        return resolved;
+    }
+    let resolved =
+        normalized_relative_import_module_uncached(test_file, source, alias_map, workspace_root);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            let position = cache.import_modules.iter().position(|table| {
+                table.alias_digest == alias_digest
+                    && table.root.as_deref().map(Path::as_os_str)
+                        == workspace_root.map(Path::as_os_str)
+            });
+            let table = match position {
+                Some(position) => &mut cache.import_modules[position],
+                None => {
+                    cache.import_modules.push(ImportModuleTable {
+                        alias_digest,
+                        root: workspace_root.map(Path::to_path_buf),
+                        by_importer: HashMap::new(),
+                    });
+                    let last = cache.import_modules.len() - 1;
+                    &mut cache.import_modules[last]
+                }
+            };
+            table
+                .by_importer
+                .entry(test_file.as_os_str().to_os_string())
+                .or_default()
+                .insert(source.to_string(), resolved.clone());
+        }
+    });
+    resolved
+}
+
+fn normalized_relative_import_module_uncached(
+    test_file: &Path,
+    source: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<String> {
+    #[cfg(test)]
+    IMPORT_MODULES_COMPUTED.with(|count| count.set(count.get() + 1));
     // `.` and `..` name the current / parent directory module
     // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
     if is_relative_specifier(source) {
@@ -5194,6 +5259,19 @@ struct RunResolverCache {
     /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
     /// per-identifier path.
     shadow_indexes: HashMap<String, std::rc::Rc<super::shadow_index::BodyShadowIndex>>,
+    /// Resolved import modules (#14364), one table per (alias map, root)
+    /// pair the run used, keyed inside by importer path then specifier.
+    import_modules: Vec<ImportModuleTable>,
+}
+
+/// Import-module answers for one (alias-map digest, workspace root) pair.
+struct ImportModuleTable {
+    alias_digest: Option<(u64, u64)>,
+    root: Option<PathBuf>,
+    /// Keyed by the importer's raw spelling: hashing a `Path` walks its
+    /// components, which costs more than the lookup saves. Two spellings of
+    /// one path are two keys, each computed from its own input.
+    by_importer: HashMap<std::ffi::OsString, HashMap<String, Option<String>>>,
 }
 
 type NestedAliasVerdict = Option<std::rc::Rc<TsAliasMap>>;
@@ -5204,6 +5282,9 @@ const MAX_RUN_SHADOW_INDEXES: usize = 4096;
 thread_local! {
     /// Alias-map resolutions actually computed (not served from the run memo).
     pub(crate) static ALIAS_RESOLUTIONS_COMPUTED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    /// Import modules actually resolved (not served from the run memo).
+    pub(crate) static IMPORT_MODULES_COMPUTED: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
