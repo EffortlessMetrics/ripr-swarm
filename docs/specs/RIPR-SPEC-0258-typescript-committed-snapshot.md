@@ -315,7 +315,8 @@ existing rules and limits.
 - Variable-computed member assignments on the admitted config or its `test`
   subsection refuse, as do reassignment of a resolved config binding,
   writes to relevant destinations nested in array/object assignment patterns
-  (including defaults and rest), and passing that config to an unread call
+  (including defaults, rest and TypeScript target wrappers), loop assignment
+  destinations, and passing that config to an unread call
   (for example `Object.assign(config, base)`). Literal member keys are decoded before checking for snapshot or
   delegating overrides. A computed read/comparison is not a write. The reader
   does not perform general JavaScript dataflow: aliases created after the

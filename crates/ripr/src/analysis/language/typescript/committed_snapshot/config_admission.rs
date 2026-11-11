@@ -168,38 +168,55 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
             }
         }
 
+        fn member_target_is_unread(
+            &self,
+            member: &oxc_ast::ast::MemberExpression<'_>,
+            value: Option<&Expression<'_>>,
+        ) -> bool {
+            use oxc_ast::ast::MemberExpression;
+            let (object, key, harmless_key) = match member {
+                MemberExpression::StaticMemberExpression(member) => {
+                    (&member.object, Some(member.property.name.as_str()), false)
+                }
+                MemberExpression::ComputedMemberExpression(member) => (
+                    &member.object,
+                    member_key(&member.expression),
+                    matches!(
+                        member.expression.get_inner_expression(),
+                        Expression::NumericLiteral(_)
+                            | Expression::BooleanLiteral(_)
+                            | Expression::NullLiteral(_)
+                    ),
+                ),
+                MemberExpression::PrivateFieldExpression(_) => return false,
+            };
+            if value.is_none() && key.is_some_and(|key| export_member(object, key)) {
+                return true;
+            }
+            config_receiver(object, &self.bindings)
+                && key.map_or(!harmless_key, |key| {
+                    override_key(key)
+                        || (key == "test"
+                            && !value.is_some_and(|value| {
+                                plain_write(value, self.program, &self.bindings)
+                            }))
+                })
+        }
+
         fn target_is_unread(
             &self,
             target: &oxc_ast::ast::AssignmentTarget<'_>,
             value: Option<&Expression<'_>>,
         ) -> bool {
             use oxc_ast::ast::{AssignmentTarget, AssignmentTargetProperty};
-            let plain_value =
-                || value.is_some_and(|value| plain_write(value, self.program, &self.bindings));
             match target {
                 AssignmentTarget::AssignmentTargetIdentifier(id) => {
                     self.bindings.iter().any(|name| name == id.name.as_str())
                 }
-                AssignmentTarget::ComputedMemberExpression(member)
-                    if config_receiver(&member.object, &self.bindings) =>
-                {
-                    // Decode escaped keys before checking runner overrides.
-                    if let Some(key) = member_key(&member.expression) {
-                        override_key(key) || (key == "test" && !plain_value())
-                    } else {
-                        !matches!(
-                            member.expression.get_inner_expression(),
-                            Expression::NumericLiteral(_)
-                                | Expression::BooleanLiteral(_)
-                                | Expression::NullLiteral(_)
-                        )
-                    }
-                }
-                AssignmentTarget::StaticMemberExpression(member)
-                    if config_receiver(&member.object, &self.bindings) =>
-                {
-                    override_key(member.property.name.as_str())
-                        || (member.property.name == "test" && !plain_value())
+                AssignmentTarget::ComputedMemberExpression(_)
+                | AssignmentTarget::StaticMemberExpression(_)
+                | AssignmentTarget::PrivateFieldExpression(_) => {
+                    self.member_target_is_unread(target.to_member_expression(), value)
                 }
                 // Pattern values cannot be inferred from the whole RHS or a
                 // default: extraction may select another value. Inspect every
@@ -230,7 +247,19 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
                         .as_ref()
                         .is_some_and(|rest| self.target_is_unread(&rest.target, None))
                 }
-                _ => value.is_none() && commonjs(target),
+                _ => target.get_expression().is_some_and(|expression| {
+                    // TypeScript assertions/non-null wrappers preserve the
+                    // destination; reads within it remain ordinary expressions.
+                    let expression = expression.get_inner_expression();
+                    match expression {
+                        Expression::Identifier(id) => {
+                            self.bindings.iter().any(|name| name == id.name.as_str())
+                        }
+                        _ => expression
+                            .as_member_expression()
+                            .is_some_and(|member| self.member_target_is_unread(member, value)),
+                    }
+                }),
             }
         }
     }
@@ -241,6 +270,12 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
         ) {
             self.unread |= self.target_is_unread(&assignment.left, Some(&assignment.right));
             walk::walk_assignment_expression(self, assignment);
+        }
+        fn visit_for_statement_left(&mut self, left: &oxc_ast::ast::ForStatementLeft<'a>) {
+            if let Some(target) = left.as_assignment_target() {
+                self.unread |= self.target_is_unread(target, None);
+            }
+            walk::walk_for_statement_left(self, left);
         }
         fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
             let wrapper = matches!(call.callee.get_inner_expression(), Expression::Identifier(id) if known_wrapper(self.program, id.name.as_str()));

@@ -2582,6 +2582,37 @@ fn destructured_config_writes_refuse_but_unrelated_patterns_keep_credit() -> Res
         ("[config['test']] = [replacement];", OracleStrength::Medium),
         ("[config.test[name]] = [true];", OracleStrength::Medium),
         ("[module.exports[name]] = [true];", OracleStrength::Medium),
+        ("[config!] = [replacement];", OracleStrength::Medium),
+        ("[config as any] = [replacement];", OracleStrength::Medium),
+        (
+            "[config satisfies unknown] = [replacement];",
+            OracleStrength::Medium,
+        ),
+        ("[<any>config] = [replacement];", OracleStrength::Medium),
+        (
+            "[config[name]!] = ['./alternate.cjs'];",
+            OracleStrength::Medium,
+        ),
+        (
+            "for ([config] of [[replacement]]) {}",
+            OracleStrength::Medium,
+        ),
+        (
+            "for ([config[name]] of [['./alternate.cjs']]) {}",
+            OracleStrength::Medium,
+        ),
+        (
+            "for ({value: config[name]} of input) {}",
+            OracleStrength::Medium,
+        ),
+        ("for (config in input) {}", OracleStrength::Medium),
+        ("[other!] = [replacement];", OracleStrength::Strong),
+        (
+            "[config.testEnvironment!] = ['node'];",
+            OracleStrength::Strong,
+        ),
+        ("for ([other] of input) {}", OracleStrength::Strong),
+        ("for (other in config) {}", OracleStrength::Strong),
         ("[other] = [replacement];", OracleStrength::Strong),
         ("({config: other} = input);", OracleStrength::Strong),
         ("({other = config} = input);", OracleStrength::Strong),
