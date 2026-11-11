@@ -419,7 +419,9 @@ pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
             }
         }
     }
-    out
+    // #14285: paths, seam ids, gap ids and evidence lines are repository
+    // text. Escape the finished report the way `ripr check` does.
+    crate::terminal_text::terminal_safe(out)
 }
 
 #[cfg(test)]
@@ -591,6 +593,52 @@ mod tests {
             human.contains("src/lib.rs:2"),
             "human output must use the workspace-relative seam path: {human}"
         );
+    }
+
+    /// #14285: repository text in the human report must not reach a terminal
+    /// as control sequences. The JSON report keeps the values, escaped by the
+    /// JSON encoder.
+    #[test]
+    fn human_report_escapes_terminal_control_and_bidi_characters() -> Result<(), String> {
+        let hostile = "e\u{1b}]0;title\u{07}\u{1b}[2J\u{202e}x\rdone";
+        let mut report = report_for(PathBuf::from("repo"), PathBuf::from("repo/src/lib.rs"));
+        let plain = render_diff_report_human(&report);
+        assert!(!plain.contains("\\u{"), "plain report changed: {plain}");
+
+        report.root = hostile.to_string();
+        report.base = hostile.to_string();
+        report.head = hostile.to_string();
+        report.receipt.path = hostile.to_string();
+        report.changed_files[0].path = format!("src/{hostile}.rs");
+        let seam = report
+            .changed_seams
+            .first_mut()
+            .ok_or("fixture has no changed seam")?;
+        seam.seam_id = format!("probe:{hostile}");
+        seam.file = format!("src/{hostile}.rs");
+        seam.canonical_gap_id = Some(format!("gap:rust:{hostile}"));
+        seam.recommended_next_step = Some(format!("next {hostile}"));
+        seam.evidence = vec![format!("evidence {hostile}")];
+
+        let human = render_diff_report_human(&report);
+        for raw in ['\u{1b}', '\u{07}', '\r', '\u{202e}'] {
+            assert!(
+                !human.contains(raw),
+                "raw {raw:?} in human report: {human:?}"
+            );
+        }
+        for line in [
+            "root: e\\u{1b}]0;title\\u{07}\\u{1b}[2J\\u{202e}x\\u{0d}done\n",
+            "  - src/e\\u{1b}]0;title\\u{07}\\u{1b}[2J\\u{202e}x\\u{0d}done.rs (+1 -1)\n",
+            "    canonical_gap_id: gap:rust:e\\u{1b}]0;title",
+            "    next action: next e\\u{1b}]0;title",
+            "    evidence: evidence e\\u{1b}]0;title",
+        ] {
+            assert!(human.contains(line), "missing {line:?} in {human:?}");
+        }
+        let json = render_diff_report_json(&report)?;
+        assert!(json.contains("e\\u001b]0;title\\u0007"), "{json}");
+        Ok(())
     }
 
     #[test]

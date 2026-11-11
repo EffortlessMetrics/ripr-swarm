@@ -1465,6 +1465,41 @@ fn pilot_terminal_why_line_keeps_the_observed_evidence_qualification() {
     assert!(!terminal.contains("no test covers"), "{terminal}");
 }
 
+/// #14285: a repository file name reaches the gap row and the hand-repair
+/// line; neither may carry a raw control or bidi character to the terminal.
+#[test]
+fn pilot_terminal_escapes_control_characters_in_repository_paths() {
+    let hostile = "src/e\u{1b}]0;title\u{07}\u{1b}[2J\u{202e}x.rs";
+    let entry = classified_with(
+        SeamGripClass::WeaklyGripped,
+        hostile,
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
+    for raw in ['\u{1b}', '\u{07}', '\u{202e}'] {
+        assert!(!terminal.contains(raw), "raw {raw:?} in {terminal:?}");
+    }
+    assert!(
+        terminal.contains("src/e\\u{1b}]0;title\\u{07}\\u{1b}[2J\\u{202e}x.rs:88"),
+        "{terminal}"
+    );
+
+    // A plain path renders as before.
+    let plain = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let terminal = render_pilot_terminal(&[plain], pilot_context(&artifacts));
+    assert!(terminal.contains("src/pricing.rs:88"), "{terminal}");
+    assert!(!terminal.contains("\\u{"), "{terminal}");
+}
+
 /// #10694 review: with a seam limit and nothing ranked, the terminal keeps
 /// the unchecked-count limitation instead of "no gap, nothing to add".
 #[test]

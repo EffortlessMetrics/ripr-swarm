@@ -731,7 +731,25 @@ pub(crate) fn render_pilot_terminal(
     render_pilot_terminal_with_target(classified, context, &top, target.as_deref())
 }
 
+/// #14285: gap rows and the hand-repair line carry repository paths and
+/// owner names, so the finished terminal summary is escaped as a whole, the
+/// way `ripr check` escapes its report. Lines escaped where they are built
+/// are unchanged by the second pass.
 fn render_pilot_terminal_with_target(
+    classified: &[ClassifiedSeam],
+    context: PilotSummaryContext<'_>,
+    top: &[&ClassifiedSeam],
+    uncommitted_inline_target: Option<&str>,
+) -> String {
+    terminal_safe(render_pilot_terminal_text(
+        classified,
+        context,
+        top,
+        uncommitted_inline_target,
+    ))
+}
+
+fn render_pilot_terminal_text(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
     top: &[&ClassifiedSeam],
