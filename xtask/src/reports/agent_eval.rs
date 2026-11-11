@@ -1544,6 +1544,15 @@ verify=refused|outcome=complete_with_findings\n";
         }
         let names_only = json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [{"route": "cli-agent-loop"}]}]});
         assert!(validate_baseline(&names_only).is_err());
+        let mut unknown_route = full.clone();
+        unknown_route["scenarios"][0]["routes"][0]["route"] = json!("cli-other");
+        assert!(validate_baseline(&unknown_route).is_err());
+        let mut string_flag = full.clone();
+        string_flag["scenarios"][0]["loop"]["weak_key_valid"] = json!("yes");
+        assert!(validate_baseline(&string_flag).is_err());
+        let mut no_id = full.clone();
+        no_id["scenarios"][0]["id"] = json!(7);
+        assert!(validate_baseline(&no_id).is_err());
         let committed: Value =
             serde_json::from_str(include_str!("../../../benchmarks/agent_eval/baseline.json"))
                 .unwrap_or_default();
@@ -1553,8 +1562,8 @@ verify=refused|outcome=complete_with_findings\n";
             strings(&["explain", "--root", "/tmp/a b", "--at", "x y", "z"])
         );
         assert_eq!(
-            split_command("explain --root '/tmp/it'\\''s dir' C:\\x\\y"),
-            strings(&["explain", "--root", "/tmp/it's dir", "C:\\x\\y"])
+            split_command("explain --root '/tmp/it'\\''s dir' dir\\sub"),
+            strings(&["explain", "--root", "/tmp/it's dir", "dir\\sub"])
         );
         let options = parse_options(&strings(&[
             "--scenario",
