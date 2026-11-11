@@ -3488,6 +3488,8 @@ mod tests {
     /// binds to the changed owner; `mixed` also calls a same-named function of
     /// its own package. Whichever is classified first, the owner-only test
     /// keeps the lifted defeat and a file of only mixed tests keeps the defeat.
+    /// #13544 also checks both call orders within one test and a two-call
+    /// all-owner control, so reverting this site's every-call gate is red.
     #[test]
     fn scip_defeat_lift_is_decided_per_test_in_either_order() -> Result<(), String> {
         use crate::analysis::scip::{
@@ -3518,7 +3520,7 @@ mod tests {
         .map_err(|error| error.to_string())?;
         let owner_source = "pub fn expect_response() -> Result<u32, ParseError> { Ok(1) }\n";
         let beta_source = "pub fn expect_response() -> Result<u32, ParseError> { Ok(2) }\n";
-        let tests_source = "#[test]\nfn owner_only() {\n    let _ = expect_response();\n}\n\n#[test]\nfn mixed() {\n    let _ = expect_response();\n    let _ = expect_response();\n}\n";
+        let tests_source = "#[test]\nfn owner_only() {\n    let _ = expect_response();\n}\n\n#[test]\nfn mixed() {\n    let _ = expect_response();\n    let _ = expect_response();\n}\n\n#[test]\nfn mixed_reversed() {\n    let _ = expect_response();\n    let _ = expect_response();\n}\n\n#[test]\nfn all_owner() {\n    let _ = expect_response();\n    let _ = expect_response();\n}\n";
         let files = vec![
             write("crates/alpha/src/lib.rs", owner_source)?,
             write("crates/beta/src/lib.rs", beta_source)?,
@@ -3544,6 +3546,8 @@ mod tests {
         };
         let owner_only = by_name("owner_only")?;
         let mixed = by_name("mixed")?;
+        let mixed_reversed = by_name("mixed_reversed")?;
+        let all_owner = by_name("all_owner")?;
         assert_eq!(
             owner_only
                 .calls
@@ -3553,15 +3557,17 @@ mod tests {
             1,
             "fixture must parse the single owner call"
         );
-        assert_eq!(
-            mixed
-                .calls
-                .iter()
-                .filter(|call| call.name == "expect_response")
-                .count(),
-            2,
-            "fixture must parse both mixed calls"
-        );
+        for test in [&mixed, &mixed_reversed, &all_owner] {
+            assert_eq!(
+                test.calls
+                    .iter()
+                    .filter(|call| call.name == "expect_response")
+                    .count(),
+                2,
+                "fixture must parse both calls in {}",
+                test.name
+            );
+        }
 
         let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/expect_response().";
         let beta = "scip rust-analyzer cargo beta 0.1.0 beta/expect_response().";
@@ -3598,7 +3604,15 @@ mod tests {
                 Document {
                     relative_path: "crates/beta/tests/protocol.rs".into(),
                     position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
-                    occurrences: vec![call_at(2, alpha)?, call_at(7, alpha)?, call_at(8, beta)?],
+                    occurrences: vec![
+                        call_at(2, alpha)?,
+                        call_at(7, alpha)?,
+                        call_at(8, beta)?,
+                        call_at(13, beta)?,
+                        call_at(14, alpha)?,
+                        call_at(19, alpha)?,
+                        call_at(20, alpha)?,
+                    ],
                     ..Document::default()
                 },
             ],
@@ -3641,6 +3655,48 @@ mod tests {
         )
         .map_err(|error| error.reason())?;
 
+        let owner_range = owner
+            .body
+            .range_in(
+                &index
+                    .files()
+                    .get(&owner.file)
+                    .ok_or("owner source")?
+                    .data()
+                    .source,
+            )
+            .ok_or("retained owner range")?;
+        for (test, expected) in [
+            (&owner_only, vec![true]),
+            (&mixed, vec![true, false]),
+            (&mixed_reversed, vec![false, true]),
+            (&all_owner, vec![true, true]),
+        ] {
+            let resolved = test
+                .calls
+                .iter()
+                .filter(|call| call.name == "expect_response")
+                .map(|call| {
+                    let source_line = tests_source
+                        .lines()
+                        .nth(call.line.checked_sub(1).ok_or("one-based call line")?)
+                        .ok_or("call source line")?;
+                    Ok(bindings.call_resolves_to_owner(
+                        &root,
+                        &test.file,
+                        call.line,
+                        source_line,
+                        "expect_response",
+                        &owner.file,
+                        &owner.name,
+                        owner_range.clone(),
+                        1,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            assert_eq!(resolved, expected, "SCIP setup for {}", test.name);
+        }
+
         let probe = Probe {
             id: ProbeId("probe:alpha:expect_response".to_string()),
             location: SourceLocation::new("crates/alpha/src/lib.rs", 1, 2),
@@ -3655,13 +3711,13 @@ mod tests {
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         };
-        let discriminate = |tests: &[&TestSummary]| -> StageState {
+        let discriminate = |tests: &[&TestSummary], with_scip: bool| -> StageState {
             let related = tests
                 .iter()
                 .map(|test| (*test, RelationReason::DirectOwnerCall))
                 .collect::<Vec<_>>();
             let context = ProbeContext::new(&probe, Some(owner), related, false, &index, true)
-                .with_scip_authority(&root, Some(&bindings));
+                .with_scip_authority(&root, with_scip.then_some(&bindings));
             ClassifiedProbeEvidence::gather(
                 &context,
                 &probe.expression,
@@ -3670,23 +3726,36 @@ mod tests {
             .discriminate
             .state
         };
+        let call_order_states = |with_scip| {
+            [&mixed, &mixed_reversed, &all_owner].map(|test| discriminate(&[test], with_scip))
+        };
         assert_eq!(
-            discriminate(&[&mixed]),
-            StageState::Weak,
-            "a test whose other same-named call binds its own package's function keeps the defeat"
+            call_order_states(false),
+            [StageState::Weak, StageState::Weak, StageState::Weak],
+            "without SCIP the cross-package defeat must decide all two-call cases"
         );
         assert_eq!(
-            discriminate(&[&owner_only]),
+            discriminate(&[&owner_only], false),
+            StageState::Weak,
+            "the single-call positive also requires SCIP authority"
+        );
+        assert_eq!(
+            call_order_states(true),
+            [StageState::Weak, StageState::Weak, StageState::Yes],
+            "both mixed call orders keep the defeat; only all-owner calls lift it"
+        );
+        assert_eq!(
+            discriminate(&[&owner_only], true),
             StageState::Yes,
             "a test whose every same-named call resolves to the owner lifts the defeat"
         );
         assert_eq!(
-            discriminate(&[&mixed, &owner_only]),
+            discriminate(&[&mixed, &owner_only], true),
             StageState::Yes,
             "the mixed test classified first must not withhold the owner-only test's authority"
         );
         assert_eq!(
-            discriminate(&[&owner_only, &mixed]),
+            discriminate(&[&owner_only, &mixed], true),
             StageState::Yes,
             "the owner-only test classified first still confirms"
         );
