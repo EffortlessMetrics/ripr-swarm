@@ -818,6 +818,73 @@ fn the_feature_table_is_read_where_the_analyzed_sources_are_read() -> Result<(),
     Ok(())
 }
 
+/// #8780 (review of #14264): the package that owns a gated test file is
+/// selected through the committed-source overlay, like its feature table.
+#[test]
+fn the_test_files_package_is_selected_where_the_analyzed_sources_are_read()
+-> Result<(), Box<dyn Error>> {
+    use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+    use crate::analysis::facts::member_crates::MemberCrates;
+    use std::sync::Arc;
+    const OUTER: &str = "[package]\nname = \"wire\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"slow\"]\nslow = []\n";
+    const INNER: &str = "[package]\nname = \"inner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nslow = []\n";
+    let slow_is_default = |root: &Path, file: &str| {
+        MemberCrates::new(root)
+            .default_test_features(Path::new(file))
+            .map(|features| features.contains("slow"))
+    };
+
+    // An uncommitted nested manifest does not hide the commit's package.
+    let dir = temp_dir("test-gate-untracked-manifest")?;
+    package(
+        &dir.0,
+        "\n[features]\ndefault = [\"slow\"]\nslow = []\n",
+        "",
+    )?;
+    fs::create_dir_all(dir.0.join("tests"))?;
+    fs::write(dir.0.join("tests/Cargo.toml"), INNER)?;
+    let overlay = CommittedSourceOverlay::from_entries(
+        &dir.0,
+        [
+            ("Cargo.toml", Some(OUTER.as_bytes())),
+            ("tests/Cargo.toml", None),
+        ],
+    );
+    let committed = with_overlay(Some(Arc::new(overlay)), || {
+        slow_is_default(&dir.0, "tests/pin.rs")
+    });
+    assert_eq!(committed, Some(true), "the commit has one package");
+    // With no overlay the worktree's nested package is the authority.
+    assert_eq!(slow_is_default(&dir.0, "tests/pin.rs"), Some(false));
+
+    // An uncommitted deletion of a nested manifest does not hand its test
+    // the outer package's defaults.
+    let dir = temp_dir("test-gate-deleted-manifest")?;
+    package(
+        &dir.0,
+        "\n[features]\ndefault = [\"slow\"]\nslow = []\n",
+        "",
+    )?;
+    fs::create_dir_all(dir.0.join("inner/tests"))?;
+    let overlay = CommittedSourceOverlay::from_entries(
+        &dir.0,
+        [
+            ("Cargo.toml", Some(OUTER.as_bytes())),
+            ("inner/Cargo.toml", Some(INNER.as_bytes())),
+        ],
+    );
+    let committed = with_overlay(Some(Arc::new(overlay)), || {
+        slow_is_default(&dir.0, "inner/tests/pin.rs")
+    });
+    assert_eq!(
+        committed,
+        Some(false),
+        "the commit's nested package owns it"
+    );
+    assert_eq!(slow_is_default(&dir.0, "inner/tests/pin.rs"), Some(true));
+    Ok(())
+}
+
 const ENCLOSING_FEATURES: &str = "\n[features]\ndefault = [\"alloc\"]\nalloc = []\nextra = []\n";
 
 /// Gates that refuse (a feature outside the default closure, in any shape)

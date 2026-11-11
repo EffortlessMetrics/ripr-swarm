@@ -879,13 +879,19 @@ impl MemberCrates {
     /// closure (#8780). Whether `file` is compiled at all is the caller's
     /// question. `None` without manifest authority, for a file under no
     /// readable package, or for a feature table this cannot read.
+    ///
+    /// The owning package is selected where the analyzed sources are read
+    /// (the committed-source overlay when one is active), like its feature
+    /// table: an uncommitted nested manifest must not hide the analyzed
+    /// commit's package, and an uncommitted deletion of one must not hand
+    /// the test an outer package's defaults.
     pub(crate) fn default_test_features(
         &self,
         file: &Path,
     ) -> Option<std::collections::BTreeSet<String>> {
         let root = lexical(self.root.as_ref()?);
         let file = lexical(&root.join(file));
-        let (package, _) = nearest_package(&root, file.parent()?)?;
+        let (package, _) = nearest_package_snapshot(&root, file.parent()?, true)?;
         self.package_default_features(&package)
     }
 
