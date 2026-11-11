@@ -142,8 +142,16 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
 
 fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
     let (name, value) = long_flag_shape(arg)?;
+    // Global switches are not in per-command option lists, so they are named
+    // here: `--verbose=check` must not become `--verbose check` and run check.
+    if GLOBAL_SWITCHES.contains(&name) {
+        return None;
+    }
     (documented_arity(name) != Some(false)).then_some((name, value))
 }
+
+/// Switches every command accepts outside its own documented options.
+const GLOBAL_SWITCHES: [&str; 3] = ["--verbose", "--help", "--version"];
 
 /// `--name=value` with a name of ASCII alphanumerics and hyphens, split at
 /// the first `=`.
@@ -333,6 +341,16 @@ mod tests {
                 "ripr", "agent", "repair", "--phase", "after", "--output", "--base", "--root", "."
             ])
         );
+    }
+
+    #[test]
+    fn split_long_flag_values_keeps_global_switch_assignments_whole() {
+        for global in ["--verbose=check", "--help=check", "--version=1"] {
+            assert_eq!(
+                split_long_flag_values(args(&["ripr", global, "--format=json"])),
+                args(&["ripr", global, "--format", "json"])
+            );
+        }
     }
 
     #[test]
