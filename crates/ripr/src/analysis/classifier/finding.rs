@@ -804,7 +804,9 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 .or_else(|| head.strip_prefix("ref "))
                 .unwrap_or(head)
                 .trim_start();
-            head.starts_with(name)
+            // `_` discards the value; unlike `_amount`, it binds no name.
+            *name != "_"
+                && head.starts_with(name)
                 && !name
                     .chars()
                     .next()
@@ -1811,6 +1813,44 @@ mod tests {
             "assert_eq!(other, Ok(amount))",
             "let other = recalculate(5);",
             Some("calculate")
+        ));
+    }
+
+    #[test]
+    fn owner_binding_scan_never_treats_a_wildcard_as_a_bound_name() {
+        for body in ["let _ = tax(100);", "let _: i64 = tax(100);"] {
+            assert!(bound_identifiers_from_owner_calls(body, "tax").is_empty());
+            assert!(!oracle_binds_sink_identity(
+                "assert!(matches!(Some(100), Some(_)))",
+                body,
+                Some("tax")
+            ));
+        }
+        // Leading underscores are legal bindings, not wildcard patterns.
+        for name in ["_amount", "__"] {
+            let body = format!("let {name} = tax(100);");
+            assert_eq!(
+                bound_identifiers_from_owner_calls(&body, "tax"),
+                vec![name.to_string()]
+            );
+            assert!(oracle_binds_sink_identity(
+                &format!("assert_eq!({name}, 8)"),
+                &body,
+                Some("tax")
+            ));
+        }
+        // Discarding a separate call must not invalidate a real binding.
+        assert_eq!(
+            bound_identifiers_from_owner_calls(
+                "let amount = tax(100); let _ = tax(200);",
+                "tax"
+            ),
+            vec!["amount".to_string()]
+        );
+        assert!(oracle_binds_sink_identity(
+            "assert_eq!(tax(100), 8)",
+            "let _ = tax(200);",
+            Some("tax")
         ));
     }
 
