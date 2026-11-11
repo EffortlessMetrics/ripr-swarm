@@ -3083,8 +3083,10 @@ impl TargetRoots {
 
 /// The crate root file `file` composes under: a recognized Cargo target root
 /// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example or build script), or `None` when composition is unresolved, goes
-/// through `include!`, or ends at an unrecognized file.
+/// example or build script), a root the package manifest names (`[lib] path`,
+/// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+/// `path`), or `None` when composition is unresolved, goes through
+/// `include!`, or ends at a file no target is known to root.
 pub(super) fn target_root(
     file: &Path,
     index: &RustIndex,
@@ -3111,7 +3113,8 @@ fn target_context_roots(
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
                 || !(recognized_target_root(root, src_dirs)
-                    || index.member_crates.is_custom_lib_path_root(root))
+                    || index.member_crates.is_custom_lib_path_root(root)
+                    || index.member_crates.is_declared_target_entry(root))
         })
     {
         return None;
