@@ -2080,6 +2080,9 @@ mod tests {
             "pub fn pick(flag: &str, strict: bool) -> bool {\n    std::process::exit(i32::from(strict));\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
             "pub fn pick(flag: &str, at: usize) -> bool {\n    let _ = [true][at];\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
             "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 1 / by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 7 % by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    let _g = move |x: u8| x;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str) -> bool {\n    unreachable!{};\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
         ] {
             let evidence = added_string_arm_evidence(
                 diverted,
