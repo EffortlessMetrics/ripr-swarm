@@ -294,3 +294,181 @@ fn behavior_change_on_a_later_line_of_a_block_keeps_probe() -> Result<(), String
     assert_eq!(classes_on(&findings, 7).len(), 1, "{findings:?}");
     Ok(())
 }
+
+/// #14097: the same new function with its signature wrapped over four lines,
+/// as a formatter writes it past the line width.
+const WRAPPED_TS: &str = "export function loyaltyPrice(\n  amount: number,\n  years: number,\n): number {\n  if (years >= 5) {\n    return amount - 100;\n  }\n  return amount;\n}\n";
+
+/// A wrapped signature of a new function yields no probe on any of its
+/// lines, and the body reads exactly as under the one-line spelling. Without
+/// the guard in `mod.rs` lines 1 to 4 each carry a probe (date-fns `18cbd43`:
+/// nine signature probes for a one-line body).
+#[test]
+fn wrapped_signature_of_a_new_function_is_not_probed() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-new-fn",
+        WRAPPED_TS,
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        Vec::new(),
+    )?;
+    for header_line in 1..=4 {
+        assert_eq!(
+            classes_on(&findings, header_line),
+            Vec::<ExposureClass>::new(),
+            "signature line {header_line} has no behavior of its own: {findings:?}"
+        );
+    }
+    assert_eq!(
+        classes_on(&findings, 5),
+        vec![ExposureClass::Exposed],
+        "the body predicate keeps the verdict it has under a one-line signature"
+    );
+    assert_eq!(classes_on(&findings, 6), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+/// A default value anywhere in the wrapped signature is behavior a test can
+/// discriminate, so the header fails closed and its lines keep their probes.
+#[test]
+fn wrapped_signature_with_a_default_value_keeps_probes() -> Result<(), String> {
+    let source = WRAPPED_TS.replacen("  years: number,", "  years = 3,", 1);
+    let findings = analyze(
+        "wrapped-default",
+        &source,
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        Vec::new(),
+    )?;
+    assert_eq!(classes_on(&findings, 3).len(), 1, "{findings:?}");
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// A parameter line added to the wrapped signature of an EXISTING function:
+/// the header is not all new, so the added line keeps its probe.
+#[test]
+fn parameter_added_to_an_existing_wrapped_signature_keeps_probe() -> Result<(), String> {
+    let findings = analyze("wrapped-existing", WRAPPED_TS, &[3, 5], Vec::new())?;
+    assert_eq!(classes_on(&findings, 3).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// A renamed function whose wrapped signature was rewritten in place: the
+/// removed opening line looks like the new one, so this is a changed
+/// signature and every header line keeps its probe.
+#[test]
+fn renamed_function_with_a_wrapped_signature_keeps_probes() -> Result<(), String> {
+    let mut removed = Vec::new();
+    for (number, text) in [
+        (1, "export function oldPrice("),
+        (2, "  amount: number,"),
+        (3, "  months: number,"),
+        (4, "): number {"),
+    ] {
+        let mut old = line(number, text);
+        old.new_side_line = 1;
+        removed.push(old);
+    }
+    let findings = analyze("wrapped-renamed", WRAPPED_TS, &[1, 2, 3, 4, 5], removed)?;
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    assert_eq!(classes_on(&findings, 3).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// A wrapped signature whose body adds nothing to probe (an empty function)
+/// keeps its opening probe: something must stand for the new owner.
+#[test]
+fn wrapped_signature_without_an_added_body_line_keeps_probe() -> Result<(), String> {
+    let source = "export function noop(\n  amount: number,\n  years: number,\n): void {\n}\n";
+    let findings = analyze("wrapped-empty-body", source, &[1, 2, 3, 4, 5], Vec::new())?;
+    assert_eq!(classes_on(&findings, 1).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// Lines of an all-new `source` that carry at least one probe.
+fn probed_lines(label: &str, source: &str) -> Result<Vec<usize>, String> {
+    let all: Vec<usize> = (1..=source.lines().count()).collect();
+    let mut lines: Vec<usize> = analyze(label, source, &all, Vec::new())?
+        .iter()
+        .map(|finding| finding.probe.location.line)
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    Ok(lines)
+}
+
+/// The wrapped shapes the guard reads, through the production path: generics
+/// with a default TYPE, a destructured parameter, an object-typed parameter,
+/// a wrapped arrow, and a wrapped method. Only body lines are probed.
+#[test]
+fn wrapped_header_shapes_leave_only_body_probes() -> Result<(), String> {
+    for (label, source, body) in [
+        (
+            "generics",
+            "export function f<\n  T extends Date,\n  R extends Date = T,\n>(\n  date: T,\n): R {\n  return go(date);\n}\n",
+            vec![7],
+        ),
+        (
+            "destructured",
+            "export function f({\n  a,\n  b,\n}: Opts): number {\n  return a + b;\n}\n",
+            vec![5],
+        ),
+        (
+            "object-type",
+            "export function f(\n  opts: {\n    a: number;\n  },\n): number {\n  return opts.a;\n}\n",
+            vec![6],
+        ),
+        (
+            "arrow",
+            "export const f = (\n  a: number,\n): number => {\n  return a + 1;\n};\n",
+            vec![4],
+        ),
+        (
+            "method",
+            "export class Cart {\n  total(\n    a: number,\n  ): number {\n    return a + 1;\n  }\n}\n",
+            vec![5],
+        ),
+    ] {
+        assert_eq!(probed_lines(label, source)?, body, "{label}");
+    }
+    Ok(())
+}
+
+/// Wrapped headers that carry runtime behavior, or are not new function
+/// headers at all, keep a probe on the line that holds it.
+#[test]
+fn wrapped_header_shapes_that_keep_their_probes() -> Result<(), String> {
+    for (label, source, probed) in [
+        (
+            "destructuring-default",
+            "export function f({\n  a = 1,\n}: Opts): number {\n  return a;\n}\n",
+            2,
+        ),
+        (
+            "rest-default",
+            "export function f(\n  ...[a = 1]: number[]\n): number {\n  return a;\n}\n",
+            2,
+        ),
+        (
+            "parameter-property",
+            "export class Cart {\n  constructor(\n    private readonly a: number,\n  ) {\n    log(a);\n  }\n}\n",
+            3,
+        ),
+        (
+            "decorated-parameter",
+            "export class Cart {\n  total(\n    @Inject() a: number,\n  ): number {\n    return a + 1;\n  }\n}\n",
+            3,
+        ),
+        (
+            "call-not-a-header",
+            "export function f(a: number): number {\n  return go(\n    a,\n    {\n      b: 1,\n    });\n}\n",
+            3,
+        ),
+    ] {
+        let lines = probed_lines(label, source)?;
+        assert!(
+            lines.contains(&probed),
+            "{label}: line {probed} of {lines:?}"
+        );
+    }
+    Ok(())
+}
