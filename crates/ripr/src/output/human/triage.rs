@@ -338,6 +338,27 @@ fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool)
     )
 }
 
+/// True when a rendered finding digest carries a `Next step` line (either
+/// prefix form the digest uses).
+fn digest_prints_next_step(digest: &str) -> bool {
+    digest
+        .lines()
+        .any(|line| line.starts_with("  Next step: ") || line.starts_with("  Next step — "))
+}
+
+/// The `Safe next action` line for a selected test gap (#14173). The digest
+/// below already states the concrete instruction as `Next step`, so the line
+/// points there instead of repeating the State line in internal words. When
+/// the digest prints no `Next step`, it names the digest lines a reader can
+/// act from (the `Why` reason and the related test). The static advisory boundary stays on both.
+fn top_gap_safe_action_line(digest_has_next_step: bool) -> &'static str {
+    if digest_has_next_step {
+        "  Safe next action: follow the Next step below; this is static advisory evidence only\n"
+    } else {
+        "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only\n"
+    }
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -367,10 +388,15 @@ pub(crate) fn render_human_triage(
     // disagree about which command is recommended.
     let recommend_start = check_case == NextActionCheckCase::PreviewAdvisory
         && recommends_gap_repair_start(triage.selected, drill_in);
+    // #14173: the digest is rendered once, before the action line, so that
+    // line can point at the `Next step` only when the digest prints one.
+    let digest = triage
+        .selected
+        .map(|finding| render_finding_digest_with_config(finding, config, &output.root));
     match check_case {
-        NextActionCheckCase::TopGap => out.push_str(
-            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
-        ),
+        NextActionCheckCase::TopGap => out.push_str(top_gap_safe_action_line(
+            digest.as_deref().is_some_and(digest_prints_next_step),
+        )),
         NextActionCheckCase::CandidateFilterHidAll => {
             // #4320: findings exist but the #3281 candidate filter hid
             // every one — the run is not a policy suppression. Claiming
@@ -561,12 +587,8 @@ pub(crate) fn render_human_triage(
             }
         }
     }
-    if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(
-            finding,
-            config,
-            &output.root,
-        ));
+    if let (Some(finding), Some(digest)) = (triage.selected, digest) {
+        out.push_str(&digest);
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             // #13502: a candidate-tree subject cannot be replayed by `explain`.
             if !navigation.finding_routes_withheld() {
@@ -3363,6 +3385,67 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    const TOP_GAP_POINTER: &str =
+        "  Safe next action: follow the Next step below; this is static advisory evidence only";
+    const TOP_GAP_NO_POINTER: &str = "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only";
+
+    /// #14173: a selected gap whose digest prints a `Next step` gets an action
+    /// line that points at it; the old internal phrase is gone.
+    #[test]
+    fn top_gap_action_points_at_the_next_step_the_digest_prints() {
+        let mut gap = finding_at("finding:gap", "src/lib.rs", ExposureClass::WeaklyExposed);
+        gap.recommended_next_step =
+            Some("Add an exact assertion for the changed value".to_string());
+        let output = test_output(vec![gap]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(digest_prints_next_step(&out), "{out}");
+        assert_eq!(
+            out.lines()
+                .find(|line| line.starts_with("  Safe next action: ")),
+            Some(TOP_GAP_POINTER),
+            "{out}"
+        );
+        assert!(!out.contains("non-exposed"), "{out}");
+    }
+
+    /// #14173 negative control: the pointer wording is chosen from the
+    /// rendered digest, so a digest with no `Next step` line never gets it,
+    /// and either prefix form of the line counts.
+    #[test]
+    fn top_gap_action_never_points_at_an_absent_next_step() {
+        assert_eq!(
+            top_gap_safe_action_line(false).trim_end_matches('\n'),
+            TOP_GAP_NO_POINTER
+        );
+        assert_eq!(
+            top_gap_safe_action_line(true).trim_end_matches('\n'),
+            TOP_GAP_POINTER
+        );
+        assert!(!digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Related test: tests/a.rs:4 t\n  Evidence: reach yes\n"
+        ));
+        // A `Next step` mention inside another line is not the line itself.
+        assert!(!digest_prints_next_step(
+            "  no repair start offered: follow the Next step above\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Next step: Add an exact assertion\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  Next step — Static limit: inspect the helper\n"
+        ));
     }
 
     /// #14080: a complete-with-findings outcome for `finding_count` findings.
