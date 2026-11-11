@@ -108,6 +108,10 @@ first line is the readiness marker with an allowed tail; a trusted reviewer's la
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+A thread reply is recorded by GitHub as a COMMENTED review with an empty body; such a
+review states nothing and does not replace its author's earlier review, so replying
+after a ready review no longer voids it (#11566). A later review with any body text
+still supersedes the earlier one.
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description

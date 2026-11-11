@@ -314,9 +314,20 @@ def reviews_allow_source_attestation(
         for r in native
     ):
         return True
+    # Replying on a review thread makes GitHub record a COMMENTED review with an
+    # empty body under the replier's login. It states nothing, so it must not
+    # replace that login's earlier statement: a reply after a ready review voided
+    # the attestation and cost a complete fresh qualification (#11566). A later
+    # review with any body text still supersedes, which keeps retraction by a later
+    # review a closed control.
+    speaking = [
+        r
+        for r in reviews
+        if str(r.get("state") or "") != "COMMENTED" or str(r.get("body") or "").strip()
+    ]
     commented = [
         r
-        for r in _latest_by_login(reviews)
+        for r in _latest_by_login(speaking)
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
@@ -626,6 +637,25 @@ def self_test() -> None:
         [review(state="COMMENTED", commit_id=other, body="REVIEW_READY")],
         head=head,
         pull=pull(body="Source review:"),
+    )
+    # A thread reply (empty COMMENTED review) after a ready review does not void it;
+    # a later review with neutral text still does, and so does a later negative one.
+    stamp0 = lambda n: f"2026-10-15T02:00:0{n}Z"
+    ready_then = lambda body: [
+        review(id=11, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp0(1)),
+        review(id=12, state="COMMENTED", commit_id=head, body=body, submitted_at=stamp0(2)),
+    ]
+    assert reviews_allow_source_attestation(ready_then(""), head=head)
+    assert reviews_allow_source_attestation(ready_then("  \n"), head=head)
+    assert not reviews_allow_source_attestation(ready_then("Thanks, looking again."), head=head)
+    assert not reviews_allow_source_attestation(ready_then("REPAIR_REQUIRED"), head=head)
+    # An empty reply on a later head never carries the earlier head's attestation.
+    assert not reviews_allow_source_attestation(
+        [
+            review(id=11, state="COMMENTED", commit_id=other, body="REVIEW_READY", submitted_at=stamp0(1)),
+            review(id=12, state="COMMENTED", commit_id=head, body="", submitted_at=stamp0(2)),
+        ],
+        head=head,
     )
     # A reviewer's negative statement outlives their own later neutral reply: the
     # description cannot stand in for the retraction they never made.

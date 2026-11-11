@@ -770,5 +770,20 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         &check_reviews(&negative_then_reply, &head)?,
         false,
         "negative then neutral reply without a description line",
-    )
+    )?;
+    // A thread reply after a ready review keeps it; later text still supersedes.
+    let ready_then = |body: &str| {
+        serde_json::json!([
+            review("r", "COMMENTED", &head, &at(5), "REVIEW_READY"),
+            review("r", "COMMENTED", &head, &at(6), body),
+        ])
+    };
+    for (body, admit) in [
+        ("", true),
+        ("Thanks, looking again.", false),
+        ("REPAIR_REQUIRED", false),
+    ] {
+        expect_outcome(&check_reviews(&ready_then(body), &head)?, admit, body)?;
+    }
+    Ok(())
 }
