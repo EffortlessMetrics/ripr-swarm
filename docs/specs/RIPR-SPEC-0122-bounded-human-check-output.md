@@ -202,6 +202,15 @@ When that JSON budget engages, it keeps the highest-priority findings
 file-order prefix, and its `limited_findings_bound` message names the dropped
 counts per class and file (#10093).
 
+The hidden identity list chooses its 20 rows by that same priority order when
+more than 20 findings are omitted, so a gap in a late-sorting file is named
+ahead of an already-noticed finding in an early one. The chosen rows still
+print in report (file, line) order, the hidden test-stub rows use the same
+window, and the remainder line counts the findings outside the window by
+class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
+is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
+findings every one is listed and the output is unchanged (#14233).
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -1122,6 +1131,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
