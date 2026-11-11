@@ -542,17 +542,28 @@ fn mcp_session(
         };
         responses.push((id, line.to_string(), value));
     }
-    // A server that exits early answers fewer requests; measuring what is
-    // left would record a cheap, clean route. That is an instrument failure.
     let answered: Vec<i64> = responses.iter().map(|(id, _, _)| *id).collect();
-    let missing = unanswered_ids(input, &answered);
-    if missing.is_empty() {
-        Ok(responses)
-    } else {
-        Err(format!(
-            "ripr mcp --stdio exited {:?} without answering request ids {missing:?}",
-            output.exit
+    match mcp_session_problem(output.exit, &unanswered_ids(input, &answered)) {
+        None => Ok(responses),
+        Some(problem) => Err(problem),
+    }
+}
+
+/// A session counts only when the server answered every request and then
+/// exited 0. A server that exits early answers fewer requests, and one that
+/// fails after answering is not a clean run; measuring either would record a
+/// cheap, clean route. Both are instrument failures.
+fn mcp_session_problem(exit: Option<i32>, missing: &[i64]) -> Option<String> {
+    if !missing.is_empty() {
+        Some(format!(
+            "ripr mcp --stdio exited {exit:?} without answering request ids {missing:?}"
         ))
+    } else if exit != Some(0) {
+        Some(format!(
+            "ripr mcp --stdio answered every request but exited {exit:?}"
+        ))
+    } else {
+        None
     }
 }
 
@@ -1605,6 +1616,10 @@ verify=refused|outcome=complete_with_findings\n";
             Vec::<i64>::new()
         );
         assert_eq!(unanswered_ids(&requests, &[1, 2]), vec![3, 4, 5, 10]);
+        assert_eq!(mcp_session_problem(Some(0), &[]), None);
+        assert!(mcp_session_problem(Some(42), &[]).is_some());
+        assert!(mcp_session_problem(None, &[]).is_some());
+        assert!(mcp_session_problem(Some(0), &[4, 5]).is_some());
         let mut reached_no_tokens = full.clone();
         reached_no_tokens["scenarios"][0]["routes"][0]["tokens_to_answer"] = Value::Null;
         assert!(validate_baseline(&reached_no_tokens).is_err());
