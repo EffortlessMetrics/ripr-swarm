@@ -561,6 +561,11 @@
       "reason": "Repair artifact digest identity; tracked so the scanner cannot treat it as a new taxonomy id"
     },
     {
+      "name": "analysis_config_identity",
+      "surfaces": ["schemas/ripr/check.schema.json"],
+      "reason": "Counted-finding binding digest of finding-affecting analysis configuration (#1779); not a FindingId or analysis-attempt identity"
+    },
+    {
       "name": "attempt_id",
       "surfaces": ["crates/ripr/src/output/feedback.rs"],
       "reason": "Caller-supplied feedback --attempt slot; must not collapse RepairAttemptId and AnalysisAttemptId"
@@ -571,14 +576,34 @@
       "reason": "Repair artifact digest identity; tracked so the scanner cannot treat it as a new taxonomy id"
     },
     {
+      "name": "cargo_input_identity",
+      "surfaces": ["schemas/ripr/check.schema.json"],
+      "reason": "Counted-finding binding digest of Cargo configuration and environment inputs (#1779); not an item or snapshot identity"
+    },
+    {
+      "name": "count_policy_identity",
+      "surfaces": ["schemas/ripr/check.schema.json"],
+      "reason": "Counted-finding binding digest of producer count policy (#1779); not a consumer post-filter counted basis or FindingId"
+    },
+    {
       "name": "diff_identity",
       "surfaces": ["schemas/ripr/check.schema.json"],
       "reason": "Git candidate diff digest (#3278); not an agentic-LSP item/instruction/action identity"
     },
     {
+      "name": "environment_identity",
+      "surfaces": ["schemas/ripr/check.schema.json"],
+      "reason": "Counted-finding binding digest of RIPR and Rust environment overrides (#1779); not a portable item or analysis-attempt identity"
+    },
+    {
       "name": "feedback_id",
       "surfaces": ["crates/ripr/src/output/feedback.rs"],
       "reason": "Idempotency/store key for a usefulness receipt, not ReceiptId"
+    },
+    {
+      "name": "producer_identity",
+      "surfaces": ["schemas/ripr/check.schema.json"],
+      "reason": "Counted-finding semantic build identity naming producer version, source commit and compiled languages (#1779); not artifact authentication or a FindingId"
     },
     {
       "name": "registration_id",

@@ -47,8 +47,13 @@ behavior, or support claims.
 ## Adjacent identity-shaped fields
 
 - `after_artifact_identity` on `schemas/ripr/repair-assurance.schema.json` — Repair artifact digest identity; tracked so the scanner cannot treat it as a new taxonomy id
+- `analysis_config_identity` on `schemas/ripr/check.schema.json` — Counted-finding binding digest of finding-affecting analysis configuration (#1779); not a FindingId or analysis-attempt identity
 - `attempt_id` on `crates/ripr/src/output/feedback.rs` — Caller-supplied feedback --attempt slot; must not collapse RepairAttemptId and AnalysisAttemptId
 - `before_artifact_identity` on `schemas/ripr/repair-assurance.schema.json` — Repair artifact digest identity; tracked so the scanner cannot treat it as a new taxonomy id
+- `cargo_input_identity` on `schemas/ripr/check.schema.json` — Counted-finding binding digest of Cargo configuration and environment inputs (#1779); not an item or snapshot identity
+- `count_policy_identity` on `schemas/ripr/check.schema.json` — Counted-finding binding digest of producer count policy (#1779); not a consumer post-filter counted basis or FindingId
 - `diff_identity` on `schemas/ripr/check.schema.json` — Git candidate diff digest (#3278); not an agentic-LSP item/instruction/action identity
+- `environment_identity` on `schemas/ripr/check.schema.json` — Counted-finding binding digest of RIPR and Rust environment overrides (#1779); not a portable item or analysis-attempt identity
 - `feedback_id` on `crates/ripr/src/output/feedback.rs` — Idempotency/store key for a usefulness receipt, not ReceiptId
+- `producer_identity` on `schemas/ripr/check.schema.json` — Counted-finding semantic build identity naming producer version, source commit and compiled languages (#1779); not artifact authentication or a FindingId
 - `registration_id` on `schemas/ripr/check.schema.json` — Test harness registration identity; not a CanonicalItemId

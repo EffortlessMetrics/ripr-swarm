@@ -722,6 +722,31 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
 
 pub const ADJACENT_FIELDS: &[AdjacentField] = &[
     AdjacentField {
+        name: "analysis_config_identity",
+        surfaces: &[CHECK_SCHEMA],
+        reason: "Counted-finding binding digest of finding-affecting analysis configuration (#1779); not a FindingId or analysis-attempt identity",
+    },
+    AdjacentField {
+        name: "cargo_input_identity",
+        surfaces: &[CHECK_SCHEMA],
+        reason: "Counted-finding binding digest of Cargo configuration and environment inputs (#1779); not an item or snapshot identity",
+    },
+    AdjacentField {
+        name: "count_policy_identity",
+        surfaces: &[CHECK_SCHEMA],
+        reason: "Counted-finding binding digest of producer count policy (#1779); not a consumer post-filter counted basis or FindingId",
+    },
+    AdjacentField {
+        name: "environment_identity",
+        surfaces: &[CHECK_SCHEMA],
+        reason: "Counted-finding binding digest of RIPR and Rust environment overrides (#1779); not a portable item or analysis-attempt identity",
+    },
+    AdjacentField {
+        name: "producer_identity",
+        surfaces: &[CHECK_SCHEMA],
+        reason: "Counted-finding semantic build identity naming producer version, source commit and compiled languages (#1779); not artifact authentication or a FindingId",
+    },
+    AdjacentField {
         name: "diff_identity",
         surfaces: &[CHECK_SCHEMA],
         reason: "Git candidate diff digest (#3278); not an agentic-LSP item/instruction/action identity",
