@@ -133,8 +133,12 @@ runs as `--test TARGET NAME` when the package's manifest or `tests/`
 discovery names its target and that name is a plain cargo target name
 (ASCII alphanumerics, `_`, `-`, not starting with `-`). Otherwise the
 file runs by name only when a target `cargo test` runs compiles it: the
-module-tree walk (`apply_module_graph_evidence`) reaches it, and its source
-role is a production subject or test evidence. For example, `src/tests/` is
+module-tree walk (`apply_module_graph_evidence`) does not prove it unreached,
+and its source role is a production subject, test evidence or production-like
+test infrastructure. An incomplete walk (an unresolved `cfg_if!` or dynamic
+`#[path]` edge, or the file bound) proves nothing, so it keeps the layout
+answer. In that case a file that is not compiled can still get a by-name
+command, and `cargo test` reports 0 tests run. For example, `src/tests/` is
 declared from the library, and a helper module is shared by an integration
 test. Every other case gets no line: a file no target reaches, a bench,
 example or build script, a registered target ripr cannot name, a non-Rust

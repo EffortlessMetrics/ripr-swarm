@@ -1908,7 +1908,8 @@ pub(crate) fn focused_test_run_command(
     test_file: &str,
     test_name: &str,
 ) -> Option<String> {
-    let file = PathBuf::from(test_file.replace('\\', "/"));
+    let spelled = test_file.replace('\\', "/");
+    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
     let plain_name = !test_name.is_empty()
         && test_name
             .chars()
