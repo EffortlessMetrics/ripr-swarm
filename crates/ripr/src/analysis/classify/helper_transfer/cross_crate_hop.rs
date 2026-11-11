@@ -366,7 +366,11 @@ fn file_imports_only_by_name(
 /// in `masked`, when that mention is exactly `<qualifier>::<callee>(` (the
 /// qualifier is the crate name and any public modules) with nothing before it
 /// that makes it a path continuation, a method call or a generic argument.
-fn sole_crate_qualified_call(masked: &str, qualifier: &str, callee: &str) -> Option<usize> {
+pub(super) fn sole_crate_qualified_call(
+    masked: &str,
+    qualifier: &str,
+    callee: &str,
+) -> Option<usize> {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
     let mut found = None;
     for (at, _) in masked.match_indices(callee) {
