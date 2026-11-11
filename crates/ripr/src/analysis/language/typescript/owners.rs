@@ -2002,8 +2002,9 @@ fn extract_imports_from_statements_inner(
 
 /// The names declared at file level more often than program-level
 /// `require("<literal>")` declarators bind them: some other declaration (a
-/// second `var`, a function, a function a sloppy block hoists) binds the name
-/// too. `top_level_names` lists every file-level declaration, once each.
+/// second `var`, a function, a function a sloppy block hoists, a `require()`
+/// pattern the extractor does not read) binds the name too. `top_level_names`
+/// lists every file-level declaration, once each.
 fn names_redeclared_beside_require(
     statements: &[Statement<'_>],
     top_level_names: &[String],
@@ -2025,13 +2026,40 @@ fn names_redeclared_beside_require(
             let Some(init) = &declarator.init else {
                 continue;
             };
-            if require_string_literal_source(init).is_none()
-                && require_member_source(init, &no_namespaces).is_none()
-            {
+            // Count exactly the locals the extractor records for this
+            // declarator. A local it does not record (a nested pattern, a
+            // rest element, an array pattern) is another declaration of the
+            // name, so it must not balance one out (#14154 review).
+            let mut count = |name: &str| *required.entry(name.to_string()).or_insert(0) += 1;
+            if require_member_source(init, &no_namespaces).is_some() {
+                if let Some(name) = binding_identifier_name(&declarator.id) {
+                    count(name);
+                }
                 continue;
             }
-            for identifier in declarator.id.get_binding_identifiers() {
-                *required.entry(identifier.name.to_string()).or_insert(0) += 1;
+            if require_string_literal_source(init).is_none() {
+                continue;
+            }
+            if let Some(name) = binding_identifier_name(&declarator.id) {
+                count(name);
+                continue;
+            }
+            let BindingPattern::ObjectPattern(object) = &declarator.id else {
+                continue;
+            };
+            for property in &object.properties {
+                if object_binding_key_name(property).is_none() {
+                    continue;
+                }
+                match &property.value {
+                    BindingPattern::BindingIdentifier(id) => count(id.name.as_str()),
+                    BindingPattern::AssignmentPattern(with_default) => {
+                        if let Some(name) = binding_identifier_name(&with_default.left) {
+                            count(name);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }

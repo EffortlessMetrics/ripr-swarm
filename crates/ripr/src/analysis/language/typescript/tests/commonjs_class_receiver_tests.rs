@@ -188,6 +188,42 @@ fn two_var_requires_of_one_local_stay_unrelated() -> Result<(), String> {
 }
 
 #[test]
+fn two_var_requires_of_the_owner_module_still_relate() -> Result<(), String> {
+    // Two spellings of one module bind the same export twice.
+    for subject in BOTH {
+        assert_credited(
+            "var { Cart } = require('../src/cart');\nvar { Cart } = require('../src/cart.js');",
+            subject,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_var_require_redeclared_by_an_unread_require_pattern_stays_unrelated() -> Result<(), String> {
+    // The extractor records no import for a nested, rest or array pattern,
+    // so each of these is another declaration of `Cart`, not a second import.
+    for redeclaration in [
+        "var { wrapper: { Cart } } = require('../src/other');",
+        "var { ...Cart } = require('../src/other');",
+        "var [Cart] = require('../src/other');",
+        "var { wrapper: { Cart } } = require('../src/cart');",
+    ] {
+        for subject in BOTH {
+            assert_withheld(
+                &format!("var {{ Cart }} = require('../src/cart');\n{redeclaration}"),
+                subject,
+            )?;
+            assert_withheld(
+                &format!("{redeclaration}\nvar {{ Cart }} = require('../src/cart');"),
+                subject,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_reassigned_let_import_stays_unrelated() -> Result<(), String> {
     for subject in BOTH {
         assert_withheld(

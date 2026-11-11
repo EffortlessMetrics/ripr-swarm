@@ -3312,11 +3312,20 @@ pub(crate) fn constructor_names_for_method_owner(
         // Two `var` requires may bind one local to different exports
         // (`var { Cart } = require('./cart'); var { Cart } =
         // require('./other')`); which one the test constructs is not read.
+        // Two spellings of the owner's module (`'./cart'`, `'./cart.js'`)
+        // bind the same export and are not a conflict.
         if test.imports_in_file.iter().any(|other| {
             other.local == import.local
-                && (other.source != import.source
-                    || other.imported != import.imported
-                    || other.namespace != import.namespace)
+                && (other.imported != import.imported
+                    || other.namespace != import.namespace
+                    || (other.source != import.source
+                        && !import_source_matches_owner(
+                            other,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )))
         }) {
             continue;
         }
