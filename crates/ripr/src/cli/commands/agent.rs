@@ -2553,7 +2553,10 @@ const UNDO_REFUSED_CHANGES: &str = "undo the refused changes";
 /// stating that no new attempt is offered.
 fn start_recipe_undecided(root: &Path, line: &str) -> String {
     let cleaned = crate::app::agent_status::without_start_recipe(line);
-    if !line.contains(UNDO_REFUSED_CHANGES) {
+    // The `ripr repair` facade has no `--store`, so for a custom-store attempt
+    // it would ask about, and start in, the default store instead; keep the
+    // withheld wording there.
+    if !line.contains(UNDO_REFUSED_CHANGES) || line.contains(" --store ") {
         return cleaned;
     }
     let ask_again = format!(
@@ -5055,6 +5058,32 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// #14271 review: the `ripr repair` facade has no `--store`, so the
+    /// ask-again pointer is offered only for a default-store attempt; a
+    /// custom-store line keeps the withheld wording.
+    #[test]
+    fn refused_edit_ask_again_pointer_is_withheld_for_a_custom_store() {
+        let root = std::path::Path::new("repo");
+        let line = |store: &str| {
+            format!(
+                "to recover: {}, set your test edit aside (for example `git stash`), run `ripr agent repair --root repo --seam s{store} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints.",
+                super::UNDO_REFUSED_CHANGES
+            )
+        };
+        let default_store = super::start_recipe_undecided(root, &line(""));
+        assert!(
+            default_store.contains("`ripr repair --root"),
+            "{default_store}"
+        );
+        let custom = line(" --store /tmp/attempts");
+        let custom_store = super::start_recipe_undecided(root, &custom);
+        assert!(!custom_store.contains("`ripr repair --root"), "{custom_store}");
+        assert_eq!(
+            custom_store,
+            crate::app::agent_status::without_start_recipe(&custom)
+        );
+    }
 
     /// The not-found hint for a gap-shaped id mentions `ripr check` only to
     /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.
