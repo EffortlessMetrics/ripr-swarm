@@ -654,7 +654,9 @@ called functions, methods and constants in the changed expression confirm
 as before. The constructed field's own name confirms even when it is also a
 parameter (`storage` in the shorthand `HirLet { storage }`), and an
 assertion naming a test `let` bound from an owner call counts as calling
-the owner. Effect families keep their existing token rule.
+the owner, but only while the test never rebinds that name: a later `let`, a
+destructuring pattern, a `for` variable or an assignment drops it (#6973), so
+the assertion is not credited. Effect families keep their existing token rule.
 
 The owner-return pin (#4478) is then the path that credits an exact pin
 such as `assert_eq!(sku_family("BOLT-M8"), "BOLT")`. Its return-path gate

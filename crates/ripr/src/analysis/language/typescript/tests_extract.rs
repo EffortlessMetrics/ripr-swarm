@@ -321,6 +321,13 @@ fn extract_tests_expanding_suite_factories(
                 test.member_replacements_in_file = replacements.clone();
             }
         }
+        let loads = dynamic_load_specifiers(source);
+        if !loads.is_empty() {
+            let loads: Shared<_> = loads.into();
+            for test in &mut tests {
+                test.dynamic_load_specifiers_in_file = loads.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             let factories: Shared<_> = factories.into();
@@ -2005,6 +2012,39 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// Literal specifiers of dynamic `import(`, `require(`, `requireActual(` and
+/// `importActual(` calls anywhere in the file (#13750), with optional ASCII
+/// whitespace between the callee and `(`. Textual and whole-file, so it
+/// over-collects (comments, strings, the literal prefix of a concatenation)
+/// and never misses a literal load; non-literal arguments are not recorded.
+fn dynamic_load_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers: Vec<String> = Vec::new();
+    for callee in ["import", "require", "requireActual", "importActual"] {
+        for (at, _) in source.match_indices(callee) {
+            if source[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let after = at + callee.len();
+            let rest = &source[after..];
+            let trimmed = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+            if !trimmed.starts_with('(') {
+                continue;
+            }
+            let open = after + (rest.len() - trimmed.len()) + 1;
+            if let Some(specifier) = quoted_literal_after(source, open)
+                && !specifiers.contains(&specifier)
+            {
+                specifiers.push(specifier);
+            }
+        }
+    }
+    specifiers
+}
+
 /// `(local, member)` for each default import whose local is used, across the
 /// whole file, only as its own `import local` binding and as direct calls
 /// `local.member(` (one pair per distinct called member; axios `utils.merge`
@@ -3448,6 +3488,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's

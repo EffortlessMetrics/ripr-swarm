@@ -182,3 +182,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (15)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

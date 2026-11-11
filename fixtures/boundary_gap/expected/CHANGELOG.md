@@ -1,5 +1,14 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.177 after #13432 (#13956)
+
+#13432 bumped the analyzer cache schema to 1.177 but left the portable
+unchanged-attempt snapshots at 1.175. Move the corpus generation to 1.177,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — cross-surface annotation conformance (#12925)
 
 Add the existing finding projection as `sarif.json` and `github.txt` under
@@ -1548,3 +1557,12 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — corpus cache generation 1.178 after #12641 (#5346)
+
+The per-byte slice-counter boundary credit bumps the analyzer cache schema to
+1.178. Move the portable unchanged-attempt snapshots to 1.178, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.

@@ -1546,6 +1546,8 @@ mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let check_json: Value = serde_json::from_str(&crate::output::json::render(&output))

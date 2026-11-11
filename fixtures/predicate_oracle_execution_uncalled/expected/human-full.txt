@@ -41,6 +41,7 @@ Evidence
   - source function argument value amount = 100 at line 14
   - source function argument value amount == discount_threshold at line 14
   - source function argument value discount_threshold = 100 at line 14
+  - assertion not credited: `assert_eq!` in equality_threshold_discounts at src/lib.rs:14: the assertion is inside a closure ripr cannot see invoked exactly once
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

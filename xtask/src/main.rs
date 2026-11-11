@@ -322,7 +322,8 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -14768,12 +14769,29 @@ mod architecture_rule_tests {
 
     #[test]
     fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
-    {
-        const OUTPUT_CLI: &str =
-            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
-        const SCOPED: &str = "!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: test wrapper";
+    -> Result<(), String> {
+        let policy_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
+        let records =
+            super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
+        let required_paths = [
+            "crates/ripr/src/output/**",
+            "!crates/ripr/src/output/first_pr.rs",
+        ];
+        let records = records
+            .into_iter()
+            .filter(|record| {
+                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+            })
+            .collect::<Vec<_>>();
+        for path in required_paths {
+            assert!(
+                records.iter().any(|record| record[0] == path),
+                "policy/architecture.txt must retain {path}|crate::cli"
+            );
+        }
         let violations = architecture_rule_violations(
-            &[record(OUTPUT_CLI), record(SCOPED)],
+            &records,
             &[
                 (
                     "crates/ripr/src/output/first_pr/options.rs".to_string(),
@@ -14790,6 +14808,7 @@ mod architecture_rule_tests {
             violations[0].contains("first_pr/options.rs"),
             "{violations:?}"
         );
+        Ok(())
     }
 }
 
@@ -18119,53 +18138,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-/// Parse a `[workspace.lints.<section>]` block from `Cargo.toml`-shaped TOML.
-///
-/// Returns a map of bare lint name (e.g. `unwrap_used`, `unsafe_code`) to its
-/// level string (e.g. `deny`, `forbid`, `warn`, `allow`). Only direct
-/// `name = "level"` lines are recognized; this matches how the workspace
-/// declares lints today and keeps the parser dependency-free.
-fn parse_workspace_lints_section(text: &str, section: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let header = format!("[workspace.lints.{section}]");
-    let mut in_section = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        if line == header {
-            in_section = true;
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_section = false;
-            continue;
-        }
-        if !in_section {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = raw_value.trim().trim_end_matches('#').trim();
-        // Take the first quoted token as the level. Anything more elaborate
-        // (table-form lint configuration) is intentionally not supported here
-        // — workspace lints today are flat `name = "level"` lines.
-        let level = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(level, _)| level.to_string()));
-        if let Some(level) = level {
-            out.insert(key.to_string(), level);
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LedgerLintEntry {
     name: String,
@@ -18451,7 +18423,13 @@ fn collect_clippy_debt_violations(
     today: &str,
 ) -> Vec<String> {
     let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => {
+            violations.push(err);
+            return violations;
+        }
+    };
     let (lints, _) = parse_clippy_lints_ledger(lints_text);
 
     let mut seen_ids = BTreeSet::new();
@@ -18692,8 +18670,14 @@ fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
 }
 
 fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
+    let cargo_rust = match parse_workspace_lints_section(cargo_text, "rust") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
@@ -18795,6 +18779,10 @@ fn check_lint_policy() -> Result<(), String> {
         &ledger_text,
         &no_panic::today_date_string(),
     ));
+    match policy::workspace_lint_inheritance_violations() {
+        Ok(member_violations) => violations.extend(member_violations),
+        Err(error) => violations.push(error),
+    }
 
     finish_policy_report(
         PolicyReportSpec {
@@ -18808,6 +18796,7 @@ fn check_lint_policy() -> Result<(), String> {
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
+                "Every Cargo workspace member must opt in with `[lints] workspace = true`; remove member-local lint tables that replace or override the shared policy.",
             ],
             rerun_command: "cargo xtask check-lint-policy",
             exception_template: None,

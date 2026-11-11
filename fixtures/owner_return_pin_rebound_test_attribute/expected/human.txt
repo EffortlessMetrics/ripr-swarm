@@ -13,7 +13,9 @@ Start here:
   File: ./src/lib.rs:2
   Static exposure: unknown (severity: note, confidence 0.64)
   Why unknown: the analysis could not determine a static exposure state
-  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: the test carries `#[test]`, which may change whether or how it runs
+  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: an import in this file may
+    rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and
+    may change whether or how the test runs
   Changed behavior: input * 3
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
     as the standard macro on the path that reaches this change (for example the file did not parse,
@@ -36,7 +38,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 7 more detail line(s) in --format human-full
+    - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
