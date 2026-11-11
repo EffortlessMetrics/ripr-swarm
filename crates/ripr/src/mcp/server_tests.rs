@@ -2384,11 +2384,23 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         Ok("gap:1".to_string())
     );
     let none: Option<serde_json::Map<String, Value>> = None;
+    let empty_map = argument_map(serde_json::json!({}));
+    let other_key = argument_map(serde_json::json!({"unrelated": "value"}));
     let empty = argument_map(serde_json::json!({"canonical_id": ""}));
     let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
     for (arguments, message, expected) in [
         (
             &none,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty_map,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &other_key,
             "canonical_id is required and must be a non-empty string",
             "non-empty string",
         ),
@@ -2408,10 +2420,12 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         assert_eq!(data["expected"], serde_json::json!(expected));
     }
 
-    assert_eq!(
-        refresh_source_argument(&none),
-        Ok(workspace::RefreshSource::Committed)
-    );
+    for absent in [&none, &empty_map, &other_key] {
+        assert_eq!(
+            refresh_source_argument(absent),
+            Ok(workspace::RefreshSource::Committed)
+        );
+    }
     for (value, expected) in [
         ("committed", workspace::RefreshSource::Committed),
         ("worktree", workspace::RefreshSource::Worktree),
