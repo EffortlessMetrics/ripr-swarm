@@ -576,7 +576,9 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
                 }
             }
             Statement::ExportNamedDeclaration(export)
-                if export.declaration.is_none() && export.source.is_none() =>
+                if export.declaration.is_none()
+                    && export.source.is_none()
+                    && export.export_kind != ImportOrExportKind::Type =>
             {
                 for specifier in &export.specifiers {
                     if specifier.export_kind == ImportOrExportKind::Type {
@@ -603,6 +605,82 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
             owner.exported_as_default = true;
         }
     }
+    // A class declared first and exported as `default` by a separate
+    // statement (`class Cart {}` ... `export default Cart;`) is the module's
+    // default export like `export default class Cart {}`, so its methods
+    // carry the same `class_default_export` marker.
+    let default_classes = default_exported_class_declarations(body, &default_locals);
+    if default_classes.is_empty() {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner
+            .class_name
+            .as_deref()
+            .is_some_and(|class_name| default_classes.contains(class_name))
+        {
+            owner.class_default_export = true;
+        }
+    }
+}
+
+/// The names in `default_locals` that are one top-level `class Name {}`
+/// declaration reachable only as the module's default export.
+///
+/// Fail-closed identity gates: exactly one file-level declaration binds the
+/// name and it is a class declaration; the file never writes the name (a
+/// class binding is mutable, and `export { Name as default }` is live); and
+/// no named export carries the class too (`export { Name }`, `export { Name
+/// as Other }`), because the marker makes a named import of the class stop
+/// relating. A class with both exports keeps its named-import reading.
+fn default_exported_class_declarations<'a>(
+    body: &'a [Statement<'a>],
+    default_locals: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<&'a str> {
+    let mut classes: std::collections::HashSet<&'a str> = body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::ClassDeclaration(class) if !class.declare => {
+                class.id.as_ref().map(|id| id.name.as_str())
+            }
+            _ => None,
+        })
+        .filter(|name| default_locals.contains(*name))
+        .collect();
+    if classes.is_empty() {
+        return classes;
+    }
+    let mut declared = Vec::new();
+    super::tests_extract::collect_registration_scope_names(body, &mut declared, false);
+    classes.retain(|name| {
+        declared
+            .iter()
+            .filter(|other| other.as_str() == *name)
+            .count()
+            == 1
+    });
+    for stmt in body {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.source.is_some() || export.export_kind == ImportOrExportKind::Type {
+            continue;
+        }
+        for specifier in &export.specifiers {
+            if specifier.export_kind != ImportOrExportKind::Type
+                && module_export_name_text(&specifier.exported).as_deref() != Some("default")
+                && let Some(local) = module_export_name_text(&specifier.local)
+            {
+                classes.remove(local.as_str());
+            }
+        }
+    }
+    if classes.is_empty() {
+        return classes;
+    }
+    let written = identifier_writes(body);
+    classes.retain(|name| !written.contains(*name));
+    classes
 }
 
 /// Mark a top-level function declaration as the module's CommonJS default

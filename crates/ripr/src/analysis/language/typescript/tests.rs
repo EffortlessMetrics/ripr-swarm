@@ -21272,6 +21272,7 @@ mod comparison_edit_tests;
 mod cross_module_entry_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
+mod default_class_declaration_tests;
 mod default_object_member_tests;
 mod derived_operand_tests;
 mod directory_specifier_tests;
