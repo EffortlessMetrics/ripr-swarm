@@ -8135,7 +8135,8 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names",
-  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref"
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref",
+  "crates/ripr/src/analysis/diff/load.rs::tests::single_branch_shallow_clone_advice_widens_before_unshallow"
 ]
 fixtures = []
 code = [

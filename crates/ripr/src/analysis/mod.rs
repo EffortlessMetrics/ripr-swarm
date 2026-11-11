@@ -87,10 +87,12 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// analysis tree and name the type through inference.
 #[cfg(test)]
 pub(crate) use diff::LoadedDiff;
+pub(crate) use diff::bare_repository_message;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+#[cfg(test)]
 pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
 /// product and xtask routes alike.

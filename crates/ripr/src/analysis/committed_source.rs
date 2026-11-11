@@ -820,11 +820,11 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
         // A bare repository resolves a base and then has no work tree to
-        // read status from. That is the not-a-work-tree state, with its own
-        // next action, not a probe failure to print raw (#14104).
+        // read status from. That state has its own next action (check out a
+        // work tree), not a probe failure to print raw (#14104).
         if output.status.code() == Some(128) && stderr.contains("must be run in a work tree") {
             return Err(CoreError::repository_root_unusable(
-                crate::analysis::not_a_work_tree_message(root),
+                crate::analysis::bare_repository_message(root),
             ));
         }
         // Exit 128 is Git's generic fatal. Only a diagnostic that says the

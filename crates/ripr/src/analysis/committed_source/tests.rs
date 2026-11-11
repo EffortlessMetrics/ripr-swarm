@@ -1025,11 +1025,11 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
 }
 
 /// #14104: a bare repository resolves a base but has no work tree, so the
-/// status read fails with Git's "must be run in a work tree". That is the
-/// not-a-work-tree state and carries its message and next action, not the
-/// raw probe failure. The work tree it was cloned from is the control.
+/// status read fails with Git's "must be run in a work tree". That carries
+/// the bare-repository message and its next action (check out a work tree),
+/// not the raw probe failure. The work tree it was cloned from is the control.
 #[test]
-fn bare_repository_reports_not_a_work_tree_with_its_next_action() -> Result<(), String> {
+fn bare_repository_reports_its_work_tree_next_action() -> Result<(), String> {
     let repo = fixture_root("bare-source")?;
     write(&repo.0, "src/lib.rs", "pub fn one() -> u8 { 1 }\n")?;
     commit_all(&repo.0, "base")?;
@@ -1056,7 +1056,8 @@ fn bare_repository_reports_not_a_work_tree_with_its_next_action() -> Result<(), 
         "{error:?}"
     );
     let message = error.to_string();
-    assert_eq!(message, crate::analysis::not_a_work_tree_message(&bare.0));
+    assert_eq!(message, crate::analysis::bare_repository_message(&bare.0));
+    assert!(message.contains("git worktree add"), "{message}");
     assert!(!message.contains("committed-source probe"), "{message}");
     Ok(())
 }

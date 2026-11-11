@@ -1010,6 +1010,18 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
     )
 }
 
+/// The refusal for a bare repository: it is a repository, but it has no
+/// checked-out source for the analysis to read, so the next action is a
+/// work tree, not "run inside a repository" (#14104).
+pub(crate) fn bare_repository_message(root: &Path) -> String {
+    format!(
+        "This root is a bare Git repository with no work tree (the analysis did not run). \
+         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
+         `--root <path>` to that work tree. Root: `{}`",
+        root.display(),
+    )
+}
+
 fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String> {
     match probe {
         GitRootProbe::GitNotFoundOnPath => {
@@ -2079,16 +2091,21 @@ fn missing_ref_repair(
             .to_string();
     }
     if is_shallow_repository(root, git_timeout) {
-        // An ancestor offset (`HEAD~5`) needs depth only. A branch needs its
-        // ref fetched, which `--unshallow` alone never does in a
-        // single-branch clone.
-        if ancestor_anchor(missing_ref).is_none()
-            && origin_tracks_a_single_branch(root, git_timeout)
-        {
+        // An ancestor offset of a present commit (`HEAD~5`) needs depth
+        // only. A branch, or an offset of one that is absent
+        // (`origin/main~1`), needs its ref fetched, which `--unshallow`
+        // alone never does in a single-branch clone.
+        let needs_a_branch = ancestor_anchor(missing_ref).is_none_or(|anchor| {
+            !git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+                .is_some_and(|output| output.status.success())
+        });
+        if needs_a_branch && origin_tracks_a_single_branch(root, git_timeout) {
+            // The widened remote is `origin`, so the fetch names it: an
+            // unqualified fetch follows the current branch's remote.
             return format!(
                 "This is a shallow clone that tracks a single branch: widen it with \
                  `{WIDEN_ORIGIN_COMMAND}`, then fetch the missing history with `git fetch \
-                 --unshallow`"
+                 --unshallow origin`"
             );
         }
         return "This is a shallow clone: fetch the missing history with `git fetch \
@@ -4708,12 +4725,14 @@ mod tests {
                 && err.contains("git fetch --unshallow origin"),
             "a single-branch shallow clone must name the widening step, got: {err}"
         );
-        let err = load_diff(&single, Some("origin/main"), None, None)
-            .expect_err("origin/main was never fetched");
-        assert!(
-            err.contains(WIDEN_ORIGIN_COMMAND) && err.contains("git fetch --unshallow"),
-            "an explicit branch base must name the widening step, got: {err}"
-        );
+        for base in ["origin/main", "origin/main~1"] {
+            let err = load_diff(&single, Some(base), None, None)
+                .expect_err("origin/main was never fetched");
+            assert!(
+                err.contains(WIDEN_ORIGIN_COMMAND) && err.contains("git fetch --unshallow origin"),
+                "an explicit base on an absent branch must name the widening step, got: {err}"
+            );
+        }
         // An ancestor offset needs depth only, not another branch.
         let err = load_diff(&single, Some("HEAD~1"), None, None)
             .expect_err("a depth-1 clone has no parent commit");
