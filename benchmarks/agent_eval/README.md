@@ -73,7 +73,7 @@ read the agent's tests before trusting a surprising score. Record each
 arm's tokens and tool calls next to its score. Use a fresh directory per arm
 and per run.
 
-### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr at main `2ab9f908`)
+### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr with sources at main `2ab9f908`)
 
 Same task text in both arms; the ripr arm also got the `init --agents` block
 and the binary path.
@@ -156,7 +156,7 @@ additions are realistic changes where an agent goes wrong today: ones vanilla
 agents miss, ones ripr reports noisily, and controls where the right answer is
 silence. Keep each crate free of dependencies so the eval stays offline.
 
-## Baseline (main `2ab9f908`, debug build)
+## Baseline (debug build; `ripr` sources identical to main `2ab9f908`)
 
 | route | answered | tokens to answer | total tokens |
 |---|---:|---:|---:|
