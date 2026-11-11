@@ -22,16 +22,23 @@ pub fn main_entry() -> Result<(), String> {
     if args == ["--retention-control-child"] {
         return transport::retention_child();
     }
+    if args == ["--cleanup-control-primary"] {
+        return transport::cleanup_primary();
+    }
+    if args == ["--cleanup-control-grandchild"] {
+        transport::cleanup_grandchild();
+        return Ok(());
+    }
     if args == ["--self-test"] {
         let executable = env::current_exe().map_err(|e| e.to_string())?;
         println!(
             "{}",
-            retention_control(&executable, Instant::now() + Duration::from_secs(10))?
+            json!({"retained_state_negative_control":retention_control(&executable, Instant::now() + Duration::from_secs(10))?,"owned_cleanup_control":transport::cleanup_control(&executable, Instant::now() + Duration::from_secs(10))?})
         );
         return Ok(());
     }
     if args.len() != 2 {
-        return Err("usage: cargo run -p xtask --no-default-features --features resident-session --example resident_session -- <exact-ripr-binary> <new-evidence-directory>\nUse --self-test for the synthetic measured-child retention control. Linux only. The fixed fixture is scratch; no existing repository is edited.".into());
+        return Err("usage: cargo run -p xtask --no-default-features --features resident-session --example resident_session -- <exact-ripr-binary> <new-evidence-directory>\nUse --self-test for the synthetic measured-child retention and owned-grandchild cleanup controls. Linux only. The fixed fixture is scratch; no existing repository is edited.".into());
     }
     if !cfg!(target_os = "linux") {
         return Err("VmRSS session instrument requires Linux; no measurements made".into());
@@ -61,6 +68,8 @@ pub fn main_entry() -> Result<(), String> {
         report["fixture_files_sha256"] = json!(fixture.identity()?);
         let control = retention_control(&env::current_exe().map_err(|e| e.to_string())?, deadline)?;
         report["retained_state_negative_control"] = control;
+        report["owned_cleanup_control"] =
+            transport::cleanup_control(&env::current_exe().map_err(|e| e.to_string())?, deadline)?;
         for wire in [Wire::Lsp, Wire::Mcp] {
             fixture.edit(0)?;
             let cache = evidence.join(format!("{}-cache", wire.name()));
@@ -204,7 +213,7 @@ fn start(
     Ok(session)
 }
 
-fn snapshot(session: &mut Session, fixture: &Fixture) -> Result<Value, String> {
+fn snapshot(session: &mut Session, fixture: &Fixture) -> Result<(Value, Value), String> {
     if session.wire == Wire::Lsp {
         session.call(
             "workspace/executeCommand",
@@ -224,9 +233,6 @@ fn snapshot(session: &mut Session, fixture: &Fixture) -> Result<Value, String> {
         }
         let mut listed = session.call("ripr/listActionableItems", json!({}))?;
         admit_lsp(&listed, &snapshot)?;
-        // Validate generation binding first. Keep every semantic field; replace
-        // only exact occurrences of this session's already-checked generation.
-        replace_generation(&mut listed, &snapshot);
         let mut diagnostics = session.call(
             "textDocument/diagnostic",
             json!({"textDocument":{"uri":transport::file_uri(&fixture.root.join("src/lib.rs"))}}),
@@ -236,14 +242,22 @@ fn snapshot(session: &mut Session, fixture: &Fixture) -> Result<Value, String> {
                 "LSP did not return full document diagnostics: {diagnostics}"
             ));
         }
+        let mut raw = listed.clone();
+        raw["document_diagnostics"] = diagnostics.clone();
+        // The complete-evidence digest includes seam generation data. Check its
+        // agreement with this current snapshot's status before normalizing it;
+        // preserve both raw responses, and compare complete diagnostic payloads.
+        let complete = normalize_lsp_evidence_identity(&mut listed, &status)?;
+        replace_generation(&mut listed, &snapshot);
         // resultId is a pull-transport token, not a finding identity.
         diagnostics
             .as_object_mut()
             .ok_or("diagnostics object missing")?
             .remove("resultId");
         replace_generation(&mut diagnostics, &snapshot);
+        replace_generation(&mut diagnostics, &complete);
         listed["document_diagnostics"] = diagnostics;
-        Ok(listed)
+        Ok((listed, raw))
     } else {
         let refresh = session.tool(
             "ripr_refresh",
@@ -272,9 +286,45 @@ fn snapshot(session: &mut Session, fixture: &Fixture) -> Result<Value, String> {
         }
         let mut listed = session.tool("ripr_list_gaps", json!({"snapshot_id":snapshot}))?;
         admit_mcp(&listed, snapshot)?;
+        let items = listed["items"]
+            .as_array()
+            .ok_or("MCP missing selected items")?
+            .clone();
+        if items.len() > 16 {
+            return Err("MCP fixture exceeds 16-item detail bound".into());
+        }
+        let mut evidence = Vec::new();
+        for item in items {
+            let canonical = text(&item, "/canonical_id")?;
+            let detail = session.tool(
+                "ripr_get_gap",
+                json!({"canonical_id":canonical,"snapshot_id":snapshot}),
+            )?;
+            if detail["snapshot_id"] != snapshot
+                || detail.pointer("/item/canonical_id").and_then(Value::as_str) != Some(canonical)
+            {
+                return Err("MCP detailed evidence snapshot/item binding differs".into());
+            }
+            evidence.push(detail);
+        }
+        listed["evidence"] = json!(evidence);
+        let raw = listed.clone();
         replace_generation(&mut listed, snapshot);
-        Ok(listed)
+        Ok((listed, raw))
     }
+}
+
+fn normalize_lsp_evidence_identity(listed: &mut Value, status: &Value) -> Result<String, String> {
+    let complete = text(listed, "/complete_evidence_identity")?.to_string();
+    if status
+        .pointer("/diagnostic_budget/complete_evidence_identity")
+        .and_then(Value::as_str)
+        != Some(complete.as_str())
+    {
+        return Err("LSP complete-evidence status/list binding differs".into());
+    }
+    replace_generation(listed, &complete);
+    Ok(complete)
 }
 
 fn text<'a>(value: &'a Value, pointer: &str) -> Result<&'a str, String> {
@@ -341,8 +391,18 @@ fn admit_mcp(listed: &Value, snapshot: &str) -> Result<(), String> {
             return Err(format!("MCP incomplete {items} population"));
         }
     }
-    if listed["overflowed"] != false {
-        return Err("MCP small fixture selection overflowed or was undisclosed".into());
+    // Inline-detail suppression is recoverable through mandatory full get_gap
+    // calls. Any item omission, other overflow or undisclosed state refuses.
+    if listed["omitted"] != 0 || listed["total"] != listed["filtered"] {
+        return Err("MCP fixture did not retain its complete item population".into());
+    }
+    let inline_only = listed["overflowed"] == true
+        && listed["overflow_reasons"] == json!(["inline_detail_limit"]);
+    let no_overflow = listed["overflowed"] == false && listed["overflow_reasons"] == json!([]);
+    if !inline_only && !no_overflow {
+        return Err(format!(
+            "MCP small fixture selection overflowed or was undisclosed: {listed}"
+        ));
     }
     Ok(())
 }
@@ -350,6 +410,9 @@ fn replace_generation(value: &mut Value, generation: &str) {
     match value {
         Value::String(text) if text == generation => {
             *text = "<validated-session-generation>".into()
+        }
+        Value::String(text) if text == &format!("ripr://snapshot/{generation}") => {
+            *text = "ripr://snapshot/<validated-session-generation>".into()
         }
         Value::Array(items) => items
             .iter_mut()
@@ -367,7 +430,7 @@ fn require_parity(resident: &Value, fresh: &Value) -> Result<(), String> {
         Ok(())
     }
 }
-const SEMANTIC_COLLECTIONS: [&str; 7] = [
+const SEMANTIC_COLLECTIONS: [&str; 8] = [
     "selected",
     "omitted",
     "hidden_gaps",
@@ -375,6 +438,7 @@ const SEMANTIC_COLLECTIONS: [&str; 7] = [
     "document_diagnostics",
     "items",
     "omitted_items",
+    "evidence",
 ];
 fn semantic_projection(value: &Value) -> Value {
     Value::Object(
@@ -436,7 +500,7 @@ fn measure_surface(
         if index != 0 && operation != "process_restart" {
             resident.begin_observation();
         }
-        let observed = snapshot(&mut resident, fixture)?;
+        let (observed, observed_raw) = snapshot(&mut resident, fixture)?;
         let memory = resident.settle(if operation == "idle_settle" {
             Duration::from_secs(1)
         } else {
@@ -444,11 +508,11 @@ fn measure_surface(
         })?;
         // Reference cost is not charged to the resident operation's samples.
         let mut fresh = start(binary, fixture, cache, wire, deadline)?;
-        let expected = snapshot(&mut fresh, fixture)?;
+        let (expected, expected_raw) = snapshot(&mut fresh, fixture)?;
         fresh.finish()?;
         // Preserve both documents before adjudication, including a failed
         // parity observation. Rehearsal failures are evidence, not lost rows.
-        let operation_receipt = json!({"operation":operation,"fixture_identity":fixture.identity()?,"pid":resident.id(),"memory":memory,"resident":observed,"fresh":expected});
+        let operation_receipt = json!({"operation":operation,"fixture_identity":fixture.identity()?,"pid":resident.id(),"memory":memory,"resident":observed,"fresh":expected,"resident_raw":observed_raw,"fresh_raw":expected_raw});
         fs::write(
             evidence.join(format!("{}-{index:02}-{operation}.json", wire.name())),
             serde_json::to_vec_pretty(&operation_receipt).map_err(|e| e.to_string())?,
@@ -584,6 +648,25 @@ mod tests {
         assert_eq!(value["items"][0]["version"], "1");
     }
     #[test]
+    fn lsp_evidence_digest_requires_current_status_agreement() {
+        let mut listed = json!({"complete_evidence_identity":"digest:a","items":[{"id":"keep"}]});
+        let wrong = json!({"diagnostic_budget":{"complete_evidence_identity":"digest:b"}});
+        assert!(normalize_lsp_evidence_identity(&mut listed, &wrong).is_err());
+        assert_eq!(listed["complete_evidence_identity"], "digest:a");
+        let current = json!({"diagnostic_budget":{"complete_evidence_identity":"digest:a"}});
+        assert!(normalize_lsp_evidence_identity(&mut listed, &current).is_ok());
+        assert_eq!(listed["items"][0]["id"], "keep");
+    }
+    #[test]
+    fn snapshot_links_do_not_supply_semantic_variation() {
+        let mut a = json!({"evidence":[{"snapshot_id":"one","item":{"canonical_id":"keep","links":{"snapshot":"ripr://snapshot/one"}}}]});
+        let mut b = json!({"evidence":[{"snapshot_id":"two","item":{"canonical_id":"keep","links":{"snapshot":"ripr://snapshot/two"}}}]});
+        replace_generation(&mut a, "one");
+        replace_generation(&mut b, "two");
+        assert!(require_changed(&a, &b).is_err());
+        assert!(require_parity(&a, &b).is_ok());
+    }
+    #[test]
     fn retained_growth_control_uses_current_memory_not_lifetime_peak() {
         assert!(retained_growth(100, 120, 20).is_ok());
         assert!(retained_growth(100, 121, 20).is_err());
@@ -593,9 +676,15 @@ mod tests {
     fn incomplete_lists_and_wrong_binding_refuse() {
         assert!(admit_lsp(&json!({}), "s").is_err());
         assert!(admit_mcp(&json!({"snapshot_id":"s","items":[]}), "s").is_err());
-        let good = json!({"snapshot_id":"s","items":[{}],"filtered":1,"omitted_items":[],"omitted":0,"overflowed":false,"page":{"next_offset":null},"omitted_page":{"next_offset":null}});
+        let good = json!({"snapshot_id":"s","items":[{}],"filtered":1,"total":1,"omitted_items":[],"omitted":0,"overflowed":false,"overflow_reasons":[],"page":{"next_offset":null},"omitted_page":{"next_offset":null}});
         assert!(admit_mcp(&good, "s").is_ok());
         assert!(admit_mcp(&good, "other").is_err());
+        let mut inline_only = good.clone();
+        inline_only["overflowed"] = json!(true);
+        inline_only["overflow_reasons"] = json!(["inline_detail_limit"]);
+        assert!(admit_mcp(&inline_only, "s").is_ok());
+        inline_only["overflow_reasons"] = json!(["serialized_byte_limit"]);
+        assert!(admit_mcp(&inline_only, "s").is_err());
         let mut partial = good;
         partial["omitted_page"]["next_offset"] = json!(1);
         assert!(admit_mcp(&partial, "s").is_err());

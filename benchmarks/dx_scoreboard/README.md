@@ -619,9 +619,14 @@ edit, a test-only assertion edit, two returns to the initial source state,
 process teardown/restart and one second of idle settling. A fresh server runs
 against the identical saved state after each measured operation. Nonempty
 initial subjects, internally bound current snapshots, complete small-fixture
-lists and equal full semantic projections are required. Only independently
-validated session-generation strings and the document pull `resultId` token
-are normalized. Both predicate and test-only edits must change semantic collections. Replaying
+lists and equal full semantic projections are required. MCP additionally reads
+every selected item through snapshot-bound `ripr_get_gap` (at most 16). An
+inline-detail omission must be recovered by that full-evidence read; any item
+omission, other overflow or failed detail read refuses the measurement. Only independently
+validated session-generation strings, the generation-sensitive complete-evidence
+digest (after checking current status/list agreement), and the document pull
+`resultId` token are normalized. Full raw snapshots remain in each operation
+receipt; diagnostic payloads and canonical finding identities are compared. Both predicate and test-only edits must change semantic collections. Replaying
 prior findings with the current response metadata must fail the same parity
 check; a changed input hash alone cannot satisfy the negative control. No claim is made about
 request cancellation, interrupted refresh supersession, didSave scheduling or
@@ -660,3 +665,21 @@ then touches and retains 32 MiB in that same PID. The retained-growth evaluator
 must reject it against a 16 MiB control threshold. Allocating memory in the
 driver cannot satisfy this control. This proves the observer/control path,
 not that a real RIPR session leaks or meets a memory target.
+
+A second synthetic control starts an owned same-group grandchild inheriting
+stdin/stdout, then exercises the actual `Session::finish` path. Within two
+seconds the primary must be reaped, the grandchild terminal (absent or zombie,
+not a descendant-reaping claim), and both pipe threads joined. A deliberately
+wrong primary-only termination must fail that same predicate while the
+still-live grandchild retains stdout; actual group cleanup then repairs it.
+The control grandchild also has a five-second lifetime ceiling. This qualifies
+only the instrument's owned same-group teardown path, not escaped descendants,
+Windows containment, or analyzer cancellation.
+
+The retained [three-run rehearsal](testdata/12906-resident-session-rehearsal.json)
+uses an exact-head Linux CI wheel payload without another analyzer build. All
+54 operation/reference comparisons completed, including semantic changes in
+both production and test-only edits. It retains raw memory samples, source
+and binary digests, and the prior failed-rehearsal repairs in the PR record.
+These small-fixture observations qualify the instrument path only. They do
+not add a scoreboard baseline or establish a memory/latency product budget.

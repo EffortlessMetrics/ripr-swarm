@@ -432,6 +432,165 @@ pub(super) fn git(root: &Path, args: &[&str], deadline: Instant) -> Result<Strin
         std::thread::sleep(SAMPLE_INTERVAL);
     }
 }
+// This is an instrument control, not a product descendant-containment claim.
+// The grandchild inherits both pipes and the primary's process group. Its own
+// five-second ceiling also bounds the deliberately wrong primary-only cleanup.
+pub(super) fn cleanup_primary() -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut command = command(executable);
+    command.arg("--cleanup-control-grandchild");
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(i32::try_from(std::process::id()).map_err(|e| e.to_string())?);
+    }
+    let mut descendant = command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("spawn owned control grandchild: {e}"))?;
+    let request = read_message(&mut BufReader::new(std::io::stdin()), Wire::Mcp)?;
+    if request["method"] != "ready" {
+        return Err("unknown cleanup control request".into());
+    }
+    println!(
+        "{}",
+        json!({"jsonrpc":"2.0","id":request["id"],"result":{"descendant_pid":descendant.id()}})
+    );
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    descendant.wait().map_err(|e| e.to_string())?;
+    Ok(())
+}
+pub(super) fn cleanup_grandchild() {
+    std::thread::sleep(Duration::from_secs(5));
+}
+
+#[derive(Clone, Copy)]
+struct ProcessIdentity {
+    group: u32,
+    started: u64,
+    state: char,
+}
+fn process_identity(pid: u32) -> Result<Option<ProcessIdentity>, String> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read owned control process: {error}")),
+    };
+    // comm can contain spaces and parentheses; numeric fields follow its final ')'.
+    let fields: Vec<_> = stat
+        .rsplit_once(')')
+        .ok_or("malformed control process stat")?
+        .1
+        .split_whitespace()
+        .collect();
+    Ok(Some(ProcessIdentity {
+        state: fields
+            .first()
+            .and_then(|s| s.chars().next())
+            .ok_or("missing state")?,
+        group: fields
+            .get(2)
+            .ok_or("missing process group")?
+            .parse::<u32>()
+            .map_err(|e| e.to_string())?,
+        started: fields
+            .get(19)
+            .ok_or("missing start time")?
+            .parse::<u64>()
+            .map_err(|e| e.to_string())?,
+    }))
+}
+fn descendant_terminal(pid: u32, identity: ProcessIdentity) -> Result<bool, String> {
+    match process_identity(pid)? {
+        None => Ok(true),
+        Some(current) if current.started != identity.started || current.group != identity.group => {
+            Err("owned control descendant identity changed".into())
+        }
+        Some(current) => Ok(matches!(current.state, 'Z' | 'X')),
+    }
+}
+fn require_cleanup(
+    primary_reaped: bool,
+    descendant_terminal: bool,
+    pipes_finished: bool,
+) -> Result<(), String> {
+    if primary_reaped && descendant_terminal && pipes_finished {
+        Ok(())
+    } else {
+        Err("owned cleanup control left a live descendant or unfinished pipe thread".into())
+    }
+}
+pub(super) fn cleanup_control(binary: &Path, deadline: Instant) -> Result<Value, String> {
+    let mut observations = Vec::new();
+    for primary_only in [false, true] {
+        let mut command = command(binary);
+        command.arg("--cleanup-control-primary");
+        let mut session = Session::spawn(command, Wire::Mcp, deadline)?;
+        let response = session.call("ready", json!({}))?;
+        let pid = response["descendant_pid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+            .ok_or("missing control descendant PID")?;
+        let identity = process_identity(pid)?.ok_or("control descendant absent before cleanup")?;
+        if identity.group != session.id() || descendant_terminal(pid, identity)? {
+            return Err("control descendant must be live in the owned primary group".into());
+        }
+        let wrong = if primary_only {
+            // Deliberately wrong cleanup leaves the inherited stdout open. Do not
+            // join its reader: first apply the same predicate, then repair using
+            // the real Session::finish path. Drop also repairs on an early error.
+            session.child.kill().map_err(|e| e.to_string())?;
+            session.child.wait().map_err(|e| e.to_string())?;
+            session.input.take();
+            std::thread::sleep(Duration::from_millis(100));
+            let primary_reaped = session
+                .child
+                .try_wait()
+                .map_err(|e| e.to_string())?
+                .is_some();
+            let terminal = descendant_terminal(pid, identity)?;
+            let pipes_finished = session.reader.as_ref().is_some_and(JoinHandle::is_finished)
+                && session.writer.as_ref().is_some_and(JoinHandle::is_finished);
+            if require_cleanup(primary_reaped, terminal, pipes_finished).is_ok()
+                || terminal
+                || session.reader.as_ref().is_none_or(JoinHandle::is_finished)
+            {
+                return Err("primary-only cleanup negative control was not detected".into());
+            }
+            json!({"status":"rejected_as_expected","primary_reaped":primary_reaped,"descendant_terminal":terminal,"pipe_threads_finished":pipes_finished})
+        } else {
+            Value::Null
+        };
+        let started = Instant::now();
+        session.finish()?;
+        let until = deadline.min(started + Duration::from_secs(2));
+        let terminal = loop {
+            let terminal = descendant_terminal(pid, identity)?;
+            if terminal || Instant::now() >= until {
+                break terminal;
+            }
+            budget(deadline)?;
+            std::thread::sleep(SAMPLE_INTERVAL);
+        };
+        let primary_reaped = session
+            .child
+            .try_wait()
+            .map_err(|e| e.to_string())?
+            .is_some();
+        let pipes_finished =
+            session.finished && session.reader.is_none() && session.writer.is_none();
+        require_cleanup(primary_reaped, terminal, pipes_finished)?;
+        if started.elapsed() >= Duration::from_secs(2) {
+            return Err("owned control cleanup exceeded two seconds".into());
+        }
+        observations.push(json!({"mode":if primary_only {"primary_only_then_actual_finish"} else {"actual_finish"},"same_group_and_live_before_cleanup":true,"primary_reaped":primary_reaped,"descendant_terminal":terminal,"pipe_threads_joined":pipes_finished,"cleanup_elapsed_ms":started.elapsed().as_secs_f64()*1000.0,"primary_only_negative_control":wrong}));
+    }
+    Ok(
+        json!({"status":"observed","scope":"synthetic same-group grandchild inheriting stdin/stdout; terminal means absent or zombie, not descendant reaping; no escaped-descendant claim","observations":observations}),
+    )
+}
+
 pub(super) fn retention_child() -> Result<(), String> {
     let mut held = Vec::new();
     let mut input = BufReader::new(std::io::stdin());
@@ -464,6 +623,14 @@ pub(super) fn retention_child() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cleanup_requires_descendant_and_pipe_completion() {
+        assert!(require_cleanup(true, true, true).is_ok());
+        assert!(require_cleanup(true, false, false).is_err());
+        assert!(require_cleanup(true, false, true).is_err());
+        assert!(require_cleanup(true, true, false).is_err());
+        assert!(require_cleanup(false, true, true).is_err());
+    }
     #[test]
     fn current_and_lifetime_peak_are_distinct() {
         let text = "VmHWM:\t9000 kB\nVmRSS:\t2000 kB\n";
