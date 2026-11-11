@@ -109,6 +109,10 @@ const OBSERVING: &[&str] = &[
     "assert_eq!(format!(\"a, b ({})\", over(10)), \"a, b (true)\");",
     "assert!(matches!(over(10), true));",
     "assert_eq!(u8::from(over(10)), 1);",
+    "assert_eq!(Some(over(10)).eq(&Some(true)), true);",
+    "assert_eq!(vec![over(10)].contains(&true), true);",
+    "assert_eq!(Some(over(10)).unwrap_or(false), true);",
+    "assert_eq!([over(10)].first(), Some(&true));",
     "for (q, e) in [(10, true), (9, false)] { assert_eq!(over(q), e); }",
 ];
 

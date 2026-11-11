@@ -51,6 +51,7 @@ const LET_DEPTH: usize = 4;
 const UNWRAPPING_METHODS: &[&str] = &[
     "unwrap",
     "expect",
+    "unwrap_or",
     "unwrap_or_default",
     "unwrap_unchecked",
     "into_inner",
@@ -70,6 +71,11 @@ const PAYLOAD_KEEPING_METHODS: &[&str] = &[
     "as_deref",
     "collect",
     "rev",
+    "first",
+    "last",
+    "get",
+    "pop",
+    "next",
 ];
 
 /// Methods whose result depends on their argument (`a.eq(&over(10))`).
@@ -403,6 +409,9 @@ impl Reader<'_> {
             // Any method of the owner's own value reads that value.
             Sink::Value => Sink::Value,
             Sink::Payload if UNWRAPPING_METHODS.contains(&name.as_str()) => Sink::Value,
+            // `Some(over(10)).eq(&Some(true))`, `vec![over(10)].contains(&true)`:
+            // the comparison reads the payload.
+            Sink::Payload if ARGUMENT_COMPARING_METHODS.contains(&name.as_str()) => Sink::Value,
             Sink::Payload if PAYLOAD_KEEPING_METHODS.contains(&name.as_str()) => Sink::Payload,
             Sink::Payload | Sink::Masked => Sink::Masked,
             Sink::Absent => {
@@ -607,6 +616,11 @@ mod tests {
             "assert_eq!(Cart::over(&cart, 10), true);",
             "assert!(ready && over(10));",
             "assert!(true.eq(&over(10)));",
+            "assert!(Some(over(10)).eq(&Some(true)));",
+            "assert!(vec![over(10)].contains(&true));",
+            "assert_eq!(Some(over(10)).unwrap_or(false), true);",
+            "assert_eq!([over(10)].first(), Some(&true));",
+            "assert_eq!(vec![over(10)].pop(), Some(true));",
             "assert_eq!(format!(\"a, b ({})\", over(10)), \"a, b (true)\");",
             "assert_eq!(match over(10) { true => ',', false => 'n' }, ',');",
             "assert_eq!(over(10), true, \"got {}\", Some(over(10)).is_some());",
@@ -634,6 +648,8 @@ mod tests {
             "assert!(true || over(10));",
             "assert_eq!([over(10)].len(), 1);",
             "assert_eq!(Some(over(10)).iter().count(), 1);",
+            "assert_eq!([over(10)].first().is_some(), true);",
+            "assert_eq!(Some(over(10)).map(|_| 1), Some(1));",
         ] {
             assert_eq!(one(assertion), OwnerValueFlow::Masked, "{assertion}");
         }

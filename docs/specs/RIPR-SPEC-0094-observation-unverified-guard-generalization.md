@@ -776,9 +776,10 @@ assertion's compared operands (never its message arguments) and answers:
 Shapes that carry the value: the call itself and any method or field of its
 result; parentheses, `!`, `-`, `*`, `&`, `as`, `?`, `.await`; a tuple, array,
 `vec!`, struct literal, or uppercase-named constructor payload (`Some(..)`),
-compared whole or taken out again with `unwrap` / `expect` /
+compared whole (also with `eq`, `contains` and the other comparing methods)
+or taken out again with `unwrap` / `expect` / `unwrap_or` /
 `unwrap_or_default` / `into_inner`, or read through `clone`, `iter`,
-`collect` and the like; a selected tuple element (`(over(10), 1).0`); any
+`collect`, `first`, `last`, `get`, `pop`, `next` and the like; a selected tuple element (`(over(10), 1).0`); any
 operand of a comparison, arithmetic or `&&` operator; the condition of an
 `if` and the scrutinee of a `match` or `matches!`; a block's tail; a
 `format!` argument; the single argument of a one-argument function call,
