@@ -5239,6 +5239,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
   "crates/ripr/src/cli/commands/init.rs::tests::generated_workflow_installs_the_checksummed_release_binary",
   "crates/ripr/tests/generated_review_workflow.rs::generated_install_failure_explanation_is_consistent_on_every_host",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_workflow_replay_prints_only_runnable_next_steps",
+  "crates/ripr/src/output/ci_summary/tests.rs::complete_artifacts_render_every_section_in_order",
+  "crates/ripr/src/output/ci_summary/tests.rs::start_here_is_named_by_artifact_not_a_target_path",
   "crates/ripr/tests/generated_review_workflow.rs::generated_install_windows_zip_route_replays_securely",
   "crates/ripr/tests/generated_review_workflow.rs::generated_install_unix_routes_keep_their_target_mapping_and_fail_closed",
   "xtask/src/policy/distribution/tests.rs::generated_install_step_mapping_matches_distribution_contract",
@@ -5252,6 +5255,7 @@ fixtures = [
 code = [
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/init_workflow.rs",
+  "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/main.rs",
 ]
