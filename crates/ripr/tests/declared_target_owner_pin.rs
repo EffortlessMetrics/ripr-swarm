@@ -4,7 +4,7 @@
 //! test under `tests/`. A file no target declares stays unplaced.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const PACKAGE: &str = r###"[package]
@@ -92,10 +92,9 @@ fn changed_return(manifest: &str, test_path: &str) -> Result<Finding, String> {
 fn pinned_class(manifest: &str, test_path: &str) -> Result<ExposureClass, String> {
     let finding = changed_return(manifest, test_path)?;
     assert!(
-        finding
-            .related_tests
-            .iter()
-            .any(|test| test.name == "total_adds_two" && test.file == PathBuf::from(test_path)),
+        finding.related_tests.iter().any(
+            |test| test.name == "total_adds_two" && test.file.as_path() == Path::new(test_path)
+        ),
         "the pinning test must be the related test under {test_path}: {finding:?}"
     );
     Ok(finding.class)
