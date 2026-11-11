@@ -112,15 +112,29 @@ NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
 # A recognized cue that refutes a negated change phrase, so it is not resolved
 # work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
 # sentence does not reach across the '.' or ';'. The same cue set is checked
-# after the phrase, so "No changes are needed. That is false." refuses.
+# after the phrase, but only when the remainder actually refutes it (see
+# REFUTATION_AFTER), so "Nothing is wrong." is not a refutation.
 REFUTATION_CUE = re.compile(
-    r"\b(?:not[ \t]+true|untrue|false|incorrect|wrong|not[ \t]+so|not[ \t]+the[ \t]+case"
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case"
     r"|isn't|is[ \t]+not|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say"
     r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
     re.IGNORECASE,
 )
 REFUTES_NEGATION = re.compile(
     REFUTATION_CUE.pattern + r"[^.;\n]*$",
+    re.IGNORECASE,
+)
+# A refutation after the phrase counts only when the remainder starts with a
+# demonstrative/pronoun subject ("That is false", "It is a lie", "I deny it")
+# or the cue itself ("Incorrect.", "Wrong.", "Not so."). Ordinary prose that
+# merely contains a cue word ("Nothing is wrong", "The wrong file") does not.
+REFUTATION_AFTER = re.compile(
+    r"^[ \t]*[.!;]?[ \t]*"
+    r"(?:"
+    r"(?:that|this|it|i)\b[ \t]*(?:is|'s|am|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:incorrect|wrong|not[ \t]+so|false|untrue)\b"
+    r")",
     re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -221,7 +235,7 @@ def strip_negated_change(line: str) -> str:
         if (
             NEGATED_CHANGE_TAIL.match(after)
             and not REFUTES_NEGATION.search(before)
-            and not REFUTATION_CUE.search(after)
+            and not REFUTATION_AFTER.search(after)
         ):
             return " "
         return match.group(0)
@@ -538,6 +552,17 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. Wrong.", False),
         ("REVIEW_READY\nNo code change needed. Not so.", False),
         ("REVIEW_READY\nNo changes are needed. All green.", True),
+        # #14355: ordinary prose with a cue word is not a refutation.
+        ("REVIEW_READY\nNo changes are needed. Nothing is wrong.", True),
+        ("REVIEW_READY\nNo changes are needed. No incorrect claims.", True),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            True,
+        ),
         # #14355: a refuted phrase is not resolved work.
         ("REVIEW_READY\nIt is not true that no changes are needed.", False),
         ("REVIEW_READY\nIt is false that no change is needed.", False),
