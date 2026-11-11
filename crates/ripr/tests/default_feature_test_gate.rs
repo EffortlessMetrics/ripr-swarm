@@ -5,7 +5,7 @@
 //! defaults do not settle keeps the test's assertion uncredited.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const LIB: &str = "pub fn discount(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
@@ -72,7 +72,7 @@ impl Fixture {
                 .related_tests
                 .iter()
                 .any(|related| related.name == "discount_boundary"
-                    && related.file == PathBuf::from(test)),
+                    && related.file.as_path() == Path::new(test)),
             "the gated test must be the related test under {test}: {finding:?}"
         );
         Ok(finding)
