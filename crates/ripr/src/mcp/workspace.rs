@@ -2052,6 +2052,16 @@ impl SessionProfile {
     }
 }
 
+/// Recovery for an invalid `RIPR_GIT_TIMEOUT` in the MCP server's environment
+/// (#14386). The value is process environment, so only a restart reads a fix.
+const MCP_GIT_TIMEOUT_RECOVERY: &str = "set RIPR_GIT_TIMEOUT in the MCP server's environment to a whole number of seconds (0 disables the deadline) or remove it, then restart the server and retry ripr_refresh";
+
+/// The per-invocation git deadline every MCP refresh path runs with:
+/// `RIPR_GIT_TIMEOUT` when set, else the `ripr check` default (#14386).
+fn mcp_git_timeout() -> Result<Option<std::time::Duration>, String> {
+    crate::app::env_or_default_git_timeout(std::env::var("RIPR_GIT_TIMEOUT"))
+}
+
 /// Run one bounded analysis through the shared check authority and bind it
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
@@ -2079,10 +2089,17 @@ pub(crate) fn run_check(
                 ),
             )
         })?;
+        // `RIPR_GIT_TIMEOUT` from the server's environment bounds each git
+        // invocation like it does for `ripr check`, through the same parser
+        // and default (#14386); an invalid value refuses, never a silent
+        // default.
+        let git_timeout = mcp_git_timeout().map_err(|error| {
+            AttemptFailure::new(CODE_CONFIG_INVALID, error, MCP_GIT_TIMEOUT_RECOVERY)
+        })?;
         let input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
-            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            git_timeout,
             ..Default::default()
         };
         if source == RefreshSource::Worktree {
@@ -2362,9 +2379,8 @@ fn committed_over_uncommitted_refusal(
 /// same committed-source probe the committed findings producer uses. Gitignored
 /// files are excluded (see the comment below).
 fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
-    let overlay =
-        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
-            .map_err(|error| error.to_string())?;
+    let overlay = crate::analysis::committed_source::probe(root, mcp_git_timeout()?)
+        .map_err(|error| error.to_string())?;
     let Some(overlay) = overlay else {
         return Ok(Vec::new());
     };

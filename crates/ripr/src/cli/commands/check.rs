@@ -527,16 +527,7 @@ fn parse_git_timeout_from(
     source: &str,
     value: &str,
 ) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("{source} requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    let timeout = std::time::Duration::from_secs(secs);
-    if std::time::Instant::now().checked_add(timeout).is_none() {
-        return Err(format!(
-            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
-        ));
-    }
-    Ok((secs > 0).then_some(timeout))
+    crate::app::parse_git_timeout_seconds(source, value)
 }
 
 /// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
@@ -572,14 +563,7 @@ pub(super) fn git_timeout_from_env(
     if explicit {
         return Ok(None);
     }
-    match env_value {
-        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", &value).map(Some),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        // Present but unreadable is still a misconfiguration (#4374).
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
-        }
-    }
+    crate::app::git_timeout_from_env_value(env_value)
 }
 
 /// Record one argv output selection, refusing a second one that disagrees

@@ -33,7 +33,17 @@ struct Session {
 
 impl Session {
     fn spawn(root: &Path) -> Result<Self, String> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        Self::spawn_with_env(root, &[])
+    }
+
+    /// Spawn with extra server environment, as a host's `env` block sets it.
+    fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command.env_remove("RIPR_GIT_TIMEOUT");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .args(["mcp", "--stdio", "--root"])
             .arg(root)
             .stdin(Stdio::piped())
@@ -649,6 +659,68 @@ fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
     {
         return Err(format!(
             "an offset past the selection must be an empty disclosed page: {beyond}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14386: `ripr_refresh` reads `RIPR_GIT_TIMEOUT` from the server's
+/// environment through the same parser as `ripr check`. An invalid value
+/// fails the attempt closed with `config_invalid` naming the variable (it
+/// used to be ignored, so MCP silently ran a different deadline than the
+/// CLI), and a valid value (`0` disables the deadline) still analyzes.
+#[test]
+fn refresh_honors_ripr_git_timeout_from_the_server_environment() -> Result<(), String> {
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+
+    let mut invalid = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "soon")])?;
+    initialize_session(&mut invalid)?;
+    let refresh = invalid.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let code = refresh_attempt_failure_code(&refresh, "ripr_refresh")?;
+    if code != "config_invalid" {
+        return Err(format!(
+            "an invalid RIPR_GIT_TIMEOUT must fail the attempt with config_invalid, got {code}"
+        ));
+    }
+    let failure = refresh
+        .pointer("/result/structuredContent/attempt/failure")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let detail = failure.get("detail").and_then(Value::as_str).unwrap_or("");
+    if !detail.contains("RIPR_GIT_TIMEOUT") || !detail.contains("\"soon\"") {
+        return Err(format!(
+            "the refusal must name the variable and the rejected value: {failure}"
+        ));
+    }
+    let recovery = failure
+        .get("recovery")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !recovery.contains("restart the server") {
+        return Err(format!(
+            "the recovery must say a fix needs a server restart: {failure}"
+        ));
+    }
+    drop(invalid);
+
+    let mut disabled = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "0")])?;
+    initialize_session(&mut disabled)?;
+    let refresh = disabled.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let refresh = structured_tool_result(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "RIPR_GIT_TIMEOUT=0 disables the deadline and keeps the analysis: {refresh}"
         ));
     }
     Ok(())
