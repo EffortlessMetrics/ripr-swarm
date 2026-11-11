@@ -218,8 +218,16 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = read_calibration_text(&options.before, SnapshotCaptureKind::Outcome)?;
-    let after_json = read_calibration_text(&options.after, SnapshotCaptureKind::Outcome)?;
+    let before_json = read_calibration_text(
+        &options.before,
+        "outcome --before",
+        SnapshotCaptureKind::Outcome,
+    )?;
+    let after_json = read_calibration_text(
+        &options.after,
+        "outcome --after",
+        SnapshotCaptureKind::Outcome,
+    )?;
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
@@ -870,6 +878,7 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let options = parse_calibrate_cargo_mutants_options(rest)?;
     let repo_exposure_json = read_calibration_text(
         &options.repo_exposure_json,
+        "calibrate cargo-mutants --repo-exposure-json",
         SnapshotCaptureKind::RepoExposure,
     )?;
     let mutants_json = read_calibration_mutants_json(&options.mutants_json)?;
@@ -970,21 +979,37 @@ fn read_calibration_mutants_json(path: &Path) -> Result<String, String> {
         }
 
         if outcomes_exists {
-            return read_calibration_text(&outcomes_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &outcomes_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         if mutants_exists {
-            return read_calibration_text(&mutants_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &mutants_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         return Err(format!(
-            "{} is a directory but contains neither outcomes.json nor mutants.json",
+            "calibrate cargo-mutants --mutants-json {} is a directory but contains neither outcomes.json nor mutants.json; pass the cargo-mutants output directory (usually `mutants.out`) or its `outcomes.json`",
             output::outcome::display_path(path)
         ));
     }
-    read_calibration_text(path, SnapshotCaptureKind::CargoMutants)
+    read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )
 }
 
 fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_calibration_text(path, SnapshotCaptureKind::CargoMutants)?;
+    let text = read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
             "failed to parse JSON from {}: {err}",
@@ -1022,7 +1047,22 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
     }
 }
 
-fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<String, String> {
+/// `flag` names the command and flag (`outcome --before`) so a directory
+/// passed where a JSON file belongs is named in user words (#14313).
+fn read_calibration_text(
+    path: &Path,
+    flag: &str,
+    kind: SnapshotCaptureKind,
+) -> Result<String, String> {
+    // Checked before reading: a directory read fails with a host-specific
+    // errno (`Is a directory` on Unix, access denied on Windows).
+    if path.is_dir() {
+        return Err(format!(
+            "{flag} {} is a directory, not a JSON file; pass the file itself. {}",
+            output::outcome::display_path(path),
+            snapshot_capture_hint(kind, Path::new("snapshot.json"))
+        ));
+    }
     crate::bounded_input::read_to_string(path).map_err(|err| {
         let displayed = output::outcome::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -5548,7 +5588,7 @@ language = "rust"
     fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
         let missing = PathBuf::from("definitely-missing-snapshot.json");
         let outcome = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::Outcome),
             "missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5563,7 +5603,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::RepoExposure),
             "missing repo-exposure snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5574,7 +5614,7 @@ language = "rust"
         );
 
         let mutants = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::CargoMutants),
             "missing cargo-mutants snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5601,7 +5641,7 @@ language = "rust"
             "control path must stay a bare shell token"
         );
         let plain_message = err_message(
-            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&plain, "test --flag", SnapshotCaptureKind::Outcome),
             "plain missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5633,7 +5673,7 @@ language = "rust"
         );
 
         let outcome = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::Outcome),
             "spaced missing outcome snapshot must fail",
         )?;
         assert!(
@@ -5652,7 +5692,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::RepoExposure),
             "spaced missing repo-exposure snapshot must fail",
         )?;
         assert!(

@@ -179,6 +179,21 @@ pub(crate) fn create_output_dir(path: &Path, relocate_flag: &str) -> Result<(), 
 
 fn create_output_dir_error(path: &Path, err: &io::Error, relocate_flag: &str) -> String {
     let message = format!("create {} failed: {err}", path.display());
+    // The flag names a directory; a file in the way is a wrong flag value,
+    // not an OS mystery, so say so instead of `File exists (os error 17)`
+    // (#14313).
+    if err.kind() == io::ErrorKind::AlreadyExists {
+        return format!(
+            "{relocate_flag} {} is an existing file, but {relocate_flag} names the directory the artifacts are written into; pass a directory path (new or existing) with {relocate_flag} PATH",
+            crate::output::path::human_path(path)
+        );
+    }
+    if err.kind() == io::ErrorKind::NotADirectory {
+        return format!(
+            "{relocate_flag} {} cannot be created because part of that path is a file, not a directory; pass a directory path with {relocate_flag} PATH",
+            crate::output::path::human_path(path)
+        );
+    }
     if is_unwritable_output_dir(err) {
         format!("{message}; write elsewhere with {relocate_flag} PATH")
     } else {
@@ -526,13 +541,14 @@ mod output_dir_tests {
     }
 
     #[test]
-    fn already_exists_does_not_name_the_relocate_flag() {
+    fn already_exists_says_the_flag_names_a_directory() {
         let err = io::Error::new(io::ErrorKind::AlreadyExists, "File exists");
         let message = create_output_dir_error(Path::new("target/ripr/pilot"), &err, "--out");
-        assert!(
-            message.contains("create target/ripr/pilot failed: File exists"),
-            "{message}"
+        assert_eq!(
+            message,
+            "--out target/ripr/pilot is an existing file, but --out names the directory the artifacts are written into; pass a directory path (new or existing) with --out PATH"
         );
+        assert!(!message.contains("os error"), "{message}");
         assert!(!message.contains("write elsewhere"), "{message}");
     }
 

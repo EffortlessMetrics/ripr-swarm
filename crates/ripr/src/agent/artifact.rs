@@ -624,10 +624,63 @@ fn check_findings_producer_stamp_refusal(
     }
 }
 
-fn repo_exposure_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+fn repo_exposure_parse_refusal(label: &str, detail: &str) -> String {
     format!(
-        "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+        "agent verify {label} artifact is not a canonical repo-exposure artifact: {detail}; expected a repo-exposure JSON object (from `ripr pilot` or `ripr check --format repo-exposure-json`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
     )
+}
+
+/// The file is not JSON at all (#14313): keep serde's line/column position,
+/// which is user-meaningful, behind a plain-words cause.
+fn invalid_json_detail(err: &serde_json::Error) -> String {
+    format!("the file is not valid JSON ({err})")
+}
+
+/// Name the top-level JSON kind when a document is not an object (#14313),
+/// so `[]` reads "holds a JSON array" instead of a serde struct mismatch.
+fn non_object_detail(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(_) => None,
+        Value::Array(_) => Some("the file holds a JSON array"),
+        Value::String(_) => Some("the file holds a JSON string"),
+        Value::Number(_) => Some("the file holds a JSON number"),
+        Value::Bool(_) => Some("the file holds a JSON boolean"),
+        Value::Null => Some("the file holds JSON null"),
+    }
+}
+
+/// Field-level problem in an object, for typing failures: the top-level
+/// kind first, then serde's message with internal type names removed.
+fn typed_shape_detail(non_object: Option<&'static str>, err: &serde_json::Error) -> String {
+    non_object.map_or_else(
+        || without_serde_type_names(&err.to_string()),
+        str::to_string,
+    )
+}
+
+/// Replace `struct Name` / `enum Name` in a serde message with plain words so
+/// internal Rust type names never reach the user.
+fn without_serde_type_names(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let next = [("struct ", "an object"), ("enum ", "a documented value")]
+            .into_iter()
+            .filter_map(|(marker, words)| rest.find(marker).map(|at| (at, marker, words)))
+            .min_by_key(|(at, _, _)| *at);
+        let Some((at, marker, words)) = next else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        out.push_str(words);
+        let after = &rest[at + marker.len()..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn repo_exposure_cut_refusal(subject: &str, document: &Value) -> Option<String> {
@@ -653,7 +706,10 @@ pub(crate) fn validate_repo_exposure_artifact(
     let parsed_value = match serde_json::from_str::<Value>(raw) {
         Ok(document) => document,
         Err(err) => {
-            return Err(repo_exposure_parse_refusal(label, err));
+            return Err(repo_exposure_parse_refusal(
+                label,
+                &invalid_json_detail(&err),
+            ));
         }
     };
     if let Some(refusal) = repo_exposure_cut_refusal(&subject, &parsed_value) {
@@ -662,8 +718,9 @@ pub(crate) fn validate_repo_exposure_artifact(
     if let Some(mismatch) = producer_stamp_mismatch(&parsed_value) {
         return Err(producer_stamp_refusal(root, &subject, &mismatch));
     }
+    let non_object = non_object_detail(&parsed_value);
     let document: RepoExposureDocument = serde_json::from_value(parsed_value)
-        .map_err(|err| repo_exposure_parse_refusal(label, err))?;
+        .map_err(|err| repo_exposure_parse_refusal(label, &typed_shape_detail(non_object, &err)))?;
     let RepoExposureDocument {
         schema_version,
         scope,
@@ -797,7 +854,8 @@ pub(crate) fn validate_check_findings_artifact(
 ) -> Result<ValidatedCheckFindings, String> {
     let subject = format!("agent verify {label} artifact");
     let parsed_value = serde_json::from_str::<Value>(raw)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+        .map_err(|err| check_findings_parse_refusal(label, &invalid_json_detail(&err)))?;
+    let non_object = non_object_detail(&parsed_value);
     refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
     let CheckFindingsDocument {
         artifact: identity,
@@ -806,8 +864,9 @@ pub(crate) fn validate_check_findings_artifact(
         run_limitations,
         findings,
         ..
-    } = serde_json::from_value(parsed_value)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    } = serde_json::from_value(parsed_value).map_err(|err| {
+        check_findings_parse_refusal(label, &typed_shape_detail(non_object, &err))
+    })?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
@@ -815,9 +874,9 @@ pub(crate) fn validate_check_findings_artifact(
     Ok(ValidatedCheckFindings { artifact, gaps })
 }
 
-fn check_findings_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+fn check_findings_parse_refusal(label: &str, detail: &str) -> String {
     format!(
-        "agent verify {label} artifact is not a canonical check-findings artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+        "agent verify {label} artifact is not a canonical check-findings artifact: {detail}; expected a check-findings JSON object (from `ripr check --format json`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
     )
 }
 
@@ -827,9 +886,11 @@ fn parse_check_findings_document(
     label: &str,
 ) -> Result<CheckFindingsDocument, String> {
     let parsed_value = serde_json::from_str::<Value>(raw)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
-    let document: CheckFindingsDocument = serde_json::from_value(parsed_value)
-        .map_err(|err| check_findings_parse_refusal(label, err))?;
+        .map_err(|err| check_findings_parse_refusal(label, &invalid_json_detail(&err)))?;
+    let non_object = non_object_detail(&parsed_value);
+    let document: CheckFindingsDocument = serde_json::from_value(parsed_value).map_err(|err| {
+        check_findings_parse_refusal(label, &typed_shape_detail(non_object, &err))
+    })?;
     if document.schema_version.trim().is_empty() {
         return Err(format!(
             "agent verify {label} artifact has an empty check schema version"
