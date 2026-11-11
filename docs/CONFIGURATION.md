@@ -1114,6 +1114,12 @@ and differs from the loaded config, naming the skipped directory entry and
 normal and preserves current built-in defaults. Unknown keys are errors so
 policy typos do not silently change analysis intent.
 
+Enumerated values (`mode`, the oracle strengths, the severities and
+`[languages] enabled`) are lowercase and case-sensitive: `mode = "Draft"` is
+an error, not `draft`. When a rejected value is an accepted one in another
+case, padded with spaces, or a small typo, the error ends with
+`(did you mean ...?)` naming the accepted spelling.
+
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.
 
