@@ -207,6 +207,9 @@ suppressed = "off"
 # initializationOptions.seamDiagnostics still wins explicitly, and repo policy
 # may disable this with seam_diagnostics = false.
 seam_diagnostics = true
+# Editor diagnostic projection: "actionable" (the default when unset) shows
+# only findings with a bounded repair route; "full" keeps the audit/debug view.
+# diagnostic_profile = "actionable"
 
 [reports]
 # Default for context packets and editor collect-context commands when no
@@ -214,7 +217,7 @@ seam_diagnostics = true
 max_related_tests = 5
 
 [suppressions]
-# Repo-relative, slash-separated path. Badge renderers load this path.
+# Repo-relative, slash-separated path. SARIF and badge output apply it.
 path = ".ripr/suppressions.toml"
 
 [languages]
