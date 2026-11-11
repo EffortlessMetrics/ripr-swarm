@@ -797,7 +797,7 @@ pub(crate) fn render_human_triage(
         } else {
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
-        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        let listed = hidden_window(&triage.omitted);
         // #7643: when the omitted set mixes currentness categories, the
         // count line's clauses cannot be connected to individual bullets;
         // append each finding's category so the reader can tell an
@@ -816,7 +816,7 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in triage.omitted.iter().take(listed) {
+        for finding in &listed {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -878,12 +878,7 @@ pub(crate) fn render_human_triage(
         // rerun to read them.
         let mut listed_classes: Vec<&ExposureClass> = Vec::new();
         for class in ExposureClass::ALL.iter() {
-            if triage
-                .omitted
-                .iter()
-                .take(listed)
-                .any(|finding| finding.class == *class)
-            {
+            if listed.iter().any(|finding| finding.class == *class) {
                 listed_classes.push(class);
             }
         }
@@ -897,10 +892,14 @@ pub(crate) fn render_human_triage(
                 ));
             }
         }
-        let remaining = triage.omitted.len() - listed;
+        let remaining = triage.omitted.len() - listed.len();
         if remaining > 0 {
+            // The window above holds the highest-priority omitted findings,
+            // so the remainder names its own class mix: the reader can see
+            // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                unlisted_class_mix(&triage.omitted)
             ));
         }
     }
@@ -913,6 +912,56 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The omitted findings the `Hidden:` list names. Within the window every
+/// omitted finding is listed in the report's file and line order. Beyond it,
+/// the window keeps the findings the check-JSON findings budget would keep
+/// (candidate-current gap classes first, `exposed` and non-candidate evidence
+/// last), still printed in file and line order, so a large diff does not spend
+/// the list on the alphabetically first files while later gaps go unnamed.
+fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    hidden_window_indices(omitted)
+        .into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
+    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
+        return (0..omitted.len()).collect();
+    }
+    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// Class counts of the omitted findings outside the listed window, in the
+/// plain vocabulary and class order of the rows above. Membership is by
+/// position in `omitted`, so findings that share an id are still counted.
+fn unlisted_class_mix(omitted: &[&Finding]) -> String {
+    let mut is_listed = vec![false; omitted.len()];
+    for index in hidden_window_indices(omitted) {
+        if let Some(slot) = is_listed.get_mut(index) {
+            *slot = true;
+        }
+    }
+    ExposureClass::ALL
+        .iter()
+        .filter_map(|class| {
+            let count = omitted
+                .iter()
+                .zip(&is_listed)
+                .filter(|(finding, listed)| !**listed && finding.class == *class)
+                .count();
+            (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -932,11 +981,8 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    triage
-        .omitted
-        .iter()
-        .take(HIDDEN_FINDINGS_LISTED)
-        .copied()
+    hidden_window(&triage.omitted)
+        .into_iter()
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -2776,10 +2822,31 @@ mod tests {
                 .map(|finding| finding.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert!(
-            candidates(&rows).is_empty(),
-            "take the displayed window before eligibility filtering"
+        // #14233: the one candidate-current row sorts last in report order,
+        // and the window keeps it ahead of the non-candidate rows.
+        assert_eq!(
+            candidates(&rows),
+            vec!["hidden:20"],
+            "the window keeps the candidate-current row"
         );
+        // Eligibility is still decided inside the displayed window: with 21
+        // candidate-current rows, the one that ranks last (no recommended next
+        // step) falls outside the window and offers no stub route.
+        let mut all_current = rows.clone();
+        for (index, row) in all_current.iter_mut().enumerate() {
+            row.source_currentness = SourceCurrentness::CandidateCurrent;
+            if index != 7 {
+                row.recommended_next_step = Some("inspect".to_string());
+            }
+        }
+        let windowed = candidates(&all_current);
+        assert_eq!(windowed.len(), 20, "{windowed:?}");
+        assert!(
+            !windowed.contains(&"hidden:7".to_string()),
+            "take the displayed window before eligibility filtering: {windowed:?}"
+        );
+        rows[20].source_currentness = SourceCurrentness::BaseDeleted;
+        assert!(candidates(&rows).is_empty());
         rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
         assert_eq!(candidates(&rows), vec!["hidden:0"]);
         rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
