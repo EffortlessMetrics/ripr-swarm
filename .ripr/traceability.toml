@@ -12258,6 +12258,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warning",
   "crates/ripr/src/lsp/diagnostics.rs::repo_scope_and_wrapped_guard_errors_do_not_convert",
   "crates/ripr/src/lsp/tests.rs::oversized_diff_warning_snapshot_prepares_commits_and_publishes",
+  "crates/ripr/src/lsp/tests/owner_opt_out_tests.rs::mutants_skip_owner_findings_are_withheld_from_the_editor_and_return_with_the_attribute_gone",
 ]
 fixtures = []
 code = [

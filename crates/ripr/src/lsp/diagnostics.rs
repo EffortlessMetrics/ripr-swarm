@@ -1596,6 +1596,18 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 );
             }
         };
+    // #14136: the findings `ripr check` withholds (an owner that carries
+    // `#[mutants::skip]`, or a suppression policy) are not projected into the
+    // editor either. The id set is the shared `withheld_finding_ids` owner, not
+    // an LSP-side matcher; the disclosure count stays on the snapshot.
+    let withheld_ids: std::collections::BTreeSet<String> = output
+        .withheld_finding_ids()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let owner_opt_out_findings = output.owner_opt_outs.len();
+    let mut visible_findings = output.findings;
+    visible_findings.retain(|finding| !withheld_ids.contains(&finding.id));
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
@@ -1627,7 +1639,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // already excluded. The suppressed count stays on the snapshot as the
     // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), visible_findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -1903,6 +1915,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        owner_opt_out_findings,
         unavailable_adapter,
         language_view,
         rust_diagnostic_origins: origins,
@@ -2639,6 +2652,7 @@ fn git_timeout_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2746,6 +2760,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -9278,6 +9293,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
