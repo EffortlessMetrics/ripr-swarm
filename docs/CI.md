@@ -2149,7 +2149,13 @@ Steps:
   Dependabot heads, whose token is read-only.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
-  gate the analysis passed. **Explain failed SARIF upload** runs only when
+  gate the analysis passed. It uploads only on pull requests: the diff
+  findings, one alert per changed-behavior spot.
+- **Upload RIPR repo seams** uploads every seam in the repository and runs
+  only on a manual (`workflow_dispatch`) run. On a pull request its alerts on
+  the changed lines repeated the diff findings, so a reviewer saw two or three
+  code-scanning alerts on one line; the packet no longer renders it there.
+  **Explain failed SARIF upload** runs only when
   one of the two upload steps failed and lists the usual causes (private
   repository without GitHub Code Security, code scanning not available, or a
   read-only token), notes it can also be an outage or a rejected SARIF file,
