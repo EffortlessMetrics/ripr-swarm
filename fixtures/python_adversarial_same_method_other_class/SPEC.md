@@ -46,6 +46,13 @@ behavior. The companion `method_name_with_class_import_identity_credits_exposed`
 unit test pins the inverse — a test that *does* import and exercise the owner
 class keeps `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_auth.py:python_preview:d982555b -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a bare method-name / bare `.method(` token match when no

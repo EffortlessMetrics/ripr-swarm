@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/diagnostics.rs::withheld_preview_findings_publish_passive_rows_at_changed_lines",
+  "crates/ripr/src/lsp/diagnostics.rs::withheld_preview_rows_stay_silent_and_bounded",
+]
+code = ["crates/ripr/src/lsp/diagnostics.rs"]

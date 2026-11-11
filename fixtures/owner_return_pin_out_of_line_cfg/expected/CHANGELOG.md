@@ -377,3 +377,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_cfg (30)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_cfg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_cfg (31)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_cfg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

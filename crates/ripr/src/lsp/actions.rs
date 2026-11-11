@@ -1,6 +1,6 @@
 use super::action_contract::{
-    ActionDataInputs, ActionDisabledReason, ParsedActionData, action_data,
-    disabled_reason_emittable, parse_validated_action_data,
+    ActionDataInputs, ActionDisabledReason, CROSS_LANGUAGE_LIMITATION_REASON, ParsedActionData,
+    action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
 use super::fix_instruction_authority;
@@ -195,6 +195,14 @@ fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> b
     SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
+/// Whether the negotiated client is offered an executable "Inspect finding"
+/// quick fix (#13440). It is the same `command_permitted` decision that
+/// gates `copy_context_action` in `code_action_response`, so hover guidance
+/// can never promise the action to a client the gate would strip or disable.
+pub(super) fn inspect_finding_quick_fix_offered(client_features: &ClientFeatureProfile) -> bool {
+    command_permitted(COPY_CONTEXT_COMMAND, client_features)
+}
+
 /// The capability the client must hold for a command (#1892): a
 /// server-executed command runs inside the server (`"server"`); any other
 /// command requires the client-command advertisement itself (#1776).
@@ -304,6 +312,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "verification_route_unavailable"
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
+                        | "repair_route_not_ready"
                 )
             )
         {
@@ -491,6 +500,35 @@ fn disabled_action(
     }))
 }
 
+/// The cross-language form of [`disabled_action`]: same machine reason
+/// (`preview_or_static_limitation`), but the human text names the language
+/// boundary. Only the sites that matched the producer-owned cross-language
+/// target limitation call this (#13797).
+fn cross_language_disabled_action(
+    title: &str,
+    action_kind: &'static str,
+    action_name: &'static str,
+    command_id: &str,
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let mut action = disabled_action(
+        title,
+        action_kind,
+        action_name,
+        command_id,
+        diagnostic,
+        snapshot,
+        ActionDisabledReason::PreviewOrStaticLimitation,
+    )?;
+    if let CodeActionOrCommand::CodeAction(code_action) = &mut action
+        && let Some(disabled) = code_action.disabled.as_mut()
+    {
+        disabled.reason = CROSS_LANGUAGE_LIMITATION_REASON.to_string();
+    }
+    Some(action)
+}
+
 /// A gap diagnostic the current snapshot no longer carries (#1892): any
 /// action built from it would address superseded evidence, so a
 /// disabled-capable client receives an inert action naming `stale_snapshot`
@@ -663,25 +701,21 @@ fn push_seam_actions(
         // surface; a disabled-capable client still sees the brief action
         // inert with the preview/static limitation named.
         if client_features.code_action_disabled
-            && let Some(action) = disabled_action(
+            && let Some(action) = cross_language_disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "quickfix.ripr.inspect",
                 "copy_targeted_test_brief",
                 COPY_TARGETED_TEST_BRIEF_COMMAND,
                 context.diagnostic,
                 Some(context.snapshot),
-                ActionDisabledReason::PreviewOrStaticLimitation,
             )
         {
             actions.push(action);
         }
         return;
     }
-    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
-        context.snapshot,
-        context.diagnostic,
-        context.seam,
-    );
+    let instruction_summary =
+        fix_instruction_authority::summary_for_seam_action(context.diagnostic, context.seam);
     let instruction_blocks_repair =
         fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
@@ -693,7 +727,7 @@ fn push_seam_actions(
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
-                instruction_summary.state,
+                &instruction_summary,
             )
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
@@ -1054,7 +1088,7 @@ fn push_gap_actions(
             if client_features.code_action_disabled
                 && let Some(reason) =
                     fix_instruction_authority::disabled_reason_for_instruction_state(
-                        instruction_summary.state,
+                        &instruction_summary,
                     )
                 && let Some(action) = disabled_action(
                     INSPECT_GAP_PACKET_TITLE,
@@ -1072,14 +1106,13 @@ fn push_gap_actions(
             push_gap_repair_ready_actions(actions, params, &context, client_features);
         }
     } else if client_features.code_action_disabled
-        && let Some(action) = disabled_action(
+        && let Some(action) = cross_language_disabled_action(
             INSPECT_GAP_PACKET_TITLE,
             "quickfix.ripr.inspect",
             "copy_gap_repair_packet",
             COPY_CONTEXT_COMMAND,
             context.diagnostic,
             Some(context.snapshot),
-            ActionDisabledReason::PreviewOrStaticLimitation,
         )
     {
         // #1892: the producer-owned cross-language limitation suppresses the

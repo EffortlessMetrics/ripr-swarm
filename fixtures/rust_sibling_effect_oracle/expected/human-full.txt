@@ -37,11 +37,11 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)
-  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - related tests (showing 5 of 7; more in --format json)
   - source assertion argument value 1024 at line 209
   - source assertion argument value 8192 at line 211
@@ -52,6 +52,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -88,11 +89,11 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches call effect: .or_default() (line 137)
-  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - related tests (showing 5 of 7; more in --format json)
   - source assertion argument value 1024 at line 209
   - source assertion argument value 8192 at line 211
@@ -103,6 +104,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
