@@ -56,6 +56,17 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr capabilities --json` (#5531, #14067). The version constant
+        // lives beside the capability table it versions, in the contract
+        // crate; `output::language_capabilities` only projects it.
+        "capabilities",
+        &[producer(
+            "crates/ripr-contract/src/domain/language_capability.rs",
+            "pub const LANGUAGE_CAPABILITIES_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -444,6 +455,27 @@ const CONTRACTS: &[VerificationContract] = &[
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
     // document shape against the published 0.3 schema.
+    // `ripr capabilities --json` (#14067). The fixture is a capture of
+    // `ripr capabilities --json --language perl`, kept as an edge fixture:
+    // the producer-byte authority is `capabilities_command.rs`, which
+    // validates every projection the real binary writes.
+    VerificationContract {
+        schema_path: "schemas/ripr/capabilities.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/capabilities.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "ripr_language_capabilities",
+            "semantic_digest",
+            "digest_scope",
+            "filtered_by",
+            "support_state_vocabulary",
+            "absent_cell_meaning",
+            "tier_ceiling",
+            "proof_refs",
+        ],
+    },
     // The `cli_refusal` document for argv usage errors and selector misses
     // under an explicit JSON request (#11584, #6834 decision).
     VerificationContract {

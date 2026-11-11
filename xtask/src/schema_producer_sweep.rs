@@ -137,6 +137,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/capabilities.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: capabilities_json_conforms_to_the_published_schema in crates/ripr/tests/capabilities_command.rs validates the real CLI bytes of the whole table and of every --language projection, published_vocabularies_equal_the_emitted_ones holds the schema's closed vocabularies equal to the emitted ones, and published_capabilities_schema_rejects_documents_it_forbids is the negative experiment; `ripr capabilities --json` writes to stdout and adapter_compiled depends on build features, so the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/capabilities.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
