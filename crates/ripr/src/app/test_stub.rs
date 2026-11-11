@@ -1926,15 +1926,24 @@ pub(crate) fn focused_test_run_command(
     };
     let integration = stub_at(TestStubPlacement::ExistingIntegrationFile { file: file.clone() });
     let manifest = package_manifest_for(root, &integration)?;
-    // The package's own target layout decides the route, not a `tests` path
-    // component anywhere: `src/tests/pricing.rs` is an inline module file.
-    let relative = file
-        .strip_prefix(manifest.parent().unwrap_or(Path::new("")))
-        .ok();
-    let under_package_tests = relative.is_some_and(|relative| relative.starts_with("tests"));
-    // Only library/binary sources run an inline test by name; a bench,
-    // example or stray file would get a command that runs nothing.
-    let under_package_src = relative.is_some_and(|relative| relative.starts_with("src"));
+    // Outside an established integration target, a by-name run reaches the
+    // test only when a target `cargo test` runs compiles the file. The
+    // module-tree walk and the layout role answer that, not path guesses:
+    // `src/tests/pricing.rs` declared from the library runs by name, while
+    // an orphan, a bench, an example or a build script gets no command.
+    let compiled_by_cargo_test = || {
+        let mut context = analysis::context_for_files(root, [file.as_path()]);
+        analysis::apply_module_graph_evidence(root, &mut context, [file.as_path()]);
+        let reached = !context.module_graph_orphans.contains(&file)
+            && !context.module_graph_unresolved_routes.contains_key(&file);
+        reached
+            && matches!(
+                analysis::classify_with(&file, &context),
+                analysis::SourceRole::ProductionSubject
+                    | analysis::SourceRole::TestEvidence
+                    | analysis::SourceRole::ProductionLikeTestInfrastructure
+            )
+    };
     let (stub, target) = match integration_target_lookup(root, &manifest, &integration) {
         // A manifest `[[test]] name` is printed into a copyable command, so
         // only a plain cargo target name is offered; anything else fails
@@ -1948,7 +1957,7 @@ pub(crate) fn focused_test_run_command(
         {
             (integration, Some(name))
         }
-        TargetLookup::NotRegistered if !under_package_tests && under_package_src => (
+        TargetLookup::NotRegistered if compiled_by_cargo_test() => (
             stub_at(TestStubPlacement::ExistingInlineModule {
                 file,
                 module_name: "tests".to_string(),
@@ -2516,8 +2525,24 @@ mod tests {
             "[package]\nname = \"price\"\nedition = \"2021\"\n",
         )
         .map_err(|error| error.to_string())?;
+        // The library declares `src/tests/pricing.rs`; `src/stray.rs` and the
+        // bench are files no `cargo test` target runs by name.
+        std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("benches")).map_err(|error| error.to_string())?;
+        for (path, text) in [
+            ("src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests;\n"),
+            ("src/tests/mod.rs", "mod pricing;\n"),
+            ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("src/stray.rs", "#[test]\nfn t() {}\n"),
+            ("tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("benches/pricing.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
         let manifest = root.join("Cargo.toml").to_string_lossy().replace('\\', "/");
         let manifest = shell_arg(&manifest);
+        // A file the library never declares gets no command (module graph).
+        assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
         assert_eq!(
             focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
             Some(format!(

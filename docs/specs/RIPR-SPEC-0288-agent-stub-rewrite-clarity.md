@@ -131,10 +131,13 @@ The human `ripr repair` / `ripr agent repair --phase before` start prints
 test's exact command is established, spelled like the stub run command. A file
 runs as `--test TARGET NAME` when the package's manifest or `tests/`
 discovery names its target and that name is a plain cargo target name
-(ASCII alphanumerics, `_`, `-`, not starting with `-`). An unregistered file
-under the package's `src/` (including `src/tests/`) is an inline module and
-runs by name. Every other case gets no line: an unregistered or unnamed file
-under `tests/`, a bench, example or other file outside `src/`, a non-Rust
+(ASCII alphanumerics, `_`, `-`, not starting with `-`). Otherwise the
+file runs by name only when a target `cargo test` runs compiles it: the
+module-tree walk (`apply_module_graph_evidence`) reaches it, and its source
+role is a production subject or test evidence. For example, `src/tests/` is
+declared from the library, and a helper module is shared by an integration
+test. Every other case gets no line: a file no target reaches, a bench,
+example or build script, a registered target ripr cannot name, a non-Rust
 file, a non-identifier test name, or a file outside any package. JSON output
 is unchanged.
 
