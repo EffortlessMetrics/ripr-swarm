@@ -4220,6 +4220,58 @@ mod tests {
         );
     }
 
+    /// The remainder line counts every finding outside the window by class,
+    /// including findings that share an id with a listed row.
+    #[test]
+    fn hidden_block_remainder_names_each_unlisted_class_by_position() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 20 gaps fill the window; every other finding reuses one of their ids.
+        for index in 0..20 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.probe.location = SourceLocation::new(format!("src/g{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..2 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::StaticUnknown;
+            finding.probe.location = SourceLocation::new(format!("src/u{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..4 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/x{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let remainder = rendered
+            .lines()
+            .find(|line| line.contains("more omitted finding(s)"))
+            .unwrap_or_default();
+        let exposed = format!("4 {}", ExposureClass::Exposed.plain_label_with_stage());
+        let unknown = format!(
+            "2 {}",
+            ExposureClass::StaticUnknown.plain_label_with_stage()
+        );
+        assert!(
+            remainder.contains("… and 6 more omitted finding(s): "),
+            "{rendered}"
+        );
+        assert!(remainder.contains(&exposed), "{rendered}");
+        assert!(remainder.contains(&unknown), "{rendered}");
+        assert!(!rendered.contains("    - src/u0.rs:"), "{rendered}");
+        assert!(!rendered.contains("    - src/x0.rs:"), "{rendered}");
+    }
+
     #[test]
     fn hidden_identity_completeness_requires_unbounded_json() -> Result<(), String> {
         let findings = (0..26)

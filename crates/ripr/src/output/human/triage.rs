@@ -827,7 +827,7 @@ pub(crate) fn render_human_triage(
             // whether anything beyond the window is still a gap.
             out.push_str(&format!(
                 "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
-                unlisted_class_mix(&triage.omitted, &listed)
+                unlisted_class_mix(&triage.omitted)
             ));
         }
     }
@@ -848,30 +848,42 @@ const HIDDEN_FINDINGS_LISTED: usize = 20;
 /// last), still printed in file and line order, so a large diff does not spend
 /// the list on the alphabetically first files while later gaps go unnamed.
 fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    hidden_window_indices(omitted)
+        .into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
     if omitted.len() <= HIDDEN_FINDINGS_LISTED {
-        return omitted.to_vec();
+        return (0..omitted.len()).collect();
     }
     let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
         .into_iter()
         .take(HIDDEN_FINDINGS_LISTED)
         .collect();
     kept.sort_unstable();
-    kept.into_iter()
-        .filter_map(|index| omitted.get(index).copied())
-        .collect()
+    kept
 }
 
 /// Class counts of the omitted findings outside the listed window, in the
-/// plain vocabulary and class order of the rows above.
-fn unlisted_class_mix(omitted: &[&Finding], listed: &[&Finding]) -> String {
-    let listed_ids: BTreeSet<&str> = listed.iter().map(|finding| finding.id.as_str()).collect();
+/// plain vocabulary and class order of the rows above. Membership is by
+/// position in `omitted`, so findings that share an id are still counted.
+fn unlisted_class_mix(omitted: &[&Finding]) -> String {
+    let mut is_listed = vec![false; omitted.len()];
+    for index in hidden_window_indices(omitted) {
+        if let Some(slot) = is_listed.get_mut(index) {
+            *slot = true;
+        }
+    }
     ExposureClass::ALL
         .iter()
         .filter_map(|class| {
             let count = omitted
                 .iter()
-                .filter(|finding| finding.class == *class)
-                .filter(|finding| !listed_ids.contains(finding.id.as_str()))
+                .zip(&is_listed)
+                .filter(|(finding, listed)| !**listed && finding.class == *class)
                 .count();
             (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
         })
@@ -2586,10 +2598,31 @@ mod tests {
                 .map(|finding| finding.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert!(
-            candidates(&rows).is_empty(),
-            "take the displayed window before eligibility filtering"
+        // #14233: the one candidate-current row sorts last in report order,
+        // and the window keeps it ahead of the non-candidate rows.
+        assert_eq!(
+            candidates(&rows),
+            vec!["hidden:20"],
+            "the window keeps the candidate-current row"
         );
+        // Eligibility is still decided inside the displayed window: with 21
+        // candidate-current rows, the one that ranks last (no recommended next
+        // step) falls outside the window and offers no stub route.
+        let mut all_current = rows.clone();
+        for (index, row) in all_current.iter_mut().enumerate() {
+            row.source_currentness = SourceCurrentness::CandidateCurrent;
+            if index != 7 {
+                row.recommended_next_step = Some("inspect".to_string());
+            }
+        }
+        let windowed = candidates(&all_current);
+        assert_eq!(windowed.len(), 20, "{windowed:?}");
+        assert!(
+            !windowed.contains(&"hidden:7".to_string()),
+            "take the displayed window before eligibility filtering: {windowed:?}"
+        );
+        rows[20].source_currentness = SourceCurrentness::BaseDeleted;
+        assert!(candidates(&rows).is_empty());
         rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
         assert_eq!(candidates(&rows), vec!["hidden:0"]);
         rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
