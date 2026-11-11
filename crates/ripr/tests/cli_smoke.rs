@@ -6415,6 +6415,60 @@ fn assistant_loop_health_cli_writes_multi_proof_report() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #14371: a mistyped or non-JSON --proof stays advisory (exit 0), but
+    // stderr names the path and the real cause instead of only `Proofs: 1`.
+    let workspace = unique_temp_workspace("assistant-loop-health-bad-proof");
+    std::fs::create_dir_all(&workspace)?;
+    let missing = workspace.join("no-such-proof.json");
+    let malformed = workspace.join("not-json-proof.json");
+    std::fs::write(&malformed, "not json")?;
+    let out = workspace.join("health.json");
+    let out_md = workspace.join("health.md");
+    let missing_arg = missing.display().to_string();
+    let malformed_arg = malformed.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "assistant-loop",
+        "health",
+        "--proof",
+        &missing_arg,
+        "--proof",
+        &malformed_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warnings: 2"), "{stderr}");
+    assert!(
+        stderr.contains("no-such-proof.json: Proof input is unreadable: the file does not exist"),
+        "a missing proof must say it does not exist: {stderr}"
+    );
+    assert!(
+        stderr.contains("not-json-proof.json: Proof input is malformed"),
+        "a non-JSON proof must say it is malformed: {stderr}"
+    );
+    assert!(
+        stderr.contains("`ripr assistant-loop proof`"),
+        "each warning names the producer: {stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    let report = std::fs::read_to_string(&out)?;
+    assert!(
+        !report.contains("missing required selected seam and movement evidence"),
+        "the repair reason must carry the specific cause: {report}"
+    );
+    assert!(report.contains("the file does not exist"), "{report}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("first-action");
     std::fs::create_dir_all(&workspace)?;

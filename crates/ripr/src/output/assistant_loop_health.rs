@@ -301,6 +301,31 @@ pub(crate) fn assistant_loop_health_proof_count(report: &AssistantLoopHealthRepo
     report.proofs.len()
 }
 
+/// Input problems to echo on stderr (#14371): one line per proof whose
+/// required input is missing, naming the proof path and the specific cause,
+/// so a mistyped or non-JSON `--proof` is visible without opening the report.
+pub(crate) fn assistant_loop_health_input_warnings(
+    report: &AssistantLoopHealthReport,
+) -> Vec<String> {
+    report
+        .proofs
+        .iter()
+        .flat_map(|proof| proof.warnings.iter())
+        .filter(|warning| warning.kind == "missing_required_input")
+        .map(|warning| {
+            let next = if warning.message.contains("ripr assistant-loop proof") {
+                ""
+            } else {
+                "; regenerate it with `ripr assistant-loop proof` (`ripr assistant-loop proof --help` lists its inputs)"
+            };
+            match warning.source_artifact.as_deref() {
+                Some(source) => format!("assistant proof {source}: {}{next}", warning.message),
+                None => format!("{}{next}", warning.message),
+            }
+        })
+        .collect()
+}
+
 pub(crate) use crate::output::path::display_path;
 
 fn classify_proof(input: AssistantLoopHealthProofInput) -> HealthProof {
@@ -789,8 +814,7 @@ fn repair_for_warning(proof: &HealthProof, warning: &HealthWarning) -> Option<Re
             seam_id: None,
             path: None,
             line: None,
-            reason: "The supplied proof is missing required selected seam and movement evidence."
-                .to_string(),
+            reason: warning.message.clone(),
             next_command: ASSISTANT_PROOF_COMMAND.to_string(),
             expected_result: "Regenerate a proof packet with selected seam and before/after static movement context.".to_string(),
         }),
