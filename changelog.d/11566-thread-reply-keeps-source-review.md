@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Merge-ready admission no longer lets a review-thread reply void an exact-head source review attestation. GitHub records the reply as a COMMENTED review with an empty body, which replaced its author's ready review and failed the required result after every proof job had passed; an empty-bodied COMMENTED review is now ignored when selecting each reviewer's latest statement, while a later review with any text still supersedes (#11566).

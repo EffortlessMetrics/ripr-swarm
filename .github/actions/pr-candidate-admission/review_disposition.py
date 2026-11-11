@@ -10,6 +10,16 @@ fields. A current positive attestation is either:
 
 Native APPROVED / CHANGES_REQUESTED / DISMISSED reviews remain a separate path.
 
+PR-body carrier (#4984): the same attestation may instead be one column-zero line in
+the pull request description, ``Source review: REVIEW_READY <40-hex head>`` (or
+``SOURCE_REVIEW_READY``). The full SHA must equal the candidate head, so a push makes
+the line stale by construction. It is read only for a same-repository pull request
+whose author association is trusted, which is the population that could already
+self-attest with a COMMENT review. It adds a carrier, not a new authority: a native
+CHANGES_REQUESTED or a trusted reviewer's current negative review still refuses.
+The reason is operational: creating a review is throttled per account ("was submitted
+too quickly"), which left reviewed candidates unable to request qualification.
+
 Documented decision (#12814): free prose cannot be enumerated, so the marker line
 is an allowlist built from the shapes of real review-of-record tails (full bodies
 are fixtures under tools/repo-policy/tests/fixtures/review_bodies). An unfamiliar
@@ -86,6 +96,16 @@ FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+# PR-body carrier. Any column-zero line that starts with this field name and has a
+# value must be exactly the positive form; an empty value is the unfilled template.
+BODY_FIELD = re.compile(r"^source review:[ \t]*(?P<value>.*?)[ \t]*$", re.IGNORECASE)
+BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0-9a-f]{40})$")
+# A second, competing state field in the description. The review-body form is a
+# ``disposition:`` line, so a description that carries one (whatever its value, and
+# however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
+BODY_COMPETING_FIELD = re.compile(r"^[ \t>*\-+_`#~]*disposition[ \t*_`]*:", re.IGNORECASE)
 
 
 def normalize_body(body: str) -> str:
@@ -195,6 +215,53 @@ def comment_body_negative(body: str) -> bool:
     )
 
 
+def body_attests_head(body: str, head: str) -> bool:
+    """Whether a pull request description carries the exact-head attestation line.
+
+    Exactly one filled ``Source review:`` line may exist outside fences and HTML
+    comments, its value must be a marker, one space and the full lowercase head SHA,
+    and no fenced ``Source review:`` line may exist to be mistaken for it.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", head or ""):
+        return False
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    if any(BODY_FIELD.match(line.strip()) for line in fenced):
+        return False
+    if any(BODY_COMPETING_FIELD.match(line) for line in (*visible, *fenced)):
+        return False
+    values = []
+    for line in visible:
+        match = BODY_FIELD.match(line)
+        if match is not None and match.group("value"):
+            values.append(match.group("value"))
+    if len(values) != 1:
+        return False
+    match = BODY_FIELD_VALUE.match(values[0])
+    return match is not None and match.group("sha") == head
+
+
+def pull_allows_source_attestation(pull: dict[str, Any] | None, *, head: str) -> bool:
+    """Whether the pull request itself carries a trusted exact-head attestation."""
+    if not isinstance(pull, dict):
+        return False
+    if str(pull.get("author_association") or "").upper() not in TRUSTED_ASSOCIATIONS:
+        return False
+    head_ref = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+    base_ref = pull.get("base") if isinstance(pull.get("base"), dict) else {}
+    head_repo = str((head_ref.get("repo") or {}).get("full_name") or "")
+    base_repo = str((base_ref.get("repo") or {}).get("full_name") or "")
+    if not head_repo or head_repo != base_repo:
+        return False
+    # The live head must be the head being admitted: a description written for an
+    # earlier head never attests a later one.
+    if str(head_ref.get("sha") or "") != head:
+        return False
+    return body_attests_head(str(pull.get("body") or ""), head)
+
+
 def _order(review: dict[str, Any]) -> tuple[str, int]:
     return (str(review.get("submitted_at") or ""), int(review.get("id") or 0))
 
@@ -224,7 +291,11 @@ def _latest_decisive(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def reviews_allow_source_attestation(
-    reviews: list[dict[str, Any]], *, head: str, author: str | None = None
+    reviews: list[dict[str, Any]],
+    *,
+    head: str,
+    author: str | None = None,
+    pull: dict[str, Any] | None = None,
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
@@ -243,9 +314,20 @@ def reviews_allow_source_attestation(
         for r in native
     ):
         return True
+    # Replying on a review thread makes GitHub record a COMMENTED review with an
+    # empty body under the replier's login. It states nothing, so it must not
+    # replace that login's earlier statement: a reply after a ready review voided
+    # the attestation and cost a complete fresh qualification (#11566). A later
+    # review with any body text still supersedes, which keeps retraction by a later
+    # review a closed control.
+    speaking = [
+        r
+        for r in reviews
+        if str(r.get("state") or "") != "COMMENTED" or str(r.get("body") or "").strip()
+    ]
     commented = [
         r
-        for r in _latest_by_login(reviews)
+        for r in _latest_by_login(speaking)
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
@@ -254,7 +336,27 @@ def reviews_allow_source_attestation(
     # trusted reviewer's current comment is ready.
     if any(comment_body_negative(str(r.get("body") or "")) for r in commented):
         return False
-    return any(comment_body_ready(str(r.get("body") or "")) for r in commented)
+    if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
+        return True
+    # The description is only another carrier, so it must not be easier to satisfy
+    # than a ready review from the same people. A thread reply creates a neutral
+    # COMMENTED review that replaces its author's earlier one in the latest-per-login
+    # view above; here each trusted reviewer's latest current-head statement that
+    # says anything (ready or negative) decides, and a negative one refuses.
+    stated = [
+        r
+        for r in reviews
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+        and (
+            comment_body_ready(str(r.get("body") or ""))
+            or comment_body_negative(str(r.get("body") or ""))
+        )
+    ]
+    if any(comment_body_negative(str(r.get("body") or "")) for r in _latest_by_login(stated)):
+        return False
+    return pull_allows_source_attestation(pull, head=head)
 
 
 def parse_paginated(text: str) -> list[dict[str, Any]]:
@@ -289,6 +391,22 @@ def fetch_reviews(repository: str, pr_number: str) -> list[dict[str, Any]]:
         timeout=120,
     ).stdout
     return parse_paginated(out)
+
+
+def fetch_pull(repository: str, pr_number: str) -> dict[str, Any]:
+    """Read the pull request object; any failure raises."""
+    out = subprocess.run(
+        ["gh", "api", f"repos/{repository}/pulls/{pr_number}"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    ).stdout
+    pull = json.loads(out)
+    if not isinstance(pull, dict):
+        raise ValueError("pull request response is not an object")
+    return pull
 
 
 def self_test() -> None:
@@ -432,6 +550,140 @@ def self_test() -> None:
     assert not reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head
     )
+    line = f"Source review: REVIEW_READY {head}"
+    body_cases: list[tuple[str, bool]] = [
+        (line, True),
+        (f"Source review: SOURCE_REVIEW_READY {head}", True),
+        (f"## Summary\n\n- change\n\n{line}\n\n## Proof\n", True),
+        (f"source review:   REVIEW_READY {head}  ", True),
+        ("Source review:", False),  # unfilled template
+        (f"Source review:\n{line}", True),  # the empty template line is not a value
+        (f"Source review: REVIEW_READY {other}", False),  # another head
+        (f"Source review: REVIEW_READY {head[:12]}", False),  # abbreviated
+        (f"Source review: REVIEW_READY {head.upper()}", False),
+        ("Source review: REVIEW_READY", False),
+        (f"Source review: REVIEW_INCOMPLETE {head}", False),
+        (f"Source review: REVIEW_READY {head} pending CI", False),
+        (f"Source review: not REVIEW_READY {head}", False),
+        (f"{line}\nSource review: REVIEW_INCOMPLETE", False),  # contradicting second line
+        (f"{line}\n{line}", False),  # exactly one filled line
+        (f" {line}", False),  # not column zero
+        (f"> {line}", False),
+        (f"- {line}", False),
+        (f"`{line}`", False),
+        (f"```\n{line}\n```", False),
+        (f"{line}\n```\nSource review: REVIEW_INCOMPLETE\n```", False),
+        (f"<!-- {line} -->", False),
+        (f"<!-- unclosed\n{line}", False),
+        (f"Prior source review: REVIEW_READY {head}", False),
+        (f"{line}\ndisposition: REPAIR_REQUIRED", False),  # competing state field
+        (f"{line}\n- **Disposition:** REVIEW_INCOMPLETE", False),
+        (f"{line}\n> disposition: REVIEW_READY", False),  # ambiguous even when positive
+        (f"{line}\n```\ndisposition: REPAIR_REQUIRED\n```", False),
+        (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
+        ("", False),
+    ]
+    for body, expected in body_cases:
+        actual = body_attests_head(body, head)
+        assert actual == expected, f"pr body={body!r} expected={expected} actual={actual}"
+    assert not body_attests_head(line, "")
+    assert not body_attests_head(f"Source review: REVIEW_READY {head[:7]}", head[:7])
+
+    repo = {"repo": {"full_name": "owner/name"}}
+    pull = lambda **kw: {
+        "author_association": "MEMBER",
+        "head": {"sha": head, **repo},
+        "base": dict(repo),
+        "body": line,
+        **kw,
+    }
+    assert reviews_allow_source_attestation([], head=head, pull=pull())
+    assert not reviews_allow_source_attestation([], head=head, pull=None)
+    assert not reviews_allow_source_attestation([], head=head)
+    for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
+        assert not reviews_allow_source_attestation(
+            [], head=head, pull=pull(author_association=association)
+        ), association
+    # A fork head is never read, whatever its description says.
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": head, "repo": {"full_name": "fork/name"}})
+    )
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": head, "repo": None})
+    )
+    # The live head moved after the description was written.
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": other, **repo})
+    )
+    assert not reviews_allow_source_attestation([], head=other, pull=pull())
+    # The description is a carrier only: every review refusal still applies.
+    assert not reviews_allow_source_attestation(
+        [review(state="CHANGES_REQUESTED", commit_id=head, body="")], head=head, pull=pull()
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=head, body="REPAIR_REQUIRED")],
+        head=head,
+        pull=pull(),
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head, pull=pull()
+    )
+    # A neutral current-head comment (a thread reply creates an empty one) no longer
+    # hides the attestation, and an older-head ready review does not supply one.
+    assert reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=head, body="")], head=head, pull=pull()
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=other, body="REVIEW_READY")],
+        head=head,
+        pull=pull(body="Source review:"),
+    )
+    # A thread reply (empty COMMENTED review) after a ready review does not void it;
+    # a later review with neutral text still does, and so does a later negative one.
+    stamp0 = lambda n: f"2026-10-15T02:00:0{n}Z"
+    ready_then = lambda body: [
+        review(id=11, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp0(1)),
+        review(id=12, state="COMMENTED", commit_id=head, body=body, submitted_at=stamp0(2)),
+    ]
+    assert reviews_allow_source_attestation(ready_then(""), head=head)
+    assert reviews_allow_source_attestation(ready_then("  \n"), head=head)
+    assert not reviews_allow_source_attestation(ready_then("Thanks, looking again."), head=head)
+    assert not reviews_allow_source_attestation(ready_then("REPAIR_REQUIRED"), head=head)
+    # An empty reply on a later head never carries the earlier head's attestation.
+    assert not reviews_allow_source_attestation(
+        [
+            review(id=11, state="COMMENTED", commit_id=other, body="REVIEW_READY", submitted_at=stamp0(1)),
+            review(id=12, state="COMMENTED", commit_id=head, body="", submitted_at=stamp0(2)),
+        ],
+        head=head,
+    )
+    # A reviewer's negative statement outlives their own later neutral reply: the
+    # description cannot stand in for the retraction they never made.
+    stamp = lambda n: f"2026-10-15T01:00:0{n}Z"
+    negative_then_reply = [
+        review(id=1, state="COMMENTED", commit_id=head, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+        review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+    ]
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head, pull=pull())
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head)
+    # The same reviewer replacing it with a ready statement lifts it; a negative one on
+    # an earlier head never applied to this head.
+    assert reviews_allow_source_attestation(
+        negative_then_reply
+        + [review(id=3, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp(3))]
+        + [review(id=4, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(4))],
+        head=head,
+        pull=pull(),
+    )
+    assert reviews_allow_source_attestation(
+        [
+            review(id=1, state="COMMENTED", commit_id=other, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+            review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+        ],
+        head=head,
+        pull=pull(),
+    )
+
     for bad_page in ('{"message": "Bad credentials"}', '[1]', '[{"a":1}] {"b":2}'):
         try:
             parse_paginated(bad_page)
@@ -522,6 +774,11 @@ def main() -> int:
     # FileType returns the existing sys.stdin for '-', ignoring its encoding
     # argument. Read bytes so piped GitHub JSON also has an explicit UTF-8 boundary.
     parser.add_argument("--check-reviews", type=argparse.FileType("rb"))
+    parser.add_argument(
+        "--check-pull",
+        type=argparse.FileType("rb"),
+        help="pull request object (JSON) to read the Source review line from, with --check-reviews",
+    )
     parser.add_argument("--repository", help="owner/name; read reviews with gh instead of a file")
     parser.add_argument("--pr", help="Pull request number for --repository")
     parser.add_argument("--head", help="Exact candidate head SHA")
@@ -544,22 +801,41 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        try:
+            pull = fetch_pull(args.repository, args.pr)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            # The description is an optional carrier: without it only reviews count.
+            print(
+                f"::warning::could not read the pull request description ({exc}); "
+                "only native reviews are considered for the source review attestation",
+                file=sys.stderr,
+            )
+            pull = None
     else:
         try:
             reviews = parse_paginated(args.check_reviews.read().decode("utf-8"))
+            pull = None
+            if args.check_pull is not None:
+                pull = json.loads(args.check_pull.read().decode("utf-8"))
+                if not isinstance(pull, dict):
+                    raise ValueError("pull request data is not an object")
         except ValueError as exc:
             print(
                 f"::error::source review attestation refused: malformed review data: {exc}",
                 file=sys.stderr,
             )
             return 1
-    if not reviews_allow_source_attestation(reviews, head=args.head, author=args.author):
+    if not reviews_allow_source_attestation(
+        reviews, head=args.head, author=args.author, pull=pull
+    ):
         print(
             "::error::source review attestation refused: a trusted reviewer "
             "(OWNER/MEMBER/COLLABORATOR) must post a current-head COMMENT whose first line is "
             "exactly SOURCE_REVIEW_READY or REVIEW_READY (or disposition: of either) with no "
             "contradicting disposition text, or a native APPROVED on the head; narrative "
-            "tokens and quoted examples do not count (#8157)",
+            "tokens and quoted examples do not count (#8157). When GitHub throttles review "
+            "writes, a same-repository pull request may instead carry one description line "
+            f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",
             file=sys.stderr,
         )
         return 1
