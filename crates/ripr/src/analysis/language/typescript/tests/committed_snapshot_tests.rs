@@ -2546,3 +2546,77 @@ fn adapter_snapshot_comment_does_not_expose_changed_owner() -> Result<(), String
     );
     Ok(())
 }
+
+#[test]
+fn destructured_config_writes_refuse_but_unrelated_patterns_keep_credit() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (write, expected) in [
+        ("[config] = [replacement];", OracleStrength::Medium),
+        (
+            "({config} = {config: replacement});",
+            OracleStrength::Medium,
+        ),
+        (
+            "({value: config} = {value: replacement});",
+            OracleStrength::Medium,
+        ),
+        (
+            "[config[name]] = ['./alternate.cjs'];",
+            OracleStrength::Medium,
+        ),
+        (
+            "({value: config[name]} = {value: './alternate.cjs'});",
+            OracleStrength::Medium,
+        ),
+        (
+            "[, {value: [config[name]]}] = input;",
+            OracleStrength::Medium,
+        ),
+        ("[config = replacement] = input;", OracleStrength::Medium),
+        ("({config = replacement} = input);", OracleStrength::Medium),
+        ("[...config] = input;", OracleStrength::Medium),
+        ("({...config} = input);", OracleStrength::Medium),
+        ("[...config[name]] = input;", OracleStrength::Medium),
+        ("({...config[name]} = input);", OracleStrength::Medium),
+        ("[config.test] = [replacement];", OracleStrength::Medium),
+        ("[config['test']] = [replacement];", OracleStrength::Medium),
+        ("[config.test[name]] = [true];", OracleStrength::Medium),
+        ("[module.exports[name]] = [true];", OracleStrength::Medium),
+        ("[other] = [replacement];", OracleStrength::Strong),
+        ("({config: other} = input);", OracleStrength::Strong),
+        ("({other = config} = input);", OracleStrength::Strong),
+        (
+            "[, {value: [other[name]]}] = input;",
+            OracleStrength::Strong,
+        ),
+        ("[...other] = input;", OracleStrength::Strong),
+        ("({...other} = input);", OracleStrength::Strong),
+        (
+            "[config.testEnvironment] = ['node'];",
+            OracleStrength::Strong,
+        ),
+        ("[config[1]] = ['data'];", OracleStrength::Strong),
+        ("config.test = {};", OracleStrength::Strong),
+    ] {
+        let text = format!(
+            "let config = {{test: {{}}}}; let other = {{}}; const name = 'snapshot' + 'Resolver'; const replacement = require('./base.cjs'); module.exports = config; {write}"
+        );
+        assert_eq!(
+            strengths(
+                "snap-config-patterns",
+                PRICE_TEST,
+                &[
+                    (SNAP_PATH, &jest),
+                    ("jest.config.js", &text),
+                    (
+                        "base.cjs",
+                        "module.exports = {snapshotResolver: './alternate.cjs'};"
+                    )
+                ]
+            )?,
+            vec![expected],
+            "{write}"
+        );
+    }
+    Ok(())
+}

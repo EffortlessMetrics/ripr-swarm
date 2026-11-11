@@ -313,9 +313,10 @@ existing rules and limits.
   and variable-computed keys there refuse. Other nested data, such as
   `transform: {...data}`, and array spreads stay supported.
 - Variable-computed member assignments on the admitted config or its `test`
-  subsection refuse, as do reassignment of a resolved config binding and
-  passing that config to an unread call (for example `Object.assign(config,
-  base)`). Literal member keys are decoded before checking for snapshot or
+  subsection refuse, as do reassignment of a resolved config binding,
+  writes to relevant destinations nested in array/object assignment patterns
+  (including defaults and rest), and passing that config to an unread call
+  (for example `Object.assign(config, base)`). Literal member keys are decoded before checking for snapshot or
   delegating overrides. A computed read/comparison is not a write. The reader
   does not perform general JavaScript dataflow: aliases created after the
   admitted binding, method side effects, prototype changes, and arbitrary
@@ -460,6 +461,8 @@ existing rules and limits.
   `vitest_config_wrapper_alias_keeps_credit_but_dynamic_test_member_refuses`
   pin #9940 export admission, member writes, unread merges, and plain/nested
   controls;
+  `destructured_config_writes_refuse_but_unrelated_patterns_keep_credit`
+  pins nested rebinding/member writes and unrelated destructuring controls;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
   `snapshot_whose_counter_cannot_be_named_stays_medium`,

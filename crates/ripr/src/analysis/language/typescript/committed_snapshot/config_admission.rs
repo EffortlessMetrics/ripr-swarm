@@ -155,47 +155,91 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
         bindings: Vec<String>,
         unread: bool,
     }
+    impl Writes<'_, '_> {
+        fn pattern_target_is_unread(
+            &self,
+            target: &oxc_ast::ast::AssignmentTargetMaybeDefault<'_>,
+        ) -> bool {
+            match target {
+                oxc_ast::ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(
+                    default,
+                ) => self.target_is_unread(&default.binding, None),
+                _ => self.target_is_unread(target.to_assignment_target(), None),
+            }
+        }
+
+        fn target_is_unread(
+            &self,
+            target: &oxc_ast::ast::AssignmentTarget<'_>,
+            value: Option<&Expression<'_>>,
+        ) -> bool {
+            use oxc_ast::ast::{AssignmentTarget, AssignmentTargetProperty};
+            let plain_value =
+                || value.is_some_and(|value| plain_write(value, self.program, &self.bindings));
+            match target {
+                AssignmentTarget::AssignmentTargetIdentifier(id) => {
+                    self.bindings.iter().any(|name| name == id.name.as_str())
+                }
+                AssignmentTarget::ComputedMemberExpression(member)
+                    if config_receiver(&member.object, &self.bindings) =>
+                {
+                    // Decode escaped keys before checking runner overrides.
+                    if let Some(key) = member_key(&member.expression) {
+                        override_key(key) || (key == "test" && !plain_value())
+                    } else {
+                        !matches!(
+                            member.expression.get_inner_expression(),
+                            Expression::NumericLiteral(_)
+                                | Expression::BooleanLiteral(_)
+                                | Expression::NullLiteral(_)
+                        )
+                    }
+                }
+                AssignmentTarget::StaticMemberExpression(member)
+                    if config_receiver(&member.object, &self.bindings) =>
+                {
+                    override_key(member.property.name.as_str())
+                        || (member.property.name == "test" && !plain_value())
+                }
+                // Pattern values cannot be inferred from the whole RHS or a
+                // default: extraction may select another value. Inspect every
+                // nested destination, including shorthand, defaults and rest.
+                AssignmentTarget::ArrayAssignmentTarget(array) => {
+                    array
+                        .elements
+                        .iter()
+                        .flatten()
+                        .any(|target| self.pattern_target_is_unread(target))
+                        || array
+                            .rest
+                            .as_ref()
+                            .is_some_and(|rest| self.target_is_unread(&rest.target, None))
+                }
+                AssignmentTarget::ObjectAssignmentTarget(object) => {
+                    object.properties.iter().any(|property| match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            self.bindings
+                                .iter()
+                                .any(|name| name == property.binding.name.as_str())
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            self.pattern_target_is_unread(&property.binding)
+                        }
+                    }) || object
+                        .rest
+                        .as_ref()
+                        .is_some_and(|rest| self.target_is_unread(&rest.target, None))
+                }
+                _ => value.is_none() && commonjs(target),
+            }
+        }
+    }
     impl<'a> Visit<'a> for Writes<'_, 'a> {
         fn visit_assignment_expression(
             &mut self,
             assignment: &oxc_ast::ast::AssignmentExpression<'a>,
         ) {
-            use oxc_ast::ast::AssignmentTarget;
-            if let AssignmentTarget::ComputedMemberExpression(member) = &assignment.left
-                && config_receiver(&member.object, &self.bindings)
-            {
-                // Decode literal member names through the AST: escaped
-                // `up\\u0064ate` must not evade the textual key checks.
-                let unread_key = if let Some(key) = member_key(&member.expression) {
-                    override_key(key)
-                        || (key == "test"
-                            && !plain_write(&assignment.right, self.program, &self.bindings))
-                } else {
-                    !matches!(
-                        member.expression.get_inner_expression(),
-                        Expression::NumericLiteral(_)
-                            | Expression::BooleanLiteral(_)
-                            | Expression::NullLiteral(_)
-                    )
-                };
-                if unread_key {
-                    self.unread = true;
-                }
-            }
-            if let AssignmentTarget::StaticMemberExpression(member) = &assignment.left
-                && config_receiver(&member.object, &self.bindings)
-                && (override_key(member.property.name.as_str())
-                    || (member.property.name == "test"
-                        && !plain_write(&assignment.right, self.program, &self.bindings)))
-            {
-                self.unread = true;
-            }
-            // Replacing a resolved local config invalidates its initializer.
-            if let AssignmentTarget::AssignmentTargetIdentifier(id) = &assignment.left
-                && self.bindings.iter().any(|name| name == id.name.as_str())
-            {
-                self.unread = true;
-            }
+            self.unread |= self.target_is_unread(&assignment.left, Some(&assignment.right));
             walk::walk_assignment_expression(self, assignment);
         }
         fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
