@@ -301,6 +301,35 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     Ok(())
 }
 
+/// #14355: a negated change/repair phrase is resolved work, not a blocker.
+/// The witness is the #14117 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-11T11:00:28Z";
+    let cases: [(&str, bool); 8] = [
+        ("REVIEW_READY\nResolved with no code change needed.", true),
+        (
+            "REVIEW_READY\nThree Devin threads resolved, no code changes needed.",
+            true,
+        ),
+        ("REVIEW_READY\nResolved without a code change.", true),
+        ("REVIEW_READY\nCode change needed.", false),
+        ("REVIEW_READY\nA change is needed.", false),
+        ("REVIEW_READY\nChanges required.", false),
+        ("REVIEW_READY\nRepairs required.", false),
+        (
+            "REVIEW_READY\nNo code change needed, but repairs required.",
+            false,
+        ),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]

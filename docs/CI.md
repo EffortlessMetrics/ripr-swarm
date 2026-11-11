@@ -108,6 +108,10 @@ first line is the readiness marker with an allowed tail; a trusted reviewer's la
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+A negated change/repair phrase is resolved work, not a blocker: `no code change
+needed`, `no changes needed` and `without a change` admit, while `Code change
+needed`, `A change is needed`, `Changes required` and `Repairs required` still
+refuse (#14355).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description

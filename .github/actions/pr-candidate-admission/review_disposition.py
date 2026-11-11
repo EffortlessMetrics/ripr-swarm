@@ -92,6 +92,18 @@ NEGATION = re.compile(
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
+# #14355: a negated change/repair phrase is not a blocker. "no code change needed"
+# and "no changes needed" describe resolved work, not a required repair. The
+# filler set is closed so an unrelated "no findings and code change needed" is
+# not swallowed; only the negated phrase is removed before the blocker scan, so
+# a genuine blocker elsewhere on the same line still refuses.
+NEGATED_CHANGE = re.compile(
+    r"\b(?:no|without)\b[ \t]+"
+    r"(?:(?:a|an|any|further|code|source|production)[ \t]+){0,2}"
+    r"(?:repairs?|changes?|fixes)\b[ \t]+"
+    r"(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b",
+    re.IGNORECASE,
+)
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
@@ -175,6 +187,16 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def negation_hit(line: str) -> bool:
+    """Whether ``line`` carries a blocker phrase outside a negated change phrase.
+
+    #14355: "no code change needed" is a resolved-work statement, not a blocker.
+    Only the negated phrase is removed, so a genuine blocker elsewhere on the
+    same line still refuses.
+    """
+    return bool(NEGATION.search(NEGATED_CHANGE.sub(" ", line)))
+
+
 def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
@@ -189,11 +211,11 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
+    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
     return all(
         positive_line(line)
-        or not (STATE_MENTION.search(line) or NEGATION.search(line))
+        or not (STATE_MENTION.search(line) or negation_hit(line))
         for line in substantive[1:]
     )
 
@@ -211,7 +233,7 @@ def comment_body_negative(body: str) -> bool:
         return True
     visible, fenced = parts
     return any(STATE_MENTION.search(line) for line in visible) or any(
-        STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced
+        STATE_TOKEN.search(line) or negation_hit(line) for line in fenced
     )
 
 
@@ -437,6 +459,15 @@ def self_test() -> None:
         ("REVIEW_READY\nnot ready; repairs are required", False),
         ("REVIEW_READY\nThis is no longer ready", False),
         ("REVIEW_READY\nRepairs are required before merge", False),
+        # #14355: a negated change/repair phrase is resolved work, not a blocker.
+        ("REVIEW_READY\nResolved with no code change needed.", True),
+        ("REVIEW_READY\nThree Devin threads resolved, no code changes needed.", True),
+        ("REVIEW_READY\nResolved without a code change.", True),
+        ("REVIEW_READY\nCode change needed.", False),
+        ("REVIEW_READY\nA change is needed.", False),
+        ("REVIEW_READY\nChanges required.", False),
+        ("REVIEW_READY\nRepairs required.", False),
+        ("REVIEW_READY\nNo code change needed, but repairs required.", False),
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),
