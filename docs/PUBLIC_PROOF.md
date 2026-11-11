@@ -153,7 +153,7 @@ Real mutation outcomes by ripr grip class, canonical-precise joins only:
 
 1745 mutants (1325 caught, 322 missed; 1647 with a caught or missed outcome). Canonical precise: 493 (28.3%). No containing seam: 843 (48.3%).
 
-Scored families: 75 (4.3%); precise but unscored: 418; excluded from precise joins: 1252; all unscored: 1670. Shares use every recorded mutant, including unknowns and exclusions.
+Scored families: 75 (4.3%); precise but unscored: 418; excluded from precise joins: 1252; all unscored: 1670. Shares use every mutant in the recorded span-join outcome table, including unknowns and exclusions. Synthetic and diff-mode populations remain separate.
 
 Overclaim examples, as recorded:
 

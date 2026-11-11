@@ -21779,10 +21779,11 @@ would require a separate versioned migration and criterion decision.
 - `scored_share`: `mutants_scored / mutants_total`, rounded as other shares.
 - `canonical_precise_unscored`: precise joins minus scored outcomes.
 - `excluded`: all non-precise dispositions.
-- `mutants_unscored`: all recorded mutants minus scored outcomes.
+- `mutants_unscored`: span-join table mutants minus scored outcomes.
 
-Both coverage shares use every recorded mutant, including timeout, unviable,
-unknown and excluded records. Zero denominators produce null shares and zero
+Both coverage shares use every mutant in the recorded span-join outcome
+table, including timeout, unviable, unknown and excluded records. Synthetic
+and diff-mode populations remain in their separate report sections. Zero denominators produce null shares and zero
 counts; the join criterion remains `not_established`. Weak and unknown
 verdict families do not score even with a precise join and caught/missed
 outcome. No threshold is assigned to actual scored-family coverage.

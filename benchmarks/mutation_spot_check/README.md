@@ -106,12 +106,14 @@ other keys are unaffected):
   established only by a Stryker report or a cosmic-ray dump (see below) and say so with their
   `agreement_method`.
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
-  and no-containing-seam counts, and their shares of all recorded mutants.
+  and no-containing-seam counts, and their shares of the recorded span-join
+  outcome table.
   Actual scored-family coverage is separate: `mutants_scored` and
   `scored_share`, with `canonical_precise_unscored`, `excluded` (non-precise
   dispositions), and `mutants_unscored` retaining the remaining counts.
-  Both coverage shares use every recorded mutant, including unknowns,
-  exclusions, timeout and unviable outcomes; zero totals yield null shares.
+  Both coverage shares include unknowns, exclusions, timeout and unviable
+  outcomes in that table; zero totals yield null shares. Synthetic and
+  diff-mode populations remain in their separate report sections.
   See the [coverage contract](../../docs/OUTPUT_SCHEMA.md#mutation-spot-check-summary-coverage).
 
 - `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one

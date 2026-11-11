@@ -1871,7 +1871,7 @@ fn seam_coverage(outcomes: &Value) -> Value {
         "mutants_unscored": mutants_total - scored,
         "no_containing_seam": no_seam,
         "no_containing_seam_share": rate(no_seam, mutants_total),
-        "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
+        "claim_boundary": "Advisory. Shares are of every mutant in the recorded span-join outcome table, including timeout and unviable outcomes; synthetic and diff-mode populations remain separate. Recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
     })
 }
 
@@ -2233,7 +2233,7 @@ pub(crate) fn coverage_markdown(report: &Value) -> String {
                 .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0))
         };
         out.push_str(&format!(
-            "\n## Seam coverage\n\n{} mutants ({} caught, {} missed; {} with a caught or missed outcome). Canonical precise: {} ({}). No containing seam: {} ({}).\n\nScored families: {} ({}); precise but unscored: {}; excluded from precise joins: {}; all unscored: {}. Shares use every recorded mutant, including unknowns and exclusions.\n",
+            "\n## Seam coverage\n\n{} mutants ({} caught, {} missed; {} with a caught or missed outcome). Canonical precise: {} ({}). No containing seam: {} ({}).\n\nScored families: {} ({}); precise but unscored: {}; excluded from precise joins: {}; all unscored: {}. Shares use every mutant in the recorded span-join outcome table, including unknowns and exclusions. Synthetic and diff-mode populations remain separate.\n",
             n("mutants_total"),
             n("caught"),
             n("missed"),
@@ -2604,6 +2604,8 @@ mod tests {
         let markdown = spot_check_markdown(&report);
         assert!(markdown.contains("Scored families: 4 (33.3%)"));
         assert!(markdown.contains("precise but unscored: 4"));
+        assert!(markdown.contains("recorded span-join outcome table"));
+        assert!(markdown.contains("Synthetic and diff-mode populations remain separate."));
         assert!(markdown.contains("legacy ID; precise join coverage"));
         assert!(!markdown.contains("and so receive a scored verdict"));
         let dir = std::env::temp_dir().join(format!("ripr-scored-coverage-{}", std::process::id()));

@@ -1055,7 +1055,7 @@
     "canonical_precise_share": 0.283,
     "canonical_precise_unscored": 418,
     "caught": 1325,
-    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
+    "claim_boundary": "Advisory. Shares are of every mutant in the recorded span-join outcome table, including timeout and unviable outcomes; synthetic and diff-mode populations remain separate. Recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
     "excluded": 1252,
     "missed": 322,
     "mutants_scored": 75,
