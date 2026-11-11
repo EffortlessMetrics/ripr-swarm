@@ -23,7 +23,10 @@ mod scope;
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
 
-pub(crate) use placement::{normalize_path_text, placement_for, placement_json};
+pub(crate) use placement::{
+    displaced_seam_location, displaced_seam_prefix, normalize_path_text, placement_for,
+    placement_json,
+};
 pub(crate) use render::display_paths;
 
 use publish_plan::{

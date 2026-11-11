@@ -10636,7 +10636,10 @@ Field contract:
   bound to a nested function; a changed line elsewhere in the same file is
   not a placement. Gap-ledger cards use `gap_record_anchor` for their
   producer-owned stable anchor. The renderer must prefer summary-only guidance
-  over misleading line placement.
+  over misleading line placement. When the mode is not `exact_seam_line` and
+  `source_location.line` names another line, the workflow annotation starts
+  `Gap at line N (`expression`) of this function:` and the inline comment
+  names the same line under its heading (#14303).
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
