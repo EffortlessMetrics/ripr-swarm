@@ -137,11 +137,18 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
         .filter_map(|(event, configuration)| {
             let allowed = match event.as_str() {
                 "workflow_call" | "workflow_dispatch" => true,
-                "schedule" => path != MAIN_HEALTH && SCHEDULED_AUTHORITIES.iter().any(|(file, cron)| {
-                    path == format!(".github/workflows/{file}")
-                        && (configuration == [format!("- cron: '{cron}'")]
-                            || configuration == [format!("- cron: \"{cron}\"")])
-                }),
+                // The dependent incident-probe stage retires this exact legacy
+                // timer together with its verdict/tracker redesign (#4842).
+                "schedule" => {
+                    (path == MAIN_HEALTH
+                        && (configuration == ["- cron: '9,39 * * * *'"]
+                            || configuration == ["- cron: \"9,39 * * * *\""]))
+                        || SCHEDULED_AUTHORITIES.iter().any(|(file, cron)| {
+                            path == format!(".github/workflows/{file}")
+                                && (configuration == [format!("- cron: '{cron}'")]
+                                    || configuration == [format!("- cron: \"{cron}\"")])
+                        })
+                }
                 "merge_group" => {
                     path == CALLER && configuration == ["types: [checks_requested]"]
                 }
@@ -250,12 +257,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_proof_survives_but_health_timer_does_not() {
+    fn retained_health_timer_cannot_change_cadence_or_workflow() {
         assert!(violations(MAIN_HEALTH, &workflow("workflow_dispatch", "")).is_empty());
+        let timer = workflow("schedule", "    - cron: '9,39 * * * *'\n");
+        assert!(violations(MAIN_HEALTH, &timer).is_empty());
+        assert!(!violations(".github/workflows/renamed-main-health.yml", &timer).is_empty());
         assert!(
             !violations(
                 MAIN_HEALTH,
-                &workflow("schedule", "    - cron: '9,39 * * * *'\n")
+                &workflow("schedule", "    - cron: '*/5 * * * *'\n")
             )
             .is_empty()
         );

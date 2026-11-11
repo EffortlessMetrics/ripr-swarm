@@ -1,2 +1,0 @@
-xtask/tests/main_health_sentinel_contract.rs|use std::process::Command|1|ci/incident-proof|#4842: Unix-only local shell replay imports the command builder; uses a fake gh in exclusive scratch and never contacts GitHub or builds product code.
-xtask/tests/main_health_sentinel_contract.rs|Command::new|1|ci/incident-proof|#4842: bounded timeout runs the actual extracted incident read/summary/judge/tracker shell blocks against fake API responses, status files and issue state; no live tracker writes or workflow dispatch.

@@ -131,13 +131,14 @@ mention subscribers are retired; their review configuration and guidance remain
 available to the session. A skipped job would still allocate a workflow, so a
 job guard is not an exception to this rule.
 
-The source retirement under #4842 removes 42 automatic event roots from 29
+The source retirement under #4842 removes 41 automatic event roots from 28
 workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
 builds are gone. Callable qualification leaves remain available to the existing
 #8082 owner; explicit manual proof and separately purposed security, corpus and
-maintenance schedules retain their declared scope. The main-health timer is
-retired; a main-health incident probe requires an incident and a concrete
-question.
+maintenance schedules retain their declared scope. The existing main-health
+sentinel, including its exact timer and job payload, remains for the dependent
+incident-probe stage under #4842. That stage carries timer retirement, selected
+commit evidence, tracker changes and their tests together.
 
 This is a source migration stage, not completed native activation. These
 remaining event edges are explicit bootstrap debt:
@@ -148,6 +149,7 @@ remaining event edges are explicit bootstrap debt:
 | `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Native queue request/refusal replaces the label interface |
 | `routed-rust.yml` | Main/master push retains the current required caller and cache-writer opportunity | Accepted selected-route cache continuity and coherent protected cutover |
 | `hard-cut-watch.yml` | Every main push allocates its release-cut observer, even when it only reports an inactive cut | Transitional debt: retire the automatic trigger after protected G/cut enforcement replaces it, or move its selected release purpose to an explicit operation |
+| `main-health-sentinel.yml` | Existing `9,39 * * * *` timer and manual probe, with unchanged jobs | Dependent incident-probe stage retires this exact timer and replaces the legacy verdict/tracker contract; no renamed or alternate-cadence timer is allowed |
 
 Do not convert the protected PR result into a cheap success while a direct merge
 could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
@@ -172,6 +174,7 @@ is economical or that the final lifecycle is activated.
 
 | Retained scheduled root | Current purpose |
 | --- | --- |
+| `main-health-sentinel.yml` | Exact legacy main-health probe retained until the dependent incident-probe stage |
 | `droid-security-scan.yml`, `security.yml` | Security/advisory drift observation |
 | `dx-scoreboard.yml` | DX scoreboard measurement |
 | `first-run-install.yml` | Published/default install-surface observation |
@@ -1402,45 +1405,58 @@ already carry the label and updates the owned comment only.
 `xtask/tests/issue_staleness_watchdog.rs` replays the sweep script against a
 fake `gh`.
 
-### Explicit Main Health Incident Probe
+### Main Health Sentinel
 
-The twice-hourly replay is retired under #4984/#4842. A concrete incident can
-request `.github/workflows/main-health-sentinel.yml` manually with an `incident`
-and `question`; neither elapsed time nor a merge count starts it. A dispatch
-outside main does not judge another branch as main health.
+This auxiliary-event retirement stage retains the existing sentinel workflow,
+tests and run-block budget unchanged. The following describes that legacy
+implementation; the dependent #4842 incident-probe stage retires its timer
+and replaces its evidence and tracker contract together. After auxiliary
+main-push retirement, the latest `ci.yml` result may remain historical. A
+green probe or automatic tracker closure is not full current qualification.
 
-The retained probe runs `cargo check --locked -p ripr` and the exact
-`cli_smoke version_is_exact_and_precedes_help_or_output_flags` test with the
-existing 20-minute probe and 30-minute job bounds. When the judge executes,
-nonzero native statuses, missing logs/statuses and zero executed tests fail it.
-Setup failure, cancellation or whole-job timeout may prevent judging or tracker
-recording; a failed run alone does not establish that either happened.
-Its subject is the
-invocation's full `GITHUB_SHA`, the selected main commit, even if main advances
-during the run. A passing job means only that this bounded compile/smoke probe
-passed, not full main health or incident recovery. The probe neither qualifies
-G nor authorizes landing, and cannot dispatch another workflow.
-
-The probe also reads the latest completed, non-cancelled, non-skipped main-push
-runs of `routed-rust.yml` and `ci.yml` with `actions: read`, retaining the full
-commit, run and failed jobs. Only a failed gate bound to the exact selected
-commit makes its current advisory verdict red. Older success and failure remain
-explicitly historical evidence; after push retirement, no new push result is
-expected. Missing, malformed or unreadable observations are `unknown`, never
-current success. Each API read is bounded, and a failed read cannot skip the
-probe judge. This inspection rebuilds, reruns and dispatches nothing.
-
-The existing main-red tracker identity and historical failure evidence remain
-intact. A failed current probe or exact-selected-commit gate creates or updates
-the tracker, deduplicated by full probe identity and failed gate run IDs. No
-passing probe closes the tracker or posts a recovery claim. The investigator
-must reconcile the existing full-gate obligations using appropriate current
-full qualification; bounded success cannot erase them.
-
-`xtask/tests/main_health_sentinel_contract.rs` checks explicit event admission,
-request scope, bounded execution, read-only gate inspection and tracker/evidence
-behavior, including shell replay with a fake API. These source tests do not
-establish a hosted incident probe or current full qualification.
+Main's push gate is frequently cancelled before completing (on busy days most
+`Routed Rust Small` main-push runs cancel before any job starts), and the
+Hard-cut watch stays green on broken main by design: it judges the cut packet,
+not the build. A broken main whose push run cancels can therefore sit with no
+completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
+live repeats through 2026-10-29).
+`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
+and probes main directly: `cargo check --locked -p ripr` plus one focused
+binary smoke selector (`cli_smoke
+version_is_exact_and_precedes_help_or_output_flags`), cached, on a
+GitHub-hosted runner, with its own serialization group and a 30-minute job
+timeout. It is a probe, not a second build lane and not a required check: it
+holds no branch-protection or ruleset authority and dispatches nothing.
+Probe logs are teed with native `PIPESTATUS` statuses. When the judge executes,
+missing or empty evidence, nonzero statuses and zero executed tests fail it.
+A probe-step timeout can leave missing status files that read as status 124;
+setup failure, cancellation or whole-job timeout can prevent the judge and
+tracker update from running. The summary table is the per-fire audit trail,
+and the `main-red` tracking issue
+(`main-red: scheduled main-health sentinel found a broken main`) is the
+durable findable record — opened once, appended per confirming probe, and
+closed by the first green probe with the recovering run link. The timer and
+probe budget do not establish a worst-case detection latency: queue delay and
+interrupted runs can extend it or prevent a verdict.
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Each fire still reads the latest completed,
+non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Since `CI` no longer runs on main pushes,
+this legacy gate lookup cannot establish current full health. The
+`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
+shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
+guard, `issues: write` as the only write authority, the exact probe selector,
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 
