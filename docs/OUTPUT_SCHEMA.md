@@ -16508,7 +16508,8 @@ Field contract:
   failed.
 - `version` - requested release version from `--version`.
 - `checks[].id` - stable check identifier such as `package-list`,
-  `publish-dry-run`, `package-install`, `installed-command-surface`,
+  `publish-dry-run`, `package-upload-size`, `package-install`,
+  `installed-command-surface`,
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,

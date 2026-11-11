@@ -246,6 +246,18 @@ release and dogfood evidence. This does not change the installed binary or
 library API, but removing either surface is a release-contract change that must
 be reviewed against `cargo package -p ripr --list` and this document.
 
+crates.io rejects a `.crate` above its default 10 MiB (10,485,760 byte) upload
+limit unless its team has raised the limit for that crate, and neither
+`cargo package` nor `cargo publish --dry-run` applies that limit. The
+`package-upload-size` check of `cargo xtask release-readiness` measures the two
+archives the publish rehearsal just wrote to `target/package`. A crate over the
+limit is reported as `warn` with its byte count, not `fail`: the `ripr` crate
+packaged from main on 2026-11-11 was 14,306,810 bytes, and #14071 owns the
+choice between a raised limit and a smaller package. Until that is settled a
+`warn` here means the real `cargo publish -p ripr` is expected to be refused.
+The check is `not_run` when the rehearsal did not pass in the same run, so an
+archive left by an earlier run is never measured.
+
 The published `cli_help_hierarchy` target must compile and run from the
 extracted package without repository-root documentation. It keeps the rendered
 help and synthetic-document cases; its shared helper is packaged under
