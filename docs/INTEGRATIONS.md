@@ -16,7 +16,8 @@ surfaces where a developer would feel ripr in the inner loop.
 | VS Code, Zed, Neovim and other LSP editors | Inner loop; diagnostics on save | [Editor quickstart](QUICKSTART.md#vs-code-first-hour), [Neovim](interop/neovim-lsp.md), [others](interop/other-editors-lsp.md) |
 | Coding agents (MCP) | Agents write the tests ripr points at | [MCP status server](interop/mcp.md) |
 | Muse | Guided setup and one bounded test repair | [Native package guide](../plugins/muse/ripr/README.md): two skills and an explicitly approved MCP server; requires an MCP-capable RIPR build |
-| pre-commit framework | Catches the gap before the push | Hook ships in `.pre-commit-hooks.yaml`; local form below |
+| pre-commit framework | Catches the gap before the push | Commit and push hooks ship in `.pre-commit-hooks.yaml`; local form below |
+| lefthook, husky, plain Git hooks | Teams that do not use pre-commit | Snippets below |
 | GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |
 | cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Advisory import of existing results; external execution |
@@ -38,9 +39,22 @@ repos:
     rev: v0.11.0
     hooks:
       - id: ripr
+      - id: ripr-push   # optional; needs `pre-commit install --hook-type pre-push`
 ```
 
-The hook uses `language: system`: `ripr` must already be on `PATH` (see
+`ripr` runs at commit time (stages `pre-commit`, `pre-merge-commit` and
+`manual`), so a push-time install does not rerun it against a clean tree.
+`ripr-push` runs at push time: `ripr check --committed --quiet` compares the
+current branch's commits with the default base (`origin/HEAD`, then
+`origin/main`, `origin/master`, `main`, `master`). That is the branch against
+its base, not the exact ref range being pushed, and pushing the base branch
+itself reports "nothing was in scope". Staged and unstaged edits are left out
+and the report says so. When none of those bases resolves,
+ripr exits 2, the hook fails and the push stops with a message naming the
+fix; for a repository whose base has another name, set
+`args: [--base, origin/develop]` on the hook.
+
+The hooks use `language: system`: `ripr` must already be on `PATH` (see
 [Install channels](INSTALL_CHANNELS.md)). It deliberately does not use
 `language: rust`, which would compile the whole crate in every consumer's hook
 environment. The manifest is new in 0.11.0: no tag before `v0.11.0` contains
@@ -115,6 +129,68 @@ reported "nothing was in scope" and passed. `args: [--format, agent]` and a
 `types_or: [rust, python]` override were accepted and ran. No hosted service
 and no released tag were involved, so `rev: v0.11.0` resolving to a tag that
 contains the manifest is not yet verified.
+
+The stage split and `ripr-push` were exercised the same way with
+`pre-commit try-repo <worktree> --hook-stage pre-push --from-ref origin/main
+--to-ref HEAD` (only `ripr-push` ran; it reported the committed change against
+`origin/main`) and `--hook-stage pre-commit` (only `ripr` ran). In a repository
+whose only branch is `trunk`, with no remote, `ripr check --committed` exited 2
+with "could not resolve a default base". A test,
+`crates/ripr/tests/pre_commit_hook_manifest.rs`, runs every manifest entry
+through the built binary so a renamed flag fails the build's tests instead of
+every consumer's hook.
+
+## lefthook, husky and plain Git hooks
+
+The same two commands work in any hook manager; `ripr` must be on `PATH`.
+
+[lefthook](https://lefthook.dev), `lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    ripr:
+      glob: "*.rs"
+      run: ripr check --worktree --base HEAD --quiet
+pre-push:
+  commands:
+    ripr:
+      glob: "*.rs"
+      run: ripr check --committed --quiet
+```
+
+[husky](https://typicode.github.io/husky/) 9, `.husky/pre-commit` and
+`.husky/pre-push`, one line each:
+
+```sh
+ripr check --worktree --base HEAD --quiet
+```
+
+```sh
+ripr check --committed --quiet
+```
+
+Without a hook manager, `.git/hooks/pre-commit` (made executable):
+
+```sh
+#!/bin/sh
+exec ripr check --worktree --base HEAD --quiet
+```
+
+All three are advisory for the same reason as the pre-commit hook: findings
+exit 0, and only a run that could not analyze exits 2. They differ in what a
+commit-time run sees. pre-commit stashes every unstaged edit, so its report
+covers exactly what is being committed. lefthook hides only the unstaged part
+of a partly staged file, so edits to other tracked files that are not staged
+at all still appear. husky and a plain hook hide nothing, and with no file
+filter they also run, and print a report, on commits that touch no Rust file.
+
+Exercised on Linux with lefthook 1.13.6 and husky 9 from npm, in a scratch
+Cargo crate with a bare local `origin`. A real `git commit` and `git push` ran
+each hook. lefthook's commit run hid the unstaged part of a partly staged file, and its push
+run compared against `origin/main`. With a second, wholly unstaged file,
+lefthook's commit report included that file too. husky's commit run included
+an unstaged edit, as did the plain hook. All exited 0.
 
 ## GitLab CI and other hosted CI
 

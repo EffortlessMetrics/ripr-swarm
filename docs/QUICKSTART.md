@@ -205,6 +205,11 @@ without making a change, use the separate
 [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
+To run the same check on every commit or push, add the shipped pre-commit hook
+or a lefthook, husky or plain Git hook from
+[Integrations](INTEGRATIONS.md#pre-commit-framework). The hooks are advisory:
+findings exit 0.
+
 ### Reference: output mechanics and terms
 
 The first run does not need this subsection. It collects, without loss, the
@@ -755,4 +760,4 @@ and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md) for supported cases.
 
 [Command guide](COMMAND_HIERARCHY.md) · [Configuration](CONFIGURATION.md) ·
 [Targeted tests](TARGETED_TEST_WORKFLOW.md) · [Output formats](OUTPUT_SCHEMA.md) ·
-[Terminology](TERMINOLOGY.md)
+[Integrations and Git hooks](INTEGRATIONS.md) · [Terminology](TERMINOLOGY.md)
