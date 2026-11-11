@@ -1,6 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0068"
 tests = [
+  "crates/ripr/src/analysis/consumed_source.rs::counted_manifest_preserves_portable_path_identity",
   "crates/ripr/src/output/counted_findings/tests.rs::consumed_source_manifest_requires_actual_complete_observations",
   "crates/ripr/src/output/counted_findings/tests.rs::ignored_test_mutation_invalidates_an_otherwise_clean_git_subject",
   "crates/ripr/src/output/counted_findings/tests.rs::identity_git_probes_obey_the_active_deadline",

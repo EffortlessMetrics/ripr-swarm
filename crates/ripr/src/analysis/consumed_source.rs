@@ -29,16 +29,33 @@ impl ConsumedRustSources {
         if self.paths.is_empty() || self.paths.len() > 4096 {
             return None;
         }
-        self.paths
-            .keys()
-            .map(|path| {
-                let digest = self.digest(path)?;
-                Some((
-                    path.to_str()?.replace('\\', "/"),
-                    format!("sha256:{digest}"),
-                ))
-            })
-            .collect()
+        let mut manifest = BTreeMap::new();
+        for path in self.paths.keys() {
+            let digest = self.digest(path)?;
+            let mut portable = String::new();
+            for component in path.components() {
+                let Component::Normal(name) = component else {
+                    return None;
+                };
+                let name = name.to_str()?;
+                // A backslash is a filename character on Unix. Replacing it
+                // would alias another observed path and silently drop custody.
+                if name.contains(['\\', '/']) {
+                    return None;
+                }
+                if !portable.is_empty() {
+                    portable.push('/');
+                }
+                portable.push_str(name);
+            }
+            if manifest
+                .insert(portable, format!("sha256:{digest}"))
+                .is_some()
+            {
+                return None;
+            }
+        }
+        Some(manifest)
     }
 
     /// True when this carrier recorded no Rust source observations (for example
@@ -252,6 +269,30 @@ fn is_normal_relative_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counted_manifest_preserves_portable_path_identity() {
+        let mut source = ConsumedRustSources::default();
+        source.record(&Path::new("src").join("lib.rs"), Some(b"first"));
+        assert_eq!(
+            source
+                .complete_manifest()
+                .map(|manifest| manifest.into_keys().collect::<Vec<_>>()),
+            Some(vec!["src/lib.rs".to_string()])
+        );
+        #[cfg(unix)]
+        for second in [b"first".as_slice(), b"different".as_slice()] {
+            let slash = Path::new("src/lib.rs");
+            let literal_backslash = Path::new(r"src\lib.rs");
+            assert_ne!(slash, literal_backslash);
+            let mut source = ConsumedRustSources::default();
+            source.record(slash, Some(b"first"));
+            source.record(literal_backslash, Some(second));
+            assert!(source.digest(slash).is_some());
+            assert!(source.digest(literal_backslash).is_some());
+            assert!(source.complete_manifest().is_none());
+        }
+    }
 
     /// #11444: a refusal names the changed file with `/` separators on every
     /// host (a Windows path arrives with `\`).

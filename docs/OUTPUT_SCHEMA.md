@@ -10506,7 +10506,8 @@ It carries Cargo configuration/environment identity captured before the
 analysis and rechecked afterward, and `rust_sources`: SHA-256 commitments to
 raw Rust bytes actually consumed by that producer. Current reads verify those
 commitments; they never create a missing producer observation. Unavailable or
-conflicting observations refuse. This initial route admits at most 4,096
+conflicting observations and ambiguous portable path encodings refuse rather
+than dropping an observation. This initial route admits at most 4,096
 source commitments, 4 MiB per source and 256 MiB total verification reads.
 The count-policy digest includes effective severity and overrides using a
 representation tied to that exact producer build. Initially only complete,
