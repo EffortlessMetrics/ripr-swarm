@@ -10,9 +10,16 @@
 an ANSI escape sequence; the only escape-adjacent code removes control
 characters from text that came from the analyzed repository
 (`crates/ripr/src/terminal_text.rs`, `crates/ripr/src/stderr_guard.rs`). The
-package has no styling dependency, never asks whether a stream is a terminal,
-and never reads `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM`
-or `COLORTERM`.
+package has no styling dependency and never reads `NO_COLOR`, `CLICOLOR`,
+`CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM` or `COLORTERM`.
+
+Terminal detection does exist, for a different purpose. The CLI asks whether
+stderr is a terminal to choose how progress is shown
+(`crates/ripr/src/cli/progress.rs`): on a terminal the progress row rewrites
+itself with a carriage return, and off one it is written as plain lines or not
+at all. It also asks whether stdin is a terminal before printing a note on
+stderr that it is waiting for input. Those checks select stderr behavior only.
+They never select styling and never change the report on stdout.
 
 That behavior was pinned for one route only: `ripr help --json` must be
 byte-identical under those variables
@@ -26,8 +33,10 @@ reader can take the absence of styling for an unfinished feature.
 
 `ripr` emits no terminal styling, by contract:
 
-- No ANSI color, weight, underline or cursor-control sequence is written to
-  stdout or stderr by any command or output format, on a terminal or off one.
+- No ANSI escape sequence (color, weight, underline or cursor movement) is
+  written to stdout or stderr by any command or output format, on a terminal
+  or off one. The carriage return that redraws the stderr progress row on a
+  terminal is the one control character `ripr` writes for presentation.
 - `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM` and
   `COLORTERM` are intentionally inert. `NO_COLOR` is satisfied trivially. The
   force variables do not turn styling on, because there is none to turn on.
@@ -42,9 +51,13 @@ variables, and neither stream may contain an escape byte.
 
 ## Consequences
 
-- Human output is the same bytes in a terminal, a pipe, a CI log, a golden and
-  an agent's captured transcript. Goldens under `fixtures/*/expected/` and PR
-  comments need no stripping step.
+- The report on stdout carries no styling bytes in a terminal, a pipe, a CI
+  log, a golden or an agent's captured transcript. Goldens under
+  `fixtures/*/expected/` and PR comments need no stripping step. Two things
+  still vary by design and are not styling: stderr progress depends on whether
+  stderr is a terminal, and the human `check` report prints its legend on the
+  first run in a workspace unless `--legend` asks for it every time (the test
+  passes `--legend` for that reason).
 - On an interactive terminal a blocking gap, an advisory note and a suggested
   command have the same visual weight. Report readability has to be improved
   through structure and wording, not color.
