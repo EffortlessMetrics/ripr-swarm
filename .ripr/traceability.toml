@@ -20953,10 +20953,16 @@ tests = [
   "xtask/src/precommit_v2.rs::tests::composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip",
   "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject",
   "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_is_disclosed_as_not_enumerated_never_as_coverage",
+  "xtask/src/policy/file_policy.rs::tests::selectors_resolved_in_source_are_not_built_and_never_read_as_listed",
+  "xtask/src/policy/library_selector.rs::tests::selector_grammar_accepts_only_one_package_lib_and_module_path",
+  "xtask/src/policy/library_selector.rs::tests::a_declared_module_with_tests_resolves_to_their_names",
+  "xtask/src/policy/library_selector.rs::tests::stale_or_unsupported_shapes_do_not_resolve",
+  "xtask/src/policy/library_selector.rs::tests::the_shipped_ripr_library_selector_resolves_in_this_repository",
 ]
 fixtures = []
 code = [
   "xtask/src/policy/file_policy.rs",
+  "xtask/src/policy/library_selector.rs",
   "xtask/src/policy/mod.rs",
   "xtask/src/main.rs",
   "xtask/src/precommit_v2.rs",

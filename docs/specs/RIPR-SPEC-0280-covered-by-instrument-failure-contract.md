@@ -161,6 +161,32 @@ sidecar; a stale sidecar is removed. `file-policy.md` carries one row starting
 report lists the skipped enumeration under `skipped`. The row carries none of
 the `selected=` tokens the retained-evidence readers accept.
 
+### Rule 7: local `precommit` resolves library unit-test selectors in source
+
+A run that Rule 6 does not skip would otherwise build the `ripr` library test
+target for one selector. Local `precommit` instead resolves a selector of the
+exact shape `cargo test -p <package> --lib <module path>` (lock flags allowed,
+nothing else) against source:
+
+- the package's library root comes from its manifest;
+- every segment of the module path is a declared module, reached through
+  ordinary `mod` declarations or inline modules, where `#[cfg(test)]` is the
+  only accepted condition;
+- the final module holds at least one `#[test]` function with no condition
+  other than `#[cfg(test)]`.
+
+A selector that resolves starts no build. Its report row reads
+`applicable; resolved_in_source=N; not_listed; tests=[...]`, carries none of
+the tokens that mean a listing ran, and the run retains no coverage subject
+sidecar. Any shape the resolver does not understand, a missing module, a
+module with no test function, or a syntax error returns to the build-and-list
+path, so a stale pointer is never accepted by source resolution. Every other
+selector kind is built and listed as before.
+
+Source resolution compiles nothing, so it is weaker than a listing. Hosted
+`ci-policy` and the standalone `cargo xtask check-file-policy` always build
+and list every applicable selector.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -178,6 +204,11 @@ the `selected=` tokens the retained-evidence readers accept.
    already skips local Clippy, with the skip written into both reports.
    Rejected: enumerating on every local run (the build does not fit a 15 GB
    container), and skipping silently or on an incomplete change set.
+5. **Resolve library selectors in source locally, disclosed.** Adopted: a
+   narrow grammar with a fall back to the build for anything else, and a row
+   that cannot be read as a listing. Rejected: dropping the selector from
+   local runs (a renamed module would pass), and moving the tests to an
+   integration target (they exercise private items).
 
 ## Required Evidence
 
@@ -202,6 +233,12 @@ the `selected=` tokens the retained-evidence readers accept.
   leg and the published `skipped` row. Unit tests pin that the skipped mode
   never calls the enumerator, still refuses a malformed declaration, retains
   no subject, and publishes a row that cannot be read as coverage.
+- Source resolution is pinned on a generated workspace: the grammar, a
+  declared module with tests, and the shapes that must not resolve (renamed
+  module, feature condition, conditional test, syntax error). One test
+  resolves the shipped `ripr` selector in this repository. A policy test pins
+  that a resolved selector is not handed to the builder, that the remaining
+  selectors are, and that the resolved row cannot be read as a listing.
 
 ## Non-Goals
 
@@ -209,6 +246,8 @@ the `selected=` tokens the retained-evidence readers accept.
   deferral behavior.
 - Scoping enumeration to the packages a Rust change impacts, or lowering the
   memory the library test build needs.
+- Resolving `--bin` or `--test` selectors in source, or evaluating `cfg`
+  conditions beyond `#[cfg(test)]`.
 - Enumeration budgets for non-lock timeouts, or the host-scoped selection
   rules (RIPR-SPEC-0191).
 - Killing or inspecting the process that holds the lock.
@@ -234,6 +273,10 @@ the `selected=` tokens the retained-evidence readers accept.
    built, `file-policy.md` has the `not_enumerated;` row, the run can pass.
    With `crates/a/src/lib.rs` or `policy/non-rust-allowlist.toml` changed, or
    under `ci-policy`, enumeration runs.
+8. Local `precommit` with `xtask/src/main.rs` changed: the `ripr` library
+   selector is resolved in source and its row says `not_listed`; the other
+   selectors are built and listed. If the named module were renamed, the
+   selector would go to the build-and-list path and fail there.
 
 ## Test Mapping
 
@@ -241,7 +284,8 @@ the `selected=` tokens the retained-evidence readers accept.
   rule 5.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
-- `xtask/src/policy/file_policy.rs`: the policy side of rule 6.
+- `xtask/src/policy/file_policy.rs`: the policy side of rules 6 and 7.
+- `xtask/src/policy/library_selector.rs`: the resolver side of rule 7.
 
 ## Implementation Mapping
 
@@ -255,7 +299,9 @@ the `selected=` tokens the retained-evidence readers accept.
   `run_composition_in`; `coverage_enumeration` (rule 6).
 - `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
   `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
-  `coverage_disclosure_items` (rule 6).
+  `coverage_disclosure_items` (rule 6); `partition_resolved_in_source`
+  (rule 7).
+- `xtask/src/policy/library_selector.rs`: `resolve_in_source` (rule 7).
 
 ## Metrics
 
