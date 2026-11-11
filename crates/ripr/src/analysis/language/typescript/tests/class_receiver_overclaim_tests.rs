@@ -260,6 +260,55 @@ fn a_local_binding_of_the_class_name_shadows_the_owner() -> Result<(), String> {
     Ok(())
 }
 
+/// The shadow must hold when the test also imports the owner's class: the
+/// import binding is a second route to the same constructor name, and a
+/// body-local `class` declaration of that name is what `new` reaches.
+#[test]
+fn a_body_local_class_shadows_the_owner_the_test_imports() -> Result<(), String> {
+    let import = "import { Url } from \"../src/u\";";
+    assert_credited(
+        &test_source(import, CTOR_BODY),
+        Subject::Constructor,
+        "owner import control",
+    )?;
+    let local_class = format!("  class Url {{ protocol = \"\"; }}\n{CTOR_BODY}");
+    assert_withheld(
+        &test_source(import, &local_class),
+        Subject::Constructor,
+        "body-local class under the owner's named import",
+    )?;
+    let alias = "import { Url as Link } from \"../src/u\";";
+    let link_body = CTOR_BODY.replace("Url", "Link");
+    assert_credited(
+        &test_source(alias, &link_body),
+        Subject::Constructor,
+        "alias import control",
+    )?;
+    let local_link = format!("  class Link {{ protocol = \"\"; }}\n{link_body}");
+    assert_withheld(
+        &test_source(alias, &local_link),
+        Subject::Constructor,
+        "body-local class under the owner's alias import",
+    )?;
+    let default_import = "import Link from \"../src/u\";";
+    let default_relation = |body: &str| {
+        relation_with(
+            &default_files(DEFAULT_URL_CLASS),
+            &test_source(default_import, body),
+            Subject::Constructor,
+        )
+    };
+    if default_relation(&link_body)?.is_none() {
+        return Err("default import control: expected credit".to_string());
+    }
+    if let Some(reason) = default_relation(&local_link)? {
+        return Err(format!(
+            "body-local class under the owner's default import: expected no credit, got {reason:?}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn a_namespace_import_under_the_class_name_is_withheld() -> Result<(), String> {
     assert_withheld(

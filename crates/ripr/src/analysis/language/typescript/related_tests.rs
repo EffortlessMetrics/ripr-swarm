@@ -2777,6 +2777,7 @@ pub(crate) fn receiver_owner_call_relation(
                         workspace_root,
                     )
                     && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                    && !body_declares_class_named(&test.body_text, &import.local)
                 {
                     constructor_names.push(import.local.clone());
                 }
@@ -3326,7 +3327,10 @@ pub(crate) fn constructor_names_for_method_owner(
         }
     }
     // A constructor name the test scope or body rebinds (`const Cart =
-    // class {}`, `const shop = {...}`) constructs something else.
+    // class {}`, `class Cart {}`, `const shop = {...}`) constructs something
+    // else. The body-local `class` declaration is checked here as well as on
+    // the bare class name, because the test's own import of the owner would
+    // otherwise put the shadowed name straight back.
     names.retain(|name| {
         let local = name.split('.').next().unwrap_or(name);
         !test
@@ -3334,6 +3338,7 @@ pub(crate) fn constructor_names_for_method_owner(
             .iter()
             .any(|binding| binding.name == local)
             && !local_identifier_declared_in_test_body(&test.body_text, local)
+            && !body_declares_class_named(&test.body_text, local)
     });
     names
 }
