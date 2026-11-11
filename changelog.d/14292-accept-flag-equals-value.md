@@ -4,4 +4,5 @@
   tokens after a literal `--` stay as written. Switches take no value, so
   `--quiet=false` is still refused as typed rather than read as `--quiet`.
   Before, every command refused the `=` spelling as an unknown argument
-  (#14292).
+  (#14292). `ripr help --json` now reports `agent repair --phase` and
+  `gate --mode`, documented as choice lists, as value-taking flags.

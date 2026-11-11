@@ -103,13 +103,19 @@ fn emit_attached_terminal_stdin_note(
 pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut literal = false;
+    // The previous token when it was a bare long flag that may own this
+    // token as its value. Its arity is looked up only when this token is
+    // `--name=value`-shaped, so ordinary argv never pays for the help scan.
+    let mut pending_flag: Option<String> = None;
     for (index, arg) in args.into_iter().enumerate() {
-        let value_position = out.last().is_some_and(|previous: &String| {
-            previous.starts_with("--")
-                && !previous.contains('=')
-                && documented_arity(previous) == Some(true)
-        });
-        if index == 0 || literal || (value_position && long_flag_shape(&arg).is_some()) {
+        let previous = pending_flag.take();
+        if index == 0 || literal {
+            out.push(arg);
+            continue;
+        }
+        let value_position = long_flag_shape(&arg).is_some()
+            && previous.is_some_and(|flag| documented_arity(&flag) == Some(true));
+        if value_position {
             out.push(arg);
             continue;
         }
@@ -123,7 +129,12 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
                 out.push(name.to_string());
                 out.push(value.to_string());
             }
-            None => out.push(arg),
+            None => {
+                if arg.starts_with("--") && !arg.contains('=') {
+                    pending_flag = Some(arg.clone());
+                }
+                out.push(arg);
+            }
         }
     }
     out
@@ -301,6 +312,25 @@ mod tests {
                 "--quiet",
                 "--format",
                 "json"
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_splits_a_choice_list_flag_and_not_a_split_off_value() {
+        // `--phase before|after|verify` takes a value (#14292 review), and a
+        // value split off `--output=--base` does not own the next token.
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "agent",
+                "repair",
+                "--phase=after",
+                "--output=--base",
+                "--root=.",
+            ])),
+            args(&[
+                "ripr", "agent", "repair", "--phase", "after", "--output", "--base", "--root", "."
             ])
         );
     }
