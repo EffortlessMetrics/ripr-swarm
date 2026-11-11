@@ -1542,6 +1542,7 @@ the first matching row wins (reach / observe / discriminate):
 | --- | --- | --- | --- |
 | 1 | a static limit | `static_unknown` | no / no / no with no related test; else yes (eligible) or weak (heuristic only) / same / unknown |
 | 2 | no related test | `no_static_path` | no / no / no |
+| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | weak / no / no |
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |
@@ -1550,8 +1551,9 @@ the first matching row wins (reach / observe / discriminate):
 | 8 | weaker than strong | `weakly_exposed` | yes / weak / weak |
 
 Confidence is 0.6 for `exposed`, 0.2 for `static_unknown` and 0.4
-otherwise. Python never emits `reachable_unrevealed` or
-`infection_unknown`. The ladder is the existing behavior and is normative.
+otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
+related test replaces the owner itself so none runs the changed code; the
+class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
 ### Decisions
 

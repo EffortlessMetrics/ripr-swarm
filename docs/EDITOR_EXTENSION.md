@@ -521,6 +521,12 @@ instead reads
 Download, HTTP, checksum, and manifest failures use diagnostic/retry
 guidance instead of `cargo install ripr`.
 
+When the download never reached its host (no DNS answer, a refused or dropped
+connection, or the 30-second fetch timeout), the message says so and names the
+offline route: check the network connection or proxy and retry, or set
+`ripr.server.path` to a `ripr` binary already on the machine
+(`ripr.server.downloadBaseUrl` for a mirror).
+
 Actions depend on the resolution failure kind.
 
 Missing binary:

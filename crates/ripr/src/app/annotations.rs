@@ -70,7 +70,7 @@ fn render_annotations(
     // One direct read determines presence: `NotFound` is the intended
     // optional-comments-file state; every other I/O failure (permission
     // denied, directory input, invalid UTF-8) stays an explicit error.
-    let text = match fs::read_to_string(&comments_path) {
+    let text = match crate::bounded_input::read_to_string(&comments_path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AnnotationOutput {
@@ -191,7 +191,7 @@ fn check_annotations(
         println!("RIPR annotations skipped: {} is missing", options.comments);
         return Ok(());
     }
-    let actual = fs::read_to_string(path).map_err(|err| {
+    let actual = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "missing or unreadable {}: {err}; run `ripr annotations` to write it",
             options.out

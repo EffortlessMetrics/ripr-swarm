@@ -1662,7 +1662,6 @@ name = "ripr"
 version = "0.11.0"
 dependencies = [
  "bitflags",
- "bytes",
  "fs2",
  "home",
  "nix",

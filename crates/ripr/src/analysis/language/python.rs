@@ -489,6 +489,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod callee_patch;
 mod collection_config;
 mod fixture_substitution;
 mod fixtures;
@@ -2530,6 +2531,8 @@ mod helper_module_attribute_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 
+#[cfg(test)]
+mod callee_patch_tests;
 #[cfg(test)]
 mod helper_inline_tests;
 #[cfg(test)]

@@ -982,6 +982,12 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
             "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
              the first selected file alone exceeded it and was analyzed whole"
         ),
+        crate::analysis::PartialDiffStopReason::FileExceedsAnalysisLimit => format!(
+            "the changed-line limit ({}); every enabled-language file that fits was selected \
+             and {} file(s) that each exceed their language's limit on their own were left out",
+            scope.over_limit_envs().join(", "),
+            scope.over_limit_files.len()
+        ),
     };
     out.push_str(&format!(
         "Partial scope: run state {} — analysis stopped at {stopped_at}; \
@@ -1011,6 +1017,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         // The raw path stays on the scope record for identities/JSON; only
         // the terminal-facing display is escaped (#2142 review).
         out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
+    }
+    for file in &scope.over_limit_files {
+        out.push_str(&format!(
+            "  over limit (not analyzed): {} ({} changed lines over {}={})\n",
+            escape_terminal_display(&file.path),
+            file.changed_lines,
+            file.limit_env,
+            file.limit
+        ));
     }
     for disclosure in &scope.budget_disclosures {
         out.push_str(&format!("  budget: {disclosure}\n"));
@@ -6755,6 +6770,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6814,6 +6831,7 @@ mod tests {
             PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
             PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
             PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
+            PartialDiffStopReason::FileExceedsAnalysisLimit => (7, 35, None),
         };
         CheckOutput {
             value_origins: Default::default(),
@@ -6849,6 +6867,8 @@ mod tests {
                 stop_reason,
                 next_file_changed_lines,
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6964,6 +6984,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
