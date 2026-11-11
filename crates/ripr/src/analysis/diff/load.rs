@@ -2151,10 +2151,10 @@ fn split_revision_range(revision: &str) -> Option<(&str, &str)> {
         if rest.starts_with("^{/") {
             // An unterminated search swallows the rest of the value.
             index += rest.find('}')? + 1;
-        } else if rest.starts_with("...") {
-            return Some((&revision[..index], &rest[3..]));
-        } else if rest.starts_with("..") {
-            return Some((&revision[..index], &rest[2..]));
+        } else if let Some(end) = rest.strip_prefix("...") {
+            return Some((&revision[..index], end));
+        } else if let Some(end) = rest.strip_prefix("..") {
+            return Some((&revision[..index], end));
         } else {
             index += rest.chars().next().map_or(1, char::len_utf8);
         }
