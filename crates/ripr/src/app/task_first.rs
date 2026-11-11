@@ -2944,7 +2944,11 @@ pub(crate) fn check_repair_route(
         // no-card refusal adds nothing to its screen (its limitation
         // guidance is the whole story); only a finding that would otherwise
         // have been offered a start names it.
-        if static_limited && reason == NO_TEST_TARGET_REASON {
+        // #14084: the same holds for a seam the before phase withholds as
+        // evidence-limited; the finding's own limitation guidance covers it.
+        if static_limited
+            && (reason == NO_TEST_TARGET_REASON || reason == evidence_limited_reason(entry))
+        {
             return CheckRepairRoute::Silent;
         }
         // A bound seam carries a canonical gap id, which a strongly gripped

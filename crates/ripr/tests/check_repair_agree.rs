@@ -1101,3 +1101,29 @@ fn weak_assertion_gap_start_offered_by_check_starts() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #14084: when check already reads the finding as unclear, its limitation
+/// guidance is the whole story; the withheld seam adds no second advisory.
+#[test]
+fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && total >= 100 {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && total >= 120 {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "use ar::discount;\n\n#[test]\nfn runs() {\n    let _ = discount(200, true);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: unknown"),
+        "the fixture must produce an unclear finding:\n{check}"
+    );
+    assert!(
+        offered_repair_id(&check).is_none() && !check.contains("no repair start offered"),
+        "an unclear finding must stay without a repair advisory:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains("whether the changed value reaches a result a test can check"),
+        "bare repair still names why the spot cannot start:\n{repair}"
+    );
+    Ok(())
+}
