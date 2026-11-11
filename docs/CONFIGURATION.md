@@ -62,7 +62,7 @@ need to run it.
 | Oracles | Snapshot and mock-expectation oracles are `medium`; broad error checks are `weak`. |
 | Seam diagnostics | Saved-workspace LSP seam diagnostics are on, with explicit config or initialization options allowed to disable them. |
 | Report caps | Context packets and collect-context commands include up to `5` related tests by default. |
-| Suppressions | SARIF and badge output apply `.ripr/suppressions.toml`; other findings formats only mention a detected `.ripr/suppressions.toml` on stderr. A missing file is normal. |
+| Suppressions | SARIF and the diff-scope and `ripr+` badge formats apply `.ripr/suppressions.toml`; human, human-full, JSON, JSON-compact, GitHub and missed-txt only mention a detected default-path file on stderr. A missing file is normal. |
 | Badges | Public repo badges count unresolved canonical actionable gaps, or explicit gap-decision-ledger projection targets when a ledger is supplied. Seam-native counts remain internal inventory. Badge rendering stays advisory unless an explicit failure policy is selected. |
 | Cache | Full and compact classified cache stores use an 8 MiB encoded-byte ceiling per entry or shard by default, with secondary record caps of `20000` (full) and `100000` (compact). Large repos can opt into higher process-local limits. |
 | CI | Generated GitHub workflows upload advisory pilot/report/agent artifacts, keep SARIF rendering/upload optional, and use `continue-on-error` by default. |
@@ -928,7 +928,7 @@ diagnostics, MCP gaps and repair cards, `ripr explain` and repo-scope output
 still report them. There is no setting to turn this off; remove the attribute
 to see the findings again.
 
-Validated by `ripr check --format sarif`, `sarif-compact` and `badge-*` (loaded relative to `--root`).
+Validated by `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats (loaded relative to `--root`).
 Schema:
 
 ```toml
@@ -1241,10 +1241,11 @@ cannot be `off`.
 
 Seam severities apply wherever ripr reports seams: LSP seam diagnostics, SARIF
 seam results, the seam `severity` field in `review-comments` output, and
-agent-brief seam selection and its `severity` field. Valid values are `off`,
-`info`, `warning`, and `note`. A class set to `off` publishes no LSP diagnostic
-or SARIF result and is left out of agent-brief results (with the omission
-reason named); `review-comments` output still lists it, labelled `off`.
+agent results: agent-brief seam selection and its `severity` field, `ripr agent
+start` and `ripr agent card`. Valid values are `off`, `info`, `warning`, and
+`note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
+left out of agent results with the omission reason named (agent start and agent
+card refuse it); `review-comments` output still lists it, labelled `off`.
 `ripr check` findings use `[severity.findings]`.
 
 | Key | Default |
@@ -1278,7 +1279,7 @@ reason named); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact` and the badge formats apply suppressions from this path; the other findings formats leave it unapplied unless `--suppression-policy` names a policy, and mention a detected `.ripr/suppressions.toml` (the default path only) on stderr. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count seams and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 

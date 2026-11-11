@@ -59,7 +59,7 @@ seam_diagnostics = true
 max_related_tests = 5
 
 [suppressions]
-# Repo-relative, slash-separated path. SARIF and badge output apply it.
+# Repo-relative, slash-separated path. SARIF and most badge formats apply it.
 path = ".ripr/suppressions.toml"
 
 [languages]
