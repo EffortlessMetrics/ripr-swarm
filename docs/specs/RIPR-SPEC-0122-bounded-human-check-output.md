@@ -433,8 +433,9 @@ step omits the "no repair route" clause. For a changed predicate the step names
 inputs that fit its shape: just below, on and just above the limit for an
 ordering comparison; equal and different compared values for an equality with
 no ordering operator; the true and false sides for a condition with no
-comparison. An angle bracket left after removing `=>`, `->`, `<<` and `>>`
-keeps the limit wording (#14349). A refusal that already names the existing test to
+comparison. String literal contents are ignored, and an angle bracket left
+after removing `=>`, `->`, `<<` and `>>` (an ordering operator, a generic
+argument or a mixed predicate) keeps the limit wording (#14349). A refusal that already names the existing test to
 strengthen (the weak-assertion pointer) gets no such line. When several seams
 share the line and exactly one is the finding's changed expression, the block
 prints the stub command for that seam (`--seam-id`) instead of listing the

@@ -957,7 +957,7 @@ enum PredicateTestShape {
 /// remains after removing arrows and shifts, since a generic argument or an
 /// unrecognised form must not lose the boundary advice.
 fn predicate_test_shape(expression: &str) -> PredicateTestShape {
-    let stripped = expression
+    let stripped = without_quoted_text(expression)
         .replace("=>", " ")
         .replace("->", " ")
         .replace("<<", " ")
@@ -969,6 +969,40 @@ fn predicate_test_shape(expression: &str) -> PredicateTestShape {
     } else {
         PredicateTestShape::Condition
     }
+}
+
+/// `text` with the contents of `"…"` and `` `…` `` literals blanked, so an
+/// operator character inside a string (`s == "<none>"`) is not read as the
+/// predicate's operator. Backslash escapes are skipped; an unterminated
+/// literal blanks to the end, which only removes operators and so fails
+/// toward the condition wording only when no operator sits outside it.
+fn without_quoted_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for character in text.chars() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                    out.push(character);
+                    continue;
+                }
+                out.push(' ');
+            }
+            None => {
+                if character == '"' || character == '`' {
+                    quote = Some(character);
+                }
+                out.push(character);
+            }
+        }
+    }
+    out
 }
 
 /// The repair view already counts the finding's seam as gripped or exposed.
@@ -2482,6 +2516,15 @@ mod tests {
             ),
             ("Some(x) => x.is_empty()", "condition true", "just below"),
             ("flags >> 2 == 0", "compared values are equal", "just below"),
+            ("x === limit", "compared values are equal", "just below"),
+            (
+                "if s == \"<none>\":",
+                "compared values are equal",
+                "just below",
+            ),
+            ("tag !== `<br>`", "compared values differ", "just below"),
+            // A mixed predicate keeps the limit wording.
+            ("a == b && c < d", "just below", "compared values"),
             // A generic argument keeps the boundary wording (fail toward it).
             ("v.is::<u8>() == true", "just below", "compared values"),
         ] {
