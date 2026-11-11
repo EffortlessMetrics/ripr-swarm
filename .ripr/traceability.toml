@@ -12325,6 +12325,9 @@ tests = [
   "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_skip_absolute_diagnostics_globs_for_metacharacter_roots",
   "crates/ripr/src/lsp/tests.rs::watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire",
   "crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers",
+  "crates/ripr/src/lsp/capabilities.rs::tests::generic_pull_client_gets_document_pull_without_workspace_pull",
+  "crates/ripr/src/lsp/tests.rs::push_and_pull_delivery_yield_identical_code_action_availability",
+  "crates/ripr/src/lsp/tests.rs::framed_generic_pull_client_repulls_its_open_document_after_a_save_refresh",
 ]
 fixtures = []
 code = [

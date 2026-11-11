@@ -55,7 +55,9 @@ key by key:
 client advertises pull diagnostics (`textDocument.diagnostic`). A pull client
 is offered document pull only (`workspaceDiagnostics: false`), so it re-pulls
 each open file when ripr sends `workspace/diagnostic/refresh` after a save or
-refresh. Workspace pull is offered only to the ripr VS Code extension
+refresh. ripr sends that request only to a client that advertises
+`workspace.diagnostics.refreshSupport`; a pull client without it sees new
+results when it next pulls on its own, for example after an edit. Workspace pull is offered only to the ripr VS Code extension
 (`experimental.riprEditor`) (#1630), so a generic pull client shows
 diagnostics for open files only, not for changed files it has not opened. The
 server still answers a `workspace/diagnostic` request from any client.
@@ -177,7 +179,7 @@ Neovim 0.12 answers `workspace/diagnostic/refresh` with a workspace pull alone
 when the server offers one, and ignores that report for buffers it pulls by
 document, so a refreshed finding never reached the open buffer (the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
-records those runs). ripr now offers generic clients document pull only, and
+records the v0.12.5 and v0.12.6 runs). ripr now offers generic clients document pull only, and
 Neovim re-pulls each open buffer on refresh (#1630). This was checked against
 Neovim v0.12.6's `runtime/lua/vim/lsp/diagnostic.lua` and a scripted client
 that follows its refresh logic, not yet in a Neovim binary.
