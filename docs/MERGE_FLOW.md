@@ -35,7 +35,8 @@ Operating facts, each observed on 2026-11-11:
   together, and a 180-minute status check timeout (raised from 60 after code
   entries were ejected at the timeout, #4838). These are live settings and can
   change without an edit here.
-- A docs-only entry took about 15 to 25 minutes and a code entry about 50 to 80.
+- A docs-only entry spent about 15 to 30 minutes in the queue and a code entry
+  about 50 to 80.
 - A re-run of a failed `merge_group` run cannot pass, because the Result is
   bound to the original run attempt. Enqueue the PR again instead.
 - An entry that fails or times out is removed by `github-merge-queue[bot]`.
