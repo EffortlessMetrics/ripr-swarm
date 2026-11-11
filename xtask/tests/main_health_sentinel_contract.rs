@@ -502,7 +502,8 @@ esac
                     continue;
                 }
                 let script = block(source, name)?;
-                let output = Command::new("timeout")
+                let mut command = Command::new("timeout");
+                command
                     .args(["10", "bash", "-c", &script])
                     .env(
                         "PATH",
@@ -520,12 +521,19 @@ esac
                     .env("FAKE_TRACKER", tracker)
                     .env("GITHUB_SHA", selected_sha)
                     .env("GITHUB_SERVER_URL", "https://github.com")
-                    .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
+                    .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
+                    .env_remove("REPOSITORY")
                     .env("GITHUB_STEP_SUMMARY", dir.0.join("summary"))
                     .env("GITHUB_OUTPUT", dir.0.join("output"))
-                    .env("VERDICT", &verdict)
-                    .output()
-                    .map_err(|e| e.to_string())?;
+                    .env("VERDICT", &verdict);
+                // Step-local bindings are not inherited by later steps.
+                if matches!(
+                    name,
+                    "Read the latest completed main push gates" | "Reconcile the main-red tracker"
+                ) {
+                    command.env("REPOSITORY", "EffortlessMetrics/ripr-swarm");
+                }
+                let output = command.output().map_err(|e| e.to_string())?;
                 if name == "Judge probe evidence" {
                     verdict = fs::read_to_string(dir.0.join("output"))
                         .map_err(|e| e.to_string())?

@@ -261,6 +261,34 @@ fn run_resolve_with_intake(
     node: Option<serde_json::Value>,
     intake_head: &str,
 ) -> Result<Outcome, String> {
+    run_resolve_with_identity(
+        world,
+        shell,
+        run,
+        node,
+        Intake {
+            pr: PR,
+            node: "PR_fixture42",
+            head: intake_head,
+            entry: "entry-42",
+        },
+    )
+}
+
+struct Intake<'a> {
+    pr: &'a str,
+    node: &'a str,
+    head: &'a str,
+    entry: &'a str,
+}
+
+fn run_resolve_with_identity(
+    world: &World,
+    shell: &str,
+    run: &Run,
+    node: Option<serde_json::Value>,
+    intake: Intake<'_>,
+) -> Result<Outcome, String> {
     world.publish(&format!("refs/pull/{PR}/head"), &run.pull_ref)?;
     let clone = world.shallow_checkout_of(&run.queued)?;
     let scratch = &world.scratch.0;
@@ -335,10 +363,10 @@ esac
         .env("GROUP_HEAD_REF", head_ref)
         .env("GROUP_BASE_SHA", &run.group_base)
         .env("GROUP_HEAD_SHA", &run.queued)
-        .env("INTAKE_PR", PR)
-        .env("INTAKE_PR_ID", "PR_fixture42")
-        .env("INTAKE_HEAD", intake_head)
-        .env("INTAKE_ENTRY", "entry-42")
+        .env("INTAKE_PR", intake.pr)
+        .env("INTAKE_PR_ID", intake.node)
+        .env("INTAKE_HEAD", intake.head)
+        .env("INTAKE_ENTRY", intake.entry)
         .env("GITHUB_RUN_ID", "100")
         .env("GITHUB_RUN_ATTEMPT", "1")
         .env("GITHUB_OUTPUT", &github_output)
@@ -665,6 +693,67 @@ fn missing_or_invalid_pr_node_identity_refuses_without_admission_outputs() -> Re
             "refusal published {:?}",
             outcome.outputs
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn valid_but_mismatched_intake_identities_refuse_without_outputs() -> Result<(), String> {
+    let world = World::new()?;
+    let shell = resolve_shell(&workflow()?)?;
+    let run = honest(&world, &world.head, &world.head)?;
+    for (pr, node, entry, comparison) in [
+        (
+            "43",
+            "PR_fixture42",
+            "entry-42",
+            "\"$pr\" == \"$INTAKE_PR\"",
+        ),
+        (
+            PR,
+            "PR_other43",
+            "entry-42",
+            "\"$pr_id\" == \"$INTAKE_PR_ID\"",
+        ),
+        (
+            PR,
+            "PR_fixture42",
+            "entry-43",
+            "\"$queue_entry\" == \"$INTAKE_ENTRY\"",
+        ),
+    ] {
+        let execute = |source: &str| {
+            run_resolve_with_identity(
+                &world,
+                source,
+                &run,
+                Some(json!("PR_fixture42")),
+                Intake {
+                    pr,
+                    node,
+                    head: &run.api_head,
+                    entry,
+                },
+            )
+        };
+        let outcome = execute(&shell)?;
+        assert!(!outcome.accepted, "mismatched {comparison} was admitted");
+        assert!(
+            outcome.outputs.is_empty(),
+            "refusal published {:?}",
+            outcome.outputs
+        );
+        // Removing only the relevant comparison admits this otherwise valid
+        // fixture, so malformed node syntax cannot satisfy the negative case.
+        assert_eq!(shell.matches(comparison).count(), 1);
+        let mutant = shell.replacen(comparison, "true", 1);
+        let outcome = execute(&mutant)?;
+        assert!(
+            outcome.accepted,
+            "comparison-removal control: {}",
+            outcome.log
+        );
+        assert!(!outcome.outputs.is_empty());
     }
     Ok(())
 }

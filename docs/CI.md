@@ -2982,9 +2982,11 @@ journeys themselves are re-checked by hand under the new runner
 before the update lands.
 
 The routed admission job checks out its executable bundle (the composite action
-wrapper and both admission interpreters) separately at the event's immutable
-PR base SHA, merge-group base SHA, or non-PR event SHA. The candidate checkout
-remains the input tree. The reserved `.admission-trusted` destination must be
+wrapper and both admission interpreters) separately at the literal reviewed
+control commit pinned in the immutable reusable workflow. Event-derived PR
+bases, merge-group bases and event SHAs do not select executable authority: a
+speculative group base can be an earlier unmerged group head. The candidate
+checkout remains the input tree. The reserved `.admission-trusted` destination must be
 absent from that tree; before invoking either action mode the job verifies the
 trusted checkout's exact HEAD and all three executable file blobs. Missing or
 modified trusted bytes refuse admission without falling back to candidate code.

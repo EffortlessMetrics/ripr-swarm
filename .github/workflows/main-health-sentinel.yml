@@ -146,7 +146,7 @@ jobs:
           while IFS=$'\t' read -r wf conclusion sha id url failed; do
             [ -n "$wf" ] || continue
             scope=unknown
-            if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$id" =~ ^[0-9]+$ && "$url" == "$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$id" && "$conclusion" =~ ^(success|failure|timed_out|action_required|startup_failure)$ ]]; then
+            if [[ "$sha" =~ ^[0-9a-f]{40}$ && "$id" =~ ^[0-9]+$ && "$url" == "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id" && "$conclusion" =~ ^(success|failure|timed_out|action_required|startup_failure)$ ]]; then
               scope=historical
               [ "$sha" != "$GITHUB_SHA" ] || scope=selected-commit
             else

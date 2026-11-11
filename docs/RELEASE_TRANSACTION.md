@@ -134,10 +134,12 @@ restated here only as pointers; their semantics stay with their owners:
 
 - Any repair PR created during the transaction, and every queued PR
   dispositioned in section 1, converges through the ordinary PR qualification
-  route: exactly one required context, earned by a fresh `merge-ready` label
-  event on the exact head, never by an in-place rerun; resolve conflicts
-  before re-firing the label. See
-  [the PR convergence runbook](agent-context/convergence-runbook.md).
+  route in [the native-queue procedure](MERGE_FLOW.md): current source review
+  and all required contexts must qualify the actual queue composition before
+  protected landing. Resolve conflicts and request fresh qualification through
+  that route; an in-place rerun is not a new admission. Ordinary development
+  repairs do not fall back to label CI. Any explicitly selected legacy
+  bootstrap transaction belongs to the activation owner and remains separate.
 - Several autonomous actors may converge on the same transaction PR. Record
   one `Converging this PR: <actor id>` claim comment and respect an existing
   actor's claim ([PR automation](PR_AUTOMATION.md#multi-actor-ownership-signaling));
