@@ -2531,6 +2531,17 @@ not themselves a static propagation proof.
   not call the owner (an `Ok`-arm `assert_eq!` beside an error-path change,
   or `if flag { assert_eq!(1, 1) }`) could not observe the change even if
   credited, so the next step stays the generic one.
+- A scoped binding of a trusted macro name reaches only calls inside its
+  scope (#8446). A `use` or definition that binds a trusted name inside an
+  inline module or a body (`mod m { use ext::vec; }`) makes a call of that
+  name opaque only when the call sits inside that same block or inline
+  module; `vec![assert_eq!(1, 1)]` outside it still resolves to the standard
+  macro, so the assertion in its arguments is read as written. A binding that
+  is not confined to its item (a file-level import, an import with a
+  visibility, an exported or `#[macro_use]`-carried definition) still reaches
+  every call of the name in the file. A call inside the scope, or in a module
+  nested in it, stays opaque, and a name such a call can bind in its
+  arguments becomes ambiguous everywhere.
 - Macro-binding ambiguity is scoped to what can bind the name. Any
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and

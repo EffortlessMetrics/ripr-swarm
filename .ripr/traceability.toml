@@ -15521,6 +15521,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::a_glob_under_another_declared_target_does_not_bind_the_test_crate_root",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::only_an_explicit_target_path_is_a_declared_target_entry",
   "crates/ripr/tests/private_inherent_receiver.rs::undeclared_target_glob_keeps_the_cross_target_probe_weakly_exposed",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_scoped_binding_makes_only_calls_in_its_scope_opaque",
 ]
 fixtures = [
   "fixtures/rust_polling_helper_direct",
