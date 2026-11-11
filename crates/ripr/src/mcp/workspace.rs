@@ -367,11 +367,12 @@ fn recovery_check_command(root: &Path, base: Option<&str>, source: RefreshSource
     .list_command()
 }
 
+/// The literal `ripr_refresh` arguments that repeat a failed attempt. The
+/// source is always named: an omitted `source` follows the current tree
+/// (#13096), so a retry of a committed attempt on a since-dirtied tree would
+/// otherwise read different input.
 fn refresh_retry_arguments(base: Option<&str>, source: RefreshSource) -> String {
-    let mut arguments = json!({});
-    if source == RefreshSource::Worktree {
-        arguments["source"] = json!("worktree");
-    }
+    let mut arguments = json!({ "source": source.as_str() });
     if let Some(base) = base {
         arguments["base"] = json!(base);
     }
@@ -394,8 +395,10 @@ fn gap_item_recovery(output: &crate::app::CheckOutput, source: RefreshSource) ->
 }
 
 /// Which input a `ripr_refresh` analyzes (#7357). `Committed` is the
-/// default and the only behavior of an omitted argument; `Worktree` is the
-/// opt-in saved tracked-worktree diff (staged and unstaged tracked edits).
+/// committed diff; `Worktree` is the saved tracked-worktree diff (staged and
+/// unstaged tracked edits). An omitted argument takes `ripr check`'s default
+/// (#13096): the working tree when it holds uncommitted tracked edits,
+/// committed history otherwise, decided by `app::diff_source`.
 /// The requested source (session) and the captured source (snapshot) are
 /// distinct facts: a failed worktree request never relabels a retained
 /// committed snapshot.
@@ -409,6 +412,9 @@ pub(crate) enum RefreshSource {
 impl RefreshSource {
     pub(crate) const COMMITTED_NAME: &'static str = "committed";
     pub(crate) const WORKTREE_NAME: &'static str = "worktree";
+    /// The `requested_source` value for a request that omitted `source` and
+    /// let the shared live-diff selection choose.
+    pub(crate) const DEFAULT_REQUEST_NAME: &'static str = "default";
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -783,6 +789,10 @@ pub(crate) struct WorkspaceSession {
     /// the retained snapshot's captured `source`: a failed worktree request
     /// leaves a committed last-good tagged committed.
     pub(crate) desired_source: RefreshSource,
+    /// `true` when the most recent refresh request omitted `source` and the
+    /// shared live-diff selection (`app::diff_source`, the same owner as
+    /// `ripr check`) chose `desired_source`; `false` for an explicit value.
+    pub(crate) desired_source_defaulted: bool,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -1927,7 +1937,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         .as_ref()
         .is_some_and(|snapshot| snapshot.source == RefreshSource::Worktree);
     if session.desired_source == RefreshSource::Worktree || captured_worktree {
-        document["requested_source"] = json!(session.desired_source.as_str());
+        document["requested_source"] = if session.desired_source_defaulted {
+            json!(RefreshSource::DEFAULT_REQUEST_NAME)
+        } else {
+            json!(session.desired_source.as_str())
+        };
         document["captured_source"] = session
             .last_good
             .as_ref()
@@ -2654,6 +2668,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2871,6 +2886,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -3119,6 +3135,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3203,6 +3220,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3763,11 +3781,9 @@ mod tests {
             let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                 .map_err(|error| format!("invalid retry JSON: {error}"))?;
             assert_eq!(arguments["base"], "captured-base");
-            if source == RefreshSource::Worktree {
-                assert_eq!(arguments["source"], "worktree");
-            } else {
-                assert!(arguments.get("source").is_none());
-            }
+            // #13096: the retry always names its source, because an omitted
+            // source follows the tree's current state.
+            assert_eq!(arguments["source"], source.as_str());
         }
         Ok(())
     }
@@ -3819,11 +3835,7 @@ mod tests {
                     .ok_or("unfinished MCP retry")?;
                 let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                     .map_err(|error| error.to_string())?;
-                if source == RefreshSource::Worktree {
-                    assert_eq!(arguments["source"], "worktree");
-                } else {
-                    assert!(arguments.get("source").is_none());
-                }
+                assert_eq!(arguments["source"], source.as_str());
                 if kind == AnalysisOutcomeKind::AnalysisFailed {
                     assert_eq!(arguments["base"], "refused-output-base");
                 } else {
@@ -5076,6 +5088,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -5159,6 +5172,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -5568,6 +5582,7 @@ mod tests {
                 superseded_attempts: std::collections::BTreeMap::new(),
                 desired_base: None,
                 desired_source: RefreshSource::Committed,
+                desired_source_defaulted: false,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items

@@ -93,11 +93,13 @@ runs no tests; run them yourself. A refresh whose attempt failed returns
 after a related test's line first) and reports `observed_values_total` and
 `observed_values_omitted`.
 
-An agent edits the worktree, but by default `ripr_refresh` analyzes only the
-committed default-branch diff. To analyze saved staged and unstaged tracked
-edits without committing them, call `ripr_refresh` with `{"source":
-"worktree"}`; omitting `source` (or `"committed"`) keeps the committed
-default. A worktree snapshot is tagged `source: "worktree"` and discloses that
+An agent edits the worktree, so `ripr_refresh` with no `source` makes the
+same choice as `ripr check` (#13096): it analyzes saved staged and unstaged
+tracked edits when any exist, and the committed default-branch diff when the
+tree is clean or has only untracked files. The result then reports
+`requested_source: "default"` beside `captured_source` so the choice is
+visible. `{"source": "worktree"}` or `{"source": "committed"}` forces one
+input. A worktree snapshot is tagged `source: "worktree"` and discloses that
 unsaved editor buffers are outside. The findings producer and the seam
 inventory each record the raw Rust bytes they read; when they agree
 (`scope.consumed_source_commitment: "established"`, `repair_cards:
@@ -342,16 +344,15 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
 
-`ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority, then commits the completed snapshot into the session.
-Staged and unstaged tracked edits and untracked files are outside this scope.
-The initialize/discover instructions, refresh tool description, and MCP help
-disclose this before invocation. `ripr check` defaults to the working tree
-when staged or unstaged tracked edits exist; sharing the authority does not
-mean identical input. `ripr check --committed` selects committed input;
-`ripr check --worktree --format json` analyzes staged and unstaged tracked
-edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
-(RIPR-SPEC-0211, #7357: repair cards and readiness only with an
+`ripr_refresh` analyzes the default-branch diff through the shared check
+authority, then commits the completed snapshot into the session. Like
+`ripr check`, an omitted `source` reads saved staged and unstaged tracked
+edits when any exist and committed input otherwise; untracked files are
+outside either way. The initialize/discover instructions, refresh tool
+description, and MCP help disclose this before invocation.
+`ripr check --committed` and `source: "committed"` select committed input;
+`ripr check --worktree --format json` and `source: "worktree"` select staged
+and unstaged tracked edits (RIPR-SPEC-0211, #7357, #13096: repair cards and readiness only with an
 established producer-custody agreement, withheld with the cause
 otherwise). `ripr_get_repair_card` re-verifies, on every read, the captured
 digests of the files the card's evidence is bound to: an edit or commit after

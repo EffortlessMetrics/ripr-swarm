@@ -29,7 +29,7 @@ fn worktree_failed_base_recovery_preserves_saved_edits_and_last_good() -> Result
     let baseline = session.call_tool(
         "committed-base",
         "ripr_refresh",
-        json!({"base": "trunk"}),
+        json!({"source": "committed", "base": "trunk"}),
         TIMEOUT,
     )?;
     let baseline = structured_tool_success(&baseline, "committed explicit base")?;
@@ -52,7 +52,7 @@ fn worktree_failed_base_recovery_preserves_saved_edits_and_last_good() -> Result
         let reset = session.call_tool(
             "reset-committed",
             "ripr_refresh",
-            json!({"base": "trunk"}),
+            json!({"source": "committed", "base": "trunk"}),
             TIMEOUT,
         )?;
         let reset = structured_tool_success(&reset, "reset committed last-good")?;
@@ -139,7 +139,7 @@ fn config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base
     let baseline = session.call_tool(
         "config-committed-baseline",
         "ripr_refresh",
-        json!({"base": "config-recovery-base"}),
+        json!({"source": "committed", "base": "config-recovery-base"}),
         TIMEOUT,
     )?;
     let baseline = structured_tool_success(&baseline, "config committed baseline")?;

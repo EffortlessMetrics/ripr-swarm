@@ -138,6 +138,19 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
         };
+        // #13096: an omitted `source` takes `ripr check`'s default through the
+        // one shared selection owner, so an agent that just edited a tracked
+        // file analyzes that edit instead of an empty committed diff.
+        let source_defaulted = source.is_none();
+        let source = match source {
+            Some(source) => source,
+            None => {
+                let probe_root = root.clone();
+                tokio::task::spawn_blocking(move || default_refresh_source(&probe_root))
+                    .await
+                    .unwrap_or(workspace::RefreshSource::Committed)
+            }
+        };
         let root_identity = self.root_identity.clone();
         let session = self.session.clone();
         {
@@ -153,6 +166,7 @@ impl McpServer {
             session.in_flight = true;
             session.desired_base = base.clone();
             session.desired_source = source;
+            session.desired_source_defaulted = source_defaulted;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         #[cfg(test)]
@@ -846,17 +860,38 @@ fn optional_string_argument(
     }
 }
 
-/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
-/// meaning of omission) or `worktree`. Any other value, including an empty
-/// string, wrong case or a non-string, is invalid params; nothing coerces.
+/// The source an omitted `ripr_refresh` `source` selects (#13096): the same
+/// `app::diff_source` decision `ripr check` makes with no `--worktree` or
+/// `--committed` flag. A clean or untracked-only tree, or a probe that could
+/// not run, keeps committed history.
+fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let selected = crate::app::diff_source::select_live_diff_source(
+        root,
+        crate::app::diff_source::DiffSourceRequest::Default,
+        Some(crate::app::default_cli_git_timeout()),
+    );
+    if selected.is_working_tree() {
+        workspace::RefreshSource::Worktree
+    } else {
+        workspace::RefreshSource::Committed
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed`, `worktree`, or
+/// omitted (`None`, resolved by [`default_refresh_source`]). Any other value,
+/// including an empty string, wrong case or a non-string, is invalid params;
+/// nothing coerces.
 fn refresh_source_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
-) -> Result<workspace::RefreshSource, ErrorData> {
+) -> Result<Option<workspace::RefreshSource>, ErrorData> {
     match optional_string_argument(arguments, "source")?.as_deref() {
-        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
-            Ok(workspace::RefreshSource::Committed)
+        None => Ok(None),
+        Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(Some(workspace::RefreshSource::Committed))
         }
-        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(workspace::RefreshSource::WORKTREE_NAME) => {
+            Ok(Some(workspace::RefreshSource::Worktree))
+        }
         Some(_other) => Err(ErrorData::invalid_params(
             "source must be one of: committed, worktree",
             Some(serde_json::json!({

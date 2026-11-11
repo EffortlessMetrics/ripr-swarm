@@ -182,14 +182,14 @@ official SDK transport:
   evidence resources do not. The field is not part of the snapshot identity,
   and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority on the committed default-branch diff
-  and commits the completed snapshot. Initialize/discover instructions,
-  the refresh tool description, and MCP help disclose before invocation
-  that staged and unstaged tracked edits and untracked files are excluded.
-  Shared authority does not mean identical input: `ripr check` defaults
-  to the working tree when staged or unstaged tracked edits exist, while
-  `ripr check --committed` selects committed input. The response scope
-  disclosure and MCP's runtime input remain unchanged. Status always emits
+  `app::check_workspace` authority on the default-branch diff and commits
+  the completed snapshot. Its input source follows `ripr check` (#13096,
+  below): committed history for a clean tree, the saved working tree when
+  staged or unstaged tracked edits exist. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose that selection, and
+  that unsaved buffers and untracked files are excluded, before invocation.
+  `ripr check --committed` and `source: "committed"` select committed
+  input. Status always emits
   `session.scope`, and refresh always emits top-level `scope`; both output
   schemas require this nullable field. It is null without a snapshot or for a
   clean committed snapshot. A dirty snapshot discloses `analyzed`,
@@ -207,8 +207,15 @@ official SDK transport:
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
 - `ripr_refresh` takes one more optional argument, `source` (#7357), with
-  the closed values `committed` and `worktree`. Omission and `committed`
-  are the same request and keep every behavior and identity above. A value
+  the closed values `committed` and `worktree`. `committed` keeps every
+  committed behavior and identity above. Omission (#13096) is a third
+  request: the server asks the one live-diff selection owner
+  (`app::diff_source::select_live_diff_source`, the decision `ripr check`
+  makes without `--worktree` or `--committed`) and runs `worktree` when the
+  tree holds a staged or unstaged tracked edit, `committed` otherwise
+  (a clean or untracked-only tree, an unborn `HEAD`, or a probe that could
+  not run). The selected attempt is exactly the explicit request of that
+  source: same producer, custody, scope and identity. A value
   outside the closed set, including an empty string, a different case, a
   non-string or an explicit null, is Invalid Params (`-32602`); nothing is
   coerced. `worktree` routes the same attempt through the shared
@@ -227,10 +234,17 @@ official SDK transport:
     (`null` before any snapshot) once a worktree source is requested or
     captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
     `last_known_good`) add `source: "worktree"` for a worktree capture.
+    For an omitted `source`, `requested_source` is `"default"` (never the
+    selected value), so `requested_source: "default"` with
+    `captured_source: "worktree"` says the default selection read the
+    working tree; `session.current_desired_input.source` names the selected
+    `worktree`. A default request that selected committed input on a session
+    with no worktree snapshot keeps the v1 shape.
     A failed attempt keeps the last-known-good snapshot with its own tag: a
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
-    Source-less callers see the unchanged v1 shapes.
+    Callers that pass no `source` on a clean tree see the unchanged v1
+    shapes.
   - A committed zero-item empty-scope snapshot (`no_scope`,
     `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
     its `last_completed_snapshot` summary adds `analysis_status:
