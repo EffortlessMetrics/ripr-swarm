@@ -49,6 +49,43 @@ use std::time::{Duration, Instant};
 pub(crate) const DOCTOR_FAILED_LINE: &str =
     "! doctor checks failed; each `!` line above names the check and its fix\n";
 
+/// Name of the check doctor adds only when `ripr check` would refuse the
+/// default output location (#14114). Absent on a usable root, so a healthy
+/// report is unchanged.
+pub(crate) const OUTPUT_LOCATION_CHECK: &str = "output_location";
+
+/// Record a failing [`OUTPUT_LOCATION_CHECK`] when the guard `ripr check`,
+/// `ripr pilot`, `explain` and `context` run before analysis refuses this
+/// root (#14114): a `target` that is a regular file, or a link that dangles,
+/// loops or leaves the workspace. Doctor used to pass and recommend
+/// `ripr check` for a root where that command exits 2. The guard is the single
+/// owner of the rule; `cache_dir_env` is the `RIPR_CACHE_DIR` value, which
+/// waives it exactly as it does for `ripr check`.
+pub(crate) fn add_output_location_check(
+    report: &mut DoctorReport,
+    root: &Path,
+    cache_dir_env: Option<&str>,
+) {
+    let Err(refusal) =
+        crate::atomic_file::ensure_default_output_contained_with(root, cache_dir_env)
+    else {
+        return;
+    };
+    // The human screen splits evidence into state and fix at the first
+    // `; `. One guard refusal carries its recovery after `Next step:`.
+    let refusal = refusal
+        .strip_prefix("refusing to write ripr output: ")
+        .unwrap_or(&refusal)
+        .replacen(". Next step: ", "; ", 1);
+    report.add_check(
+        OUTPUT_LOCATION_CHECK,
+        DoctorStatus::Fail,
+        Some(format!(
+            "`ripr check` and `ripr pilot` refuse to run here: {refusal}"
+        )),
+    );
+}
+
 /// First command doctor prints after the checks. Git-backed routes are only
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
 /// refuses gets whole-repository pilot exploration instead of a command that
@@ -133,14 +170,13 @@ impl DoctorFirstCommand {
                 .iter()
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
-        let failed_prerequisites = report
-            .checks
+        let failed_prerequisites = report.checks.iter().any(|check| {
+            (check.name == "cargo_toml" || check.name == OUTPUT_LOCATION_CHECK)
+                && check.status == DoctorCheckStatus::Fail
+        }) || report
+            .runtime_probes
             .iter()
-            .any(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
-            || report
-                .runtime_probes
-                .iter()
-                .any(|probe| probe.required && probe.status == DoctorStatus::Fail);
+            .any(|probe| probe.required && probe.status == DoctorStatus::Fail);
         if !passed("root_directory") {
             // #5010 renders the lossless root spelling for recovery, and the
             // work-tree probe stays withheld (#4531). No `--diff` route is
@@ -1423,7 +1459,10 @@ pub(crate) fn doctor_recovery_for_first_command(
             let failed_check = report
                 .checks
                 .iter()
-                .find(|check| check.name == "cargo_toml" && check.status == DoctorCheckStatus::Fail)
+                .find(|check| {
+                    (check.name == "cargo_toml" || check.name == OUTPUT_LOCATION_CHECK)
+                        && check.status == DoctorCheckStatus::Fail
+                })
                 .map(|check| check.name.to_string());
             let failed_runtime = || {
                 report
@@ -2047,6 +2086,13 @@ fn evaluate_doctor_core_with_probe_for_profile(
         },
     }
     report.mark_check_elapsed("git_repository", git_started.elapsed());
+    if root_status == DoctorStatus::Pass {
+        add_output_location_check(
+            &mut report,
+            root,
+            std::env::var("RIPR_CACHE_DIR").ok().as_deref(),
+        );
+    }
     match &config {
         Ok(config) => report.add_check(
             "config",
@@ -7006,6 +7052,114 @@ mod tests {
                 None
             );
         }
+        Ok(())
+    }
+
+    fn output_location_base_report() -> DoctorReport {
+        let mut report = DoctorReport::new(".");
+        for name in ["root_directory", "cargo_toml", "git_repository", "tool_git"] {
+            report.add_check(name, DoctorStatus::Pass, None);
+        }
+        report
+    }
+
+    fn output_location_check(report: &DoctorReport) -> Option<&DoctorCheck> {
+        report
+            .checks
+            .iter()
+            .find(|check| check.name == OUTPUT_LOCATION_CHECK)
+    }
+
+    /// #14114: a usable default output tree adds no check, so a healthy
+    /// report is unchanged: `target` missing, and `target` a real directory.
+    #[test]
+    fn output_location_check_is_absent_for_a_usable_output_tree() -> Result<(), String> {
+        let root = unique_test_dir("output-location-usable");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let mut report = output_location_base_report();
+        add_output_location_check(&mut report, &root, None);
+        let missing_target = output_location_check(&report).cloned();
+        std::fs::create_dir_all(root.join("target/ripr/cache"))
+            .map_err(|error| error.to_string())?;
+        add_output_location_check(&mut report, &root, None);
+        let real_target = output_location_check(&report).cloned();
+        let status = report.status;
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(missing_target, None);
+        assert_eq!(real_target, None);
+        assert_eq!(status, DoctorStatus::Pass);
+        Ok(())
+    }
+
+    /// #14114: `ripr check` refuses a root whose `target` dangles, so doctor
+    /// must fail, name the recovery, and withhold the `ripr check` first
+    /// command. `RIPR_CACHE_DIR` waives the guard for `ripr check`, so it
+    /// waives the doctor check too.
+    #[cfg(unix)]
+    #[test]
+    fn output_location_check_fails_for_a_dangling_target_link() -> Result<(), String> {
+        let root = unique_test_dir("output-location-dangling");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(root.join("no-such-directory"), root.join("target"))
+            .map_err(|error| error.to_string())?;
+        let guard = crate::atomic_file::ensure_default_output_contained_with(&root, None);
+
+        let mut refused = output_location_base_report();
+        add_output_location_check(&mut refused, &root, None);
+        let mut waived = output_location_base_report();
+        add_output_location_check(&mut waived, &root, Some("/var/cache/ripr"));
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+
+        // Fixture premise: this is the state `ripr check` refuses.
+        assert!(guard.is_err(), "{guard:?}");
+        let check = output_location_check(&refused)
+            .ok_or_else(|| format!("no output_location check: {refused:?}"))?;
+        assert_eq!(check.status, DoctorCheckStatus::Fail);
+        let evidence = check.evidence.as_deref().unwrap_or_default();
+        assert!(
+            evidence.starts_with("`ripr check` and `ripr pilot` refuse to run here: ")
+                && evidence.contains("cannot be resolved")
+                && evidence.contains("; replace it with a real directory")
+                && evidence.contains("RIPR_CACHE_DIR"),
+            "{evidence}"
+        );
+        assert_eq!(refused.status, DoctorStatus::Fail);
+        let first = DoctorFirstCommand::resolve_for_report(&refused, || false);
+        assert_eq!(first, DoctorFirstCommand::FailedPrerequisites);
+        assert_eq!(first.command_line(), None);
+        assert_eq!(
+            doctor_recovery_for_first_command(first, &refused).map(|recovery| recovery.check_name),
+            Some(OUTPUT_LOCATION_CHECK.to_string())
+        );
+
+        assert_eq!(output_location_check(&waived), None);
+        assert_eq!(waived.status, DoctorStatus::Pass);
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&waived, || false),
+            DoctorFirstCommand::DefaultCheck
+        );
+        Ok(())
+    }
+
+    /// #14114: a regular file named `target` is refused on Unix because
+    /// `target/ripr` cannot be enumerated.
+    #[cfg(unix)]
+    #[test]
+    fn output_location_check_fails_when_target_is_a_regular_file() -> Result<(), String> {
+        let root = unique_test_dir("output-location-file");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("target"), "x").map_err(|error| error.to_string())?;
+        let mut report = output_location_base_report();
+        add_output_location_check(&mut report, &root, None);
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let check = output_location_check(&report)
+            .ok_or_else(|| format!("no output_location check: {report:?}"))?;
+        let evidence = check.evidence.as_deref().unwrap_or_default();
+        assert_eq!(check.status, DoctorCheckStatus::Fail);
+        assert!(
+            evidence.contains("cannot enumerate") && evidence.contains("; "),
+            "{evidence}"
+        );
         Ok(())
     }
 }

@@ -671,6 +671,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             Some(_) => {}
         }
     }
+    // #14114: `ripr check` refuses this root's output location, so the
+    // cache lines below would describe a run that cannot happen.
+    let output_location_refused = match check_named(report, output::doctor::OUTPUT_LOCATION_CHECK) {
+        Some(check) if check.status == output::doctor::DoctorCheckStatus::Fail => {
+            let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+            lines.extend(failure_block(evidence));
+            true
+        }
+        _ => false,
+    };
     if let Err(err) = config {
         let path = display_path(&root.join(CONFIG_FILE_NAME));
         lines.push(format!("! Config: invalid {CONFIG_FILE_NAME}"));
@@ -873,6 +883,11 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     } else {
         output::doctor::root_unusable_skip_reason(root)
     };
+    let cache_skip_reason = cache_skip_reason.or(if output_location_refused {
+        Some("the default output location is refused (see the `!` line above)")
+    } else {
+        None
+    });
     if let Some(reason) = cache_skip_reason {
         // The default cache lives under the unusable root; a ✓ would claim
         // a usable cache for a root that cannot hold one.
@@ -886,8 +901,9 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
     }
     // Keep the historical `- Cache location:` / `- Cache size:` spellings on
     // verbose so JSON/human parity still names the same words.
-    if !cache.relocated_by_env && !root.is_dir() {
-        // A missing root already failed `root_directory`; do not probe.
+    if (!cache.relocated_by_env && !root.is_dir()) || output_location_refused {
+        // A missing root already failed `root_directory`, and a refused
+        // output location already has its `!` line; do not probe.
     } else if let Some(reason) =
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
@@ -9255,5 +9271,43 @@ mod tests {
         assert!(!is_workspace_relative_value("../tmp"));
         assert!(!is_workspace_relative_value("a/../../tmp"));
         assert!(!is_workspace_relative_value("/var/tmp"));
+    }
+
+    /// #14114: when `ripr check` refuses the output location, the screen
+    /// shows the `!` line with its fix and drops the cache lines that
+    /// described a run that cannot happen.
+    #[test]
+    fn refused_output_location_replaces_the_cache_lines_with_a_failure() {
+        let environment = empty_environment();
+        let healthy = render_screen(&passing_report(), &environment, false, true).join("\n");
+        assert!(healthy.contains("✓ Cache:"), "{healthy}");
+        assert!(!healthy.contains("refuse to run here"), "{healthy}");
+
+        let mut report = passing_report();
+        report.add_check(
+            output::doctor::OUTPUT_LOCATION_CHECK,
+            output::doctor::DoctorStatus::Fail,
+            Some(
+                "`ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved; replace it with a real directory"
+                    .to_string(),
+            ),
+        );
+        let text = render_screen(&report, &environment, false, false).join("\n");
+        assert!(
+            text.contains(
+                "! `ripr check` and `ripr pilot` refuse to run here: ./target cannot be resolved"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("  Fix: replace it with a real directory"),
+            "{text}"
+        );
+        assert!(!text.contains("✓ Cache:"), "{text}");
+        assert!(!text.contains("Cache not writable"), "{text}");
+        assert!(
+            text.contains("- Cache check skipped: the default output location is refused"),
+            "{text}"
+        );
     }
 }
