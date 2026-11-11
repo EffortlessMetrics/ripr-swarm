@@ -976,6 +976,11 @@ fn check_inner(
             // `help_request` already consumed `--all` alongside `--help`; here
             // it has no `--help` to widen, so it is still an unknown argument.
             "--all" => return Err(unknown_argument("check", "--all")),
+            // #14307: a bare argument is a `--path` scope, like `git diff
+            // PATH`; it shares --path's matching and fail-closed refusal.
+            path if !path.is_empty() && !path.starts_with('-') => {
+                scope_include.push(path.to_string());
+            }
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
@@ -3679,6 +3684,29 @@ mod tests {
             ));
         }
         diff
+    }
+
+    #[test]
+    fn check_reads_a_bare_argument_as_a_path_scope() {
+        // #14307: the bare path reaches the --path refusal for a repo-scoped
+        // format, so it was parsed as a scope rather than refused as unknown.
+        let bare = check(&args(&["src/lib.rs", "--format", "repo-exposure-json"]));
+        let flag = check(&args(&[
+            "--path",
+            "src/lib.rs",
+            "--format",
+            "repo-exposure-json",
+        ]));
+        assert!(
+            bare.as_ref()
+                .err()
+                .is_some_and(|message| message.contains("--path/--exclude narrow a diff")),
+            "{bare:?}"
+        );
+        assert_eq!(bare, flag);
+        assert!(
+            check(&args(&["-x"])).is_err_and(|message| message.contains("unknown check argument"))
+        );
     }
 
     #[test]
