@@ -101,6 +101,22 @@ const TOKENS: &[&[u8]] = &[
     b"= ",
     b"1e999",
     b"-9223372036854775809",
+    // Repeat units: a run of one of these (edit kind 5) builds a long
+    // chain or a deep nest on one line, the shape behind #14096.
+    b" + 1",
+    b" && a > 1",
+    b".min(3)",
+    b" as u64",
+    b" else if a == 1 { 1 }",
+    b"match a { 0 => 0, _ => ",
+    b"if a > 1 { ",
+    b" and a > 1",
+    b"not ",
+    b"lambda: ",
+    b" for _ in [1]",
+    b"?.b",
+    b"${a}",
+    b"() => ",
 ];
 
 /// One edit: `(kind, position, token, repeat)`, all reduced modulo the input.
@@ -222,6 +238,12 @@ impl Workspace {
     /// deadline the worker is left detached; it cannot keep the test binary
     /// alive, and the failing input bytes are already in the message.
     fn check_within_deadline(&self) -> Result<(), String> {
+        self.check_within(CASE_DEADLINE).map(|_answer| ())
+    }
+
+    /// As [`Self::check_within_deadline`] with a chosen deadline, keeping
+    /// the check's own answer: `Ok(Err(_))` is a clean refusal.
+    fn check_within(&self, deadline: Duration) -> Result<Result<(), String>, String> {
         let args = self.args();
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new()
@@ -230,14 +252,14 @@ impl Workspace {
                 let _ = sender.send(ripr::cli::run(args).map_err(|error| error.to_string()));
             })
             .map_err(|error| format!("spawn worker failed: {error}"))?;
-        match receiver.recv_timeout(CASE_DEADLINE) {
-            Ok(_) => {
+        match receiver.recv_timeout(deadline) {
+            Ok(answer) => {
                 let _ = worker.join();
-                Ok(())
+                Ok(answer)
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
                 "check exceeded {}s (hang or runaway pass)",
-                CASE_DEADLINE.as_secs()
+                deadline.as_secs()
             )),
             // The sender dropped without a result: the worker panicked.
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
@@ -445,6 +467,53 @@ fn unmutated_seeds_reach_analysis_and_config_is_consumed() -> Result<(), String>
     ])?;
     if ripr::cli::run(workspace.args()).is_ok() {
         return Err("a malformed ripr.toml was accepted".to_string());
+    }
+    Ok(())
+}
+
+/// Inputs the fuzz lane found, kept as fixed cases: `(name, repeat unit,
+/// repeat count, closing unit)`. Each replaces the Rust seed with a
+/// function whose body is a changed `let` followed by one very long line.
+///
+/// - `nested-match-one-line` (#14096): the changed-binding predicate scan
+///   re-read the line once per `>`; 20,000 links (500 KB) took 18 seconds
+///   in a release build and minutes in a debug build.
+const LONG_LINE_REGRESSIONS: &[(&str, &str, usize, &str)] = &[(
+    "nested-match-one-line",
+    "match a { 0 => 0, _ => ",
+    20_000,
+    " }",
+)];
+
+/// A regression case must finish well inside the general case deadline:
+/// each one ran in seconds once fixed and in minutes before.
+const REGRESSION_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Each case must be analyzed, not refused: a refusal (an oversized diff,
+/// an unreadable file) would finish in time without running the pass the
+/// case exists for.
+#[test]
+fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
+    for (name, unit, count, close) in LONG_LINE_REGRESSIONS {
+        let source = format!(
+            "pub fn price(amount: u64, years: u32) -> u64 {{\n    let a = amount + u64::from(years);\n    {}a{}\n}}\n",
+            unit.repeat(*count),
+            close.repeat(*count)
+        );
+        if source.lines().count() != 4 || source.len() < unit.len() * count {
+            return Err(format!("{name}: fixture is not one long body line"));
+        }
+        let diff = replace_diff("src/lib.rs", RUST_OLD, source.as_bytes());
+        let workspace = Workspace::create(&[
+            ("Cargo.toml", CARGO_TOML.as_bytes()),
+            ("src/lib.rs", source.as_bytes()),
+            ("ripr.toml", languages_toml().as_bytes()),
+            ("fuzz.diff", &diff),
+        ])?;
+        workspace
+            .check_within(REGRESSION_DEADLINE)
+            .map_err(|error| format!("{name} ({} bytes): {error}", source.len()))?
+            .map_err(|error| format!("{name}: the check refused the input: {error}"))?;
     }
     Ok(())
 }
