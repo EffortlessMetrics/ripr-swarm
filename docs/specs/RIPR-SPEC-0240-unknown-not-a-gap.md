@@ -769,7 +769,7 @@ three judged tests.
 
 ### Owners reached without a call ripr can place (#9442, #9443)
 
-A gap pairs an assertion with a call to the owner. Three source forms give
+A gap pairs an assertion with a call to the owner. Four source forms give
 ripr no such call although the test's oracle is real, and each used to read
 `weakly_exposed`. `indirect_owner::withhold_indirect_owner_gap` withholds a
 `weakly_exposed` or `reachable_unrevealed` finding with no `static_limit_kind`
@@ -826,6 +826,25 @@ under `rust_indirect_owner_call_unresolved`:
   assertion reads the helper's result, and only a helper RIPR-SPEC-0197
   verifies as a poll-to-completion loop is followed to the future's output
   (#9478); every other helper leaves the finding limited rather than credited.
+- **blanket impl hop** (#6732): the owner is a trait-impl method
+  (`impl Render for f64 { fn render .. }`), and a related test that never
+  spells the owner's name calls a blanket entry (`impl<T: Render> ToText for
+  T`, also `&T`) whose body calls the owner on `self`, on a receiver that
+  resolves to the owner's `Self`. Reach is established, but the owner pin
+  does not read a trait-impl owner behind such an entry, so the finding is
+  limited rather than left as a weak gap. The hop is reach only when the
+  bound is the owner's trait spelled as one bare name, the owner impl, the
+  blanket entry and that trait's only declaration share one module (so the
+  bare name cannot be an import of another crate's trait), no second trait
+  of either name is declared or named by another impl, and no other function
+  shares the entry method's name (a concrete `impl ToText for f64` is what
+  Rust runs, and an unrelated trait's method matches the same spelling). A
+  module-qualified or differently parameterised bound, a generic free helper
+  (`fn text_of<T: Render>(x: &T)`) and a call on another receiver type are not
+  the hop and keep the ordinary reading. A blanket test is judged even beside
+  a test that calls the owner by name: that direct assertion can be weak while
+  the blanket test discriminates, so it cannot establish a gap for the
+  combined test set; a direct-only test set keeps its gap.
 
 These forms are limited, not credited: crediting an unresolved iterator path,
 an executor's return evaluated without a verified poll loop, or a macro-generated
@@ -1462,8 +1481,9 @@ precedence over a competing field-snapshot witness. The existing genuine
 selection remain unchanged, including its all-concrete-stage case.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, inert-macro, `cfg_attr` and
-trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr`,
+trailing-comment and blanket-impl-hop controls; the blanket identity unit
+controls are in `classify/transitive_reach.rs` tests) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

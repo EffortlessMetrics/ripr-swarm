@@ -4041,17 +4041,59 @@ fn blanket_trait_binding_established<'f>(
     {
         return false;
     }
+    // A bare name resolves through the module it is written in: an import
+    // there (`use external::Render;`) would name another crate's trait. A
+    // module cannot both declare `trait Render` and import another `Render`,
+    // so the bound and the owner's trait are established only when the owner
+    // impl, the blanket entry and that declaration share one module.
+    let (Some(entry_module), Some(owner_module)) = (
+        impl_method_module(&entry.id.0),
+        impl_method_module(&owner.id.0),
+    ) else {
+        return false;
+    };
+    if entry_module != owner_module
+        || !trait_declared_in_module(owner_trait, owner_module, functions.clone())
+    {
+        return false;
+    }
+    // Any other function with the entry method's name may be what the test's
+    // call runs: Rust picks a concrete `impl ToText for f64` over the blanket,
+    // and an unrelated trait's method matches the same spelling. Only the
+    // entry trait's own declaration is not a rival.
     functions.into_iter().all(|other| {
         if other.name != entry.name || other.id == entry.id {
             return true;
         }
-        match &other.item.container {
-            FunctionContainer::Trait { trait_name } => trait_name == entry_trait,
-            _ => blanket_impl_header(other)
-                .as_deref()
-                .and_then(header_trait_path)
-                .is_some_and(|path| path == entry_path),
-        }
+        matches!(
+            &other.item.container,
+            FunctionContainer::Trait { trait_name } if trait_name == entry_trait
+        )
+    })
+}
+
+/// The file-and-module prefix of an impl method's symbol id
+/// (`src/lib.rs::a::impl Render for f64::render` → `src/lib.rs::a`).
+fn impl_method_module(owner_id: &str) -> Option<&str> {
+    owner_id.split_once("::impl ").map(|(module, _)| module)
+}
+
+/// Whether a method of `trait name` is declared directly in `module` (the id
+/// prefix [`impl_method_module`] returns for impls in that module).
+fn trait_declared_in_module<'f>(
+    name: &str,
+    module: &str,
+    functions: impl Iterator<Item = &'f FunctionSummary>,
+) -> bool {
+    functions.into_iter().any(|function| {
+        matches!(
+            &function.item.container,
+            FunctionContainer::Trait { trait_name } if trait_name == name
+        ) && function
+            .id
+            .0
+            .rsplit_once("::")
+            .is_some_and(|(declaring, _)| declaring == module)
     })
 }
 
@@ -6976,6 +7018,86 @@ fn real() {}
             vec![test.clone()],
         );
         assert!(test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+    }
+
+    /// The blanket, the owner impl and the bound trait's declaration share one
+    /// module only when the bare bound provably names that trait: a blanket in
+    /// another module may import a foreign `Render` (#13041 review).
+    #[test]
+    fn a_blanket_in_another_module_than_the_bound_trait_is_not_reach() {
+        let render_f64 = make_impl_fn("render", "impl Render for f64", Vec::new());
+        let mut blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        blanket.id = SymbolId("src/lib.rs::b::impl <T: Render> ToText for T::to_text".to_string());
+        let mut to_text_decl = trait_decl("to_text", "ToText");
+        to_text_decl.id = SymbolId("src/lib.rs::b::to_text".to_string());
+        let mut test = make_test("negative_zero", vec!["to_text"]);
+        test.body = "assert_eq!((-0.0f64).to_text(), \"-0.0\");".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "to_text".to_string(),
+            text: "(-0.0f64).to_text()".into(),
+        }]
+        .into();
+        let index = index_with(
+            vec![
+                render_f64.clone(),
+                blanket,
+                trait_decl("render", "Render"),
+                to_text_decl,
+            ],
+            vec![test.clone()],
+        );
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+    }
+
+    /// A concrete `impl ToText for f64` beside a blanket `impl<T: Render>
+    /// ToText for &T` is what `f64.to_text()` runs (#13041 review).
+    #[test]
+    fn a_concrete_impl_of_the_entry_trait_is_a_rival_to_the_blanket() {
+        let render_f64 = make_impl_fn("render", "impl Render for f64", Vec::new());
+        let blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for &T",
+            vec![("render", "self.render()")],
+        );
+        let concrete = make_impl_fn("to_text", "impl ToText for f64", Vec::new());
+        let mut test = make_test("fixed", vec!["to_text"]);
+        test.body = "assert_eq!((-0.0f64).to_text(), \"fixed\");".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "to_text".to_string(),
+            text: "(-0.0f64).to_text()".into(),
+        }]
+        .into();
+        let functions = vec![
+            render_f64.clone(),
+            blanket,
+            trait_decl("render", "Render"),
+            trait_decl("to_text", "ToText"),
+        ];
+        // Discriminating: without the concrete impl the hop is reach.
+        let index = index_with(functions.clone(), vec![test.clone()]);
+        assert!(test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+        let mut with_concrete = functions;
+        with_concrete.push(concrete);
+        let index = index_with(with_concrete, vec![test.clone()]);
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
             &test,
             &render_f64,
             &index,
