@@ -73,8 +73,8 @@ STATE_TOKEN = re.compile(
     re.IGNORECASE,
 )
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
-# A line that states a disposition: after optional list, quote, heading or emphasis
-# markers it opens with a ``disposition:`` field or a state token. Only such a line
+# A line that states a disposition: after optional list, quote, heading, emphasis or
+# code markers it opens with a ``disposition:`` field or a state token. Only such a line
 # after the first one changes what the review says. A state word inside prose, such
 # as a backticked quotation of a marker or "the earlier review is superseded", is
 # narration and is not read: free text scanning ejected fully green queue entries
@@ -82,7 +82,7 @@ STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 # A line that is nothing but a state token, however it is marked up (including
 # backticks), still states it.
 STATE_LINE = re.compile(
-    r"^[ \t>*\-+_#~]*(?:disposition[ \t*_]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
+    r"^[ \t>*\-+_#~`]*(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
     r"|^[ \t>*\-+_#~`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$",
     re.IGNORECASE,
 )
@@ -502,6 +502,8 @@ def self_test() -> None:
         ("REVIEW_READY\n`REPAIR_REQUIRED`", False),
         ("REVIEW_READY\n## SUPERSEDED", False),
         ("REVIEW_READY\nDisposition: repair the oracle first", False),
+        ("REVIEW_READY\n`REPAIR_REQUIRED`: fix the oracle", False),
+        ("REVIEW_READY\n- `Disposition`: repair the oracle first", False),
         # Narration that only mentions a state word is not a state line (#11566).
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
@@ -562,6 +564,7 @@ def self_test() -> None:
     # prose that only quotes a state word is narration (#11566).
     for body, allowed in (
         ("Tests fail here, so the earlier REVIEW_READY is withdrawn.", False),
+        ("`REPAIR_REQUIRED`: fix the oracle", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
