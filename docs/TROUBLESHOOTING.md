@@ -3,10 +3,11 @@
 Use this page when `ripr` reports nothing, stops, or reports something you did
 not expect, and the screen alone does not tell you why.
 
-Every quoted line in a `text` block below is real `ripr` output. A test
-(`crates/ripr/tests/troubleshooting_guide.rs`) reproduces each situation with
-the built binary and fails when a quoted line stops appearing, so this page
-cannot drift from the product.
+Every line in a `text` block below is text `ripr` prints: a whole output line,
+or the stable part of a longer one that also carries your paths and names. A
+test (`crates/ripr/tests/troubleshooting_guide.rs`) reproduces each situation
+with the built binary and fails when quoted text stops appearing, so this
+page cannot drift from the product.
 
 ## Read these three things first
 
@@ -247,16 +248,19 @@ command stops with exit code `2` and the message ends with the cause:
 
 ```text
 No finding is at line
-No file exists at
+is not the path of a file from the analyzed root
 exists, but this run has no finding anywhere in it
 ```
 
 - The first names the lines in that file that do have a finding. Retry with
   one of them.
-- The second means the path is not a file under the analyzed root. Paths are
-  read relative to the root, so check the spelling or pass `--root`.
-- The third means the file was read and nothing in it was reported. Findings
-  attach only to changed lines whose behavior `ripr` checks.
+- The second means the text is not a file path from the analyzed root. Give
+  the path from that root (`src/lib.rs:12`, not `lib.rs:12`), check the
+  spelling, or pass `--root`.
+- The third means the file exists and this run reported nothing in it.
+  Findings attach only to changed lines whose behavior `ripr` checks, so an
+  unchanged file has none. When the analysis was incomplete, the message says
+  so, because the file may not have been analyzed at all.
 
 ## The editor shows nothing
 

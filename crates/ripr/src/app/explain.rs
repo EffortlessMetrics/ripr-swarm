@@ -458,6 +458,9 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
 
     // Only a plain relative path is probed on disk, so a selector can never
     // be used to ask whether something outside the analyzed root exists.
+    // Selection also accepts a path suffix (`lib.rs` for `src/lib.rs`), which
+    // only finding files can resolve; with none matching, the miss says the
+    // text is not a path from the root rather than that no such file exists.
     let relative = Path::new(&wanted_file);
     let confined = relative
         .components()
@@ -468,7 +471,7 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     let root = output.root.display();
     if !output.root.join(relative).is_file() {
         return Some(format!(
-            "No file exists at {wanted_file:?} under the analyzed root `{root}`; a file location is read relative to that root, so check the spelling or pass `--root`"
+            "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
         ));
     }
     let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");

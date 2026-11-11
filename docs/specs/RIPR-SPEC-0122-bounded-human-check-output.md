@@ -123,7 +123,10 @@ into a single bucket named only when non-zero. Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
-(#10691). The static-limited `State:` line reads `ripr cannot tell from reading
+(#10691). The pointer is printed only when such a note follows for that
+limitation: with no preview-language advisory, or for Rust switched off in
+`[languages]` (which has no such note), the line drops the pointer and a
+`Fix:` line carries the limitation's own recovery (#14152). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id

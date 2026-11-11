@@ -5,8 +5,10 @@
 //! longer prints would send that reader looking for text that is not there,
 //! so the guide is checked against the binary in both directions:
 //!
-//! - every line inside a `text` fence in the guide must appear in the output
-//!   of at least one reproduced situation;
+//! - every line inside a `text` fence in the guide must appear verbatim in
+//!   the output of its own section's reproduced situation. A quote may be the
+//!   stable part of a longer output line (the rest carries paths and names),
+//!   which is what the guide says of its quotes;
 //! - every reproduced situation must have one of its lines quoted in the
 //!   guide, and must end with the exit code the guide states.
 

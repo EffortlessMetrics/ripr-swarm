@@ -6,7 +6,8 @@
 //! producer's outcome counts:
 //!
 //! - the file has a finding at another line: the finding lines are named;
-//! - no file exists at that path under the analyzed root: the root is named;
+//! - the text is not the path of a file from the analyzed root: the root is
+//!   named, without claiming a file of that name is absent elsewhere;
 //! - the file exists and has no finding: the reason findings attach where
 //!   they do, with the run's changed-file, changed-line and candidate counts;
 //!   an incomplete run says instead that the file may not have been analyzed.
@@ -25,7 +26,7 @@ const TEST_SRC: &str =
     "use lm::price;\n#[test]\nfn small() {\n    assert_eq!(price(2, 3), 6);\n}\n";
 
 const OTHER_LINE: &str = "No finding is at line";
-const NO_FILE: &str = "No file exists at";
+const NO_FILE: &str = "is not the path of a file from the analyzed root";
 const NO_FINDING_IN_FILE: &str = "exists, but this run has no finding anywhere in it";
 const CLAUSES: [&str; 3] = [OTHER_LINE, NO_FILE, NO_FINDING_IN_FILE];
 
@@ -210,13 +211,25 @@ fn a_miss_on_a_path_that_is_not_a_file_names_the_analyzed_root() -> Result<(), S
         require_contains(
             label,
             &run.1,
-            "No file exists at \"src/nope.rs\" under the analyzed root `",
+            "\"src/nope.rs\" is not the path of a file from the analyzed root `",
         )?;
-        require_contains(
-            label,
-            &run.1,
-            "a file location is read relative to that root",
-        )?;
+        require_contains(label, &run.1, "give the file's path from that root")?;
+    }
+    // `tests/t.rs` exists and has no finding, so its bare name resolves to
+    // nothing. The clause must not say the file is absent: it says the text
+    // is not a path from the root and no finding file ends with it.
+    let suffix = repo.explain("t.rs:4")?;
+    require_miss("explain", "t.rs:4", &suffix, Some(NO_FILE))?;
+    require_contains(
+        "explain",
+        &suffix.1,
+        "no finding is in a file whose path ends with it",
+    )?;
+    if suffix.1.contains("No file exists") {
+        return Err(format!(
+            "a suffix must not be called a missing file: {}",
+            suffix.1
+        ));
     }
     // A directory is not a file location either.
     let directory = repo.explain("src:1")?;
