@@ -62,6 +62,7 @@
         "ready"
       ]
     },
+    "counted_check_join": { "$ref": "#/$defs/counted_check_join" },
     "analysis_scope": {
       "$ref": "#/$defs/analysis_scope"
     },
@@ -296,6 +297,20 @@
     }
   ],
   "$defs": {
+    "counted_check_join": {
+      "description": "Version 1 discloses that no individual counted-check mapping is available. It never authorizes clearing a check finding. producer_version, when present, names only the renderer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "finding_ids", "analysis_binding", "reason"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "status": { "const": "unjoinable" },
+        "finding_ids": { "type": "array", "maxItems": 0 },
+        "analysis_binding": { "type": "null" },
+        "reason": { "const": "producer_mapping_unavailable" },
+        "producer_version": { "type": "string", "minLength": 1 }
+      }
+    },
     "inputs": {
       "type": "object",
       "additionalProperties": false,
@@ -887,6 +902,7 @@
         "llm_guidance"
       ],
       "properties": {
+        "counted_check_join": { "$ref": "#/$defs/counted_check_join" },
         "id": {
           "type": "string",
           "minLength": 1
@@ -946,7 +962,7 @@
           "$ref": "#/$defs/llm_guidance"
         },
         "gap_state": {
-          "description": "RIPR actionability state per RIPR-SPEC-0061 / RIPR-SPEC-0068. Present on every card.",
+          "description": "RIPR actionability disposition per RIPR-SPEC-0061 / RIPR-SPEC-0068. Present on every card. Generic suggested_test text can coexist with static_limitation; neither this disposition nor suggested_test binds a counted check finding.",
           "type": "string",
           "enum": [
             "actionable",
@@ -1525,6 +1541,7 @@
             "line"
           ],
           "properties": {
+            "counted_check_join": { "$ref": "#/$defs/counted_check_join" },
             "seam_id": {
               "type": "string",
               "minLength": 1
@@ -1554,6 +1571,7 @@
             "gap_id"
           ],
           "properties": {
+            "counted_check_join": { "$ref": "#/$defs/counted_check_join" },
             "gap_id": {
               "type": "string",
               "minLength": 1

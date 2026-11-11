@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.effortlessmetrics.dev/ripr/check.schema.json",
   "title": "RIPR Check Output",
-  "description": "The versioned JSON envelope emitted by ripr check. Static findings and typed analysis completeness are evidence only; they do not claim runtime mutation results or merge readiness.",
+  "description": "The versioned JSON envelope emitted by ripr check. Static findings and typed analysis completeness are evidence only; they do not claim runtime mutation results or merge readiness. Finding membership does not establish a review-card disposition join or a downstream post-filter counted basis. Review counted_check_join version 1 is unjoinable and permits no clearance.",
   "type": "object",
   "additionalProperties": false,
   "required": [

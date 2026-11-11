@@ -234,6 +234,7 @@ pub(crate) fn render_review_comments_json_with_scope(
         "limits_note": "Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking.",
     });
     let mut value = value;
+    disclose_counted_check_join(&mut value);
     if let Some(outcome) = analysis_outcome
         && let Some(object) = value.as_object_mut()
     {
@@ -362,6 +363,7 @@ pub(crate) fn render_gap_record_review_comments_json(
         "limits_note": "Advisory static evidence only; gap-ledger repair cards do not edit source, generate tests, run mutation testing, or change CI/gate authority.",
     });
     let mut value = value;
+    disclose_counted_check_join(&mut value);
     if let Some(projection) = &causal_projection
         && let Some(object) = value.as_object_mut()
     {
@@ -369,6 +371,31 @@ pub(crate) fn render_gap_record_review_comments_json(
     }
 
     super::json::render_pretty(&value, "gap-ledger review comments")
+}
+
+/// Review dispositions describe independently evaluated seams or supplied ledger
+/// records. Neither route carries the originating check finding and its analysis
+/// binding. In particular, a repair-witness location match is not authority to
+/// apply a seam's disposition to a changed probe (EffortlessMetrics/ripr#1779).
+/// Keep this contract closed until a shared producer can supply that evidence.
+fn disclose_counted_check_join(value: &mut Value) {
+    let unjoinable = json!({
+        "schema_version": 1,
+        "status": "unjoinable",
+        "finding_ids": [],
+        "analysis_binding": null,
+        "reason": "producer_mapping_unavailable",
+    });
+    value["counted_check_join"] = unjoinable.clone();
+    // This is the renderer version, not the identity of a shared analysis run.
+    value["counted_check_join"]["producer_version"] = json!(env!("CARGO_PKG_VERSION"));
+    for key in ["comments", "summary_only", "suppressed"] {
+        if let Some(cards) = value.get_mut(key).and_then(Value::as_array_mut) {
+            for card in cards {
+                card["counted_check_join"] = unjoinable.clone();
+            }
+        }
+    }
 }
 
 fn load_causal_projection_for_review(root: &Path) -> (Option<CausalDeltaArtifact>, Option<String>) {
@@ -481,6 +508,7 @@ pub(crate) const LLM_PROMPT_VERIFY_SENTENCE: &str = "Verify with ripr agent veri
 
 #[cfg(test)]
 mod tests {
+    mod counted_check_join;
     use super::publish_plan::reason_for;
     use super::render::{
         gap_record_proposed_target, gap_record_related_test, push_analysis_scope_summary,

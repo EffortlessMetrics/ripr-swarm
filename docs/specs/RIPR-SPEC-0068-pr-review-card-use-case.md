@@ -120,7 +120,16 @@ Every rendered review card must include:
   expression, or test navigation. `seam_id` remains the source-locator
   identity whenever a seam identity exists.
 - `gap_state` on every card using the canonical actionability vocabulary
-  (RIPR-SPEC-0061); cards never invent an alternate state.
+  (RIPR-SPEC-0061); cards never invent an alternate state. Generic
+  `suggested_test` text can coexist with `static_limitation`.
+- `counted_check_join` version 1 on the document and every inline, summary-only
+  and suppressed card: `status: unjoinable`, empty `finding_ids`, null
+  `analysis_binding`, and `reason: producer_mapping_unavailable`. Neither
+  rendering route establishes an individual counted-check disposition. Absent,
+  malformed or unsupported contracts also grant zero clearance. The document's
+  `producer_version` names the renderer only, not a shared analysis run.
+  Positive joins and downstream post-filter counting remain separate work
+  (EffortlessMetrics/ripr#1779).
 - a card repair summary — a projection of the canonical repair
   packet (RIPR-SPEC-0061), never a packet contract of its own:
   changed owner, changed behavior or missing discriminator,

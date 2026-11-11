@@ -946,6 +946,15 @@ reason = "Fixture-backed base/head attribution rules for canonical evidence comp
 covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "crates/ripr/tests/fixtures/counted-check-join/*.json"
+kind = "counted_check_join_fixture"
+owner = "output/review-comments"
+surface = "fixtures"
+classification = "fixture"
+reason = "Retained RIPR 0.10 consumer projections distinguish three counted probes from ten unrelated review cards; replay proves no join, not a new hosted analysis."
+covered_by = ["cargo test -p ripr --lib counted_check_join"]
+
+[[allow]]
 glob = "crates/ripr/tests/data/uncertain-delivery/receipt.json"
 kind = "assertion_helper_fixture"
 owner = "analysis/test-helpers"

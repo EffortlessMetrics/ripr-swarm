@@ -10455,6 +10455,37 @@ files, or generate tests. CI can use the JSON to write a job summary and emit
 check annotations by default. Inline PR review comments require a custom
 explicit opt-in publisher.
 
+### Counted-check join disclosure (version 1)
+
+Every newly rendered review document and each entry in `comments`,
+`summary_only`, and `suppressed` carries `counted_check_join`:
+
+```json
+{"schema_version":1,"status":"unjoinable","finding_ids":[],"analysis_binding":null,"reason":"producer_mapping_unavailable"}
+```
+
+The document-level object additionally names `producer_version`, the rendering
+binary's package version. It is not the identity of a shared check/review run.
+Version 1 supports only this refusal: neither the seam nor supplied-ledger route
+carries a producer-backed individual check-finding disposition. `--check-output`
+does not upgrade it. Missing fields in older outputs, malformed objects,
+unsupported versions, and `unjoinable` all permit **zero clearance**.
+
+`gap_state` is the actionability disposition of the guidance card. Generic
+`suggested_test` text can coexist with `static_limitation`. Neither field, equal
+counts, matching seam/gap IDs, file/owner proximity, changed-owner placement,
+nor matching base/head/diff metadata establishes a counted-finding join.
+
+A future positive contract must originate with the individual finding and bind
+its disposition to the same evaluated head, base, exact diff, producer build,
+effective analysis configuration/options and run completeness. Duplicate or
+conflicting claims, suppression, stale/cross-diff inputs, missing bindings and
+unsupported producers must grant no credit. Raw membership alone is insufficient:
+the consumer still owns its exact post-filter counted set, exclusions, and
+unknown-class/cap reconciliation. Version 1 creates no such binding or positive
+join. It does not fix a consumer pinned to RIPR 0.10.0; release and intentional
+pin adoption remain separate work (EffortlessMetrics/ripr#1779).
+
 JSON shape:
 
 ```json
