@@ -472,3 +472,51 @@ fn wrapped_header_shapes_that_keep_their_probes() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A bracket inside a header comment or string throws the round-bracket
+/// count off. The count only picks the line where the parse is tried and the
+/// parse decides, so the cost is a missed header whose lines keep their
+/// probes. A body line is never taken for part of the header.
+#[test]
+fn bracket_in_a_header_comment_or_string_never_hides_a_body_line() -> Result<(), String> {
+    // An unclosed `(` in a comment: the count never returns to zero on the
+    // closer, so no header is read and every line keeps its probe.
+    let lines = probed_lines(
+        "comment-open",
+        "export function f(\n  a: number, // threshold (inclusive\n): number {\n  return a + 1;\n}\n",
+    )?;
+    assert!(lines.contains(&2) && lines.contains(&4), "{lines:?}");
+
+    // The same, with a body comment that brings the count back to zero on a
+    // body line ending in `{`. The text joined up to that line is not a
+    // signature with an empty body, so the parse refuses it.
+    let lines = probed_lines(
+        "comment-open-then-closed-in-body",
+        "export function f(\n  a: number, // (open\n): number {\n  // closes) here\n  if (a > 1) {\n    return 1;\n  }\n  return a;\n}\n",
+    )?;
+    for body_line in [5, 6, 8] {
+        assert!(
+            lines.contains(&body_line),
+            "body line {body_line} of {lines:?}"
+        );
+    }
+
+    // A stray `)` in a comment: the count reaches zero early, but only a line
+    // ending in `{` is tried, and that is the real closer. The header is read.
+    assert_eq!(
+        probed_lines(
+            "comment-close",
+            "export function f(\n  a: number, // see note)\n  b: number,\n): number {\n  return a + b;\n}\n",
+        )?,
+        vec![5]
+    );
+
+    // A `)` inside a default string: the closer is tried, and the default
+    // value keeps the header probed.
+    let lines = probed_lines(
+        "string-close",
+        "export function f(\n  sep = ')',\n): string {\n  return sep;\n}\n",
+    )?;
+    assert!(lines.contains(&2) && lines.contains(&4), "{lines:?}");
+    Ok(())
+}
