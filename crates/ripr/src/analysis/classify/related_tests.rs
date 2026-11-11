@@ -7267,6 +7267,19 @@ pub(in crate::analysis) fn owner_impl_identity_shadowed(
     impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
+/// Whether every call of `owner`'s name in `test` provably selects a sibling
+/// impl of the same generic trait on the same type (#14074), so the test
+/// cannot run `owner`. The seam-side relation applies the same refusal the
+/// finding-level relation applies to a direct owner call. Fails open: any
+/// part that is not established keeps the credit.
+pub(in crate::analysis) fn owner_call_selects_generic_sibling(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+}
+
 /// Whether a same-named `trait` declared in the test's own module scope (or at
 /// the root of an out-of-line parent module) shadows a trait-declaration
 /// default-method owner (#7123, #7087). The trait name comes from the
@@ -7425,7 +7438,7 @@ fn owner_call_relation_reason_gated(
     // so nothing below tells them apart. A test whose every call passes a
     // value written as a sibling's trait argument cannot run this owner.
     if indexed_same_name_count > 1
-        && generic_sibling::every_call_selects_generic_sibling(test, owner, same_name_ids, index)
+        && generic_sibling::every_call_selects_generic_sibling(test, owner, index)
     {
         return RelationReason::WeakTokenSubstring;
     }

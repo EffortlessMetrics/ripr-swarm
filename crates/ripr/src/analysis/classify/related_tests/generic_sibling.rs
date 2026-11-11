@@ -28,7 +28,6 @@ use crate::analysis::syntax::fn_signature::{OwnerContainer, owner_signature_at_l
 pub(super) fn every_call_selects_generic_sibling(
     test: &TestSummary,
     owner: &FunctionSummary,
-    same_name_ids: &[&str],
     index: &RustIndex,
 ) -> bool {
     let FunctionContainer::TraitImpl {
@@ -50,7 +49,7 @@ pub(super) fn every_call_selects_generic_sibling(
     ) else {
         return false;
     };
-    let sibling_heads = sibling_argument_heads(owner, same_name_ids, &trait_base, &self_base);
+    let sibling_heads = sibling_argument_heads(owner, index, &trait_base, &self_base);
     // A sibling that reads as the owner's own argument (`From<Foo>` beside
     // `From<&Foo>`) is told apart only by a reference this reading drops.
     if sibling_heads.is_empty() || sibling_heads.contains(&owner_head) {
@@ -126,33 +125,32 @@ fn selecting_type_head(ty: &str) -> Option<String> {
 /// against it.
 fn sibling_argument_heads(
     owner: &FunctionSummary,
-    same_name_ids: &[&str],
+    index: &RustIndex,
     trait_base: &str,
     self_base: &str,
 ) -> Vec<String> {
     let mut heads = Vec::new();
-    let owner_file = owner.id.0.split("::impl ").next();
-    for id in same_name_ids {
-        if *id == owner.id.0 {
+    let files = index.files();
+    let Some(file) = files.get(&owner.file) else {
+        return heads;
+    };
+    for function in file.functions.iter() {
+        if function.name != owner.name || function.id == owner.id {
             continue;
         }
-        let mut parts = id.split("::impl ");
-        if parts.next() != owner_file {
-            continue;
-        }
-        let Some((trait_ty, self_ty)) = parts
-            .next()
-            .and_then(|rest| rest.rsplit_once("::"))
-            .and_then(|(impl_body, _)| impl_body.rsplit_once(" for "))
+        let FunctionContainer::TraitImpl {
+            trait_path,
+            self_ty,
+        } = &function.item.container
         else {
             continue;
         };
-        if compact_impl_type_name(trait_ty).as_deref() != Some(trait_base)
+        if compact_impl_type_name(trait_path).as_deref() != Some(trait_base)
             || compact_impl_type_name(self_ty).as_deref() != Some(self_base)
         {
             continue;
         }
-        if let Some(head) = sole_trait_argument(trait_ty).and_then(selecting_type_head)
+        if let Some(head) = sole_trait_argument(trait_path).and_then(selecting_type_head)
             && !heads.contains(&head)
         {
             heads.push(head);
@@ -410,8 +408,7 @@ mod tests {
     }
 
     /// Whether this reading alone refuses the fixture's one test for the
-    /// owner whose symbol id ends in `owner_suffix`, given every indexed
-    /// function of the owner's name.
+    /// owner whose symbol id ends in `owner_suffix`.
     fn refused(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool, String> {
         let index = parsed_index(production, test_body)?;
         let functions = index.functions();
@@ -419,19 +416,9 @@ mod tests {
             .iter()
             .find(|function| function.id.0.ends_with(owner_suffix))
             .ok_or_else(|| format!("owner `{owner_suffix}` indexed"))?;
-        let ids: Vec<&str> = functions
-            .iter()
-            .filter(|function| function.name == owner.name)
-            .map(|function| function.id.0.as_str())
-            .collect();
-        if ids.len() < 2 {
-            return Err(format!("`{}` has a same-named sibling", owner.name));
-        }
         let tests = index.tests();
         let test = tests.iter().next().ok_or("test indexed")?;
-        Ok(every_call_selects_generic_sibling(
-            test, owner, &ids, &index,
-        ))
+        Ok(every_call_selects_generic_sibling(test, owner, &index))
     }
 
     /// An argument whose type the test does not write and an unnamed route
@@ -571,17 +558,14 @@ mod tests {
             .iter()
             .find(|function| function.id.0.ends_with("impl From<&str> for Cents::from"))
             .ok_or("owner indexed")?;
-        let ids: Vec<&str> = functions
+        let indexed = functions
             .iter()
             .filter(|function| function.name == "from")
-            .map(|function| function.id.0.as_str())
-            .collect();
-        assert_eq!(ids.len(), 3, "all three `from` impls are indexed");
+            .count();
+        assert_eq!(indexed, 3, "all three `from` impls are indexed");
         let tests = index.tests();
         let test = tests.iter().next().ok_or("test indexed")?;
-        assert!(!every_call_selects_generic_sibling(
-            test, owner, &ids, &index
-        ));
+        assert!(!every_call_selects_generic_sibling(test, owner, &index));
         Ok(())
     }
 

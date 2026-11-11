@@ -1,8 +1,9 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
-    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem,
+    owner_call_selects_generic_sibling, owner_dispatch_trait, owner_impl_identity_shadowed,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -365,6 +366,15 @@ pub(super) fn match_direct_owner_call(
         // the direct-call credit, so this can only lower a relation.
         if owner.function.is_some_and(|function| {
             owner_impl_identity_shadowed(indexed.test, function, context.index)
+        }) {
+            continue;
+        }
+        // #14074: a test whose every call passes a value written as a
+        // sibling impl's trait argument (`Cents::from(2u32)` beside
+        // `impl From<&str> for Cents`) cannot run this owner; the
+        // finding-level relation refuses the same call.
+        if owner.function.is_some_and(|function| {
+            owner_call_selects_generic_sibling(indexed.test, function, context.index)
         }) {
             continue;
         }
