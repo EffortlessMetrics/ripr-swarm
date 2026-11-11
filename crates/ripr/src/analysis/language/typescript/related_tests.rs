@@ -5004,7 +5004,7 @@ pub(crate) fn normalized_relative_import_module(
     // The answer depends on the importer and specifier, never on the owner
     // being matched, but the owners x tests x imports walk asks it once per
     // owner. Memoized per run (#14364): a hit borrows the importer path and
-    // specifier, so it allocates nothing.
+    // specifier as the key and clones only the cached answer.
     let alias_digest = alias_map.map(TsAliasMap::cache_digest);
     let cached = RUN_RESOLVER_CACHE.with(|cache| {
         let cache = cache.try_borrow().ok()?;
