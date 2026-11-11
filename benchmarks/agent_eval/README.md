@@ -43,6 +43,24 @@ the baseline shows reviewers exactly what moved. The baseline holds no
 timings, scratch paths or dates. Two runs of the same binary give byte-identical
 reports. Only `ripr_version` changes from build to build.
 
+## Agent-in-the-loop trials
+
+The routes above replay ripr's output without a model. To see whether a real
+agent writes better tests, or spends fewer tokens, with ripr than without:
+
+```bash
+cargo xtask agent-eval trial-setup <fresh-dir>   # one repo per gap scenario
+# give an agent each repo, with or without ripr; it adds tests under tests/
+cargo xtask agent-eval trial-score <fresh-dir>   # judges what it left behind
+```
+
+`trial-score` does not ask ripr. For every keyed gap it puts that one changed
+line back to its base text and runs `cargo test`. The gap counts as caught
+only when the suite passes on the changed code, fails with the line reverted,
+and `src/lib.rs` was left as committed. Controls: a fresh setup scores 0/6,
+and the reference tests score 6/6. Record each arm's tokens and tool calls
+next to its score. Use a fresh directory per arm and per run.
+
 ## Routes
 
 | route | what the agent runs |

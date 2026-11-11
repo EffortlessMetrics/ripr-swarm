@@ -30,6 +30,7 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
+mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -41,7 +42,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
 /// A route regresses when its token total grows by more than this fraction
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_FRACTION: f64 = 0.10;
@@ -773,6 +774,9 @@ fn summarize_routes(scenarios: &[Value]) -> Value {
     Value::Array(rows)
 }
 
+/// Loop checks only the cargo key validation fills in.
+const CARGO_FLAGS: [&str; 2] = ["reference_key_valid", "weak_key_valid"];
+
 const LOOP_FLAGS: [&str; 5] = [
     "silent_on_control",
     "weak_test_still_flagged",
@@ -872,6 +876,12 @@ pub(crate) fn compare(
         }
         for flag in LOOP_FLAGS {
             let (now, then) = (&scenario["loop"][flag], &base["loop"][flag]);
+            // `--skip-cargo` leaves the cargo-only key checks unmeasured
+            // (null); that is not a regression. A scenario that loses its
+            // test still regresses through `reference_test_closes_loop`.
+            if now.is_null() && CARGO_FLAGS.contains(&flag) {
+                continue;
+            }
             if then == true && now != true {
                 regressions.push(format!("{id}: {flag} true -> {now}"));
             } else if then == false && now == true {
@@ -968,10 +978,39 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
+fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
+    match args {
+        [_, dir] => Ok(PathBuf::from(dir)),
+        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
+    }
+}
+
+fn write_trial_score(dir: &Path) -> Result<(), String> {
+    let score = trial::trial_score(dir)?;
+    let report_dir = crate::reports_dir();
+    let path = report_dir.join("agent-eval-trial-score.json");
+    let pretty = serde_json::to_string_pretty(&score)
+        .map_err(|err| format!("failed to render trial score: {err}"))?;
+    write_file(&path, &format!("{pretty}\n"))?;
+    println!("{pretty}");
+    println!(
+        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
+        score["caught"],
+        score["keyed_gaps"],
+        normalize_path(&path)
+    );
+    Ok(())
+}
+
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
+        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
+        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {
@@ -1175,6 +1214,14 @@ verify=refused|outcome=complete_with_findings\n";
             vec!["s: baseline scenario missing from this run".to_string()]
         );
         assert!(compare(&empty, &baseline, false).0.is_empty());
+        // A `--skip-cargo` run leaves the cargo key checks null.
+        let mut keyed = report(1000, true, true);
+        keyed["scenarios"][0]["loop"]["reference_key_valid"] = json!(true);
+        let mut skipped = keyed.clone();
+        skipped["scenarios"][0]["loop"]["reference_key_valid"] = Value::Null;
+        assert!(compare_full(&skipped, &keyed).is_empty());
+        skipped["scenarios"][0]["loop"]["reference_key_valid"] = json!(false);
+        assert_eq!(compare_full(&skipped, &keyed).len(), 1);
         let mut no_route = report(1000, true, true);
         no_route["scenarios"][0]["routes"] = json!([]);
         assert_eq!(
