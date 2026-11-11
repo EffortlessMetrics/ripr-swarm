@@ -49,5 +49,12 @@ fn render_json_reports_a_complete_analysis_of_the_bundled_diff() -> Result<(), S
         ]
     );
 
+    // The root the document names still exists once the example has returned.
+    let root = document["root"].as_str().ok_or("root is not a string")?;
+    assert!(
+        std::path::Path::new(root).join("src/lib.rs").is_file(),
+        "{root}"
+    );
+
     render_json::main()
 }

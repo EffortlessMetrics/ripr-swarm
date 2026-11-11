@@ -27,5 +27,23 @@ fn explain_names_the_changed_line_the_missing_boundary_and_a_next_step() -> Resu
         );
     }
 
+    // The follow-up command the explanation prints names a root and a diff
+    // that still exist once the example has returned.
+    let next = explanation
+        .lines()
+        .find_map(|line| line.strip_prefix("Next: ripr context --root "))
+        .ok_or_else(|| format!("no follow-up command in:\n{explanation}"))?;
+    let (root, rest) = next
+        .split_once(" --diff ")
+        .ok_or_else(|| format!("no --diff in `{next}`"))?;
+    let (diff, _) = rest
+        .split_once(" --at ")
+        .ok_or_else(|| format!("no --at in `{next}`"))?;
+    assert!(
+        std::path::Path::new(root).join("Cargo.toml").is_file(),
+        "{next}"
+    );
+    assert!(std::path::Path::new(diff).is_file(), "{next}");
+
     explain::main()
 }

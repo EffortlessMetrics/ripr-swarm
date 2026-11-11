@@ -74,6 +74,7 @@ pub fn report() -> Result<String, String> {
         .map_err(|error| format!("write {} failed: {error}", tests.display()))?;
     let after = check_workspace(workspace.input())?;
     describe(&mut report, "tests strengthened", &workspace.root, &after);
+    let _ = writeln!(report, "sample workspace: {}", workspace.root.display());
 
     Ok(report)
 }

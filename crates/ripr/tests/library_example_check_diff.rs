@@ -57,5 +57,15 @@ fn check_diff_shows_the_weak_findings_and_the_strengthened_tests_closing_them() 
         "{report}"
     );
 
+    // The copy the report names is kept, with the strengthened tests in it.
+    let root = report
+        .lines()
+        .find_map(|line| line.strip_prefix("sample workspace: "))
+        .map(std::path::Path::new)
+        .ok_or_else(|| format!("no sample workspace line in:\n{report}"))?;
+    let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read kept tests failed: {error}"))?;
+    assert!(tests.contains("fn discount_starts_at_the_threshold()"));
+
     check_diff::main()
 }
