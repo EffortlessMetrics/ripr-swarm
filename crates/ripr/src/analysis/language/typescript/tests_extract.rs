@@ -4077,7 +4077,10 @@ fn nested_rebinding_bodies(masked: &str, context: &str) -> Vec<std::ops::Range<u
             let Some(open) = open else { continue };
             let word_end = masked[..open].trim_end().len();
             let word_start = masked[..word_end]
-                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                // A non-ASCII char continues the word (a combining mark in an
+                // identifier is not alphanumeric), so the char found here is
+                // ASCII and one byte wide (#14089).
+                .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()))
                 .map_or(0, |k| k + 1);
             if matches!(
                 &masked[word_start..word_end],
