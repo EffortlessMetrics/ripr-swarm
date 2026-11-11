@@ -2060,6 +2060,36 @@ mod tests {
         )
     }
 
+    /// #14388 review: only types whose `==` against a literal compares the
+    /// text qualify for the appended string-arm reading.
+    #[test]
+    fn only_plain_string_types_compare_a_literal_by_text() {
+        for accepted in [
+            "&str",
+            "& str",
+            "&'a str",
+            "&'static str",
+            "String",
+            "&String",
+        ] {
+            assert!(is_plain_string_type(accepted), "{accepted}");
+        }
+        for rejected in [
+            "&mut str",
+            "&&str",
+            "Cow<str>",
+            "impl AsRef<str>",
+            "Box<str>",
+            "T",
+            "Option<&str>",
+            "&'a",
+            "&'a mut str",
+            "Flag",
+        ] {
+            assert!(!is_plain_string_type(rejected), "{rejected}");
+        }
+    }
+
     /// #14388 (agent-eval `struct_field`): `flag == "-v"` gains
     /// `|| flag == "--verbose"`; a related test calling the owner with
     /// `"--verbose"` reaches the added arm. Every near miss stays unknown.
