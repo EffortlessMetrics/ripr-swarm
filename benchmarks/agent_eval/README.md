@@ -61,6 +61,26 @@ and `src/lib.rs` was left as committed. Controls: a fresh setup scores 0/6,
 and the reference tests score 6/6. Record each arm's tokens and tool calls
 next to its score. Use a fresh directory per arm and per run.
 
+### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr at main `2ab9f908`)
+
+Same task text in both arms; the ripr arm also got the `init --agents` block
+and the binary path.
+
+| arm | keyed gaps caught | tokens (5 runs) | tool calls | wall time |
+|---|---:|---:|---:|---:|
+| without ripr | 6/6 | 260,146 | 47 | 102 s |
+| with ripr | 6/6 | 296,330 | 98 | 235 s |
+
+Token totals are the subagent totals the host reported, including the fixed
+system prompt each run pays (about 50k), so the difference (about +36k, +14%)
+is the part ripr added. On these easy tasks both arms hit the ceiling: ripr
+added no caught gaps but doubled tool calls and wall time. Two ripr runs
+(`changed_constant_return`, `struct_field`) wrote the right test and then
+stopped on `verify=refused` (#14325, #14326), which is the loop failure the
+routes table measures. One run per cell supports no rate claim. It does show
+where the cost goes and which scenarios need to be harder before a quality
+difference can appear.
+
 ## Routes
 
 | route | what the agent runs |
