@@ -195,6 +195,34 @@ pub(crate) fn render_with_config(
     config: &RiprConfig,
     findings_budget: Option<(usize, FindingsBudgetSource)>,
 ) -> String {
+    match try_render_with_config(output, config, findings_budget) {
+        Ok(rendered) => rendered,
+        Err(error) => crate::output::limited_check::render_check_output_failure_json(output, error),
+    }
+}
+
+pub(crate) fn try_render_with_config(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    findings_budget: Option<(usize, FindingsBudgetSource)>,
+) -> Result<String, String> {
+    // Validate before bounding: an omitted finding still contributes to the
+    // report's summary, and must not hide malformed producer evidence.
+    for finding in &output.findings {
+        finding.validate_missing_evidence(&projected_preview_actionability_missing(finding))?;
+    }
+    Ok(render_validated_with_config(
+        output,
+        config,
+        findings_budget,
+    ))
+}
+
+fn render_validated_with_config(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    findings_budget: Option<(usize, FindingsBudgetSource)>,
+) -> String {
     let mut out = String::new();
     out.push_str("{\n");
     field(&mut out, 1, "schema_version", &output.schema_version, true);

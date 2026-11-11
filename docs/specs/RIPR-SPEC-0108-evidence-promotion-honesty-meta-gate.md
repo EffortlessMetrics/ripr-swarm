@@ -113,6 +113,23 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
 
 ## Behavior
 
+### Missing evidence at the Check JSON boundary (#9361)
+
+The domain finding validator requires a nonblank missing-evidence detail for
+every classification except `exposed`. Check JSON validates the actual
+projected list for every finding before byte-budget selection. A malformed
+producer or a projection that removes the last detail must fail through the
+existing error/refusal path, including unbounded artifact consumers; it must
+not become a successful empty report or receive invented evidence. The
+legacy string-returning renderer retains its signature and emits the shared
+non-consumable refusal envelope. Schema `0.2` input compatibility is unchanged.
+
+The Rust producer may preserve its own non-Yes stage explanations when its
+specialized missing-evidence projection is empty. This changes disclosure,
+not classification. Runtime tests in `check_json_missing_evidence.rs` cover
+real producers, malformed and nearest-positive consumers, preview filtering
+and budget omission; enforcement-removal controls must reject the candidate.
+
 ### The invariant
 
 > A finding may not be promoted to `exposed` unless its evidence STRUCTURALLY

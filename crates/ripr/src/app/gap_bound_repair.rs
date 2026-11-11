@@ -215,7 +215,10 @@ pub(crate) fn startable_python_gap_record(
     let gap_id = finding.canonical_gap.as_ref()?.id.clone();
     let mut single = output.clone();
     single.findings = vec![finding.clone()];
-    let check_json = crate::output::json::render_with_config(&single, config, None);
+    let check_json = match crate::output::json::try_render_with_config(&single, config, None) {
+        Ok(rendered) => rendered,
+        Err(_) => return None,
+    };
     match lookup_python_gap_start(
         &output.findings,
         &check_json,

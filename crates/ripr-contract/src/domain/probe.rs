@@ -1012,6 +1012,23 @@ pub fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// Check the missing-evidence detail that a consumer will publish. A
+    /// projection may remove obsolete actionability prose, so callers pass
+    /// the projected list rather than validating only the producer's list.
+    /// This validates disclosure, never infers evidence or changes the class.
+    pub fn validate_missing_evidence(&self, missing: &[String]) -> Result<(), String> {
+        if self.class != ExposureClass::Exposed
+            && !missing.iter().any(|detail| !detail.trim().is_empty())
+        {
+            return Err(format!(
+                "finding `{}` classified `{}` requires non-empty missing evidence; this is a ripr bug, report it with the command you ran",
+                self.id,
+                self.class.as_str(),
+            ));
+        }
+        Ok(())
+    }
+
     /// The (file, line, expression) a finding speaks about. Probes of
     /// different families can sit on one expression (#11554); they share this
     /// key, so counts and selection can treat them as one verdict.

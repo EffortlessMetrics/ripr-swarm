@@ -1285,6 +1285,15 @@ Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
 
 ## Check Output
 
+Every emitted finding other than `exposed` carries at least one nonblank
+`missing` detail. The check validates the projected detail before applying
+the findings byte budget (#9361). Malformed producer evidence fails the
+fallible render APIs and the CLI's existing refusal path; the legacy
+`output::json::render` string API emits the existing `status: refused`,
+`analysis_failed`, non-consumable envelope. It does not repair evidence or
+change the classification. Valid reports retain their existing bytes and
+schema `0.2`; historical input acceptance is unchanged.
+
 `ripr check --json` emits:
 
 The normative top-level contract is

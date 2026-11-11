@@ -27,7 +27,7 @@ pub(crate) fn render_check_findings_json_with_context(
 ) -> Result<String, String> {
     use std::io::Write as _;
 
-    let body = crate::output::render::render_check_json_unbounded(output, config);
+    let body = crate::output::render::render_check_json_unbounded(output, config)?;
     let placeholder = check_findings_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
     let hashed = splice_artifact_member(&body, &placeholder)?;
     let mut hasher = Sha256Writer::new();

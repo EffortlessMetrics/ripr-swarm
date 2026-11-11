@@ -403,8 +403,8 @@ pub(crate) fn render_check_with_config(
 
 /// Unbounded JSON render for in-process consumers (#5203): the internal
 /// `pr-evidence` input carries the full finding set regardless of
-/// `RIPR_CHECK_FINDINGS_BYTES`. Infallible: no budget parsing, no failure.
-pub(crate) fn render_check_json_unbounded(output: &CheckOutput) -> String {
+/// `RIPR_CHECK_FINDINGS_BYTES`. Malformed finding evidence still fails closed.
+pub(crate) fn render_check_json_unbounded(output: &CheckOutput) -> Result<String, String> {
     output::render::render_check_json_unbounded(output, &RiprConfig::default())
 }
 

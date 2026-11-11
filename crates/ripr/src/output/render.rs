@@ -60,7 +60,7 @@ pub(crate) fn render_check_with_config_and_progress(
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
             let findings_budget = json::check_findings_byte_budget()?;
             let rendered = stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
+                json::try_render_with_config(output, config, findings_budget)?,
                 &output.root,
             );
             Ok(super::compact_json::finish(rendered, format))
@@ -71,7 +71,7 @@ pub(crate) fn render_check_with_config_and_progress(
             // like the renderer: a terse transform error aborts the run.
             let findings_budget = json::check_findings_byte_budget()?;
             let rendered = stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
+                json::try_render_with_config(output, config, findings_budget)?,
                 &output.root,
             );
             json::render_terse(&rendered)
@@ -327,8 +327,14 @@ pub(crate) fn render_check_with_config_and_progress(
 /// set; the findings-array byte budget protects external document consumers
 /// (agents, editors, CI logs), so it must not truncate a JSON string that
 /// never leaves the process. Same stamping as the `Json` arm, budget `None`.
-pub(crate) fn render_check_json_unbounded(output: &CheckOutput, config: &RiprConfig) -> String {
-    stamp_check_json(json::render_with_config(output, config, None), &output.root)
+pub(crate) fn render_check_json_unbounded(
+    output: &CheckOutput,
+    config: &RiprConfig,
+) -> Result<String, String> {
+    Ok(stamp_check_json(
+        json::try_render_with_config(output, config, None)?,
+        &output.root,
+    ))
 }
 
 /// #4544: stamp the check JSON with the content digests of every file a gap
@@ -370,7 +376,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
             // committed-source default or executable route.
             let findings_budget = json::check_findings_byte_budget()?;
             let rendered = stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
+                json::try_render_with_config(output, config, findings_budget)?,
                 &output.root,
             );
             // `finding_routes` precedes `canonical_next_action` so the latter
@@ -383,7 +389,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         OutputFormat::JsonTerse => {
             let findings_budget = json::check_findings_byte_budget()?;
             let rendered = stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
+                json::try_render_with_config(output, config, findings_budget)?,
                 &output.root,
             );
             json::render_terse(&attach_canonical_next_action(
@@ -912,6 +918,35 @@ mod tests {
     use crate::output::format::OutputFormat;
     use crate::output::json;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn missing_evidence_navigation_json_routes_propagate_failure() -> Result<(), String> {
+        let mut output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+        for format in [
+            OutputFormat::Json,
+            OutputFormat::JsonCompact,
+            OutputFormat::JsonTerse,
+        ] {
+            let render = |output: &CheckOutput| {
+                render_check_with_config_and_navigation_and_progress(
+                    output,
+                    &format,
+                    &RiprConfig::default(),
+                    None,
+                    None,
+                    CheckDiffProvenance::Worktree,
+                )
+            };
+            render(&output)?;
+            let missing = std::mem::take(&mut output.findings[0].missing);
+            match render(&output) {
+                Err(error) => assert!(error.contains("requires non-empty missing evidence")),
+                Ok(_) => return Err(format!("navigation {format:?} accepted malformed evidence")),
+            }
+            output.findings[0].missing = missing;
+        }
+        Ok(())
+    }
 
     #[test]
     fn render_dispatch_renders_diff_sarif() -> Result<(), String> {

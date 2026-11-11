@@ -362,7 +362,7 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
     // the full finding set; the external findings-array byte budget must
     // not silently truncate the counts this packet routes from (Codex P1:
     // a bounded prefix under-counted severe gaps with no disclosure).
-    Ok(crate::app::render_check_json_unbounded(&output))
+    crate::app::render_check_json_unbounded(&output)
 }
 
 /// `pr-evidence` reads Git history and writes `target/ripr/pr/` from the

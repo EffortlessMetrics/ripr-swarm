@@ -34,7 +34,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     mut evidence: ClassifiedProbeEvidence,
     origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
-    let missing = missing_evidence(
+    let mut missing = missing_evidence(
         context.probe,
         &class,
         &evidence.infect,
@@ -42,6 +42,25 @@ pub(in crate::analysis) fn build_finding_with_origins(
         &evidence.discriminate,
         &evidence.activation,
     );
+    // A strong oracle can still leave weak reach, infection or propagation.
+    // Retain the actual blocking stage's explanation when the specialized
+    // missing-evidence producer has no detail; never invent a discriminator.
+    if class == ExposureClass::WeaklyExposed && missing.is_empty() {
+        missing.extend(
+            [
+                &evidence.reach,
+                &evidence.infect,
+                &evidence.propagate,
+                &evidence.observe,
+                &evidence.discriminate,
+            ]
+            .into_iter()
+            .filter(|stage| stage.state != StageState::Yes && !stage.summary.trim().is_empty())
+            .map(|stage| stage.summary.clone()),
+        );
+        missing.sort();
+        missing.dedup();
+    }
     // #8999: for a user `PartialEq::eq`/`ne` owner only, a fixture/builder
     // word in a test that merely shares a file or a name token with the owner
     // says nothing about the inputs that reach it. When some related test

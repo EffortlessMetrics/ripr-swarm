@@ -16,9 +16,11 @@ pub(crate) use context_packet::render_context_packet_dto;
 #[cfg(test)]
 pub(crate) use report::FindingsBudgetSource;
 pub use report::render;
+#[cfg(test)]
+pub(crate) use report::render_with_config;
 pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
-    render_with_config,
+    try_render_with_config,
 };
 pub(crate) use terse::render_terse;
 
@@ -355,6 +357,9 @@ mod tests {
             finding.probe.expression = expression;
             finding.recommended_next_step = recommended_next_step;
             finding.missing = missing;
+            // This property exercises successful report escaping. Keep one
+            // actual missing-stage detail while varying the other text.
+            finding.missing.push(finding.ripr.infect.summary.clone());
 
             let rendered = render(&output);
             let value = match serde_json::from_str::<serde_json::Value>(&rendered) {
@@ -2433,7 +2438,7 @@ mod tests {
             },
             confidence: 0.2,
             evidence: vec![],
-            missing: vec![],
+            missing: vec!["Changed syntax is not mapped to a probe".to_string()],
             flow_sinks: vec![],
             activation: ActivationEvidence::default(),
             stop_reasons: vec![],

@@ -206,6 +206,30 @@ pub(crate) fn render_refusal_envelope(
     render_pretty_with_newline(&refusal_envelope_value(context, error), "limited check")
 }
 
+/// Preserve the legacy string-returning JSON API without publishing malformed
+/// findings as a successful check. Fallible renderers propagate the error;
+/// this compatibility surface emits the existing non-consumable refusal.
+pub(crate) fn render_check_output_failure_json(
+    output: &crate::app::CheckOutput,
+    detail: String,
+) -> String {
+    let error = CoreError::message(detail);
+    let context = RefusalEnvelopeContext {
+        schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
+        scope: "diff",
+        mode: Some(output.mode.as_str()),
+        root: &output.root,
+        base: output.base.as_deref(),
+    };
+    let mut value = refusal_envelope_value(&context, &error);
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    RefusalBlock::from_remedy(notice.identity, &notice.message, &notice.remedy)
+        .insert_into(&mut value);
+    // Value's Display serializer is infallible; no fabricated success or
+    // panic fallback is needed by the compatibility String return type.
+    format!("{value}\n")
+}
+
 /// Render the `check --json` refusal document for a failure that is not one
 /// of the two scope guards (#6834).
 ///
