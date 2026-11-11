@@ -104,6 +104,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     if options.write_baseline && !options.scenarios.is_empty() {
         return Err("--write-baseline records every scenario; drop --scenario".to_string());
     }
+    if options.write_baseline && options.skip_cargo {
+        // A baseline without the cargo key checks would leave them unguarded.
+        return Err("--write-baseline needs the cargo key checks; drop --skip-cargo".to_string());
+    }
     Ok(options)
 }
 
@@ -198,11 +202,18 @@ fn capture(
         stderr_bytes: 4 * 1024 * 1024,
     };
     let context = format!("{} {}", program.display(), args.join(" "));
+    // The caller's `RIPR_*` settings would change what is measured.
+    let ambient: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .filter(|name| name.starts_with("RIPR_"))
+        .collect();
+    let ambient: Vec<&str> = ambient.iter().map(String::as_str).collect();
+    // An empty input closes stdin instead of inheriting the caller's.
     let output = capture_bytes_in_dir_with_input_env_budget(
         program,
         args,
-        (cwd, input),
-        envs,
+        (cwd, Some(input.unwrap_or_default())),
+        (envs, &ambient),
         budget,
         &context,
     )?;
@@ -217,11 +228,18 @@ fn capture(
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let owned: Vec<String> = ["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"]
-        .iter()
-        .chain(args.iter())
-        .map(|value| value.to_string())
-        .collect();
+    let owned: Vec<String> = [
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.hooksPath=.ripr-agent-eval-no-hooks",
+    ]
+    .iter()
+    .chain(args.iter())
+    .map(|value| value.to_string())
+    .collect();
     let output = capture(Path::new("git"), &owned, root, None, &GIT_IDENTITY)?;
     if output.exit == Some(0) {
         Ok(())
@@ -275,14 +293,7 @@ fn cli_step(
     args: &[String],
 ) -> Result<Step, String> {
     let output = capture(ripr, args, &workspace.root, None, &[])?;
-    let text = workspace.normalize(&format!("{}{}", output.stdout, output.stderr));
-    Ok(Step {
-        label: label.to_string(),
-        exit: output.exit,
-        bytes: text.len() as u64,
-        tokens: estimate_tokens(&text),
-        text,
-    })
+    Ok(raw_step(label, &output, workspace))
 }
 
 fn strings(args: &[&str]) -> Vec<String> {
@@ -448,7 +459,11 @@ fn route_mcp(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
             let text = workspace.normalize(&mcp_visible(*id, value));
             Step {
                 label: mcp_label(*id),
-                exit: Some(i32::from(value.get("error").is_some())),
+                // A JSON-RPC error or a tool result flagged `isError` failed.
+                exit: Some(i32::from(
+                    value.get("error").is_some()
+                        || value.pointer("/result/isError") == Some(&Value::Bool(true)),
+                )),
                 bytes: workspace.normalize(line).len() as u64,
                 tokens: estimate_tokens(&text),
                 text,
@@ -485,10 +500,22 @@ fn run_route(ripr: &Path, workspace: &Workspace, route: &str) -> Result<Vec<Step
     }
 }
 
+/// True when `text` holds `prefix` immediately followed by `number` and then
+/// a non-digit, so `lib.rs:5` does not match `lib.rs:50`.
+fn has_number_after(text: &str, prefix: &str, number: u32) -> bool {
+    let needle = format!("{prefix}{number}");
+    text.match_indices(&needle).any(|(index, _)| {
+        !text[index + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_ascii_digit())
+    })
+}
+
 fn has_line(text: &str, line: u32) -> bool {
-    text.contains(&format!("lib.rs:{line}"))
-        || text.contains(&format!("\"line\":{line}"))
-        || text.contains(&format!("\"line\": {line}"))
+    ["lib.rs:", "\"line\":", "\"line\": "]
+        .iter()
+        .any(|prefix| has_number_after(text, prefix, line))
 }
 
 fn gap_visible(text: &str, gap: &GapKey) -> bool {
@@ -513,7 +540,9 @@ fn tokens_to_answer(steps: &[Step], gaps: &[GapKey]) -> Option<u64> {
         if gaps.is_empty() {
             tokens += step.tokens;
             if DISCOVERY_STEPS.contains(&step.label.as_str()) {
-                return Some(tokens);
+                // A failed or empty discovery step is not an answer.
+                let usable = step.exit == Some(0) && !step.text.trim().is_empty();
+                return usable.then_some(tokens);
             }
             continue;
         }
@@ -527,7 +556,9 @@ fn tokens_to_answer(steps: &[Step], gaps: &[GapKey]) -> Option<u64> {
     None
 }
 
-/// Changed lines the agent report lists as gaps (`class|src/lib.rs:N|...`).
+/// Changed lines of every gap row the agent report lists
+/// (`class|src/lib.rs:N|...`), one entry per row, so two rows on one line
+/// count twice.
 fn reported_gap_lines(agent_report: &str) -> Vec<u32> {
     let mut lines: Vec<u32> = agent_report
         .lines()
@@ -543,8 +574,22 @@ fn reported_gap_lines(agent_report: &str) -> Vec<u32> {
         })
         .collect();
     lines.sort_unstable();
-    lines.dedup();
     lines
+}
+
+/// Keyed lines with no gap row, and gap rows beyond one per keyed line.
+fn missed_and_extra(expected: &[u32], reported: &[u32]) -> (usize, usize) {
+    let mut unmatched = reported.to_vec();
+    let mut missed = 0;
+    for line in expected {
+        match unmatched.iter().position(|row| row == line) {
+            Some(index) => {
+                unmatched.remove(index);
+            }
+            None => missed += 1,
+        }
+    }
+    (missed, unmatched.len())
 }
 
 fn gaps_header_count(agent_report: &str) -> Option<u64> {
@@ -589,24 +634,21 @@ fn usefulness(
     let expected: Vec<u32> = scenario.gaps.iter().map(|gap| gap.line).collect();
     let find = capture(ripr, &find_args(), &workspace.root, None, &[])?;
     let reported = reported_gap_lines(&find.stdout);
-    let missed: Vec<u32> = expected
-        .iter()
-        .copied()
-        .filter(|line| !reported.contains(line))
-        .collect();
-    let extra: Vec<u32> = reported
-        .iter()
-        .copied()
-        .filter(|line| !expected.contains(line))
-        .collect();
+    let (missed, extra) = missed_and_extra(&expected, &reported);
+    let header = gaps_header_count(&find.stdout);
     let mut result = json!({
         "find_exit": find.exit,
         "expected_gap_lines": expected,
         "reported_gap_lines": reported,
-        "missed_gaps": missed.len(),
-        "extra_gaps": extra.len(),
-        "gaps_header": gaps_header_count(&find.stdout),
-        "silent_on_control": if scenario.gaps.is_empty() { Some(reported.is_empty()) } else { None },
+        "missed_gaps": missed,
+        "extra_gaps": extra,
+        "gaps_header": header,
+        // Silence counts only from a report that ran and said `gaps=0`.
+        "silent_on_control": if scenario.gaps.is_empty() {
+            Some(find.exit == Some(0) && header == Some(0) && reported.is_empty())
+        } else {
+            None
+        },
         "weak_test_still_flagged": Value::Null,
         "reference_test_closes_loop": Value::Null,
         "reference_key_valid": Value::Null,
@@ -740,13 +782,40 @@ const LOOP_FLAGS: [&str; 5] = [
 ];
 
 /// Regressions of `current` against `baseline`: lost answers, token growth
-/// past the margin, more missed or extra gaps, and loop flags that went from
-/// true to false. Rows missing from either side are reported, not guessed.
-pub(crate) fn compare(current: &Value, baseline: &Value) -> (Vec<String>, Vec<String>) {
+/// past the margin, more failed steps, more missed or extra gaps, and loop
+/// flags that were true and no longer are. A row new in `current` is a note.
+/// With `full_run`, a baseline scenario or route missing from `current` is a
+/// regression; a `--scenario` subset skips that check.
+pub(crate) fn compare(
+    current: &Value,
+    baseline: &Value,
+    full_run: bool,
+) -> (Vec<String>, Vec<String>) {
     let mut regressions = Vec::new();
     let mut notes = Vec::new();
     let empty = Vec::new();
     let base_scenarios = baseline["scenarios"].as_array().unwrap_or(&empty);
+    let current_scenarios = current["scenarios"].as_array().unwrap_or(&empty);
+    if full_run {
+        for base in base_scenarios {
+            let id = base["id"].as_str().unwrap_or_default();
+            let Some(now) = current_scenarios.iter().find(|row| row["id"] == id) else {
+                regressions.push(format!("{id}: baseline scenario missing from this run"));
+                continue;
+            };
+            for old in base["routes"].as_array().unwrap_or(&empty) {
+                let route = old["route"].as_str().unwrap_or_default();
+                let present = now["routes"]
+                    .as_array()
+                    .is_some_and(|routes| routes.iter().any(|row| row["route"] == route));
+                if !present {
+                    regressions.push(format!(
+                        "{id} {route}: baseline route missing from this run"
+                    ));
+                }
+            }
+        }
+    }
     for scenario in current["scenarios"].as_array().unwrap_or(&empty) {
         let id = scenario["id"].as_str().unwrap_or_default();
         let Some(base) = base_scenarios.iter().find(|row| row["id"] == id) else {
@@ -764,6 +833,16 @@ pub(crate) fn compare(current: &Value, baseline: &Value) -> (Vec<String>, Vec<St
             };
             if old["answer_reached"] == true && cell["answer_reached"] != true {
                 regressions.push(format!("{id} {route}: answer no longer reached"));
+            }
+            let (now_failed, then_failed) = (
+                cell["failed_steps"].as_u64().unwrap_or(u64::MAX),
+                old["failed_steps"].as_u64().unwrap_or(0),
+            );
+            if now_failed > then_failed {
+                regressions.push(format!(
+                    "{id} {route}: failed steps {then_failed} -> {}",
+                    cell["failed_steps"]
+                ));
             }
             for metric in ["total_tokens", "tokens_to_answer"] {
                 let (Some(now), Some(then)) = (cell[metric].as_u64(), old[metric].as_u64()) else {
@@ -793,8 +872,8 @@ pub(crate) fn compare(current: &Value, baseline: &Value) -> (Vec<String>, Vec<St
         }
         for flag in LOOP_FLAGS {
             let (now, then) = (&scenario["loop"][flag], &base["loop"][flag]);
-            if then == true && now == false {
-                regressions.push(format!("{id}: {flag} true -> false"));
+            if then == true && now != true {
+                regressions.push(format!("{id}: {flag} true -> {now}"));
             } else if then == false && now == true {
                 notes.push(format!("{id}: {flag} false -> true"));
             }
@@ -925,7 +1004,7 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
                     path.display()
                 ));
             }
-            Some(compare(&report, &baseline))
+            Some(compare(&report, &baseline, options.scenarios.is_empty()))
         }
         None => None,
     };
@@ -993,8 +1072,13 @@ weakly_exposed|src/lib.rs:5|a >= B|missing=a == B|test=t1|id=p\n\
 stages=reach:yes\n\
 t1=tests/x.rs:4 name exact_value `assert_eq!(f(1), 0);`\n\
 reachable_unrevealed|src/lib.rs:12|x|id=q\n\
+weakly_exposed|src/lib.rs:12|x|id=r\n\
 verify=refused|outcome=complete_with_findings\n";
-        assert_eq!(reported_gap_lines(report), vec![5, 12]);
+        // Two rows on line 12 count twice.
+        assert_eq!(reported_gap_lines(report), vec![5, 12, 12]);
+        assert_eq!(missed_and_extra(&[5, 12], &[5, 12, 12]), (0, 1));
+        assert_eq!(missed_and_extra(&[5, 7], &[5]), (1, 0));
+        assert_eq!(missed_and_extra(&[], &[3]), (0, 1));
         assert_eq!(gaps_header_count(report), Some(2));
         assert!(!verify_complete(report));
         assert!(verify_complete("verify=complete|outcome=x\n"));
@@ -1014,31 +1098,28 @@ verify=refused|outcome=complete_with_findings\n";
             tokens: 10,
             text: text.to_string(),
         };
+        let one = std::slice::from_ref(&gap);
         let partial = [step("shipping_cents src/lib.rs:5 5000")];
-        assert_eq!(tokens_to_answer(&partial, std::slice::from_ref(&gap)), None);
+        assert_eq!(tokens_to_answer(&partial, one), None);
         let later = [step("shipping_cents src/lib.rs:5 5000"), step("equal")];
-        assert_eq!(
-            tokens_to_answer(&later, std::slice::from_ref(&gap)),
-            Some(20)
-        );
+        assert_eq!(tokens_to_answer(&later, one), Some(20));
         let json_line = [step(
             "{\"owner\":\"shipping_cents\",\"line\": 5,\"x\":\"FREE equal\"}",
         )];
-        assert_eq!(
-            tokens_to_answer(&json_line, std::slice::from_ref(&gap)),
-            Some(10)
-        );
-        let wrong_line = [step("shipping_cents src/lib.rs:50 5000 equal")];
-        // `lib.rs:5` is a prefix of `lib.rs:50`; the owner and facts still
-        // have to match, so this documents the known looseness.
-        assert_eq!(
-            tokens_to_answer(&wrong_line, std::slice::from_ref(&gap)),
-            Some(10)
-        );
-        // A control answer is known once the discovery step is read.
+        assert_eq!(tokens_to_answer(&json_line, one), Some(10));
+        // `lib.rs:5` must not match `lib.rs:50` or `"line":50`.
+        let wrong_line = [step("shipping_cents src/lib.rs:50 \"line\":50 5000 equal")];
+        assert_eq!(tokens_to_answer(&wrong_line, one), None);
+        // A control answer is known once the discovery step is read, and
+        // only when that step succeeded with output.
         let mut mcp = [step("init"), step("[]")];
         mcp[1].label = "ripr_list_gaps".to_string();
         assert_eq!(tokens_to_answer(&mcp, &[]), Some(20));
+        mcp[1].exit = Some(1);
+        assert_eq!(tokens_to_answer(&mcp, &[]), None);
+        mcp[1].exit = Some(0);
+        mcp[1].text = String::new();
+        assert_eq!(tokens_to_answer(&mcp, &[]), None);
     }
 
     fn report(tokens: u64, reached: bool, closes: bool) -> Value {
@@ -1046,34 +1127,60 @@ verify=refused|outcome=complete_with_findings\n";
             "schema_version": SCHEMA_VERSION,
             "scenarios": [{
                 "id": "s",
-                "routes": [{"route": "r", "total_tokens": tokens, "tokens_to_answer": if reached { Some(tokens) } else { None }, "answer_reached": reached}],
+                "routes": [{"route": "r", "failed_steps": 0, "total_tokens": tokens, "tokens_to_answer": if reached { Some(tokens) } else { None }, "answer_reached": reached}],
                 "loop": {"missed_gaps": 0, "extra_gaps": 0, "reference_test_closes_loop": closes},
             }],
         })
     }
 
+    fn compare_full(current: &Value, baseline: &Value) -> Vec<String> {
+        compare(current, baseline, true).0
+    }
+
     #[test]
     fn compare_flags_growth_lost_answers_and_flipped_flags() {
         let baseline = report(1000, true, true);
-        let (regressions, _) = compare(&report(1100, true, true), &baseline);
-        assert!(regressions.is_empty(), "{regressions:?}");
+        assert!(compare_full(&report(1100, true, true), &baseline).is_empty());
         // Both the route total and its tokens-to-answer grew past the margin.
-        let (regressions, _) = compare(&report(1200, true, true), &baseline);
-        assert_eq!(regressions.len(), 2, "{regressions:?}");
-        let (regressions, _) = compare(&report(900, false, true), &baseline);
-        assert!(
-            regressions
-                .iter()
-                .any(|line| line.contains("no longer reached"))
-        );
-        let (regressions, _) = compare(&report(1000, true, false), &baseline);
+        assert_eq!(compare_full(&report(1200, true, true), &baseline).len(), 2);
+        let lost = compare_full(&report(900, false, true), &baseline);
+        assert!(lost.iter().any(|line| line.contains("no longer reached")));
         assert_eq!(
-            regressions,
+            compare_full(&report(1000, true, false), &baseline),
             vec!["s: reference_test_closes_loop true -> false".to_string()]
         );
-        let (regressions, notes) = compare(&report(500, true, true), &baseline);
+        let (regressions, notes) = compare(&report(500, true, true), &baseline, true);
         assert!(regressions.is_empty());
         assert!(notes.iter().any(|line| line.contains("1000 -> 500")));
+        // A flag that disappears is not a pass.
+        let mut dropped = report(1000, true, true);
+        dropped["scenarios"][0]["loop"]["reference_test_closes_loop"] = Value::Null;
+        assert_eq!(
+            compare_full(&dropped, &baseline),
+            vec!["s: reference_test_closes_loop true -> null".to_string()]
+        );
+        // More failed steps regress even when the answer survives.
+        let mut failing = report(1000, true, true);
+        failing["scenarios"][0]["routes"][0]["failed_steps"] = json!(1);
+        let failed = compare_full(&failing, &baseline);
+        assert!(
+            failed
+                .iter()
+                .any(|line| line.contains("failed steps 0 -> 1"))
+        );
+        // A baseline row missing from a full run regresses; a subset skips it.
+        let empty = json!({"schema_version": SCHEMA_VERSION, "scenarios": []});
+        assert_eq!(
+            compare_full(&empty, &baseline),
+            vec!["s: baseline scenario missing from this run".to_string()]
+        );
+        assert!(compare(&empty, &baseline, false).0.is_empty());
+        let mut no_route = report(1000, true, true);
+        no_route["scenarios"][0]["routes"] = json!([]);
+        assert_eq!(
+            compare_full(&no_route, &baseline),
+            vec!["s r: baseline route missing from this run".to_string()]
+        );
     }
 
     #[test]
@@ -1116,6 +1223,7 @@ verify=refused|outcome=complete_with_findings\n";
             ]))
             .is_err()
         );
+        assert!(parse_options(&strings(&["--write-baseline", "--skip-cargo"])).is_err());
         let options = parse_options(&strings(&[
             "--scenario",
             "boundary_threshold",

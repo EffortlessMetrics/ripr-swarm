@@ -1,6 +1,6 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (2ab9f908bccd3b509b177cc0520aeb19034b0a4b)",
+  "ripr_version": "ripr 0.11.0 (131b2e316046ba8b002c16c92b79736b8bd11fd9)",
   "routes": [
     {
       "answered": 6,
@@ -215,13 +215,14 @@
         "expected_gap_lines": [
           12
         ],
-        "extra_gaps": 0,
+        "extra_gaps": 1,
         "find_exit": 0,
         "gaps_header": 2,
         "missed_gaps": 0,
         "reference_key_valid": true,
         "reference_test_closes_loop": true,
         "reported_gap_lines": [
+          12,
           12
         ],
         "silent_on_control": null,

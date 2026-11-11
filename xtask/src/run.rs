@@ -1013,16 +1013,17 @@ pub(crate) fn capture_bytes_in_dir_with_input_env_budget(
     program: &Path,
     args: &[String],
     source: (&Path, Option<&[u8]>),
-    envs: &[(&str, &str)],
+    envs: (&[(&str, &str)], &[&str]),
     budget: ByteCaptureBudget,
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
+    let (envs, env_remove) = envs;
     capture_bytes_with_input(
         program,
         args,
         source,
         envs,
-        &[],
+        env_remove,
         (budget.timeout, Some(budget)),
         error_context,
     )

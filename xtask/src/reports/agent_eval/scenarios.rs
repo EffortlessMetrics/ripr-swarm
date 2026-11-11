@@ -280,7 +280,7 @@ fn eval_reference() {
         gaps: &[GapKey {
             owner: "options_from_flag",
             line: 10,
-            facts: &[&["verbose"], &["--verbose"]],
+            facts: &[&["--verbose"]],
         }],
     },
     Scenario {
@@ -380,7 +380,7 @@ fn eval_reference() {
             GapKey {
                 owner: "discount_percent",
                 line: 2,
-                facts: &[&["100"]],
+                facts: &[&["== 100", ">= 100"]],
             },
             GapKey {
                 owner: "late_fee",

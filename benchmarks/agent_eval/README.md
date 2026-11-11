@@ -74,9 +74,19 @@ human legend, cannot leak from one route into the next.
   is answered once the route's discovery step (the check, brief or
   `ripr_list_gaps`) has been read. The loop checks decide whether the route
   really stayed quiet.
+- **missed / extra gaps**: keyed lines with no gap row, and gap rows beyond
+  one per keyed line. Two rows for the same changed line count as one extra.
 - **regression** (`--compare`): an answer no longer reached, total or
-  to-answer tokens up more than 10% plus 20 tokens, more missed or extra gaps,
-  or a loop check that went from yes to NO.
+  to-answer tokens up more than 10% plus 20 tokens, more failed steps (a
+  nonzero exit, a JSON-RPC error or an MCP `isError` result), more missed or
+  extra gaps, a loop check that was yes and is now NO or missing, or (on a
+  full run) a baseline scenario or route that no longer runs. A check that is
+  already NO in the baseline is not guarded; fixing it shows as a note, and
+  the fixing PR rebaselines so it stays fixed.
+- A silent control counts only when `check --format agent` exited 0 and its
+  header says `gaps=0`; a failed or empty discovery step answers nothing.
+- The eval clears the caller's `RIPR_*` environment, closes stdin, and runs
+  git without hooks, so local settings do not change what is measured.
 
 The scratch root path is replaced by `<root>` before anything is measured.
 
@@ -116,3 +126,5 @@ What the baseline shows:
 - Loop: after the reference test, two of the five gap scenarios
   (`changed_constant_return`, `struct_field`) still end with
   `verify=refused`, so an agent following the block cannot finish.
+- `error_variant` gets two identical gap rows for its one changed line
+  (`extra_gaps: 1`), so the header asks for two tests where one is needed.
