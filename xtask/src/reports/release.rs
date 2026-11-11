@@ -222,11 +222,15 @@ pub(crate) fn upload_size_problems(sizes: &[(String, u64)], limit: u64) -> Vec<S
         .collect()
 }
 
+/// A packaged crate within this many bytes of the limit is reported as `warn`:
+/// it still uploads, but the next growth in source will not.
+pub(crate) const UPLOAD_HEADROOM_WARN_BYTES: u64 = CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES / 10;
+
 /// Measure the crates the publish rehearsal just packaged against the
 /// crates.io default upload limit. Only a rehearsal that passed in this run
 /// is measured: an archive left in `target/package` by an earlier run is not
-/// this candidate. An over-limit crate reports `warn`, not `fail`, until
-/// #14071 settles which limit applies to `ripr`; an unreadable archive after a
+/// this candidate. A crate over the limit fails; one within
+/// `UPLOAD_HEADROOM_WARN_BYTES` of it warns; an unreadable archive after a
 /// passing rehearsal fails, because the measurement itself did not happen.
 fn package_upload_size_check(version: &str, rehearsed: bool) -> ReleaseReadinessCheck {
     package_upload_size_check_in(Path::new("target/package"), version, rehearsed)
@@ -288,12 +292,36 @@ fn package_upload_size_check_in(
         .collect::<Vec<_>>();
     let problems = upload_size_problems(&sizes, CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES);
     if problems.is_empty() {
+        let near = sizes
+            .iter()
+            .filter(|(_, bytes)| {
+                CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes < UPLOAD_HEADROOM_WARN_BYTES
+            })
+            .map(|(name, bytes)| {
+                format!(
+                    "{name} has {} bytes of headroom under the {CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES}-byte crates.io default upload limit",
+                    CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes
+                )
+            })
+            .collect::<Vec<_>>();
+        if near.is_empty() {
+            return readiness_check(
+                id,
+                "pass",
+                true,
+                command,
+                "every packaged crate fits the crates.io default upload limit",
+                artifacts,
+                details,
+            );
+        }
+        details.extend(near);
         return readiness_check(
             id,
-            "pass",
-            true,
+            "warn",
+            false,
             command,
-            "every packaged crate fits the crates.io default upload limit",
+            "every packaged crate fits the crates.io default upload limit, but one is within 10% of it (#14071)",
             artifacts,
             details,
         );
@@ -301,10 +329,10 @@ fn package_upload_size_check_in(
     details.extend(problems);
     readiness_check(
         id,
-        "warn",
-        false,
+        "fail",
+        true,
         command,
-        "a packaged crate is over the crates.io default upload limit; publication is expected to be rejected unless crates.io has raised the limit for this crate (#14071)",
+        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest (#14071)",
         artifacts,
         details,
     )
@@ -5926,40 +5954,53 @@ mod tests {
     }
 
     #[test]
-    fn package_upload_size_passes_at_the_limit_and_warns_one_byte_over() -> Result<(), String> {
+    fn package_upload_size_passes_with_headroom_warns_near_and_fails_over() -> Result<(), String> {
         let limit = super::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
-        assert_eq!(limit, 10_485_760);
+        let headroom = super::UPLOAD_HEADROOM_WARN_BYTES;
+        assert_eq!((limit, headroom), (10_485_760, 1_048_576));
 
-        let at_limit = upload_size_fixture("at-limit", Some(limit))?;
-        let check = super::package_upload_size_check_in(&at_limit, "9.9.9", true);
+        // Exactly the warning headroom left: still a plain pass.
+        let roomy = upload_size_fixture("roomy", Some(limit - headroom))?;
+        let check = super::package_upload_size_check_in(&roomy, "9.9.9", true);
         assert_eq!(
             (check.id, check.status.as_str(), check.required),
             ("package-upload-size", "pass", true)
         );
-        assert!(
-            check
-                .details
-                .contains(&"ripr-9.9.9.crate: 10485760 bytes".to_string())
-        );
-        assert!(
-            check
-                .details
-                .contains(&"ripr-contract-9.9.9.crate: 8 bytes".to_string())
+        assert_eq!(
+            check.details,
+            vec![
+                "ripr-contract-9.9.9.crate: 8 bytes".to_string(),
+                "ripr-9.9.9.crate: 9437184 bytes".to_string(),
+            ]
         );
 
+        // One byte less headroom warns, and so does a crate exactly at the limit.
+        let near = upload_size_fixture("near", Some(limit - headroom + 1))?;
+        let check = super::package_upload_size_check_in(&near, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+        assert!(check.details.contains(
+            &"ripr-9.9.9.crate has 1048575 bytes of headroom under the 10485760-byte crates.io default upload limit"
+                .to_string()
+        ));
+        assert_eq!(super::release_readiness_status(&[check]), "warn");
+        let at_limit = upload_size_fixture("at-limit", Some(limit))?;
+        let check = super::package_upload_size_check_in(&at_limit, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+
+        // One byte over the limit is a required failure.
         let over = upload_size_fixture("over-limit", Some(limit + 1))?;
         let check = super::package_upload_size_check_in(&over, "9.9.9", true);
-        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
         assert!(check.summary.contains("#14071"));
         assert!(check.details.contains(
             &"ripr-9.9.9.crate is 10485761 bytes, 1 bytes over the 10485760-byte crates.io default upload limit"
                 .to_string()
         ));
-        // The warning reaches the report status and its next commands.
-        assert_eq!(super::release_readiness_status(&[check]), "warn");
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
 
-        let _ = fs::remove_dir_all(at_limit);
-        let _ = fs::remove_dir_all(over);
+        for dir in [roomy, near, at_limit, over] {
+            let _ = fs::remove_dir_all(dir);
+        }
         Ok(())
     }
 
