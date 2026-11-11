@@ -971,9 +971,12 @@ subscribes only to `labeled`, and its executable job guard additionally requires
 Non-full-ci labels, `merge-ready` alone, Ready, reopen and push do not execute
 the UB job or invoke its sensors. `full-ci` requests one advisory review of the
 exact head passed by `pr-head-sha`. Remove and re-apply `full-ci` after a new
-head is ready for advisory review. The unchanged same-repository fork guard and
-concurrency/cancellation settings govern these requests; a cancelled old run is
-not review evidence.
+head is ready for advisory review. The same-repository fork guard is unchanged.
+Admitted `full-ci` requests share a per-PR concurrency group with cancellation,
+so a new request supersedes its predecessor. Other labels use unique per-run
+groups and cannot cancel the admitted UB run before their own job is skipped.
+In either case, `cancel-in-progress` applies only within that group and a
+cancelled old run is not review evidence.
 
 `.ub-review.toml` retains `opened`, `synchronize` and `reopened` in
 `gate.post_review_on` and adds `pull_request_other` for the newly admitted

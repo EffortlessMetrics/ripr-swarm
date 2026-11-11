@@ -354,7 +354,9 @@ fn publication_events(config: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-fn ub_admits(
+/// Model admission for review cases after pinning the actual guard string.
+/// An unrecognized guard fails closed; this does not execute a GitHub event.
+fn models_ub_guard_admission(
     source: &str,
     action: &str,
     label: Option<&str>,
@@ -368,6 +370,22 @@ fn ub_admits(
     Ok(same_repository && action == "labeled" && label == Some("full-ci"))
 }
 
+/// Return the PR-group suffix for the event model after requiring the actual
+/// label-selective concurrency expression. This is a contract discriminator,
+/// not a claim to have scheduled a hosted workflow run.
+fn models_ub_concurrency_group(source: &str, label: &str, run_id: u64) -> Result<String, String> {
+    if !source.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name == 'full-ci' && 'full-ci' || github.run_id }}\n")
+        || !source.contains("  cancel-in-progress: true\n")
+    {
+        return Err("UB must isolate non-full-ci labels while retaining cancellation".to_owned());
+    }
+    Ok(if label == "full-ci" {
+        "full-ci".to_owned()
+    } else {
+        run_id.to_string()
+    })
+}
+
 fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
     if parsed_types(ub)? != ["labeled"] {
         return Err("UB subscribe only to labeled pull-request events".to_owned());
@@ -379,7 +397,7 @@ fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
             "UB must retain prior publication and admit full-ci reviews: {posts:?}"
         ));
     }
-    if !ub_admits(ub, "labeled", Some("full-ci"), true)? {
+    if !models_ub_guard_admission(ub, "labeled", Some("full-ci"), true)? {
         return Err("same-repository full-ci must execute the advisory review".to_owned());
     }
     Ok(())
@@ -404,11 +422,11 @@ fn non_request_labels_ready_updates_and_forks_execute_no_ub_job() -> Result<(), 
         ("ready_for_review", None, true),
     ] {
         assert!(
-            !ub_admits(&source, action, label, same_repository)?,
+            !models_ub_guard_admission(&source, action, label, same_repository)?,
             "UB must not execute for {action}/{label:?}/same_repository={same_repository}"
         );
     }
-    assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
+    assert_eq!(parsed_types(&source)?, ["labeled"]);
     Ok(())
 }
 
@@ -417,9 +435,36 @@ fn full_ci_label_reapplication_admits_the_new_exact_head() -> Result<(), String>
     let source = repo_file(UB_WORKFLOW)?;
     // The same label event requests review once. Re-applying it for a new head
     // is a separate request, not an opened/synchronize/Ready re-entry path.
-    assert!(ub_admits(&source, "labeled", Some("full-ci"), true)?);
+    assert!(models_ub_guard_admission(
+        &source,
+        "labeled",
+        Some("full-ci"),
+        true
+    )?);
     assert!(source.contains("          pr-head-sha: ${{ github.event.pull_request.head.sha }}\n"));
-    assert!(source.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
+    let first = models_ub_concurrency_group(&source, "full-ci", 101)?;
+    let later = models_ub_concurrency_group(&source, "full-ci", 202)?;
+    assert_eq!(first, later, "full-ci requests intend supersession");
+    Ok(())
+}
+
+#[test]
+fn unrelated_labels_cannot_cancel_admitted_full_ci() -> Result<(), String> {
+    let source = repo_file(UB_WORKFLOW)?;
+    let admitted = models_ub_concurrency_group(&source, "full-ci", 101)?;
+    let replacement = models_ub_concurrency_group(&source, "full-ci", 202)?;
+    assert_eq!(
+        admitted, replacement,
+        "a repeated full-ci request must retain intended supersession"
+    );
+    for label in ["merge-ready", "windows-ci", "vscode"] {
+        assert_ne!(
+            models_ub_concurrency_group(&source, label, 303)?,
+            admitted,
+            "{label} must not group with or cancel admitted full-ci work"
+        );
+    }
+    assert!(source.contains("  cancel-in-progress: true\n"));
     Ok(())
 }
 
@@ -427,7 +472,7 @@ fn full_ci_label_reapplication_admits_the_new_exact_head() -> Result<(), String>
 fn advisory_sensors_concurrency_and_trust_remain_exact() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
     assert_eq!(direct_job_field(&ub, "ub-review", "if"), Some(UB_GUARD));
-    assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
+    assert!(ub.contains("  cancel-in-progress: true\n"));
     assert!(ub.contains("          review-mode: advisory\n"));
     assert!(ub.contains("          config: .ub-review.toml\n"));
     assert!(ub.contains("          posting: review\n"));
@@ -445,14 +490,41 @@ fn contract_rejects_reentry_and_missing_publication() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
     let config = repo_file(".ub-review.toml")?;
     let changed = ub.replacen("types: [", "types: [synchronize, ", 1);
-    assert_ne!(changed, ub, "mutation engages UB review");
-    assert!(advisory_contract(&changed, &config).is_err());
+    assert_ne!(
+        changed, ub,
+        "failed to find 'types: [' in workflow to apply mutation"
+    );
+    let error = match advisory_contract(&changed, &config) {
+        Ok(()) => return Err("synchronize must be rejected as a UB trigger".to_owned()),
+        Err(error) => error,
+    };
+    assert_eq!(error, "UB subscribe only to labeled pull-request events");
     let changed = config.replace("\"synchronize\", ", "");
-    assert_ne!(changed, config, "publication mutation engages");
-    assert!(advisory_contract(&ub, &changed).is_err());
+    assert_ne!(
+        changed, config,
+        "failed to find '\"synchronize\", ' in config to apply mutation"
+    );
+    let error = match advisory_contract(&ub, &changed) {
+        Ok(()) => return Err("synchronize publication must be retained".to_owned()),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("UB must retain prior publication and admit full-ci reviews: "),
+        "unexpected publication error: {error}"
+    );
     let changed = config.replace(", \"pull_request_other\"", "");
-    assert_ne!(changed, config, "full-ci publication mutation engages");
-    assert!(advisory_contract(&ub, &changed).is_err());
+    assert_ne!(
+        changed, config,
+        "failed to find ', \"pull_request_other\"' in config to apply mutation"
+    );
+    let error = match advisory_contract(&ub, &changed) {
+        Ok(()) => return Err("full-ci publication must be retained".to_owned()),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("UB must retain prior publication and admit full-ci reviews: "),
+        "unexpected publication error: {error}"
+    );
     Ok(())
 }
 
