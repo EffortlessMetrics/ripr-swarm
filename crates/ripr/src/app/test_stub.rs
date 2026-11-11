@@ -1934,8 +1934,8 @@ pub(crate) fn focused_test_run_command(
     // module-tree walk (a positive reach, never a missing orphan verdict)
     // and the layout role answer that, not path guesses: `src/tests/pricing.rs`
     // declared from the library runs by name, while an orphan, a file an
-    // incomplete walk cannot place, a bench, an example or a build script
-    // gets no command.
+    // incomplete walk cannot place, a file only a bench, example, test or
+    // ancestor package reaches, or a build script gets no command.
     let compiled_by_cargo_test = || {
         let mut context = analysis::context_for_files(root, [file.as_path()]);
         analysis::apply_module_graph_evidence(root, &mut context, [file.as_path()]);
@@ -2635,6 +2635,7 @@ mod tests {
             // survive into the printed manifest path.
             .join(if cfg!(unix) { "team\\repo" } else { "repo" });
         std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("benches")).map_err(|error| error.to_string())?;
         for (path, text) in [
             (
                 "Cargo.toml",
@@ -2644,12 +2645,22 @@ mod tests {
             ("src/tests/mod.rs", "mod pricing;\n"),
             ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
             ("src/stray.rs", "#[test]\nfn t() {}\n"),
+            // Reached only from a bench root: `cargo test` never runs it.
+            (
+                "benches/b.rs",
+                "#[path = \"../src/bench_only.rs\"]\nmod bench_only;\n",
+            ),
+            ("src/bench_only.rs", "#[test]\nfn t() {}\n"),
         ] {
             std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
         }
         std::fs::write(root.join("src/bad.rs"), [0xff_u8, 0xfe, 0x00])
             .map_err(|error| error.to_string())?;
         assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        assert_eq!(
+            focused_test_run_command(&root, "src/bench_only.rs", "t"),
+            None
+        );
         let command = focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold")
             .ok_or("a declared inline test file must still run by name")?;
         assert!(command.ends_with(" equal_threshold"), "{command}");
