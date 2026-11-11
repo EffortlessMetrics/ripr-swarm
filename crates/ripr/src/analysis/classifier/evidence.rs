@@ -963,6 +963,7 @@ impl ClassifiedProbeEvidence {
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
         let pushed_path = std::cell::OnceCell::<Option<String>>::new();
+        let assigned_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -1356,6 +1357,32 @@ impl ClassifiedProbeEvidence {
                                     path,
                                     &owner.name,
                                 ) && pushed_collection_compared_whole(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    context.index,
+                                )
+                            })
+                    })
+                },
+                assigned_field_observed: &|test, assertion| {
+                    // RIPR-SPEC-0228 (#14407): the one exact-read rule for a
+                    // changed field assignment, shared with activation and the
+                    // repository seam. The path depends only on the owner and
+                    // probe, so it is computed once per probe.
+                    context.owner_fn.is_some_and(|owner| {
+                        assigned_path
+                            .get_or_init(|| {
+                                crate::analysis::classify::assigned_field_of(
+                                    owner,
+                                    context.probe,
+                                    context.index,
+                                )
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
+                                crate::analysis::classify::assigned_field_read_confirms(
                                     owner,
                                     path,
                                     test,

@@ -4989,17 +4989,23 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
+    // #14407: an integration test may build the receiver as
+    // `krate::Ty { .. }` through the owner's own, unshadowed library name.
+    let own_crate = std::cell::OnceCell::new();
     super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
         .into_iter()
         .any(|read| {
             !super::reveal::owner_called_on_other_receiver(&test.body, &read.binding, call.name())
-                && super::reveal::owner_call_precedes_read(
+                && super::reveal::owner_call_precedes_read_in_crate(
                     &test.body,
                     test.start_line,
                     &read.binding,
                     call.name(),
                     assertion.line,
                     call.impl_type(),
+                    *own_crate.get_or_init(|| {
+                        super::related_tests::own_crate_qualifier(index, test, owner)
+                    }),
                 )
                 && super::reveal::binding_untouched_after_owner_call(
                     &test.body,

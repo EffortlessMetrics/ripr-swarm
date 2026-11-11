@@ -2364,6 +2364,27 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
         && owner_impl_is_root_item_of(index, owner, &owner.file)
 }
 
+/// The factory name [`initializer_names_impl_type`] passes for a
+/// crate-qualified struct literal head (`krate::Ty { .. }`): no associated
+/// function can be spelled `{`, so it never collides with a constructor name.
+const CRATE_QUALIFIED_STRUCT_LITERAL: &str = "{";
+
+/// The root package's library name when `test` may spell the owner's impl type
+/// through it (`krate::Ty`): the owner is a root-file item of `src/lib.rs` and
+/// `test`, an integration test of the root package, names the library
+/// unshadowed (#14036, #14407). `None` otherwise, so a crate-qualified
+/// spelling then establishes nothing.
+pub(in crate::analysis) fn own_crate_qualifier<'a>(
+    index: &'a RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<&'a str> {
+    let krate = index.root_library_name.as_deref()?;
+    (owner_is_root_library_item(index, owner)
+        && root_library_name_is_unshadowed(index, test, krate))
+    .then_some(krate)
+}
+
 /// Whether `krate` is the root package's library identifier and `test` — an
 /// integration test of the root package — names it unshadowed (#14036).
 fn root_library_name_is_unshadowed(index: &RustIndex, test: &TestSummary, krate: &str) -> bool {
@@ -4428,6 +4449,41 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     let_binding_mentions_type_at(body, body, body, body.len(), binding, type_name)
 }
 
+/// Whether the latest `let` of `binding` in `body` (everything before the
+/// use, comments and strings masked) is unannotated and initialized by exactly
+/// the crate-qualified struct literal `krate::type_name { .. }` (#14407): the
+/// same latest-`let` reading [`let_binding_certain_type_head`] gives a
+/// one-segment literal. The caller supplies `krate` only after establishing
+/// that it names the owner's own library unshadowed ([`own_crate_qualifier`]),
+/// and rejects a rebinding after the call itself.
+pub(in crate::analysis) fn let_binding_is_crate_qualified_literal(
+    body: &str,
+    binding: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    last_let_statement(body, binding).is_some_and(|stmt| {
+        stmt.find('=').is_some_and(|eq| {
+            !stmt[..eq].contains(':')
+                && initializer_is_crate_qualified_literal(&stmt[eq + 1..], krate, type_name)
+        })
+    })
+}
+
+/// Whether `init` is one struct literal whose head is exactly
+/// `krate::type_name` (`rg::Counter { n: 5 }`), with nothing after it.
+pub(in crate::analysis) fn initializer_is_crate_qualified_literal(
+    init: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init)
+        && matches!(type_head(init), Some((segments, Some(b'{')))
+            if segments.as_slice() == [krate, type_name])
+}
+
 fn let_binding_mentions_type_at(
     prefix: &str,
     full_body: &str,
@@ -4593,6 +4649,12 @@ fn initializer_names_impl_type(
         // the type literal `Ty` when a same-named function could run (#8917).
         ([ty], Some(b'(')) => factory("", ty),
         ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
+        // `krate::Ty { .. }` (#14407): the same crate-prefix authority (checked
+        // before the variant arm below, which would otherwise take it); the
+        // literal itself names the type, so no constructor is consulted.
+        ([krate, ty], Some(b'{')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), CRATE_QUALIFIED_STRUCT_LITERAL)
+        }
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
         // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
         // through the `krate::Ty` spelling and accepts only the root
@@ -5609,12 +5671,14 @@ fn inherent_receiver_call_resolves_with(
                 head == impl_type
             } else if let Some((krate, ty)) = ty.split_once("::") {
                 // A crate-qualified constructor head (`krate::Ty::new()`,
-                // #14036): the leading segment must be the root package's
-                // library name, unshadowed in this test, and the owner an
-                // item of that library.
-                owner.is_some_and(|owner| owner_is_root_library_item(index, owner))
-                    && root_library_name_is_unshadowed(index, test, krate)
-                    && associated_constructor_names_own_type(index, ty, name, None)
+                // #14036) or struct literal (`krate::Ty { .. }`, #14407): the
+                // leading segment must be the root package's library name,
+                // unshadowed in this test, and the owner an item of that
+                // library. A literal names the type itself; an associated
+                // call must be a constructor of it.
+                owner.is_some_and(|owner| own_crate_qualifier(index, test, owner) == Some(krate))
+                    && (name == CRATE_QUALIFIED_STRUCT_LITERAL
+                        || associated_constructor_names_own_type(index, ty, name, None))
             } else {
                 if associated_constructor_names_own_type(
                     index,
@@ -8115,6 +8179,92 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_crate_qualified_struct_literal_receiver_asks_the_crate_authority() {
+        // #14407: `krate::Ty { .. }` reaches the factory under the literal
+        // marker, so only the crate-prefix authority (never a constructor
+        // lookup) decides it.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let factory = |admit: bool| {
+            let asked = &asked;
+            move |ty: &str, name: &str| {
+                asked.borrow_mut().push((ty.to_string(), name.to_string()));
+                admit
+            }
+        };
+        assert!(initializer_names_impl_type(
+            "probe::Counter { n: 5 }",
+            "Counter",
+            &factory(true)
+        ));
+        assert_eq!(
+            asked.borrow().as_slice(),
+            &[(
+                "probe::Counter".to_string(),
+                CRATE_QUALIFIED_STRUCT_LITERAL.to_string()
+            )]
+        );
+        // The authority refusing (a foreign or shadowed crate name) refuses.
+        assert!(!initializer_names_impl_type(
+            "other::Counter { n: 5 }",
+            "Counter",
+            &factory(false)
+        ));
+        asked.borrow_mut().clear();
+        // Another type, a deeper path or a tuple-struct call never asks.
+        for refused in [
+            "probe::Other { n: 5 }",
+            "probe::inner::Counter { n: 5 }",
+            "probe::Counter(5)",
+        ] {
+            assert!(
+                !initializer_names_impl_type(refused, "Counter", &factory(true)),
+                "{refused}"
+            );
+        }
+        assert!(asked.borrow().is_empty(), "{:?}", asked.borrow());
+    }
+
+    #[test]
+    fn a_latest_let_names_the_crate_qualified_literal_exactly() {
+        let reads =
+            |body: &str| let_binding_is_crate_qualified_literal(body, "c", "probe", "Counter");
+        assert!(reads(
+            "let mut c = probe::Counter { n: 5 };
+"
+        ));
+        assert!(reads(
+            "let c = probe::Counter { n: 5 };
+"
+        ));
+        for refused in [
+            // Another crate, another type, or a one-segment spelling.
+            "let mut c = other::Counter { n: 5 };
+",
+            "let mut c = probe::Other { n: 5 };
+",
+            "let mut c = Counter { n: 5 };
+",
+            // Not one head expression: the chained value may have another type.
+            "let mut c = probe::Counter { n: 5 }.into();
+",
+            // An annotation is read by the existing typed rule, not this one.
+            "let mut c: Wrapper = probe::Counter { n: 5 };
+",
+            // Another binding, or none.
+            "let mut d = probe::Counter { n: 5 };
+",
+            "",
+        ] {
+            assert!(!reads(refused), "{refused:?}");
+        }
+        assert!(initializer_is_crate_qualified_literal(
+            " probe::Counter { n: 5 };",
+            "probe",
+            "Counter"
+        ));
+    }
 
     #[test]
     fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
