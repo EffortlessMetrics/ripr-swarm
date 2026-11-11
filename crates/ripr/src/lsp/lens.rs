@@ -23,6 +23,7 @@ use super::uri::{file_uri_for_path, file_uris_match};
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
 use crate::domain::{
     ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTest, RelationConfidence,
+    SymbolId,
 };
 use std::path::Path;
 use std::time::Duration;
@@ -168,17 +169,37 @@ pub(super) fn code_lens_response(
     };
     let age = snapshot.refresh.age();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    for lens in lens_findings(uri, snapshot)
-        .map(|finding| finding_to_code_lens(snapshot, finding, age, client_features))
-    {
+    // The owner of each emitted lens's finding, parallel to `lenses`.
+    let mut owners: Vec<Option<&SymbolId>> = Vec::new();
+    for finding in lens_findings(uri, snapshot) {
+        let lens = finding_to_code_lens(snapshot, finding, age, client_features);
+        let owner = finding.probe.owner.as_ref();
         // Several probes on one line (a predicate and its returned value) often
         // read identically; one lens per distinct line and title keeps the
-        // editor from stacking repeated text. Hover still lists every finding.
-        if !lenses
-            .iter()
-            .any(|seen| seen.range == lens.range && seen.command == lens.command)
-        {
-            lenses.push(lens);
+        // editor from stacking repeated text. Probes on neighbouring changed
+        // lines of one function usually read identically too, so a lens that
+        // repeats an earlier lens of the same owner is dropped and the first
+        // one stands for the function. Hover and diagnostics still cover every
+        // finding on its own line.
+        let repeat = lenses
+            .iter_mut()
+            .zip(&owners)
+            .find(|(seen, seen_owner)| {
+                seen.command == lens.command
+                    && (seen.range == lens.range || (owner.is_some() && **seen_owner == owner))
+            })
+            .map(|(seen, _)| seen);
+        match repeat {
+            // The surviving lens sits on the topmost of the rows it stands for.
+            Some(seen) => {
+                if lens.range.start.line < seen.range.start.line {
+                    seen.range = lens.range;
+                }
+            }
+            None => {
+                lenses.push(lens);
+                owners.push(owner);
+            }
         }
     }
     lenses
@@ -916,7 +937,9 @@ mod tests {
         twin.id = "probe:src/lib.rs:10:return_value:11223344".to_string();
         twin.probe.id = ProbeId(twin.id.clone());
         twin.probe.family = ProbeFamily::ReturnValue;
-        let other_line = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
+        // Another function's row keeps its own lens even with the same title.
+        let mut other_line = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
+        other_line.probe.owner = Some(SymbolId("owner::other_fn".to_string()));
         let different = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 5, None);
         let snapshot =
             make_snapshot_with_findings("/workspace", vec![first, twin, other_line, different]);
@@ -952,6 +975,37 @@ mod tests {
         if survivors[0].1 != survivors[1].1 {
             return Err(format!(
                 "same-count lenses must share a title: {survivors:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn code_lens_response_collapses_identical_lenses_within_one_function() -> Result<(), String> {
+        // Two changed lines of one function that read the same: the editor
+        // shows one lens on the topmost row, not a copy above each line.
+        let lower = make_finding("src/lib.rs", 3, ExposureClass::Exposed, 2, None);
+        let upper = make_finding("src/lib.rs", 2, ExposureClass::Exposed, 2, None);
+        // Same function, different evidence: its own lens survives.
+        let distinct = make_finding("src/lib.rs", 4, ExposureClass::Exposed, 4, None);
+        // Same title in a probe with no owner: no function to collapse into.
+        let mut ownerless = make_finding("src/lib.rs", 8, ExposureClass::Exposed, 2, None);
+        ownerless.probe.owner = None;
+        let mut ownerless_twin = make_finding("src/lib.rs", 9, ExposureClass::Exposed, 2, None);
+        ownerless_twin.probe.owner = None;
+        let snapshot = make_snapshot_with_findings(
+            "/workspace",
+            vec![lower, upper, distinct, ownerless, ownerless_twin],
+        );
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+
+        let lenses =
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
+
+        let lines: Vec<u32> = lenses.iter().map(|lens| lens.range.start.line).collect();
+        if lines != vec![1, 3, 7, 8] {
+            return Err(format!(
+                "expected one lens for the function on its top row plus the distinct and ownerless rows, got {lines:?}"
             ));
         }
         Ok(())

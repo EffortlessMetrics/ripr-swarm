@@ -116,6 +116,12 @@ A lens click does something useful for its own row (#13389):
   arguments are all equal. Two findings on one row whose related tests share a
   name but live in different files keep two lenses with different targets; two
   findings that resolve to the same test collapse to one.
+- Collapse within one function: a lens whose title, command and arguments equal
+  an earlier lens from a finding with the same probe owner is dropped, and the
+  surviving lens moves to the topmost of those rows. Neighbouring changed lines
+  of one function therefore show one lens instead of a copy above each line.
+  Findings with no recorded owner keep one lens per row. Diagnostics and line
+  hover still cover each finding on its own row (#14362).
 - The navigation target is part of the lens-view identity, so a changed target
   triggers `workspace/codeLens/refresh`.
 - Navigation opens a file only. It adds no actionability, repair data or
@@ -249,7 +255,8 @@ output is unchanged).
   lenses on document change).
 - No aggregation lens beyond collapsing: one lens per finding, except that
   findings on one line whose lens range and title are identical share one lens
-  (hover still lists every finding on the line). Aggregation into a single
+  (hover still lists every finding on the line), and identical lenses of one
+  function share the topmost row. Aggregation into a single
   per-file count is a separate UI concern.
 - No Python-specific label differentiation beyond the preview prefix; the same
   softening logic covers both TS and Python for now.
@@ -301,6 +308,7 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_zero_related_tests_is_honest`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line`
+- `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`

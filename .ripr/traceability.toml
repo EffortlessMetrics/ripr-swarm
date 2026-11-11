@@ -9203,6 +9203,7 @@ tests = [
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip",
   "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean",
+  "crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function",
 ]
 code = [
   "crates/ripr/src/lsp/lens.rs",
