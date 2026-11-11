@@ -6305,7 +6305,7 @@ language = "rust"
         );
         for command in [
             "--format sarif",
-            "--format repo-sarif",
+            // `--format repo-sarif` runs on manual runs only (#14300).
             "--format repo-badge-json",
             "ripr pilot",
             "ripr agent start",
@@ -6411,7 +6411,7 @@ language = "rust"
         assert!(workflow.contains("gh api --method \"$method\""));
         assert!(!workflow.contains("jq "));
         assert!(workflow.contains(
-            "env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
+            "env.RIPR_UPLOAD_SARIF == 'true' && github.event_name != 'pull_request' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
         ));
         assert!(
             workflow
@@ -6799,8 +6799,11 @@ language = "rust"
         );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
-        assert!(packet.contains("--format repo-sarif"));
+        // The repo seam SARIF renders on manual runs only (#14300); the
+        // recorded packet is a pull request run.
+        assert!(!packet.contains("--format repo-sarif"));
         assert!(packet_source.contains("let sarif = self.settings.upload_sarif == \"true\";"));
+        assert!(packet_source.contains("sarif && !pr,"));
 
         let artifact_check = packet_source
             .split("fn check_advisory_artifacts")
