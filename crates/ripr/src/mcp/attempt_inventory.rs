@@ -24,8 +24,8 @@ pub(super) fn tool_descriptor() -> Value {
             "type": "object",
             "properties": {
                 "inventory_id": {"type": "string", "description": "Optional prior inventory identity; mismatch fails with stale_inventory."},
-                "offset": {"type": "integer", "minimum": 0},
-                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_ITEMS}
+                "offset": {"type": "integer", "minimum": 0, "description": "Start row. Default 0."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_ITEMS, "description": "Rows per page. Default 256."}
             },
             "additionalProperties": false
         },
