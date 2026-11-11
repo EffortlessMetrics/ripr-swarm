@@ -98,7 +98,6 @@ sha2 = "0.10"
 # tests must run in the default suite, and the module is not yet reachable from
 # the CLI. Revisit a feature gate when the CLI slice wires it in.
 prost = "0.13"
-bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"

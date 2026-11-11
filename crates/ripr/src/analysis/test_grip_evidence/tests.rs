@@ -23018,16 +23018,52 @@ fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_kee
             "rooted production import",
             format!("{rival}use ::lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
         ),
-        (
-            "own definition shadowing a glob",
-            format!(
-                "{rival}use local::*;\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 1 }}\n\n{test}"
-            ),
-        ),
     ] {
         let related = related_test_names_for_boundary_seam(&source)?;
         assert_eq!(related, vec!["bare_real".to_string()], "{label}: {source}");
     }
+    Ok(())
+}
+
+/// #10855: a body-ful definition of the owner's name in the test's own file
+/// is what an unimported bare call reaches, with or without a glob that also
+/// offers the name (an item shadows a glob). Each case is paired with the
+/// same test calling the production function through a path, which keeps the
+/// relation, so the emptiness assertions are not vacuous.
+#[test]
+fn given_integration_test_when_bare_call_reaches_a_top_level_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let rival = "fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let bare =
+        "#[test]\nfn bare_top_level() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n";
+    let mut failures = Vec::new();
+    for (label, source) in [
+        ("plain top-level rival", format!("{rival}\n{bare}")),
+        (
+            "rival shadowing a glob of another module",
+            format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse local::*;\n{rival}\n{bare}"),
+        ),
+        (
+            "rival shadowing a glob of the library",
+            format!("use lib_proptest::*;\n{rival}\n{bare}"),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        if !related.is_empty() {
+            failures.push(format!("{label}: {related:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#10855: a top-level rival reached by a bare call must not relate the owner: {failures:?}"
+    );
+    // Control: the same file, but the test calls the production function by
+    // its path and the rival is never called.
+    let control = format!(
+        "{rival}\n#[test]\nfn qualified_real() {{\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&control)?;
+    assert_eq!(related, vec!["qualified_real".to_string()], "{control}");
     Ok(())
 }
 

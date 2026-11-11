@@ -6801,7 +6801,11 @@ mod tests {
                             .map_err(|err| err.to_string())?,
                     )?;
                     assert_eq!(manifest.shards.len(), 2);
-                    cache.sharded_entry_dir(&key).join(&manifest.shards[1].file)
+                    // The manifest names a shard as `g<id>/shard-N.json`. Resolve it
+                    // through the loader's own resolver so the path below is spelled
+                    // the way the load-side reason spells it: on Windows a plain
+                    // `join` keeps the `/` and the reason would not contain it (#13897).
+                    cache.sharded_shard_path(&key, 1)?
                 } else {
                     cache.entry_path(&key)
                 };
