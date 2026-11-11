@@ -307,7 +307,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-11T11:00:28Z";
-    let cases: [(&str, bool); 15] = [
+    let cases: [(&str, bool); 28] = [
         // The strip-exercising control: this admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", true),
         (
@@ -324,7 +324,48 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
             "REVIEW_READY\nNo code change needed, but repairs required.",
             false,
         ),
-        // A refuted or followed-by-blocker phrase is not resolved work.
+        // The real #14117 line 6: mid-line phrase followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR \
+             conversation and resolved with no code change needed. Gemini had no findings. \
+             CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a \
+             review; the owning session's inline source review stands in for them.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. All threads resolved.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini had no findings.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is red.",
+            false,
+        ),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        (
+            "REVIEW_READY\nNo code change needed. Repairs required.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build fails.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is broken.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is failing.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. A fix is needed.",
+            false,
+        ),
+        // A refuted phrase is not resolved work.
         (
             "REVIEW_READY\nIt is not true that no changes are needed.",
             false,
@@ -336,7 +377,22 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
             "REVIEW_READY\nNo changes are needed -- the build is red.",
             false,
         ),
-        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        (
+            "REVIEW_READY\nThere is no truth to the claim that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is a lie that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is wrong to say that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNobody could say that no changes are needed.",
+            false,
+        ),
         ("REVIEW_READY\nno findings, code change needed", false),
     ];
     for (body, admit) in cases {
