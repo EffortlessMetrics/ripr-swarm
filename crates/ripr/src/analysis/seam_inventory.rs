@@ -456,6 +456,8 @@ fn inventory_classified_seams_report_inner(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
 ) -> Result<ClassifiedSeamsReport, String> {
+    #[cfg(test)]
+    WORKSPACE_CLASSIFIED_INVENTORIES.with(|count| count.set(count.get() + 1));
     // Store failures of the classified-seam and corpus-fingerprint families
     // are collected through the same bounded `{path, stage, error}` row
     // owner as file-fact failures (#9633) and surfaced once per run, success
@@ -4253,8 +4255,8 @@ pub(crate) fn scoped_file_seams(
 /// inventory holds only a prefix of a large workspace, and a seam id past
 /// that prefix (any changed seam `ripr check` reports, for example) would
 /// otherwise be unresolvable. Locating a seam needs no test-grip evidence,
-/// so the walk reads only cached file facts; the caller classifies the one
-/// file it names.
+/// so the walk reads only cached file facts; the caller then runs the
+/// file-scoped classification for the file it names.
 pub(crate) fn locate_seam_file_at_with_config(
     root: &Path,
     config: &RiprConfig,
@@ -4274,6 +4276,9 @@ pub(crate) fn locate_seam_file_at_with_config(
 
 #[cfg(test)]
 thread_local! {
+    /// Whole-workspace classified inventories started on this thread.
+    pub(crate) static WORKSPACE_CLASSIFIED_INVENTORIES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
     /// Uncapped seam-id walks [`locate_seam_file_at_with_config`] ran on this
     /// thread.
     pub(crate) static SEAM_FILE_LOCATIONS: std::cell::Cell<usize> =

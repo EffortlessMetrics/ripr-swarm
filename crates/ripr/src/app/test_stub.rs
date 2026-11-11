@@ -592,21 +592,10 @@ fn narrowed_ambiguity(
                 scoped.require_complete_evidence("test stub")?;
                 Ok(scoped.classified)
             }
-            None => {
-                #[cfg(test)]
-                WORKSPACE_AMBIGUITY_INVENTORIES.with(|count| count.set(count.get() + 1));
-                analysis::inventory_classified_seams_at_with_config(root, config)
-                    .map(|(classified, _)| classified)
-            }
+            None => analysis::inventory_classified_seams_at_with_config(root, config)
+                .map(|(classified, _)| classified),
         },
     )
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Whole-workspace inventories `narrowed_ambiguity` loaded on this thread.
-    static WORKSPACE_AMBIGUITY_INVENTORIES: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
 }
 
 /// The validation half of `narrowed_ambiguity`, with the classified inventory
@@ -2152,7 +2141,7 @@ mod tests {
                 .map(|seam| seam.id().as_str().to_string())
                 .collect::<Vec<_>>();
             assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
-            let before = WORKSPACE_AMBIGUITY_INVENTORIES.with(std::cell::Cell::get);
+            let workspace = analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get);
             let decision = narrowed_ambiguity(
                 &root,
                 &config,
@@ -2162,49 +2151,43 @@ mod tests {
                 ids,
                 &mut index,
             );
-            // #14369: candidates from one file are validated against that
-            // file's classified seams, never a whole-workspace inventory.
-            assert_eq!(
-                WORKSPACE_AMBIGUITY_INVENTORIES.with(std::cell::Cell::get),
-                before,
-                "a file-scoped ambiguity must not classify the whole workspace"
-            );
-            // The printed `--seam-id` command must itself succeed, even for a
-            // seam past the capped workspace inventory (#14369): with a cap of
-            // one seam the capped inventory does not hold the narrowed seam,
-            // yet the seam-id resolution still produces its stub.
+            // The printed `--seam-id` command, run as printed, must produce
+            // the same seam's stub; it is located by the uncapped seam walk
+            // (#14369). The seam-cap case runs as a subprocess in
+            // `agent_stub_compiles`, since the cap is process-wide.
             let executed = match &decision {
                 StubRouteDecision::SeamStub { seam_id } => {
-                    let _cap = analysis::PilotInventoryDefault::widen_to(1);
-                    let (capped, _) =
-                        analysis::inventory_classified_seams_at_with_config(&root, &config)?;
-                    assert!(
-                        capped
-                            .iter()
-                            .all(|entry| entry.seam.id().as_str() != seam_id),
-                        "precondition: the cap hides the narrowed seam"
-                    );
                     let located = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get);
                     let resolved = resolve_test_stub(
                         &root,
                         &config,
                         &TestStubSelector::SeamId(seam_id.clone()),
                     );
-                    assert_eq!(
-                        analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get),
-                        located + 1,
-                        "a seam id is located by the uncapped seam walk"
-                    );
-                    Some(resolved.map(|resolution| resolution.seam_id))
+                    let walks = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get) - located;
+                    Some((walks, resolved))
                 }
                 _ => None,
             };
+            let workspace =
+                analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get) - workspace;
             let _ = std::fs::remove_dir_all(&root);
-            if let StubRouteDecision::SeamStub { seam_id } = &decision {
-                assert_eq!(
-                    executed,
-                    Some(Ok(seam_id.clone())),
-                    "the printed seam-id command resolves the same seam"
+            // #14369: candidates from one file are validated, and the seam id
+            // then resolved, against that file's classified seams, never a
+            // whole-workspace inventory.
+            assert_eq!(
+                workspace, 0,
+                "a file-scoped ambiguity must not classify the whole workspace"
+            );
+            if let (StubRouteDecision::SeamStub { seam_id }, Some((walks, resolved))) =
+                (&decision, executed)
+            {
+                assert_eq!(walks, 1, "a seam id is located by the uncapped seam walk");
+                let resolution = resolved.map_err(|error| format!("{error:?}"))?;
+                assert_eq!(&resolution.seam_id, seam_id, "the printed seam resolves");
+                assert!(
+                    resolution.outcome.is_ok() && resolution.weak_oracle_guidance.is_none(),
+                    "the printed seam-id command yields a stub: {:?}",
+                    resolution.outcome
                 );
             }
             Ok(decision)

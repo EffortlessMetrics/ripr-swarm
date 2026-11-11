@@ -163,8 +163,6 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
-pub(crate) use seam_inventory::SEAM_FILE_LOCATIONS;
-#[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
@@ -195,6 +193,8 @@ pub(crate) use seam_inventory::{
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
+#[cfg(test)]
+pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
