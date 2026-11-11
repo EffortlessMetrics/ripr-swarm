@@ -318,6 +318,37 @@ mod tests {
     }
 
     #[test]
+    fn a_named_owner_import_in_the_body_withholds_the_owner_call() {
+        // #13583: even an import of the owner is a named local binding. The
+        // bounded scan does not resolve imports, so it deliberately withholds.
+        let chain = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
+        let unbound = format!("fn t() {{\n    {chain}\n}}\n");
+        assert_eq!(reach_names(&unbound), vec!["inc".to_string()]);
+        let imported = format!("fn t() {{\n    use super::inc;\n    {chain}\n}}\n");
+        assert!(crate::analysis::syntax::parse_clean_source_file(&imported).is_some());
+        assert!(reach_names(&imported).is_empty());
+    }
+
+    #[test]
+    fn an_unparseable_claimed_span_withholds_only_the_bare_owner_call() {
+        // #13583: harness_registry extracts the Trial::test invocation span,
+        // which is an expression, not a file. Unknown bindings fail closed.
+        let chain = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
+        let span = format!("Trial::test(\"mapped\", || {{\n    {chain}\n}})");
+        assert!(crate::analysis::syntax::parse_clean_source_file(&span).is_none());
+        assert_eq!(
+            synthetic_calls_in_line(chain),
+            vec![("inc".to_string(), "inc(1)".to_string(), true)]
+        );
+        assert!(reach_names(&span).is_empty());
+        let wrapped = format!("fn register() {{\n{span};\n}}\n");
+        assert!(crate::analysis::syntax::parse_clean_source_file(&wrapped).is_some());
+        assert_eq!(reach_names(&wrapped), vec!["inc".to_string()]);
+        let qualified = span.replace(".map(inc)", ".map(m::inc)");
+        assert_eq!(reach_names(&qualified), vec!["inc".to_string()]);
+    }
+
+    #[test]
     fn a_path_owner_keeps_its_call_when_a_same_leaf_local_exists() {
         let body = "fn t() {\n    let inc = |x| x;\n    assert_eq!(vec![1, 2].into_iter().map(m::inc).collect::<Vec<_>>(), vec![2, 3]);\n}\n";
         assert_eq!(reach_names(body), vec!["inc".to_string()]);
