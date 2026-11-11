@@ -3,5 +3,3 @@
   is now compared against its whole old `&&`/`||` chain, so an edit that drops
   or adds an operand no longer reads `exposed` from an input at the surviving
   comparison's boundary (#7945).
-<!-- section: Internal / CI -->
-- Evidence-promotion honesty corpus: add the multi-line dropped-conjunct refusal case (#7945).
