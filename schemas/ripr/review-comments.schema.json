@@ -678,7 +678,7 @@
           "minimum": 0
         },
         "static_limited_omitted_seams": {
-          "description": "The part of omitted_by_policy withheld because static evidence is opaque or unknown at a stage (or names an unresolved panic outcome or framework oracle). ripr could not judge these changed seams, so their absence from this document is not a clean result; the gate adds a warning and never reports pass. Present only when at least one such seam was withheld.",
+          "description": "The part of omitted_by_policy withheld because static evidence is opaque or unknown at a stage: seams whose class is itself a static limitation (the *_unknown classes and opaque, unless configured off), gap-class seams with a limited stage, and seams naming an unresolved panic outcome or framework oracle. ripr could not judge these changed seams, so their absence from this document is not a clean result; the gate adds a warning and never reports pass. Present only when at least one such seam was withheld.",
           "type": "integer",
           "minimum": 1
         },

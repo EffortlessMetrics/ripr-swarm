@@ -928,14 +928,17 @@ enum AgentBriefOmission {
 
 impl AgentBriefOmission {
     /// The seam was withheld because ripr could not judge it, as opposed to
-    /// configured off or simply not a gap.
+    /// configured off or simply not a gap. That covers a gap class with
+    /// limited evidence and a class that is itself a static limitation
+    /// (`*_unknown`, `opaque`), which `for_entry` reports as not actionable.
     fn is_static_limited(self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::EvidenceLimited(_)
-                | Self::PanicOutcomeUnresolved(_)
-                | Self::FrameworkOracleUnresolved(_)
-        )
+            | Self::PanicOutcomeUnresolved(_)
+            | Self::FrameworkOracleUnresolved(_) => true,
+            Self::NotActionable(class) => class.is_static_limitation(),
+            Self::ConfiguredOff(_) => false,
+        }
     }
 
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
@@ -2093,9 +2096,24 @@ ungripped = "warning"
         // #14082: configured off is a choice, not a seam ripr could not judge.
         assert_eq!(selection.omitted_static_limited, 0);
         let class = SeamGripClass::Ungripped;
+        for unknown in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            // A class that is itself a static limitation was not judged
+            // either, unless the user configured it off.
+            assert!(AgentBriefOmission::NotActionable(unknown).is_static_limited());
+            assert!(!AgentBriefOmission::ConfiguredOff(unknown).is_static_limited());
+        }
         for (omission, limited) in [
             (AgentBriefOmission::ConfiguredOff(class), false),
-            (AgentBriefOmission::NotActionable(class), false),
+            (
+                AgentBriefOmission::NotActionable(SeamGripClass::StronglyGripped),
+                false,
+            ),
             (AgentBriefOmission::EvidenceLimited(class), true),
             (AgentBriefOmission::PanicOutcomeUnresolved(class), true),
             (AgentBriefOmission::FrameworkOracleUnresolved(class), true),
