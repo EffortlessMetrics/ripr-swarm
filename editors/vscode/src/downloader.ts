@@ -508,7 +508,9 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
             finish({
               kind: 'transport_failure',
               url: target,
-              message: error instanceof Error ? error.message : String(error)
+              // A body cut off by the peer arrives here as "aborted" with
+              // the reset only in `code`; keep both and name the URL.
+              message: requestErrorMessage(target, error instanceof Error ? error : new Error(String(error)))
             });
           });
         });

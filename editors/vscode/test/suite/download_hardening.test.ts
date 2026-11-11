@@ -32,6 +32,8 @@ interface FixtureRoute {
   readonly body?: Buffer;
   readonly location?: string;
   readonly contentLength?: string;
+  /** Send the head and body, then drop the connection instead of ending the response. */
+  readonly dropConnectionAfterBody?: boolean;
 }
 
 class HardeningFixtureServer {
@@ -67,6 +69,10 @@ class HardeningFixtureServer {
           headers['content-length'] = route.contentLength;
         }
         response.writeHead(route.status, headers);
+        if (route.dropConnectionAfterBody) {
+          response.write(route.body ?? Buffer.alloc(0), () => request.socket.destroy());
+          return;
+        }
         response.end(route.body ?? Buffer.alloc(0));
       });
       created.on('error', reject);
@@ -268,6 +274,29 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       assert.ok(outcome.message.startsWith(`Could not fetch ${url}: `), outcome.message);
       assert.match(outcome.message, /ECONNREFUSED/);
       assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network');
+    }
+  });
+
+  test('a connection dropped mid-body classifies as a network failure (#13638)', async function () {
+    const server = new HardeningFixtureServer();
+    await server.start(tls.key, tls.cert);
+    try {
+      // The head promises 100 bytes; the server sends 3 and drops the socket.
+      server.route('/dropped.tar.gz', {
+        status: 200,
+        body: Buffer.from('abc'),
+        contentLength: '100',
+        dropConnectionAfterBody: true
+      });
+      const url = `${server.base}/dropped.tar.gz`;
+      const outcome = await fetchManifestBytesOverHttps(url, ARCHIVE_MAX_BYTES);
+      assert.strictEqual(outcome.kind, 'transport_failure');
+      if (outcome.kind === 'transport_failure') {
+        assert.ok(outcome.message.includes(url), outcome.message);
+        assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network', outcome.message);
+      }
+    } finally {
+      await server.stop();
     }
   });
 
