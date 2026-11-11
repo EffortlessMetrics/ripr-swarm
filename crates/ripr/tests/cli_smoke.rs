@@ -35730,13 +35730,9 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
 {
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
-    let cases: [(&[&str], i32); 4] = [
+    let cases: [(&[&str], i32); 2] = [
         (&["pr-summary", "--baseline", "/dev/zero"], 0),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
-        // `first-pr` folds an unreadable artifact into its Malformed state and
-        // writes a blocked packet, so an oversized input takes that route.
-        (&["first-pr", "--check-output", "/dev/zero"], 0),
-        (&["first-pr", "--gap-ledger", "/dev/zero"], 0),
     ];
     let result = (|| {
         for (args, expected) in cases {
@@ -35753,6 +35749,68 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&cwd);
+    result
+}
+
+/// `first-pr` only reads its artifacts after the root passes its preflight, so
+/// the rows need a real committed Cargo project; in an empty directory the
+/// command stops at its wrong-root recovery packet and never touches the
+/// flag. With a project, an endless `--check-output` is refused at the shared
+/// limit (exit 2), and an endless `--gap-ledger` takes the command's
+/// established malformed-artifact route (exit 0, a packet that names the limit)
+/// instead of growing until the process is ended.
+#[cfg(unix)]
+#[test]
+fn first_pr_artifact_flags_from_endless_device_reach_the_input_limit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("endless-first-pr");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let check_output = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        assert_input_limit_refusal(&check_output, "first-pr --check-output /dev/zero");
+        let ledger = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        let stdout = String::from_utf8_lossy(&ledger.stdout);
+        assert_eq!(
+            ledger.status.code(),
+            Some(0),
+            "first-pr --gap-ledger keeps its malformed-artifact exit:\n{}",
+            String::from_utf8_lossy(&ledger.stderr)
+        );
+        assert!(
+            stdout.contains("State: malformed artifact")
+                && stdout.contains("268435456 byte input limit (256 MiB)"),
+            "the packet must name the limit, not the wrong-root recovery:\n{stdout}"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
     result
 }
 
