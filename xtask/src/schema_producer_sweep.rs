@@ -176,9 +176,18 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         schema_path: "schemas/ripr/diff.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
-            "narrower authority: diff_json_conforms_to_the_published_schema_in_each_completion_state in crates/ripr/tests/diff_json_schema.rs validates the real CLI bytes of a complete diff with a finding, a complete empty diff and an incomplete diff with a preview-language advisory, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_schema_rejects_documents_it_forbids is the negative experiment; `ripr diff --json` writes to stdout from a live git range, so the committed fixture is a capture kept as an edge fixture. The refusal envelope the command writes when it cannot produce a report is a separate document this schema does not describe",
+            "narrower authority: diff_json_conforms_to_the_published_schema_in_each_completion_state in crates/ripr/tests/diff_json_schema.rs validates the real CLI bytes of a complete diff with a finding, a complete empty diff and an incomplete diff with a preview-language advisory, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_schema_rejects_documents_it_forbids is the negative experiment; `ripr diff --json` writes to stdout from a live git range, so the committed fixture is a capture kept as an edge fixture",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/diff.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_refusals_conform_to_the_published_schema in crates/ripr/tests/diff_json_schema.rs validates the real exit-2 CLI bytes for an unresolvable base and an unreadable config, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_refusal_schema_rejects_documents_it_forbids is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff-refusal.valid.json"],
         excluded: &[],
     },
     Binding {

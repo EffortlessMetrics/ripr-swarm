@@ -205,6 +205,13 @@ fn check_array(
             "{location}: {count} items is below minItems {minimum}"
         ));
     }
+    if let Some(maximum) = schema.get("maxItems").and_then(Value::as_u64)
+        && count > maximum
+    {
+        return Err(format!(
+            "{location}: {count} items is above maxItems {maximum}"
+        ));
+    }
     if schema.get("uniqueItems").and_then(Value::as_bool) == Some(true) {
         for (index, item) in items.iter().enumerate() {
             if items.iter().take(index).any(|earlier| earlier == item) {
@@ -232,9 +239,15 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
                     return Err(format!("{location}: {text:?} does not match {pattern}"));
                 }
             }
+            LONG_FLAG_PATTERN => {
+                let mut rest = text.strip_prefix("--").unwrap_or("").chars();
+                if !rest.next().is_some_and(|first| first.is_ascii_lowercase()) {
+                    return Err(format!("{location}: {text:?} does not match {pattern}"));
+                }
+            }
             other => {
                 return Err(format!(
-                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?}"
+                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?} and {LONG_FLAG_PATTERN:?}"
                 ));
             }
         }
@@ -242,9 +255,12 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
     Ok(())
 }
 
-/// The one regular expression this checker evaluates. Any other `pattern` is
-/// an error at check time, never an assumed match.
+/// The regular expressions this checker evaluates. Any other `pattern` is an
+/// error at check time, never an assumed match.
 pub const SHA256_DIGEST_PATTERN: &str = "^sha256:[0-9a-f]{64}$";
+/// Unanchored at the end: a long flag is `--` then a lowercase letter, then
+/// anything.
+pub const LONG_FLAG_PATTERN: &str = "^--[a-z]";
 
 const SUPPORTED_KEYWORDS: &[&str] = &[
     "$defs",
@@ -259,6 +275,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "enum",
     "if",
     "items",
+    "maxItems",
     "minItems",
     "minLength",
     "minimum",

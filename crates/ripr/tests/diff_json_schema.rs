@@ -1,9 +1,10 @@
 //! The published `ripr diff --json` schema, checked against bytes the real
 //! command wrote.
 //!
-//! `schemas/ripr/diff.schema.json` describes the `ripr_diff` report. A run
-//! that cannot produce a report writes the separate refusal envelope instead;
-//! that document is not a `ripr_diff` and this schema does not describe it.
+//! The command writes exactly one of two documents to stdout:
+//! `schemas/ripr/diff.schema.json` describes the `ripr_diff` report, and
+//! `schemas/ripr/diff-refusal.schema.json` the refusal envelope a run writes
+//! with exit code 2 when it cannot produce a report.
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -18,18 +19,28 @@ mod published_schema;
 use common::fixture_git::fixture_git_ok;
 
 const DIFF_SCHEMA: &str = "schemas/ripr/diff.schema.json";
+const DIFF_REFUSAL_SCHEMA: &str = "schemas/ripr/diff-refusal.schema.json";
 const CHECK_SCHEMA: &str = "schemas/ripr/check.schema.json";
 
-/// Definitions `diff.schema.json` copies from `check.schema.json`, because the
+/// Definitions each schema copies from `check.schema.json`, because the
 /// repository validator resolves local references only.
-const SHARED_WITH_CHECK: [&str; 7] = [
-    "analysis_outcome",
-    "analysis_identity",
-    "analysis_counts",
-    "analysis_limitation",
-    "recovery",
-    "nullable_string",
-    "preview_language",
+const SHARED_WITH_CHECK: [(&str, &[&str]); 2] = [
+    (
+        DIFF_SCHEMA,
+        &[
+            "analysis_outcome",
+            "analysis_identity",
+            "analysis_counts",
+            "analysis_limitation",
+            "recovery",
+            "nullable_string",
+            "preview_language",
+        ],
+    ),
+    (
+        DIFF_REFUSAL_SCHEMA,
+        &["summary", "run_limitation", "refusal_remedy"],
+    ),
 ];
 
 static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -106,21 +117,43 @@ fn diff_json(root: &Path, base: &str) -> Result<Value, String> {
     })
 }
 
+/// Stdout of a `ripr diff --json` run that must exit 2 with a refusal.
+fn diff_refusal_json(root: &Path, base: &str) -> Result<Value, String> {
+    let root_arg = root.display().to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["diff", "--json", "--root", &root_arg, "--base", base])
+        .output()
+        .map_err(|error| format!("spawn ripr diff: {error}"))?;
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "ripr diff --json --base {base} should exit 2, got {:?}",
+            output.status.code()
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "refusal JSON did not parse: {error}\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
 fn conforms(document: &Value, schema: &Value) -> Result<(), String> {
     published_schema::check(document, schema, schema, "diff")
 }
 
 #[test]
-fn the_checker_covers_every_keyword_the_diff_schema_uses() -> Result<(), String> {
-    let schema = published_schema::read(DIFF_SCHEMA)?;
-    let ignored = published_schema::unsupported_keywords(&schema);
-    if ignored.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "the conformance checker ignores these published keywords, so it would under-check the schema: {ignored:?}"
-        ))
+fn the_checker_covers_every_keyword_the_diff_schemas_use() -> Result<(), String> {
+    for path in [DIFF_SCHEMA, DIFF_REFUSAL_SCHEMA] {
+        let schema = published_schema::read(path)?;
+        let ignored = published_schema::unsupported_keywords(&schema);
+        if !ignored.is_empty() {
+            return Err(format!(
+                "the conformance checker ignores these keywords of {path}, so it would under-check the schema: {ignored:?}"
+            ));
+        }
     }
+    Ok(())
 }
 
 /// `analysis_outcome` and `preview_languages` are the same objects in check
@@ -129,24 +162,34 @@ fn the_checker_covers_every_keyword_the_diff_schema_uses() -> Result<(), String>
 /// outcome cannot be published for one schema and forgotten in the other.
 #[test]
 fn definitions_shared_with_the_check_schema_are_identical() -> Result<(), String> {
-    let diff = published_schema::read(DIFF_SCHEMA)?;
     let check = published_schema::read(CHECK_SCHEMA)?;
-    for name in SHARED_WITH_CHECK {
-        let pointer = format!("/$defs/{name}");
-        let ours = diff
-            .pointer(&pointer)
-            .ok_or_else(|| format!("diff schema has no {pointer}"))?;
-        let theirs = check
-            .pointer(&pointer)
-            .ok_or_else(|| format!("check schema has no {pointer}"))?;
-        if ours != theirs {
+    for (path, names) in SHARED_WITH_CHECK {
+        let schema = published_schema::read(path)?;
+        let mut pointers: Vec<String> = names.iter().map(|name| format!("/$defs/{name}")).collect();
+        pointers.push("/properties/mode".to_string());
+        for pointer in pointers {
+            let ours = schema
+                .pointer(&pointer)
+                .ok_or_else(|| format!("{path} has no {pointer}"))?;
+            let theirs = check
+                .pointer(&pointer)
+                .ok_or_else(|| format!("check schema has no {pointer}"))?;
+            if ours != theirs {
+                return Err(format!(
+                    "{pointer} differs between {path} and check.schema.json; copy the check schema's definition"
+                ));
+            }
+        }
+        // Every definition the schema carries is either shared or its own:
+        // a copied definition that is not listed here would not be held equal.
+        let carried = schema["$defs"].as_object().map_or(0, serde_json::Map::len);
+        let own = usize::from(path == DIFF_SCHEMA) * 3;
+        if carried != names.len() + own {
             return Err(format!(
-                "{pointer} differs between diff.schema.json and check.schema.json; copy the check schema's definition"
+                "{path} carries {carried} definitions; expected {} shared and {own} of its own",
+                names.len()
             ));
         }
-    }
-    if diff.pointer("/properties/mode") != check.pointer("/properties/mode") {
-        return Err("`mode` differs between diff.schema.json and check.schema.json".to_string());
     }
     Ok(())
 }
@@ -255,6 +298,96 @@ fn published_diff_schema_rejects_documents_it_forbids() -> Result<(), String> {
             Ok(()) => {
                 return Err(format!(
                     "the published diff schema accepted a document the contract forbids: {label}"
+                ));
+            }
+            Err(error) => println!("rejected as expected ({label}): {error}"),
+        }
+    }
+    Ok(())
+}
+
+/// A run that cannot produce a report still writes one schema-conforming
+/// document: the refusal envelope, for a base that does not resolve and for
+/// a config that does not parse.
+#[test]
+fn diff_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
+    let schema = published_schema::read(DIFF_REFUSAL_SCHEMA)?;
+    let root = fixture_repo("refusal")?;
+    let bad_base = diff_refusal_json(&root, "no-such-ref-14067");
+    let _ = std::fs::remove_dir_all(&root);
+    let bad_base = bad_base?;
+    conforms(&bad_base, &schema).map_err(|error| format!("unresolvable base: {error}"))?;
+
+    // A second refusal identity through the same envelope: a config that
+    // does not parse refuses before any base is resolved.
+    let broken = fixture_repo("refusal-config")?;
+    write(&broken, "ripr.toml", "[analysis\nmode = \n")?;
+    let bad_config = diff_refusal_json(&broken, "HEAD~1");
+    let _ = std::fs::remove_dir_all(&broken);
+    let bad_config = bad_config?;
+    conforms(&bad_config, &schema).map_err(|error| format!("unreadable config: {error}"))?;
+
+    let observed = json!([
+        bad_base["analysis_scope"]["run_status"],
+        bad_base["base"],
+        bad_base.get("kind"),
+        bad_config["analysis_scope"]["run_status"] != "base_unresolvable",
+        bad_config["analysis_scope"]["run_status"].is_string(),
+    ]);
+    let expected = json!(["base_unresolvable", "no-such-ref-14067", null, true, true]);
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(format!("unexpected refusals: {observed}"))
+    }
+}
+
+/// The negative experiment for the refusal arm.
+#[test]
+fn published_diff_refusal_schema_rejects_documents_it_forbids() -> Result<(), String> {
+    type Mutation = fn(&mut Value);
+    let schema = published_schema::read(DIFF_REFUSAL_SCHEMA)?;
+    let root = fixture_repo("refusal-negative")?;
+    let refusal = diff_refusal_json(&root, "no-such-ref-14067");
+    let _ = std::fs::remove_dir_all(&root);
+    let refusal = refusal?;
+    conforms(&refusal, &schema)?;
+    let cases: [(&str, Mutation); 8] = [
+        ("unknown field", |doc| doc["status"] = json!("refused")),
+        ("a refusal that carries a finding", |doc| {
+            doc["findings"] = json!([{}])
+        }),
+        ("a refusal with a non-zero summary", |doc| {
+            doc["summary"]["findings"] = json!(1)
+        }),
+        ("a refusal reported as consumable", |doc| {
+            doc["analysis_scope"]["downstream_consumable"] = json!(true)
+        }),
+        ("no run_limitations entry", |doc| {
+            doc["run_limitations"] = json!([])
+        }),
+        ("a limitation with no remedy", |doc| {
+            if let Some(object) = doc["run_limitations"][0].as_object_mut() {
+                object.remove("remedy");
+            }
+        }),
+        ("a remedy flag that is not a long flag", |doc| {
+            doc["run_limitations"][0]["remedy"]["flags"] = json!(["base"])
+        }),
+        ("another command's scope", |doc| {
+            doc["analysis_scope"]["scope"] = json!("repo")
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut document = refusal.clone();
+        mutate(&mut document);
+        if document == refusal {
+            return Err(format!("{label}: the mutation changed nothing"));
+        }
+        match conforms(&document, &schema) {
+            Ok(()) => {
+                return Err(format!(
+                    "the published diff refusal schema accepted a document the contract forbids: {label}"
                 ));
             }
             Err(error) => println!("rejected as expected ({label}): {error}"),

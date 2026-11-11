@@ -56,14 +56,23 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
-        // The `ripr_diff` report of `ripr diff --json`. The refusal envelope
-        // the same command writes when it cannot produce a report is a
-        // separate document, versioned by `DIFF_REFUSAL_SCHEMA_VERSION` in
-        // `crates/ripr/src/cli/commands.rs`, and is not described here.
+        // The `ripr_diff` report of `ripr diff --json`.
         "diff",
         &[producer(
             "crates/ripr/src/output/diff_report.rs",
             "pub(crate) const DIFF_REPORT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // The refusal envelope `ripr diff --json` writes when it cannot
+        // produce a report. It is keyed with the report's version through
+        // its own mirrored constant, so that constant is the producer pinned
+        // here.
+        "diff-refusal",
+        &[producer(
+            "crates/ripr/src/cli/commands.rs",
+            "const DIFF_REFUSAL_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -499,6 +508,16 @@ const CONTRACTS: &[VerificationContract] = &[
             "preview_languages[]",
             "outcome_hint",
         ],
+    },
+    // The diff refusal envelope: a capture of `ripr diff --json --root .
+    // --base <unresolvable>` (exit 2), kept as an edge fixture.
+    VerificationContract {
+        schema_path: "schemas/ripr/diff-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/diff-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["analysis_scope.scope", "run_limitations"],
     },
     // `ripr cache status --json`. The fixture is hand-written with a portable
     // path: the real document carries the host's absolute cache directory.
