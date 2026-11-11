@@ -191,3 +191,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (16)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

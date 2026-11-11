@@ -295,3 +295,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (23)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

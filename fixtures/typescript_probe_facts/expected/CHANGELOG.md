@@ -913,3 +913,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_probe_facts (43)
+
+Reason:
+RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

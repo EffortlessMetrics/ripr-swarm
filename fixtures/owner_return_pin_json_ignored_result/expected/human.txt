@@ -43,8 +43,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:5 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
+    - ./src/lib.rs:5 (unrevealed); 2 changed behaviors in `did_save_params`; kinds: error_path, return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
     unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
