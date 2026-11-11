@@ -163,6 +163,19 @@ fn macro_arguments(call: &ast::MacroCall) -> Option<Vec<String>> {
     if masked.len() != tokens.len() || end == 0 {
         return None;
     }
+    // Arguments that parse as one tuple keep a turbofish whole
+    // (`over::<T, U>(10)`), which a bracket count cannot see.
+    if let Some(ast::Expr::TupleExpr(tuple)) =
+        parse_expression(&format!("({},)", tokens.get(1..end)?))
+    {
+        return Some(
+            tuple
+                .fields()
+                .map(|field| field.syntax().text().to_string().trim().to_string())
+                .filter(|argument| !argument.is_empty())
+                .collect(),
+        );
+    }
     let mut arguments = Vec::new();
     let mut depth = 0usize;
     let mut start = 1usize;
@@ -405,7 +418,19 @@ impl Reader<'_> {
         if name == self.owner {
             return Sink::Value;
         }
-        match self.inner(call.receiver(), depth) {
+        let receiver = self.inner(call.receiver(), depth);
+        // `masked.eq(&over(10))`: a comparing method's result depends on its
+        // argument whatever the receiver is.
+        if ARGUMENT_COMPARING_METHODS.contains(&name.as_str())
+            && receiver != Sink::Absent
+            && call.arg_list().is_some_and(|list| {
+                list.args()
+                    .any(|argument| self.sink(&argument, depth).reaches())
+            })
+        {
+            return Sink::Value;
+        }
+        match receiver {
             // Any method of the owner's own value reads that value.
             Sink::Value => Sink::Value,
             Sink::Payload if UNWRAPPING_METHODS.contains(&name.as_str()) => Sink::Value,
@@ -624,6 +649,10 @@ mod tests {
             "assert_eq!(format!(\"a, b ({})\", over(10)), \"a, b (true)\");",
             "assert_eq!(match over(10) { true => ',', false => 'n' }, ',');",
             "assert_eq!(over(10), true, \"got {}\", Some(over(10)).is_some());",
+            // #14276 review: a turbofish comma does not split the operand,
+            // and a comparing method reads its argument past a masked receiver.
+            "assert_eq!(over::<u8, u16>(10), true);",
+            "assert!(Some(over(9)).is_some().eq(&over(10)));",
         ] {
             assert_eq!(one(assertion), OwnerValueFlow::Reaches, "{assertion}");
         }
