@@ -75,6 +75,15 @@ mod tests {
     }
 
     #[test]
+    fn startup_splits_flag_equals_value_on_the_mcp_route() {
+        // #14292: the MCP route accepts `--name=value` like every command.
+        assert_eq!(
+            routed_mcp_args(&args(&["ripr", "mcp", "--stdio", "--root=."])),
+            Some(args(&["--stdio", "--root", "."]))
+        );
+    }
+
+    #[test]
     fn startup_extracts_the_global_verbose_flag_in_any_position() {
         // #2610 contract: --verbose works appended or prepended. Startup
         // strips it before routing so the MCP parser never sees it and the

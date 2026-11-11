@@ -85,6 +85,13 @@ fn emit_attached_terminal_stdin_note(
 /// (`--root=`) becomes an empty value token, which the owning parser
 /// refuses as it would `--root ""`. `argv[0]`, short flags, positional
 /// values and every token after a literal `--` are left unchanged.
+///
+/// A boolean-literal value (`--quiet=false`, `--json=true`, `yes`/`no`,
+/// `on`/`off`) is never split: ripr's switches take no value, and splitting
+/// would turn `--quiet=false` into `--quiet` plus a stray `false` that a
+/// command with a positional item reads as that item, the opposite of what
+/// was typed. The intact token reaches the command parser, which refuses it
+/// as an unknown argument naming exactly what was typed.
 #[doc(hidden)]
 pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
@@ -113,10 +120,19 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
 fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
     let (name, value) = arg.split_once('=')?;
     let bare = name.strip_prefix("--")?;
+    if is_boolean_literal(value) {
+        return None;
+    }
     let mut chars = bare.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
     let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '-');
     (first_ok && rest_ok).then_some((name, value))
+}
+
+fn is_boolean_literal(value: &str) -> bool {
+    ["true", "false", "yes", "no", "on", "off"]
+        .iter()
+        .any(|literal| value.eq_ignore_ascii_case(literal))
 }
 
 /// Extract every global `-v`/`--verbose` occurrence from argv, reporting
@@ -199,6 +215,9 @@ mod tests {
                 "-x=1",
                 "--=x",
                 "--bad name=x",
+                "--quiet=false",
+                "--json=TRUE",
+                "--base=a=b",
             ])),
             args(&[
                 "ripr",
@@ -217,6 +236,10 @@ mod tests {
                 "-x=1",
                 "--=x",
                 "--bad name=x",
+                "--quiet=false",
+                "--json=TRUE",
+                "--base",
+                "a=b",
             ])
         );
     }
@@ -224,8 +247,23 @@ mod tests {
     #[test]
     fn split_long_flag_values_leaves_argv0_and_tokens_after_double_dash() {
         assert_eq!(
-            split_long_flag_values(args(&["--root=.", "check", "--", "--format=json"])),
-            args(&["--root=.", "check", "--", "--format=json"])
+            split_long_flag_values(args(&[
+                "--root=.",
+                "check",
+                "--base=main",
+                "--",
+                "--format=json",
+                "--quiet",
+            ])),
+            args(&[
+                "--root=.",
+                "check",
+                "--base",
+                "main",
+                "--",
+                "--format=json",
+                "--quiet",
+            ])
         );
     }
 
@@ -238,9 +276,9 @@ mod tests {
                 "--format=json",
                 "--base=main"
             ]))),
-            parse_args(args(&[
-                "ripr", "check", "--format", "json", "--base", "main"
-            ]))
+            Ok(CliCommand::Check(args(&[
+                "--format", "json", "--base", "main"
+            ])))
         );
     }
 
