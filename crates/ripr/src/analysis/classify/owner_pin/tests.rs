@@ -6222,6 +6222,55 @@ fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
 }
 
 #[test]
+fn a_scoped_binding_makes_only_calls_in_its_scope_opaque() {
+    // #8446 (finding 3): a trusted name bound only inside an inline module or
+    // body is still the standard macro outside it, so a call there keeps its
+    // arguments trusted instead of widening them to every file.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let refusal = |other: &str| weight_refusal(tests, &[("src/other.rs", other)]);
+    for kept in [
+        "mod m { use ext::vec; }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        "mod m { use ext::*; }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        "fn g() { use ext::vec; }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        "fn g() { macro_rules! vec { ($($t:tt)*) => { $($t)* }; } }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        // A token-spelled nested call outside the scope.
+        "mod m { use ext::vec; }\nfn f() { dbg!(vec![assert_eq!(1, 1)]); }\n",
+        // An attribute in the arguments of a call the scope does not reach.
+        "mod m { use ext::vec; }\nfn f() { vec![#[macro_use] 1]; }\n",
+    ] {
+        assert_eq!(refusal(kept), None, "{kept}");
+    }
+    // Discriminating negatives: the call inside the scope, in a module nested
+    // in it, or under a binding that can leave its item stays opaque.
+    for hidden in [
+        "mod m { use ext::vec; fn f() { vec![assert_eq!(1, 1)]; } }\n",
+        "mod m { use ext::vec; mod inner { use super::*; fn f() { vec![assert_eq!(1, 1)]; } } }\n",
+        "fn g() { use ext::vec; vec![assert_eq!(1, 1)]; }\n",
+        "mod m { use ext::vec; fn f() { dbg!(vec![assert_eq!(1, 1)]); } }\n",
+        "mod m { use ext::vec; fn f() { vec![#[macro_use] 1]; } }\n",
+        // A visible import, a file-level import and an exported or
+        // `#[macro_use]`-carried definition are not confined to their item.
+        "mod m { pub(crate) use ext::vec; }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        "use ext::vec;\nmod m { fn f() { vec![assert_eq!(1, 1)]; } }\n",
+        "mod m { #[macro_export] macro_rules! vec { ($($t:tt)*) => { $($t)* }; } }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        "#[macro_use] mod m { macro_rules! vec { ($($t:tt)*) => { $($t)* }; } }\nfn f() { vec![assert_eq!(1, 1)]; }\n",
+        // Fixpoint across scopes: the in-scope `vec!(format)` binds `format`
+        // everywhere, so the `format!` call outside the scope is opaque.
+        "mod m { use ext::vec; vec!(format); }\nfn f() { format!(assert_eq!(1, 1)); }\n",
+    ] {
+        assert!(
+            matches!(
+                refusal(hidden),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{hidden}"
+        );
+    }
+}
+
+#[test]
 fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
     // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
     // only inside its arguments can be defined by the expansion together with

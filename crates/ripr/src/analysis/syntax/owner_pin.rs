@@ -1560,7 +1560,21 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    //
+    // A binding whose scope cannot leave an inline module or body binds the
+    // name only for calls inside that scope (#8446): `mod m { use ext::vec; }`
+    // leaves a `vec!` call outside `m` the standard macro, so its arguments
+    // stay trusted there. A site without a scope reaches every call.
+    let bound_at = |sites: &NamedMacroSites, name: &str, node: &SyntaxNode| {
+        let range = node.text_range();
+        let (start, end) = (u32::from(range.start()), u32::from(range.end()));
+        sites.iter().any(|(bound, site)| {
+            bound == name
+                && site
+                    .scope_bytes
+                    .is_none_or(|(from, to)| from <= start && end <= to)
+        })
+    };
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1583,9 +1597,11 @@ fn macro_binding_sites_in_tree(
         }
     }
     loop {
-        let before = bound.len();
+        let before = ambiguous.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
+            if !is_trusted_macro(path, trusted)
+                || !bound_at(&ambiguous, path.trim_start_matches("r#"), node)
+            {
                 continue;
             }
             let tokens: Vec<_> = tree
@@ -1621,7 +1637,6 @@ fn macro_binding_sites_in_tree(
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    bound.insert(name.to_string());
                     let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
@@ -1640,7 +1655,7 @@ fn macro_binding_sites_in_tree(
                 }
             }
         }
-        if bound.len() == before {
+        if ambiguous.len() == before {
             break;
         }
     }
