@@ -758,19 +758,24 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             }
         }
         println!();
-        if inside_git {
-            println!(
-                "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
-            );
+        let next = if inside_git {
+            // Only an established unborn HEAD changes the advice; an
+            // unanswered or damaged-ref probe keeps the ordinary route and
+            // leaves the diagnosis to `ripr doctor`.
+            match crate::analysis::probe_head_ref_state(
+                root,
+                Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
+            ) {
+                crate::analysis::HeadRefState::Unborn => InitNextStep::NoCommits,
+                _ => InitNextStep::Ready,
+            }
         } else {
-            println!(
-                "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
-            );
-        }
-        let commands: &[&String] = if inside_git {
-            &[&doctor, &check]
-        } else {
-            &[&doctor]
+            InitNextStep::NoGit
+        };
+        println!("{}", init_next_step_line(next, &doctor, &check));
+        let commands: &[&String] = match next {
+            InitNextStep::Ready | InitNextStep::NoCommits => &[&doctor, &check],
+            InitNextStep::NoGit => &[&doctor],
         };
         for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
@@ -779,6 +784,35 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// What `init` can truthfully recommend after writing files. `ripr check`
+/// only runs once the root is inside a repository that has a commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitNextStep {
+    /// Inside a work tree whose `HEAD` resolves (or could not be diagnosed).
+    Ready,
+    /// Inside a work tree with an unborn `HEAD`: the state right after
+    /// `git init`, where `ripr check` has no base and exits 2.
+    NoCommits,
+    /// Not established as inside a work tree.
+    NoGit,
+}
+
+/// The closing `Next:` line. Split from the probes so every state's wording
+/// pins without arranging a repository.
+fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String {
+    match next {
+        InitNextStep::Ready => format!(
+            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
+        ),
+        InitNextStep::NoCommits => format!(
+            "Next: run `{doctor}` to verify your setup. This repository has no commits yet, so `ripr check` has no base to compare: commit once, then edit a tracked source file and run `{check}`."
+        ),
+        InitNextStep::NoGit => format!(
+            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
+        ),
+    }
 }
 
 fn write_init_target(target: &InitTarget) -> Result<(), String> {
@@ -1455,6 +1489,39 @@ mod tests {
         assert_eq!(non_git_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
+    }
+
+    /// A brand-new `git init` repository has no commit, so `ripr check` exits
+    /// 2 there; the closing line must name the commit-first step instead of
+    /// sending the user straight into that failure. The other two states
+    /// keep their wording.
+    #[test]
+    fn next_step_line_names_commit_first_only_for_a_repository_without_commits() {
+        let ready = init_next_step_line(InitNextStep::Ready, "ripr doctor", "ripr check");
+        assert!(
+            ready.contains("then `ripr check` to analyze your branch"),
+            "{ready}"
+        );
+        assert!(!ready.contains("no commits yet"), "{ready}");
+
+        let unborn = init_next_step_line(
+            InitNextStep::NoCommits,
+            "ripr doctor --root /r",
+            "ripr check --root /r",
+        );
+        assert!(unborn.contains("run `ripr doctor --root /r`"), "{unborn}");
+        assert!(unborn.contains("no commits yet"), "{unborn}");
+        let commit = unborn.find("commit once");
+        let check = unborn.find("run `ripr check --root /r`");
+        assert!(
+            matches!((commit, check), (Some(commit), Some(check)) if commit < check),
+            "the commit must come before the runnable check: {unborn}"
+        );
+        assert!(!unborn.contains("git init"), "{unborn}");
+
+        let no_git = init_next_step_line(InitNextStep::NoGit, "ripr doctor", "ripr check");
+        assert!(no_git.contains("run `git init`"), "{no_git}");
+        assert!(!no_git.contains("no commits yet"), "{no_git}");
     }
 
     #[test]
