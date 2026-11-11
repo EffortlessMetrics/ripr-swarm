@@ -463,7 +463,8 @@ existing rules and limits.
   pin #9940 export admission, member writes, unread merges, and plain/nested
   controls;
   `destructured_config_writes_refuse_but_unrelated_patterns_keep_credit` and
-  `wrapped_commonjs_exports_track_destructured_config_writes` pin nested rebinding/member writes and unrelated destructuring controls;
+  `wrapped_commonjs_exports_track_destructured_config_writes` pin nested
+  rebinding/member writes and unrelated destructuring controls;
   `fixtures/typescript_snapshot_destructured_config_write` and its honesty
   corpus case pin the medium public result independently of golden updates;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
