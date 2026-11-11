@@ -348,33 +348,56 @@ fn split_command(text: &str) -> Vec<String> {
 
 /// A baseline must carry every field `compare` guards, or a row missing one
 /// would skip that guard and the compare would pass vacuously. Nulls are
-/// allowed only where a run legitimately leaves a value unmeasured.
+/// allowed only where a run legitimately leaves a value unmeasured: a
+/// reached answer has a token count, and a scenario that still exists has a
+/// loop flag exactly when it defines what that flag measures.
 fn validate_baseline(baseline: &Value) -> Result<(), String> {
     let count = |value: &Value| value.is_u64();
-    // Present, and a bool or an unmeasured null.
-    let flag = |value: &Value| value.is_boolean() || value.is_null();
     let route_ok = |route: &Value| {
+        let reached = route["answer_reached"].as_bool();
         route["route"]
             .as_str()
             .is_some_and(|name| ROUTES.contains(&name))
-            && route["answer_reached"].is_boolean()
+            && reached.is_some()
             && count(&route["failed_steps"])
             && count(&route["total_tokens"])
-            && route
-                .get("tokens_to_answer")
-                .is_some_and(|tokens| count(tokens) || tokens.is_null())
+            && route.get("tokens_to_answer").is_some_and(|tokens| {
+                if reached == Some(true) {
+                    count(tokens)
+                } else {
+                    tokens.is_null()
+                }
+            })
     };
     let scenario_ok = |row: &Value| {
         let checks = &row["loop"];
+        let known = row["id"]
+            .as_str()
+            .and_then(|id| SCENARIOS.iter().find(|scenario| scenario.id == id));
+        // Present, and a bool where the scenario measures it, else null. A
+        // scenario the eval no longer defines keeps the type check only;
+        // compare reports it as no longer running.
+        let flag = |name: &str, measured: Option<bool>| {
+            checks.get(name).is_some_and(|value| match measured {
+                Some(true) => value.is_boolean(),
+                Some(false) => value.is_null(),
+                None => value.is_boolean() || value.is_null(),
+            })
+        };
+        let control = known.map(|scenario| scenario.gaps.is_empty());
+        let weak = known.map(|scenario| scenario.weak_test.is_some());
+        let reference = known.map(|scenario| scenario.reference_test.is_some());
         row["id"].is_string()
             && row["routes"]
                 .as_array()
                 .is_some_and(|routes| !routes.is_empty() && routes.iter().all(route_ok))
             && count(&checks["missed_gaps"])
             && count(&checks["extra_gaps"])
-            && LOOP_FLAGS
-                .iter()
-                .all(|name| checks.get(*name).is_some_and(flag))
+            && flag("silent_on_control", control)
+            && flag("weak_test_still_flagged", weak)
+            && flag("weak_key_valid", weak)
+            && flag("reference_test_closes_loop", reference)
+            && flag("reference_key_valid", reference)
     };
     let valid = baseline["scenarios"]
         .as_array()
@@ -487,6 +510,16 @@ fn mcp_visible(id: i64, response: &Value) -> String {
     }
 }
 
+/// Request ids in `input` (one JSON-RPC message per line) with no response.
+fn unanswered_ids(input: &str, answered: &[i64]) -> Vec<i64> {
+    input
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|request| request.get("id").and_then(Value::as_i64))
+        .filter(|id| !answered.contains(id))
+        .collect()
+}
+
 fn mcp_session(
     ripr: &Path,
     workspace: &Workspace,
@@ -509,7 +542,18 @@ fn mcp_session(
         };
         responses.push((id, line.to_string(), value));
     }
-    Ok(responses)
+    // A server that exits early answers fewer requests; measuring what is
+    // left would record a cheap, clean route. That is an instrument failure.
+    let answered: Vec<i64> = responses.iter().map(|(id, _, _)| *id).collect();
+    let missing = unanswered_ids(input, &answered);
+    if missing.is_empty() {
+        Ok(responses)
+    } else {
+        Err(format!(
+            "ripr mcp --stdio exited {:?} without answering request ids {missing:?}",
+            output.exit
+        ))
+    }
 }
 
 fn route_mcp(ripr: &Path, workspace: &Workspace) -> Result<Vec<Step>, String> {
@@ -1518,7 +1562,7 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(refused(&["--write-baseline", "--skip-cargo"]));
         assert!(refused(&["--write-baseline", "--compare", "b.json"]));
         assert!(validate_baseline(&json!({"schema_version": SCHEMA_VERSION})).is_err());
-        let route = json!({"route": "mcp", "answer_reached": true, "failed_steps": 0, "total_tokens": 9, "tokens_to_answer": null});
+        let route = json!({"route": "mcp", "answer_reached": true, "failed_steps": 0, "total_tokens": 9, "tokens_to_answer": 9});
         let checks = json!({"missed_gaps": 0, "extra_gaps": 0, "silent_on_control": null, "weak_test_still_flagged": true,
             "reference_test_closes_loop": true, "reference_key_valid": true, "weak_key_valid": null});
         let full = json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [route], "loop": checks}]});
@@ -1553,10 +1597,43 @@ verify=refused|outcome=complete_with_findings\n";
         let mut no_id = full.clone();
         no_id["scenarios"][0]["id"] = json!(7);
         assert!(validate_baseline(&no_id).is_err());
+        // An MCP server that stops early leaves requests unanswered; the
+        // notification has no id and needs no answer.
+        let requests = mcp_requests(&strings(&["gap-a"]), false);
+        assert_eq!(
+            unanswered_ids(&requests, &[1, 2, 3, 4, 5, 10]),
+            Vec::<i64>::new()
+        );
+        assert_eq!(unanswered_ids(&requests, &[1, 2]), vec![3, 4, 5, 10]);
+        let mut reached_no_tokens = full.clone();
+        reached_no_tokens["scenarios"][0]["routes"][0]["tokens_to_answer"] = Value::Null;
+        assert!(validate_baseline(&reached_no_tokens).is_err());
+        let mut unreached = full.clone();
+        unreached["scenarios"][0]["routes"][0]["answer_reached"] = json!(false);
+        assert!(validate_baseline(&unreached).is_err());
+        unreached["scenarios"][0]["routes"][0]["tokens_to_answer"] = Value::Null;
+        assert_eq!(validate_baseline(&unreached), Ok(()));
         let committed: Value =
             serde_json::from_str(include_str!("../../../benchmarks/agent_eval/baseline.json"))
                 .unwrap_or_default();
         assert_eq!(validate_baseline(&committed), Ok(()));
+        // A null where the scenario defines the check would switch its guard
+        // off; a bool where it does not would invent one.
+        let position = committed["scenarios"].as_array().and_then(|rows| {
+            rows.iter()
+                .position(|row| row["id"] == "boundary_threshold")
+        });
+        assert!(position.is_some());
+        let row = position.unwrap_or_default();
+        for (flag, value) in [
+            ("reference_test_closes_loop", Value::Null),
+            ("reference_key_valid", Value::Null),
+            ("silent_on_control", json!(true)),
+        ] {
+            let mut edited = committed.clone();
+            edited["scenarios"][row]["loop"][flag] = value;
+            assert!(validate_baseline(&edited).is_err(), "{flag}");
+        }
         assert_eq!(
             split_command("explain --root '/tmp/a b' --at \"x y\" z"),
             strings(&["explain", "--root", "/tmp/a b", "--at", "x y", "z"])
