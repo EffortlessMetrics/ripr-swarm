@@ -38,7 +38,10 @@ pub(super) fn every_call_selects_generic_sibling(
     else {
         return false;
     };
-    let Some(owner_head) = sole_trait_argument(trait_path).and_then(selecting_type_head) else {
+    let Some(owner_argument) = sole_trait_argument(trait_path) else {
+        return false;
+    };
+    let Some(owner_head) = selecting_type_head(owner_argument) else {
         return false;
     };
     let (Some(trait_base), Some(self_base)) = (
@@ -55,7 +58,13 @@ pub(super) fn every_call_selects_generic_sibling(
     }
     let masked = mask_comments_and_strings(&test.body);
     if has_unnamed_route(owner.name.as_str(), &masked)
-        || !every_site_passes_sibling_type(test, owner, &masked, &sibling_heads)
+        || !every_site_passes_sibling_type(
+            test,
+            owner,
+            &masked,
+            &sibling_heads,
+            owner_argument.starts_with('&'),
+        )
     {
         return false;
     }
@@ -111,8 +120,10 @@ fn selecting_type_head(ty: &str) -> Option<String> {
 }
 
 /// Trait-argument heads of the other impls of `trait_base` on `self_base`
-/// that define the owner's method. An impl whose argument has no plain head
-/// contributes nothing: no call-site type can be matched against it.
+/// in the owner's file that define the owner's method. An impl in another
+/// file may be on another type of the same name, and one whose argument has
+/// no plain head contributes nothing: no call-site type can be matched
+/// against it.
 fn sibling_argument_heads(
     owner: &FunctionSummary,
     same_name_ids: &[&str],
@@ -120,13 +131,17 @@ fn sibling_argument_heads(
     self_base: &str,
 ) -> Vec<String> {
     let mut heads = Vec::new();
+    let owner_file = owner.id.0.split("::impl ").next();
     for id in same_name_ids {
         if *id == owner.id.0 {
             continue;
         }
-        let Some((trait_ty, self_ty)) = id
-            .split("::impl ")
-            .nth(1)
+        let mut parts = id.split("::impl ");
+        if parts.next() != owner_file {
+            continue;
+        }
+        let Some((trait_ty, self_ty)) = parts
+            .next()
             .and_then(|rest| rest.rsplit_once("::"))
             .and_then(|(impl_body, _)| impl_body.rsplit_once(" for "))
         else {
@@ -170,11 +185,16 @@ fn has_unnamed_route(name: &str, masked: &str) -> bool {
 /// receiver first); an associated function at `Path::name(arg)` only. A
 /// mention that is not a call (`map(Cents::from)`), a turbofish, or the other
 /// spelling is not read, so the answer is `false`.
+///
+/// `owner_takes_reference`: the owner's parameter is a reference, which a
+/// borrowed argument of another type can reach by deref coercion
+/// (`&String` for `&str`), so a borrowed argument is not read either.
 fn every_site_passes_sibling_type(
     test: &TestSummary,
     owner: &FunctionSummary,
     masked: &str,
     sibling_heads: &[String],
+    owner_takes_reference: bool,
 ) -> bool {
     let name = owner.name.as_str();
     let bytes = masked.as_bytes();
@@ -194,6 +214,13 @@ fn every_site_passes_sibling_type(
         }
         let method_site = at > 0 && bytes[at - 1] == b'.';
         if method_site != owner.item.has_self_param {
+            return false;
+        }
+        if owner_takes_reference
+            && first_argument_span(masked, after)
+                .and_then(|(start, end)| masked.get(start..end))
+                .is_none_or(|argument| argument.trim_start().starts_with('&'))
+        {
             return false;
         }
         let lets_before = masked[..at].rfind(';').map_or("", |end| &masked[..=end]);
@@ -501,6 +528,16 @@ mod tests {
             "impl Scale<T> for Bar<u8>::scale",
             "let b = Bar(2u8); assert_eq!(b.scale(2.0f32), 1);",
         )?);
+        // A borrowed argument can reach a reference parameter by deref
+        // coercion, so it does not name the sibling.
+        let coerced = "pub struct Name(pub u64);\n\
+            impl From<&str> for Name {\n    fn from(v: &str) -> Self { Name(v.len() as u64) }\n}\n\
+            impl From<String> for Name {\n    fn from(v: String) -> Self { Name(v.len() as u64 + 1) }\n}\n";
+        assert!(direct(
+            coerced,
+            "impl From<&str> for Name::from",
+            "let s: String = String::new(); assert_eq!(Name::from(&s).0, 0);",
+        )?);
         // An operator method is left to the operator reading.
         let add = "use std::ops::Add;\n#[derive(Debug, PartialEq, Clone, Copy)]\npub struct Meters(pub u32);\n\
             impl Add<u32> for Meters {\n    type Output = Meters;\n    fn add(self, rhs: u32) -> Meters { Meters(self.0 + rhs) }\n}\n\
@@ -520,7 +557,15 @@ mod tests {
         let production = "pub struct Cents(pub u64);\npub struct Dollars(pub u64);\n\
             impl From<&str> for Cents {\n    fn from(v: &str) -> Self { Cents(v.len() as u64) }\n}\n\
             impl From<u32> for Dollars {\n    fn from(v: u32) -> Self { Dollars(v as u64) }\n}\n";
-        let index = parsed_index(production, "assert_eq!(Dollars::from(2u32).0, 2);")?;
+        let mut index = parsed_index(production, "assert_eq!(Dollars::from(2u32).0, 2);")?;
+        // A second file's `Cents` is another type of the same name: its
+        // `From<u32>` is not a sibling of this file's `From<&str>` either.
+        let other = "pub struct Cents(pub u64);\n\
+            impl From<u32> for Cents {\n    fn from(v: u32) -> Self { Cents(v as u64) }\n}\n";
+        let other_path = Path::new("src/other.rs");
+        let other_facts = RaRustSyntaxAdapter.summarize_file(other_path, other)?;
+        index.extend_functions(other_facts.functions.iter().cloned());
+        index.insert_file_only(PathBuf::from(other_path), other_facts);
         let functions = index.functions();
         let owner = functions
             .iter()
@@ -531,7 +576,7 @@ mod tests {
             .filter(|function| function.name == "from")
             .map(|function| function.id.0.as_str())
             .collect();
-        assert_eq!(ids.len(), 2, "both `from` impls are indexed");
+        assert_eq!(ids.len(), 3, "all three `from` impls are indexed");
         let tests = index.tests();
         let test = tests.iter().next().ok_or("test indexed")?;
         assert!(!every_call_selects_generic_sibling(
