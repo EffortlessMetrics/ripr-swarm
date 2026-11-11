@@ -145,6 +145,14 @@ kept the other advisory (`incomplete_repair_route`). A gap stays advisory, for
 instance, when ripr cannot name a repair or when a test next to it changed in
 the same pull request. `gate-decision.md` states the reason for each one.
 
+A changed gap that ripr withholds as a static limitation is listed too, not
+dropped. For example, a changed function no test calls, whose boundary operand
+is computed (`cents % 100 > 49`), prints as `no_static_path` in `missed-txt`.
+`comments.json` lists it under `suppressed` with reason `static_limitation`,
+and the gate reports it as `suppressed` with that reason. It does not block:
+ripr cannot yet name a bounded repair for it, so a cargo-mutants run or a
+reviewer has to decide whether it needs a test (#13892).
+
 ### Observed
 
 Run with a development build of `ripr 0.11.0` on the example crate, with a

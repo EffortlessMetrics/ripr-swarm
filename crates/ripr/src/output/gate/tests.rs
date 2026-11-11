@@ -5767,6 +5767,7 @@ fn e2e_review_comments_doc(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        withheld_changed_gaps: Vec::new(),
     };
     let config = crate::config::RiprConfig::default();
     let context = ReviewCommentsRenderContext {
