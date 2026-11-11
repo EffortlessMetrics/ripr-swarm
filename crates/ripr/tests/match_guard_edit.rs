@@ -770,6 +770,44 @@ fn a_one_line_block_if_boundary_edit_reads_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// Two predicates edited in one contiguous block (#7945 review): the first
+/// keeps its two-line `&&` chain and the second gains `other > 0 &&`.
+const TWO_PREDICATE_BLOCK: &str = "/// The tier of `points`.\npub fn tier(points: i64, other: i64, c: bool, d: bool) -> u8 {\n    let _ = other;\n    if c &&\n        d { return 1; }\n    if other > 0 && points <= 100 { return 2; }\n    0\n}\n\npub fn unused() {}\n";
+
+#[test]
+fn a_conjunct_added_beside_another_multi_line_chain_is_not_credited() -> Result<(), String> {
+    // The removed block holds two statement heads, so it is not one chain:
+    // read whole, the first predicate's old `&&` would match the `&&` the
+    // second predicate gained. `tier(100, 0, ..)` is false under both the
+    // old `points < 100` and the new `other > 0 && points <= 100`, so the
+    // input at the boundary discriminates nothing.
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,8 +1,8 @@\n /// The tier of `points`.\n pub fn tier(points: i64, other: i64, c: bool, d: bool) -> u8 {\n     let _ = other;\n-    if d &&\n-        c { return 1; }\n-    if points < 100 { return 2; }\n+    if c &&\n+        d { return 1; }\n+    if other > 0 && points <= 100 { return 2; }\n     0\n }\n";
+    let test = "use guard_edit::tier;\n\n#[test]\nfn witness() {\n    assert_eq!(tier(100, 0, false, false), 0);\n}\n";
+    let repo = TempRepo::create(TWO_PREDICATE_BLOCK, &[], test, diff)?;
+    let findings = repo
+        .check()?
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 6)
+        .collect::<Vec<_>>();
+    let gained = predicates(&findings)
+        .into_iter()
+        .filter(|finding| finding.probe.expression.contains("points <= 100"))
+        .collect::<Vec<_>>();
+    assert!(!gained.is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "conjunct added beside another multi-line chain");
+    // Its old side is its own old line, not the whole block.
+    assert!(
+        gained.iter().all(|finding| finding
+            .probe
+            .before
+            .as_deref()
+            .is_some_and(|before| before.contains("points < 100") && !before.contains("return 1"))),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn an_added_if_disjunct_is_not_credited() -> Result<(), String> {
     // Control (#7898): adding `other > 0 ||` widens the predicate where no

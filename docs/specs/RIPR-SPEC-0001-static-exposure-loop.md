@@ -428,9 +428,11 @@ across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
 old lines and one of them starts or ends with `&&` or `||` outside strings
 and comments, the predicate's old text is the whole block, joined into its
 one-line spelling, instead of the one removed line that pairing names. A
-block holding a comment keeps its line breaks and is compared uncut, and a
-block that removes more than the chain is compared whole, so any connective
-it holds beyond the predicate's withholds credit. The chain's old lines
+block holding a comment keeps its line breaks and is compared uncut. A block
+holding more than one statement head (outside strings and comments it holds
+a `;`, a `}` or more than one `{`) is not read whole, because its connectives
+belong to several predicates; it keeps the single-line pairing, and its
+lines keep their own probes. The chain's old lines
 (each line that starts or ends with a connective, and the neighbour it
 continues) are the predicate's old side, so they get no deleted-line probe of
 their own: one operand of the old chain is not a predicate an input at its

@@ -2632,8 +2632,9 @@ fn family_before(
 /// one `&&`/`||` chain across lines (rustfmt's `if a` / `&& b` / `{`), with
 /// the old-side numbers of the chain's lines: each line that starts or ends
 /// with a connective and the neighbour it continues. `None` unless the block
-/// removes at least two consecutive old lines and one of them starts or
-/// ends with a connective.
+/// removes at least two consecutive old lines, one of them starts or ends
+/// with a connective, and the block is one statement head: outside strings
+/// and comments it holds no `;`, no `}` and at most one `{`.
 ///
 /// #7945: pairing names one removed line as a predicate's `before`, which
 /// hides an operand on another line from `same_connectives`, so a dropped
@@ -2642,8 +2643,13 @@ fn family_before(
 /// connective comparison read it as they read a one-line edit. A block
 /// holding a comment keeps its line breaks instead, so a `//` comment cannot
 /// swallow the lines after it; such a block is never cut and is compared
-/// whole. A block that removes more than the chain is compared whole too:
-/// any connective it holds beyond the predicate's withholds credit.
+/// whole.
+///
+/// A block holding more than one statement head (`if a &&` / `b { return
+/// 1; }` / `if points < 100 {`) is not read whole: its connectives belong to
+/// several predicates, and one predicate's old `&&` could stand in for an
+/// operand another predicate gained. Such a block keeps the single-line
+/// pairing of `removed_before`, and its lines keep their own probes.
 fn removed_connective_block(
     added_new_side_line: usize,
     changed: &ChangedFile,
@@ -2670,6 +2676,9 @@ fn removed_connective_block(
     // Masked, so a connective inside a string or comment is not one. Masking
     // keeps byte offsets and line breaks.
     let masked = crate::analysis::extract::mask_comments_and_strings(&source);
+    if masked.contains([';', '}']) || masked.matches('{').count() > 1 {
+        return None;
+    }
     let masked = masked.lines().map(str::trim).collect::<Vec<_>>();
     let leads = |line: &str| line.starts_with("&&") || line.starts_with("||");
     let trails = |line: &str| line.ends_with("&&") || line.ends_with("||");
