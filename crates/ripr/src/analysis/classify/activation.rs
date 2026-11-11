@@ -1855,6 +1855,11 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                 .strip_prefix(operand)
                 .is_some_and(|rest| rest.trim_start().starts_with(':'))
     });
+    // Each occurrence asks about the text before it (arm pattern, `for` and
+    // `let` heads) and the brackets after it. Reading those afresh per
+    // occurrence made one call quadratic in the body, and the call runs once
+    // per changed comparison (#11738); the scan answers them from one pass.
+    let scan = RebindingScan::new(body);
     body.match_indices(operand).any(|(start, _)| {
         let before = &body[..start];
         let after = &body[start + operand.len()..];
@@ -1909,34 +1914,22 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
                     || after_trimmed.starts_with("=>")
                     || after_trimmed.starts_with(','))
         };
-        let match_arm_pattern = !binds_scrutinee_itself && in_match_arm_pattern(before);
+        let match_arm_pattern =
+            !binds_scrutinee_itself && in_match_arm_pattern(scan.chars_before(start));
         // A destructuring assignment `(x, y) = (y, x);` or `[x, ..] = ..;`:
         // the bracket group holding the name is followed by a bare `=`.
-        let destructuring_assignment = {
-            let mut depth = 0usize;
-            let mut closed_at = None;
-            for (offset, ch) in after.char_indices() {
-                match ch {
-                    '(' | '[' | '{' => depth += 1,
-                    ')' | ']' | '}' if depth == 0 => {
-                        closed_at = Some(offset + 1);
-                        break;
-                    }
-                    ')' | ']' | '}' => depth -= 1,
-                    _ => {}
-                }
-            }
-            closed_at.is_some_and(|at| {
-                let rest = after[at..].trim_start();
+        let destructuring_assignment = scan
+            .first_unmatched_closer_from(start + operand.len())
+            .is_some_and(|closer| {
+                let rest = body[closer + 1..].trim_start();
                 rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
-            })
-        };
-        let for_pattern = before
-            .rfind("for ")
+            });
+        let for_pattern = scan
+            .last_for_before(start)
             .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
             .is_some_and(|at| !contains_word(&before[at..], "in"));
-        let let_pattern = before
-            .rfind("let ")
+        let let_pattern = scan
+            .last_let_before(start)
             .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
             .is_some_and(|at| !before[at..].contains(['=', ';']));
         let single_pipes = line_before
@@ -1965,8 +1958,7 @@ fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line:
 /// its `=>` with no separator) or any other operator ends it as not a pattern,
 /// so guard operators (`==`, `>=`), `1..=5` ranges and struct braces after the
 /// name never hide the binding (#9197).
-fn in_match_arm_pattern(before: &str) -> bool {
-    let chars: Vec<char> = before.chars().collect();
+fn in_match_arm_pattern(chars: &[char]) -> bool {
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let mut i = chars.len();
     // After a `,` or a skipped `{}` block at this level the text read back is
@@ -2004,9 +1996,7 @@ fn in_match_arm_pattern(before: &str) -> bool {
             match ch {
                 '(' | '[' => tolerant = false,
                 '{' => {
-                    let head: String = chars[..i].iter().collect();
-                    let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
-                    if contains_word(&head[boundary..], "match") {
+                    if statement_head_names_match(&chars[..i]) {
                         return true;
                     }
                     tolerant = false;
@@ -2020,9 +2010,7 @@ fn in_match_arm_pattern(before: &str) -> bool {
         match ch {
             '(' | '[' => {}
             '{' => {
-                let head: String = chars[..i].iter().collect();
-                let boundary = head.rfind([';', '{', '}']).map_or(0, |at| at + 1);
-                if contains_word(&head[boundary..], "match") {
+                if statement_head_names_match(&chars[..i]) {
                     return true;
                 }
             }
@@ -2058,6 +2046,150 @@ fn in_match_arm_pattern(before: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether the statement head that ends `head` (the text after its last `;`,
+/// `{` or `}`) holds the word `match`.
+fn statement_head_names_match(head: &[char]) -> bool {
+    let boundary = head
+        .iter()
+        .rposition(|ch| matches!(ch, ';' | '{' | '}'))
+        .map_or(0, |at| at + 1);
+    head[boundary..]
+        .split(|ch| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+        .any(|token| token.iter().copied().eq("match".chars()))
+}
+
+/// The per-body answers [`owner_rebinds_operand`] asks once per occurrence of
+/// the operand, each built on first use from one pass over the body.
+struct RebindingScan<'a> {
+    body: &'a str,
+    chars: std::cell::OnceCell<Vec<char>>,
+    /// Byte offset of the last prefix handed out and its length in chars.
+    /// Occurrences arrive in ascending order, so each prefix is counted from
+    /// the previous one.
+    counted: std::cell::Cell<(usize, usize)>,
+    for_starts: std::cell::OnceCell<Vec<usize>>,
+    let_starts: std::cell::OnceCell<Vec<usize>>,
+    closers: std::cell::OnceCell<BracketClosers>,
+}
+
+impl<'a> RebindingScan<'a> {
+    fn new(body: &'a str) -> Self {
+        Self {
+            body,
+            chars: std::cell::OnceCell::new(),
+            counted: std::cell::Cell::new((0, 0)),
+            for_starts: std::cell::OnceCell::new(),
+            let_starts: std::cell::OnceCell::new(),
+            closers: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The chars of `body[..end]`; `end` is a char boundary.
+    fn chars_before(&self, end: usize) -> &[char] {
+        let chars = self.chars.get_or_init(|| self.body.chars().collect());
+        let (from, counted) = match self.counted.get() {
+            (from, counted) if from <= end => (from, counted),
+            _ => (0, 0),
+        };
+        let count = counted + self.body[from..end].chars().count();
+        self.counted.set((end, count));
+        &chars[..count]
+    }
+
+    /// `body[..end].rfind("for ")`.
+    fn last_for_before(&self, end: usize) -> Option<usize> {
+        let starts = self
+            .for_starts
+            .get_or_init(|| keyword_starts(self.body, "for "));
+        last_start_ending_by(starts, "for ".len(), end)
+    }
+
+    /// `body[..end].rfind("let ")`.
+    fn last_let_before(&self, end: usize) -> Option<usize> {
+        let starts = self
+            .let_starts
+            .get_or_init(|| keyword_starts(self.body, "let "));
+        last_start_ending_by(starts, "let ".len(), end)
+    }
+
+    /// The first closing bracket at or after `from` that closes nothing
+    /// opened at or after `from`: where a forward scan that counts every
+    /// `(`, `[`, `{` up and every `)`, `]`, `}` down first goes below zero.
+    fn first_unmatched_closer_from(&self, from: usize) -> Option<usize> {
+        self.closers
+            .get_or_init(|| BracketClosers::of(self.body))
+            .first_unmatched_from(from)
+    }
+}
+
+/// Every byte offset where `keyword` starts. Neither keyword this is used for
+/// can overlap itself, so these are all of its occurrences.
+fn keyword_starts(body: &str, keyword: &str) -> Vec<usize> {
+    body.match_indices(keyword).map(|(at, _)| at).collect()
+}
+
+/// The last of the ascending `starts` whose `len`-byte keyword ends at or
+/// before `end`.
+fn last_start_ending_by(starts: &[usize], len: usize, end: usize) -> Option<usize> {
+    let within = starts.partition_point(|at| at + len <= end);
+    within
+        .checked_sub(1)
+        .and_then(|last| starts.get(last).copied())
+}
+
+/// Bracket structure of a body, kinds not distinguished (the scan it replaces
+/// counted all three kinds on one depth).
+struct BracketClosers {
+    /// Per byte offset (and one past the end): the innermost bracket opened
+    /// before it and not yet closed.
+    enclosing: Vec<Option<usize>>,
+    /// Per byte offset of an opening bracket: the offset of its closer.
+    closer_of: Vec<Option<usize>>,
+    /// Closing brackets met with nothing open, ascending.
+    unopened: Vec<usize>,
+}
+
+impl BracketClosers {
+    fn of(body: &str) -> Self {
+        let mut enclosing = Vec::with_capacity(body.len() + 1);
+        let mut closer_of = vec![None; body.len()];
+        let mut unopened = Vec::new();
+        let mut open: Vec<usize> = Vec::new();
+        // Brackets are ASCII, and no byte of a multi-byte char is.
+        for (at, byte) in body.bytes().enumerate() {
+            enclosing.push(open.last().copied());
+            match byte {
+                b'(' | b'[' | b'{' => open.push(at),
+                b')' | b']' | b'}' => match open.pop() {
+                    Some(opener) => {
+                        if let Some(slot) = closer_of.get_mut(opener) {
+                            *slot = Some(at);
+                        }
+                    }
+                    None => unopened.push(at),
+                },
+                _ => {}
+            }
+        }
+        enclosing.push(open.last().copied());
+        Self {
+            enclosing,
+            closer_of,
+            unopened,
+        }
+    }
+
+    fn first_unmatched_from(&self, from: usize) -> Option<usize> {
+        match self.enclosing.get(from).copied()? {
+            Some(opener) => self.closer_of.get(opener).copied().flatten(),
+            None => {
+                let next = self.unopened.partition_point(|closer| *closer < from);
+                self.unopened.get(next).copied()
+            }
+        }
+    }
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
@@ -8884,6 +9016,9 @@ fn looks_like_builder_method(line: &str) -> bool {
 
 #[cfg(test)]
 mod method_hop_rows;
+
+#[cfg(test)]
+mod rebinding_scan;
 
 #[cfg(test)]
 mod tests {

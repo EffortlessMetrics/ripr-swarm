@@ -6249,11 +6249,16 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     // at weak) never comes back as strong because of its kind. Rule 1: an
     // inequality is never lifted above its classified strength, whatever
     // that strength is.
-    if (matches!(
-        assertion.strength,
-        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
-    ) || is_inequality_assertion(&assertion.text))
-        && overridden.rank() > assertion.strength.rank()
+    // The rank comparison goes first: with no raising override there is
+    // nothing to refuse, and reading the assertion text for an inequality is
+    // the expensive operand. This runs once per (probe, related assertion),
+    // and every unit test of a file is related to every changed owner in it,
+    // so the text read was most of a large single-file diff (#11738).
+    if overridden.rank() > assertion.strength.rank()
+        && (matches!(
+            assertion.strength,
+            OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+        ) || is_inequality_assertion(&assertion.text))
     {
         assertion.strength.clone()
     } else {
