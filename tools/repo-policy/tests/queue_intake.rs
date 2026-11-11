@@ -4,7 +4,7 @@
 use std::process::Command;
 
 const CONTROLS: &str = r#"
-import copy, importlib.util, json, pathlib, subprocess, sys, tomllib, unittest
+import copy, importlib.util, json, os, pathlib, re, subprocess, sys, tempfile, tomllib, unittest
 from datetime import datetime, timedelta, timezone
 p=pathlib.Path(sys.argv[1]); spec=importlib.util.spec_from_file_location('intake',p)
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
@@ -357,6 +357,16 @@ class Controls(unittest.TestCase):
     if mode=='entry':row['pullRequest']['mergeQueueEntry']['id']='other'
     if mode=='draft':row['pullRequest']['isDraft']=True
     self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
+ def test_later_speculative_group_refuses_before_check_or_source_reads(self):
+  api=API();prior=copy.deepcopy(ROW);later=api.q['data']['repository']['mergeQueue']['entries']['nodes'][0]
+  prior['headCommit']['oid']='8'*40
+  prior['id']='MQE_PRIOR';prior['pullRequest']['mergeQueueEntry']['id']='MQE_PRIOR'
+  later['position']=2;later['baseCommit']['oid']='8'*40
+  entries=api.q['data']['repository']['mergeQueue']['entries'];entries['nodes']=[prior,later];entries['totalCount']=2
+  subject=dict(SUBJECT,base_sha=prior['headCommit']['oid'])
+  self.assertEqual(subject['base_sha'],prior['headCommit']['oid'])
+  self.refused(lambda:m.observe(api,subject,CONFIG,lambda:NOW))
+  self.assertEqual(api.reads,[])
  def test_event_identity_does_not_accept_pr_or_wrong_group(self):
   event={'action':'checks_requested','repository':{'full_name':m.REPOSITORY,'id':1243918801,'node_id':'R_1'},
          'merge_group':{'base_sha':B,'head_sha':G,'head_ref':SUBJECT['head_ref'],'base_ref':'refs/heads/main'}}
@@ -366,7 +376,99 @@ class Controls(unittest.TestCase):
   for key,value in [('GITHUB_EVENT_NAME','pull_request'),('GITHUB_SHA',H),('GITHUB_RUN_ATTEMPT','0')]:
    wrong=dict(env);wrong[key]=value;self.refused(lambda:m.event_subject(event,wrong))
 
-suite=unittest.defaultTestLoader.loadTestsFromTestCase(Controls)
+
+# These fixtures exercise the shipped shell and real local Git objects. They
+# establish source selection, not GitHub's installed runner-group enforcement.
+class WorkflowAuthorityControls(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory(prefix='ripr-control-authority-')
+  self.addCleanup(self.tmp.cleanup)
+  self.root=pathlib.Path(self.tmp.name); self.repo=self.root/'source'; self.repo.mkdir()
+  self.workflow=(p.parents[3]/'.github/workflows/routed-rust.yml').read_text()
+  self.env={'PATH':os.environ['PATH'],'GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null',
+            'GIT_AUTHOR_NAME':'fixture','GIT_AUTHOR_EMAIL':'fixture@example.test',
+            'GIT_COMMITTER_NAME':'fixture','GIT_COMMITTER_EMAIL':'fixture@example.test'}
+  self.run_command('git','init','-q',cwd=self.repo)
+  action=self.repo/'.github/actions/pr-candidate-admission'; action.mkdir(parents=True)
+  (self.repo/'policy').mkdir()
+  self.script=action/'queue_intake.py'
+  self.script.write_text('print("trusted evaluator")\n')
+  (self.repo/'policy/queue-publisher.toml').write_text('schema_version = 1\n')
+  (self.repo/'.github/workflows').mkdir()
+  (self.repo/'.github/workflows/routed-rust.yml').write_text(self.workflow)
+  self.trusted=self.commit('trusted control')
+  self.run_command('git','branch','protected-main',self.trusted,cwd=self.repo)
+  self.script.write_text('import os,pathlib\npathlib.Path(os.environ["MARKER"]).write_text(os.environ["GH_TOKEN"])\n')
+  (self.repo/'.github/workflows/routed-rust.yml').write_text(self.workflow+'\n  candidate_injection:\n    runs-on: ci-control\n    steps:\n      - run: echo candidate_marker\n')
+  self.g1=self.commit('unmerged G1')
+  (self.repo/'G2.txt').write_text('next speculative group')
+  self.g2=self.commit('G2 based on unmerged G1')
+  self.assertEqual(self.run_command('git','rev-parse',self.g2+'^',cwd=self.repo).stdout.strip(),self.g1)
+  self.assertEqual(self.run_command('git','rev-parse','protected-main',cwd=self.repo).stdout.strip(),self.trusted)
+ def run_command(self,*args,cwd=None,env=None,check=True):
+  result=subprocess.run(args,cwd=cwd,env=self.env if env is None else env,text=True,capture_output=True,timeout=5)
+  if check:self.assertEqual(result.returncode,0,result.stderr)
+  return result
+ def commit(self,message):
+  self.run_command('git','add','.',cwd=self.repo)
+  self.run_command('git','commit','-qm',message,cwd=self.repo)
+  return self.run_command('git','rev-parse','HEAD',cwd=self.repo).stdout.strip()
+ def step(self,name):
+  return self.workflow.split('      - name: '+name+'\n',1)[1].split('\n      - ',1)[0]
+ def shell(self,name):
+  body=self.step(name).split('        run: |\n',1)[1]
+  return '\n'.join(line[10:] for line in body.splitlines() if line.startswith('          '))
+ def checkout(self,root,name,sha):
+  dest=root/name
+  self.run_command('git','clone','-q','--no-checkout',str(self.repo),str(dest))
+  self.run_command('git','checkout','-q','--detach',sha,cwd=dest)
+  return dest
+ def test_speculative_base_never_selects_initial_or_final_evaluator(self):
+  for step,folder,checkout in [('Authenticate exact head and acknowledged queue entry','.queue-trusted','Check out protected intake evaluator only'),
+                               ('Recheck native intake authority','.admission-trusted','Check out trusted admission bundle for the review recheck')]:
+   body=self.step(step)
+   pin=re.search(r'TRUSTED_SHA: ([0-9a-f]{40})\n',body)[1]
+   selected=re.search(r'          ref: (.+)\n',self.step(checkout))[1]
+   self.assertEqual(selected,pin)
+   self.assertIn('          persist-credentials: false',self.step(checkout))
+   self.assertNotIn('TRUSTED_SHA: ${{',body)
+   for mode in ('trusted','wrong_checkout','old_event_base_selection'):
+    with self.subTest(step=step,mode=mode):
+     work=self.root/(folder[1:]+mode);work.mkdir();marker=work/'candidate-executed'
+     chosen=self.trusted if mode=='trusted' else self.g1
+     self.checkout(work,folder,chosen)
+     env=dict(self.env,GITHUB_WORKSPACE=str(work),TRUSTED_SHA=self.g1 if mode=='old_event_base_selection' else self.trusted,
+              GH_TOKEN='fixture-token-not-a-credential',MARKER=str(marker),GROUP_BASE_SHA=self.g1,GITHUB_SHA=self.g2,
+              EXPECTED_INTAKE='{}')
+     result=self.run_command('bash','-c',self.shell(step),cwd=work,env=env,check=False)
+     if mode=='trusted':
+      self.assertEqual(result.returncode,0,result.stderr);self.assertIn('trusted evaluator',result.stdout)
+     elif mode=='wrong_checkout':self.assertNotEqual(result.returncode,0)
+     else:
+      self.assertEqual(result.returncode,0,result.stderr)
+      self.assertEqual(marker.read_text(),'fixture-token-not-a-credential')
+     self.assertEqual(marker.exists(),mode=='old_event_base_selection')
+ def test_admission_selection_ignores_all_event_source_fields(self):
+  work=self.root/'admission';work.mkdir();out=work/'output'
+  env=dict(self.env,GITHUB_WORKSPACE=str(work),GITHUB_OUTPUT=str(out),EVENT_NAME='merge_group',
+           GROUP_BASE_SHA=self.g1,PR_BASE_SHA=self.g1,EVENT_SHA=self.g2)
+  result=self.run_command('bash','-c',self.shell('Select trusted admission source'),cwd=work,env=env)
+  expected=re.search(r'          sha=([0-9a-f]{40})\n',self.step('Select trusted admission source'))[1]
+  self.assertEqual(out.read_text(),'sha='+expected+'\n')
+  (work/'.admission-trusted').symlink_to(self.repo,target_is_directory=True)
+  self.assertNotEqual(self.run_command('bash','-c',self.shell('Select trusted admission source'),cwd=work,env=env,check=False).returncode,0)
+ def test_pinned_workflow_ignores_candidate_modified_steps(self):
+  # GitHub resolves an owner/repo/workflow@SHA from that immutable Git object.
+  # A restricted group must independently admit only this path@SHA. The local
+  # fixture cannot certify that installed service setting or a hosted denial.
+  pinned=self.run_command('git','show',self.trusted+':.github/workflows/routed-rust.yml',cwd=self.repo).stdout
+  candidate=self.run_command('git','show',self.g2+':.github/workflows/routed-rust.yml',cwd=self.repo).stdout
+  self.assertEqual(pinned,self.workflow)
+  self.assertNotIn('candidate_marker',pinned)
+  self.assertIn('candidate_marker',candidate)
+
+suite=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(Controls),
+                         unittest.defaultTestLoader.loadTestsFromTestCase(WorkflowAuthorityControls)])
 result=unittest.TextTestRunner(verbosity=2).run(suite)
 sys.exit(not result.wasSuccessful())
 "#;

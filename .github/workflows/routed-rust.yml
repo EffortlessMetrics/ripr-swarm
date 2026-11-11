@@ -1,12 +1,11 @@
-name: Routed Rust Small
-run-name: Merge queue ${{ github.event.merge_group.head_sha }}
+name: Trusted queue qualification
 
-# Final activation candidate. The protected publisher/settings, reviewed source
-# closure, owned heavy/control capacity and cache/native canaries must be ready
-# before this generation replaces the legacy admission producer.
+# Immutable reusable control authority. The merge-queue entrypoint pins this
+# entire workflow, not just its evaluator. em-ci-queue-control must allow only
+# the reviewed path@commit and run clean single-job workers separate from builds.
+# No event base, candidate workflow, input, or mutable branch selects control code.
 on:
-  merge_group:
-    types: [checks_requested]
+  workflow_call:
 
 permissions:
   actions: read
@@ -23,8 +22,9 @@ env:
 jobs:
   intake:
     name: Authenticate native queue intake
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested' && github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on:
-      group: em-ci-build
+      group: em-ci-queue-control
       labels: [self-hosted, linux, x64, ci-control]
     timeout-minutes: 5
     permissions:
@@ -43,7 +43,7 @@ jobs:
       - name: Check out protected intake evaluator only
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.merge_group.base_sha }}
+          ref: abbe32369c5b0587613f331ec5bd6f22f5bef934
           path: .queue-trusted
           sparse-checkout: |
             .github/actions/pr-candidate-admission
@@ -55,7 +55,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}
+          TRUSTED_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
         run: |
           set -euo pipefail
           trusted="$GITHUB_WORKSPACE/.queue-trusted"
@@ -134,8 +134,8 @@ jobs:
     needs: [intake, detect-docs-only]
     if: needs.intake.result == 'success' && needs.detect-docs-only.result == 'success'
     runs-on:
-      group: em-ci-build
-      labels: [self-hosted, linux, x64, rust-heavy]
+      group: em-ci-queue-control
+      labels: [self-hosted, linux, x64, ci-control]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -166,23 +166,16 @@ jobs:
       subject_json: ${{ steps.group.outputs.subject-json }}
       subject_identity: ${{ steps.group.outputs.subject-identity }}
     steps:
+      # Candidate files are data only; no candidate action or script runs here.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - name: Select trusted admission source
         id: trusted
         shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          case "$EVENT_NAME" in
-            pull_request) sha="$PR_BASE_SHA" ;;
-            merge_group) sha="$GROUP_BASE_SHA" ;;
-            push|workflow_dispatch) sha="$EVENT_SHA" ;;
-            *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
-          esac
+          sha=abbe32369c5b0587613f331ec5bd6f22f5bef934
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission source SHA is missing or invalid"; exit 1; }
           if [ -e "$GITHUB_WORKSPACE/.admission-trusted" ] || [ -L "$GITHUB_WORKSPACE/.admission-trusted" ]; then
             echo "::error::trusted admission destination is present in the candidate checkout"
@@ -194,7 +187,10 @@ jobs:
         with:
           ref: ${{ steps.trusted.outputs.sha }}
           path: .admission-trusted
-          sparse-checkout: .github/actions/pr-candidate-admission
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            .github/actions/verify-merge-group-subject
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Verify trusted admission bundle
         shell: bash
@@ -206,8 +202,7 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
-          for name in action.yml candidate_admission.py release_cut_admission.py review_disposition.py; do
-            path=".github/actions/pr-candidate-admission/$name"
+          for path in .github/actions/pr-candidate-admission/{action.yml,candidate_admission.py,release_cut_admission.py,review_disposition.py} .github/actions/verify-merge-group-subject/action.yml; do
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
             expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
             actual="$(git hash-object --no-filters "$trusted/$path")" || refuse
@@ -280,7 +275,7 @@ jobs:
       - name: Freeze actual native group subject
         id: group
         if: github.event_name == 'merge_group'
-        uses: ./.github/actions/verify-merge-group-subject
+        uses: ./.admission-trusted/.github/actions/verify-merge-group-subject
         with:
           head-sha: ${{ steps.entry.outputs.head }}
           base-sha: ${{ github.event.merge_group.base_sha }}
@@ -382,7 +377,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
-      control_runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","ci-control"]}'
+      control_runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
       proof_profile: merge-group
       request_id: ${{ needs.admission.outputs.request }}
       head_sha: ${{ needs.admission.outputs.head }}
@@ -414,7 +409,7 @@ jobs:
     needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on:
-      group: em-ci-build
+      group: em-ci-queue-control
       labels: [self-hosted, linux, x64, ci-control]
     timeout-minutes: 5
     permissions:
@@ -427,7 +422,7 @@ jobs:
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.admission.outputs.trusted_sha }}
+          ref: abbe32369c5b0587613f331ec5bd6f22f5bef934
           path: .admission-trusted
           sparse-checkout: |
             .github/actions/pr-candidate-admission
@@ -442,7 +437,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.admission.outputs.pr }}
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
-          TRUSTED_ADMISSION_SHA: ${{ needs.admission.outputs.trusted_sha }}
+          TRUSTED_ADMISSION_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
         run: |
           set -euo pipefail
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
@@ -607,7 +602,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}
+          TRUSTED_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
           EXPECTED_INTAKE: ${{ needs.intake.outputs.intake_json }}
         run: |
           set -euo pipefail

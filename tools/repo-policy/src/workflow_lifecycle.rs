@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-const CALLER: &str = ".github/workflows/routed-rust.yml";
+const CALLER: &str = ".github/workflows/merge-queue.yml";
 #[cfg(test)]
 const CONFLICT_NOTICE: &str = ".github/workflows/merge-ready-conflict-notice.yml";
 #[cfg(test)]

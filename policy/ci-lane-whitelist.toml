@@ -97,7 +97,7 @@ jobs = ["Ripr Rust Small Result"]
 commands = ["cargo fmt --check", "cargo clippy -p ripr --all-targets --all-features -- -D warnings", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "Native merge-group Rust Small result gate with mandatory owned heavy proof and separate owned control capability. The installed predecessor used host-label routing and hosted fallback; neither is an ordinary route in this final source."
+description = "Immutable reusable native merge-group Rust Small result gate, called by merge-queue.yml, with mandatory owned heavy proof and workflow-restricted single-job control capacity. The installed predecessor used host-label routing and hosted fallback; neither is an ordinary route in this final source."
 
 [[lane]]
 id = "msrv"

@@ -3,7 +3,8 @@
 
 Protocol: hermes-deploy 60a7e753, scripts/app-publisher.py; read-consumer
 semantics adapted from perl-lsp-swarm 2858e8c9, native_queue_title.py.
-Trust configuration and this evaluator come from protected B, never G. The
+Trust configuration and this evaluator come from an immutable reviewed source,
+not event B (which may be speculative) or G. The
 App-authenticated receipt authorizes the exact target producer closure at G;
 requiring that target to equal B would prevent reviewed CI changes.
 No enqueue, check publication, credential minting or settings operation exists.

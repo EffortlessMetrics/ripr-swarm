@@ -4,6 +4,7 @@
 use crate::workflow_lifecycle::event_declarations;
 
 pub const GENERATION: &str = "  CI_LIFECYCLE_GENERATION: merge-queue-v1";
+const CONTROL_SOURCE: &str = "abbe32369c5b0587613f331ec5bd6f22f5bef934";
 const HEAVY: &str =
     "{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}";
 
@@ -42,12 +43,9 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let events = event_declarations(source);
     require(
         events.is_ok_and(|events| {
-            events.len() == 1
-                && events
-                    .get("merge_group")
-                    .is_some_and(|config| config == &["types: [checks_requested]"])
+            events.len() == 1 && events.get("workflow_call").is_some_and(Vec::is_empty)
         }),
-        "ordinary root must accept only native merge_group checks_requested",
+        "trusted orchestration must accept only input-free workflow_call",
     );
     for forbidden in [
         "EM_RUNNER_READ_TOKEN",
@@ -68,7 +66,15 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     for name in ["detect-docs-only", "admission"] {
         let body = job(source, name).unwrap_or("");
         let header = body.split("    steps:\n").next().unwrap_or("");
-        require(header.contains("    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, rust-heavy]"), &format!("{name} candidate composition requires selected-source heavy capacity"));
+        let runner = if name == "admission" {
+            "    runs-on:\n      group: em-ci-queue-control\n      labels: [self-hosted, linux, x64, ci-control]"
+        } else {
+            "    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, rust-heavy]"
+        };
+        require(
+            header.contains(runner),
+            &format!("{name} must preserve control/build isolation"),
+        );
         require(
             header.contains("    timeout-minutes:"),
             &format!("{name} requires a deadline"),
@@ -86,7 +92,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let intake = job(source, "intake").unwrap_or("");
     for binding in [
         "labels: [self-hosted, linux, x64, ci-control]",
-        "ref: ${{ github.event.merge_group.base_sha }}",
+        "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
         "checks: read",
         "queue_intake.py",
         "policy/queue-publisher.toml",
@@ -103,7 +109,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     );
     let admission = job(source, "admission").unwrap_or("");
     for binding in [
-        "uses: ./.github/actions/verify-merge-group-subject",
+        "uses: ./.admission-trusted/.github/actions/verify-merge-group-subject",
         "subject-sha: ${{ github.event.merge_group.head_sha }}",
         "base-sha: ${{ github.event.merge_group.base_sha }}",
         "subject-tree: ${{ steps.entry.outputs.tree }}",
@@ -193,7 +199,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         "    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
         "    if: always()",
         "    timeout-minutes: 5",
-        "    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, ci-control]",
+        "    runs-on:\n      group: em-ci-queue-control\n      labels: [self-hosted, linux, x64, ci-control]",
     ] {
         require(
             header.contains(binding),
@@ -201,7 +207,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     for binding in [
-        "ref: ${{ needs.admission.outputs.trusted_sha }}",
+        "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
         "sparse-checkout: |\n            .github/actions/pr-candidate-admission\n            policy/queue-publisher.toml",
         "--head \"$EXPECTED_HEAD\"",
         ".head.sha == $head",
@@ -220,6 +226,44 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
             &format!("terminal currentness/cut/receipt check is absent: {binding}"),
         );
     }
+    for (name, body) in [
+        ("intake", intake),
+        ("admission", admission),
+        ("result", result),
+    ] {
+        require(
+            body.contains("group: em-ci-queue-control"),
+            &format!("{name} needs restricted control capacity"),
+        );
+        for forbidden in [
+            "ref: ${{ github.event.merge_group.base_sha }}",
+            "TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}",
+            "merge_group) sha=\"$GROUP_BASE_SHA\"",
+            "uses: ./.github/actions/",
+        ] {
+            require(
+                !body.contains(forbidden),
+                &format!("{name} executes candidate-selected control code: {forbidden}"),
+            );
+        }
+    }
+    require(
+        intake.contains(&format!("TRUSTED_SHA: {CONTROL_SOURCE}"))
+            && result.contains(&format!("TRUSTED_SHA: {CONTROL_SOURCE}")),
+        "initial and final intake must use the same immutable evaluator",
+    );
+    require(
+        admission.contains(&format!("sha={CONTROL_SOURCE}")),
+        "admission source cannot come from the event or caller",
+    );
+    require(
+        result.contains(&format!("TRUSTED_ADMISSION_SHA: {CONTROL_SOURCE}")),
+        "final review must use the immutable admission source",
+    );
+    require(
+        !ci.contains("ci-control"),
+        "candidate CI leaf must not receive control capacity",
+    );
     let aggregate = step(result, "Require complete native group portfolio").unwrap_or("");
     require(
         result.contains("--expected-env EXPECTED_INTAKE")
@@ -276,16 +320,93 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     findings
 }
 
+/// The only event subscriber is a fixed, input-free call to an immutable workflow.
+/// Runner-group selected_workflows is the independent runtime enforcement: a
+/// malicious candidate can edit this checker, but cannot grant its job access.
+pub fn entrypoint_violations(source: &str) -> Vec<String> {
+    const PREFIX: &str =
+        "    uses: EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@";
+    let Some(pin) = source.lines().find_map(|line| line.strip_prefix(PREFIX)) else {
+        return vec!["queue entrypoint must call the immutable trusted workflow".into()];
+    };
+    if pin.len() != 40
+        || !pin
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || pin.bytes().all(|b| b == b'0')
+    {
+        return vec!["queue entrypoint requires a nonzero full commit SHA".into()];
+    }
+    let expected = format!(
+        "name: Routed Rust Small\nrun-name: Merge queue ${{{{ github.event.merge_group.head_sha }}}}\non:\n  merge_group:\n    types: [checks_requested]\npermissions:\n  actions: read\n  contents: read\n  pull-requests: read\n  checks: read\njobs:\n  queue:\n{PREFIX}{pin}\n"
+    );
+    if source == expected {
+        Vec::new()
+    } else {
+        vec!["queue entrypoint must contain only the fixed immutable call; no candidate steps, inputs, secrets or runner selectors".into()]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+    const ENTRY: &str = include_str!("../../../.github/workflows/merge-queue.yml");
     const RUST: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+
+    #[test]
+    fn control_sources_are_immutable_not_speculative_event_base() {
+        for name in ["intake", "admission", "result"] {
+            let body = job(CALLER, name).unwrap_or("");
+            assert!(
+                body.contains("group: em-ci-queue-control"),
+                "{name} needs isolated control group"
+            );
+            assert!(!body.contains("ref: ${{ github.event.merge_group.base_sha }}"));
+            assert!(!body.contains("TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}"));
+            assert!(!body.contains("merge_group) sha=\"$GROUP_BASE_SHA\""));
+        }
+    }
 
     #[test]
     fn current_queue_generation_is_complete() {
         assert_eq!(violations(CALLER, Some(RUST)), Vec::<String>::new());
+        assert!(entrypoint_violations(ENTRY).is_empty());
     }
+    #[test]
+    fn candidate_workflow_cannot_define_control_steps_or_select_mutable_authority() {
+        for wrong in [
+            ENTRY.replace(
+                ENTRY
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .rsplit('@')
+                    .next()
+                    .unwrap_or(""),
+                "main",
+            ),
+            ENTRY.replace(
+                ENTRY
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .rsplit('@')
+                    .next()
+                    .unwrap_or(""),
+                "${{ github.event.merge_group.base_sha }}",
+            ),
+            format!(
+                "{ENTRY}  injected:\n    runs-on:\n      group: em-ci-queue-control\n    steps:\n      - run: echo candidate\n"
+            ),
+            format!("{ENTRY}    secrets: inherit\n"),
+            format!("{ENTRY}    with:\n      trusted-sha: ${{{{ github.sha }}}}\n"),
+        ] {
+            assert_ne!(wrong, ENTRY);
+            assert!(!entrypoint_violations(&wrong).is_empty());
+        }
+    }
+
     #[test]
     fn development_roots_and_router_fallback_cannot_return() {
         for extra in [
@@ -331,8 +452,8 @@ mod tests {
             ("--expected-env EXPECTED_INTAKE", ""),
             ("\"$INTAKE_RECHECK\" == success", "true"),
             (
+                "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
                 "ref: ${{ github.event.merge_group.base_sha }}",
-                "ref: ${{ github.sha }}",
             ),
         ] {
             let wrong = CALLER.replace(before, after);

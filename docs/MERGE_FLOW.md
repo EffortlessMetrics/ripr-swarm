@@ -78,6 +78,46 @@ Useful review and local evidence can be complete before future hosted proof
 exists. Missing future CI must not make requesting CI circular. Conversely,
 source review is not a claim that required execution already passed.
 
+## Immutable queue control bootstrap
+
+Before using the queue-only generation, the activation owner must establish both
+workflow authority and runner isolation. `merge-queue.yml` is the event root;
+its immutable `routed-rust.yml` reference is the only control workflow to admit.
+Event `merge_group.base_sha` is not protected-main authority: later speculative
+groups may be based on an earlier unmerged group.
+
+1. Review the complete reusable workflow, its nested proof workflows, and the
+   literal admission/evaluator source commit. Commit that authority first, then
+   bind the event root to that exact full SHA. Preserve the anchor commit and
+   its ancestors with a durable branch while referenced, including after squash.
+2. Through the separately approved security-settings transaction, provision
+   `em-ci-queue-control` with access restricted to this repository and only
+   `EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@<reviewed SHA>`.
+   No mutable refs, candidate roots, wildcard workflows or repository-wide runner
+   access may grant control execution. Confirm this repository cannot still
+   reach legacy persistent `ci-control` workers through `em-ci-build` or another
+   group; the new group alone does not remove an old access path. Read back
+   effective enforcement across every reachable control worker.
+3. Use clean single-job control workers separate from candidate build workers,
+   with no shared writable host/workspace/cache or privileged host interfaces.
+   Do not repurpose an untrusted persistent build worker by relabeling it.
+4. Prove on native test jobs that both a candidate-added direct control job and
+   a changed reusable-workflow SHA are denied before assignment, and that the
+   approved immutable workflow runs. Exercise `G2.base = G1.head` with G1
+   unmerged and confirm fail-closed intake before candidate work allocation.
+5. Only then bind the real publisher App policy at a newly reviewed immutable
+   source, retain the singleton bootstrap, refresh exact-H/G evidence and read
+   back the actual nested required context/App mapping. The disabled current
+   publisher policy must remain disabled until that transaction succeeds.
+
+This source repair does not create a runner group, change installed permissions,
+activate a publisher or prove a native denial. Missing isolation or a stale pin
+keeps the candidate Draft and out of the queue. Changing this authority requires
+another reviewed anchor and approved allowlist update; a branch push alone cannot
+update executable authority. Roll back by stopping new admission and reconciling
+in-flight runs, then restoring the previously verified complete authority and
+required-result binding. Never restore the event-base executable checkout.
+
 ## Historical bootstrap procedure (activation owner only)
 
 The retained predecessor requested `Ripr Rust Small Result` by applying

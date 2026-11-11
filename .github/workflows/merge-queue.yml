@@ -1,0 +1,13 @@
+name: Routed Rust Small
+run-name: Merge queue ${{ github.event.merge_group.head_sha }}
+on:
+  merge_group:
+    types: [checks_requested]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  checks: read
+jobs:
+  queue:
+    uses: EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@4f12c62ad03ca46de0e949351b8c2332440e6287

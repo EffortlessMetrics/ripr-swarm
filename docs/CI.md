@@ -58,7 +58,8 @@ The current `merge-queue-v1` activation candidate is described in the event and
 owned-runner sections below. This historical account records the predecessor
 that remained satisfiable during source preparation.
 
-`routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
+`merge-queue.yml` subscribes to `merge_group` (`checks_requested`) and calls the
+SHA-pinned reusable `routed-rust.yml`, so the
 required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
 the exact queued merge commit, instead of by a label. The queue run reads the
 queued PR's claim and scope (#8192) through the same admission job: the PR
@@ -160,7 +161,7 @@ cache hit or prove the <=20-minute active qualification target.
 The staged `queue_intake.py` evaluator in the trusted admission bundle consumes
 the existing `hermes.queue-intake.v2` protocol from
 [Hermes PR #55](https://github.com/EffortlessMetrics/hermes-deploy/pull/55).
-It performs only bounded GitHub reads. Protected-base code and
+It performs only bounded GitHub reads. Immutable reviewed code and
 `policy/queue-publisher.toml` authenticate the configured numeric publisher App
 and check name; candidate JSON cannot select an issuer. The configuration is
 explicitly disabled until the real App binding is verified and installed through
@@ -194,9 +195,35 @@ the final expected-intake check remain immediate and do not retry.
 with fake API observations, including head/entry/issuer/source/expiry negatives
 and currentness changes. These tests establish consumer behavior, not a live
 publisher, installed capacity, native enqueue or protected landing. The cutover
-caller runs this control on `ci-control` before either heavy preflight job can
-start. It rechecks the same frozen intake before terminal success. The support
+caller runs this control on restricted `em-ci-queue-control` / `ci-control` before
+candidate composition or heavy work can start. It rechecks the same frozen intake before terminal success. The support
 stage alone does not change event subscriptions or allocate jobs.
+
+### Queue workflow execution authority (#4838)
+
+A native queue base is not a trusted code source. A speculative `G2` can have
+`G2.base_sha == G1.head_sha` while `G1` is still unmerged, even with
+`base_ref == refs/heads/main`. B/G remain composition data only. Initial intake,
+admission (including the composition action), review recheck and final intake
+use the same literal reviewed source commit, currently
+`abbe32369c5b0587613f331ec5bd6f22f5bef934`. The publisher policy at that commit
+is disabled. Updating main or a candidate cannot enable it or alter this code.
+
+The complete orchestration is called by immutable SHA from `merge-queue.yml`.
+That call has no inputs, inherited secrets or candidate-authored steps. The
+control runner group's platform `selected_workflows` restriction must admit
+only that exact repository/path@SHA, not the event root, a branch, a wildcard,
+or the candidate workflows. All candidate-executing leaves stay outside this
+group, including `ci.yml`'s result. Admission checks out G as data only and uses
+trusted composite actions from the pinned source after rejecting a preexisting
+trusted-bundle destination. All control checkouts disable persisted credentials.
+
+The Rust policy checks catch source regressions. The local Git fixtures execute
+initial/final binding shells with `G2.base = G1.head`, a marker evaluator, and a
+candidate-modified workflow. They also expose the unsafe old event-base choice.
+These are not a substitute for installed runner restriction, single-job isolation
+or native denial tests. A candidate could edit its policy checker, so the external
+runner restriction is mandatory before enabling this source generation.
 
 ### Actual-G callable source preparation (#8082)
 
@@ -1614,9 +1641,15 @@ the allowlist budget row.
 
 ### Self-Hosted Runner Placement
 
-The final `routed-rust.yml` caller admits actual native merge groups only. It
-selects `em-ci-build` / `rust-heavy` for Rust work and `em-ci-build` / `ci-control`
-for intake and result work, exposing `Ripr Rust Small Result`. The older
+The `merge-queue.yml` event root calls the complete `routed-rust.yml` orchestration
+by immutable commit. It selects `em-ci-build` / `rust-heavy` for candidate work
+and a separate `em-ci-queue-control` / `ci-control` group for intake, admission
+and final rechecks. This group must restrict access to the reviewed reusable
+workflow path@SHA and use clean single-job workers, with no shared writable
+workspace/cache/host access from candidate workers. A runner label alone does
+not establish this boundary. The result job remains named `Ripr Rust Small
+Result`; the exact nested check context/App binding must be read back during
+activation, not inferred from the old direct-job name. The older
 CX43/CPX42/CX53 router, `/mnt/ci-*` scratch/cache contract and automatic hosted
 fallback describe the installed predecessor, not this source generation.
 
@@ -1631,7 +1664,7 @@ qualification result.
 | --- | --- | --- |
 | `ci.yml` release, Rust-only and MSRV jobs | Caller `runner_config`; native caller selects `em-ci-build` / `rust-heavy`; default `ubuntu-latest` | Manual dispatch or frozen-subject callable selection |
 | `ci.yml` source identity | Caller `runner_config`; native caller selects `em-ci-build` / `rust-heavy`; default `ubuntu-latest` | Frozen-subject callable path only |
-| `ci.yml` result | Caller `control_runner_config`; native caller selects `em-ci-build` / `ci-control`; default `ubuntu-latest` | Frozen-subject callable path only |
+| `ci.yml` result | Caller `control_runner_config`; native caller selects `em-ci-build` / `rust-heavy`; default `ubuntu-latest` | Frozen-subject callable path only |
 | `ci.yml` `vscode` via `vscode-e2e.yml` | `ubuntu-latest` | Manual dispatch or callable `run_vscode` selection |
 | `coverage.yml`, `test-analytics.yml` | `ubuntu-latest` | Manual dispatch only |
 | `future-clippy.yml` both jobs | `ubuntu-latest` | Manual dispatch only |

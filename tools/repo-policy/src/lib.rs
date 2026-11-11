@@ -1073,12 +1073,22 @@ pub fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>
     let settings = optional_policy_text(".github/settings.yml")?;
     let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
 
-    Ok(routed_rust_workflow_contract_violations_with_reusable(
+    let mut violations = routed_rust_workflow_contract_violations_with_reusable(
         &workflow,
         reusable_workflow.as_deref(),
         settings.as_deref(),
         lane_whitelist.as_deref(),
-    ))
+    );
+    if workflow
+        .lines()
+        .any(|line| line == queue_workflow::GENERATION)
+    {
+        let entrypoint = optional_policy_text(".github/workflows/merge-queue.yml")?;
+        violations.extend(queue_workflow::entrypoint_violations(
+            entrypoint.as_deref().unwrap_or(""),
+        ));
+    }
+    Ok(violations)
 }
 
 pub fn optional_policy_text(path: &str) -> Result<Option<String>, String> {
