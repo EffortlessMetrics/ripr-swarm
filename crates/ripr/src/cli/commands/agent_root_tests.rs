@@ -640,8 +640,8 @@ fn cli_non_git_patch_snapshots_refuse_missing_git_revision_provenance() -> Resul
     .err()
     .ok_or("non-Git verify was admitted")?;
     assert!(
-        refusal.contains("agent verify before artifact")
-            && refusal.contains("Git/revision provenance")
+        refusal.message().contains("agent verify before artifact")
+            && refusal.message().contains("Git/revision provenance")
     );
     assert!(!root.join(".git").exists());
     Ok(())

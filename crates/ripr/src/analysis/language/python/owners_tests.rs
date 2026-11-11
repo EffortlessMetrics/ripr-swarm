@@ -620,6 +620,7 @@ fn owner_from_function(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: constants_visible_in_function(
             context.module_constants,
@@ -740,6 +741,7 @@ fn owner_from_class(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
@@ -782,6 +784,7 @@ pub(super) fn module_owner(
         reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
         rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
