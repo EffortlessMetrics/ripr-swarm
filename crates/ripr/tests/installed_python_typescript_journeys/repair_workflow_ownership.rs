@@ -93,8 +93,8 @@ exec "$RIPR_REAL_GIT" "$@"
             if !stderr.contains("parse") || !stderr.contains("before.check-findings.json") {
                 return Err(format!("expected later snapshot parse failure: {stderr}").into());
             }
-        } else if !stderr.contains("attempt-baseline.json")
-            && !(mode == "baseline"
+        } else if !(stderr.contains("attempt-baseline.json")
+            || mode == "baseline"
                 && stderr.contains("parse")
                 && stderr.contains("before.check-findings.json"))
         {
