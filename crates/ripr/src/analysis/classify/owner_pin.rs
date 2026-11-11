@@ -86,11 +86,11 @@ use crate::analysis::syntax::{
     RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    is_test_scoped_trusted_macro, literal_module_path_targets, local_empty_macro_names,
-    macro_binding_scan, owner_pin_assertions, owner_pin_matches_assertions,
-    parse_clean_source_file, pattern_pins, qualified_matches_paths, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
-    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan, module_path_targets,
+    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
+    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
 use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
@@ -2906,8 +2906,9 @@ const UNINDEXED_MEMBER_ROOTS: &[&str] =
     &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
 const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
 
-/// The most files one unindexed member's `#[path]` chain may reach before
-/// the walk fails closed.
+/// The most `#[path]`-named files one unindexed member's walk follows before
+/// it fails closed. Crate roots, including every explicitly declared target,
+/// are not counted.
 const UNINDEXED_MEMBER_PATH_FILES: usize = 64;
 
 /// Whether an unindexed member's crate-root sources look like they could
@@ -2936,6 +2937,7 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
         Err(_) => return true,
     }
     let mut seen = BTreeSet::new();
+    let mut followed = 0;
     let mut inspected = false;
     // `required`: a `#[path]` named the file, so its absence is not a guess
     // that missed but a module whose source ripr cannot read.
@@ -2943,8 +2945,11 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
         if !seen.insert(path.clone()) {
             continue;
         }
-        if seen.len() > UNINDEXED_MEMBER_ROOTS.len() + UNINDEXED_MEMBER_PATH_FILES {
-            return true;
+        if required {
+            followed += 1;
+            if followed > UNINDEXED_MEMBER_PATH_FILES {
+                return true;
+            }
         }
         match std::fs::read(&path) {
             Ok(bytes) => {
@@ -2955,7 +2960,7 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
                     return true;
                 };
                 inspected = true;
-                let Some(literals) = own_path_literals(source) else {
+                let Some(literals) = own_path_literals(source, required) else {
                     return true;
                 };
                 for literal in literals {
@@ -2975,8 +2980,10 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
 /// The `#[path]` literals of `source` when they are all it could mount
 /// through: no `include!`, no inner `#![path]`, and every `#[path` in the
 /// text is the one plain literal of a top-level out-of-line `mod name;`.
+/// A file reached through `#[path]` (`followed`) must also declare no
+/// default-layout `mod child;`, whose file this walk would not read.
 /// `None` for anything else, which the caller reads as a foreign mount.
-fn own_path_literals(source: &str) -> Option<Vec<String>> {
+fn own_path_literals(source: &str, followed: bool) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(source);
     let includes = whole_word_offsets(&masked, "include")
         .into_iter()
@@ -2990,10 +2997,17 @@ fn own_path_literals(source: &str) -> Option<Vec<String>> {
         return None;
     }
     let attributes = compact.matches("#[path").count();
-    if attributes == 0 {
+    if attributes == 0 && !followed {
         return Some(Vec::new());
     }
-    let literals = literal_module_path_targets(source)?;
+    let mut literals = Vec::new();
+    for target in module_path_targets(source)? {
+        match target {
+            ModulePathTarget::Literal(literal) => literals.push(literal),
+            ModulePathTarget::Default if !followed => {}
+            ModulePathTarget::Default | ModulePathTarget::Unknown => return None,
+        }
+    }
     (literals.len() == attributes).then_some(literals)
 }
 

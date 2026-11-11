@@ -156,6 +156,33 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
         ),
     ];
     assert_credited("own #[path] chain, draft", &finding(Mode::Draft, &chain)?);
+
+    // Explicit target paths are crate roots, not followed files: many of them
+    // must not exhaust the walk's budget of path-named files.
+    let mut manifest =
+        String::from("[package]\nname = \"tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n");
+    let names = (0..70).map(|index| format!("t{index}")).collect::<Vec<_>>();
+    for name in &names {
+        manifest.push_str(&format!(
+            "\n[[test]]\nname = \"{name}\"\npath = \"checks/{name}.rs\"\n"
+        ));
+    }
+    let mut many: Vec<(String, String)> = vec![
+        ("Cargo.toml".to_string(), manifest),
+        ("src/lib.rs".to_string(), OWN_PATH.to_string()),
+        ("support.rs".to_string(), SUPPORT.to_string()),
+    ];
+    many.extend(names.iter().map(|name| {
+        (
+            format!("checks/{name}.rs"),
+            "#[test]\nfn ok() {}\n".to_string(),
+        )
+    }));
+    let many = many
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    assert_credited("70 explicit targets, draft", &finding(Mode::Draft, &many)?);
     Ok(())
 }
 
@@ -163,7 +190,7 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
 fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -> Result<(), String>
 {
     let lib = |text: &'static str| [("src/lib.rs", text), ("support.rs", SUPPORT)];
-    let cases: [(&str, Vec<(&str, &str)>); 8] = [
+    let cases: [(&str, Vec<(&str, &str)>); 9] = [
         (
             "path leaves the member",
             lib("#[path = \"../../app/src/par.rs\"]\nmod par;\n").to_vec(),
@@ -196,6 +223,14 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
             lib("#[path = concat!(\"../\", \"support.rs\")]\nmod support;\n").to_vec(),
         ),
         (
+            "own file declares a default child that mounts a file",
+            vec![
+                ("src/lib.rs", OWN_PATH),
+                ("support.rs", "mod child;\n"),
+                ("child.rs", "include!(\"../app/src/par.rs\");\n"),
+            ],
+        ),
+        (
             "inner path attribute",
             lib("#![path = \"../support.rs\"]\n").to_vec(),
         ),
@@ -203,5 +238,29 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
     for (label, files) in cases {
         assert_withheld(label, &finding(Mode::Draft, &files)?);
     }
+
+    // A chain of path-named files past the walk's budget is read as a mount.
+    let names = (0..70)
+        .map(|index| format!("p{index}.rs"))
+        .collect::<Vec<_>>();
+    let mut chain: Vec<(String, String)> = vec![
+        ("src/lib.rs".to_string(), OWN_PATH.to_string()),
+        (
+            "support.rs".to_string(),
+            format!("#[path = \"{}\"]\nmod hop;\n", names[0]),
+        ),
+    ];
+    for (index, name) in names.iter().enumerate() {
+        let body = match names.get(index + 1) {
+            Some(next) => format!("#[path = \"{next}\"]\nmod hop;\n"),
+            None => SUPPORT.to_string(),
+        };
+        chain.push((name.clone(), body));
+    }
+    let chain = chain
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    assert_withheld("path chain past the budget", &finding(Mode::Draft, &chain)?);
     Ok(())
 }
