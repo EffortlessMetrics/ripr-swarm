@@ -5612,8 +5612,13 @@ fn inherent_receiver_call_resolves_with(
                 // #14036): the leading segment must be the root package's
                 // library name, unshadowed in this test, and the owner an
                 // item of that library.
+                // The constructor is found by the type's base name alone,
+                // so the name must declare one type: with a second `Ty` in
+                // another library module, `krate::Ty` may be that one
+                // (`pub use b::Ty;` beside the owner's `a::Ty`, #14083 A2).
                 owner.is_some_and(|owner| owner_is_root_library_item(index, owner))
                     && root_library_name_is_unshadowed(index, test, krate)
+                    && super::owner_pin::workspace_type_name_count(ty, index) == 1
                     && associated_constructor_names_own_type(index, ty, name, None)
             } else {
                 if associated_constructor_names_own_type(
