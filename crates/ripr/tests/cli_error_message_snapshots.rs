@@ -65,6 +65,73 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: repository root /ripr-missing-root does not exist or is not a directory; pass `--root <dir>` naming an existing repository\n",
     },
+    // #14076: missing-required-input refusals that used to stop at "requires X".
+    Case {
+        args: &["zero", "status"],
+        exit: 2,
+        stderr: "ripr: zero status requires --delta <path>; pass the baseline debt delta JSON that `ripr baseline diff` writes, for example `--delta target/ripr/reports/baseline-debt-delta.json`\n",
+    },
+    Case {
+        args: &["calibrate", "cargo-mutants"],
+        exit: 2,
+        stderr: "ripr: calibrate cargo-mutants requires --mutants-json <path>; run `cargo mutants` first, then pass its `mutants.out` directory or `mutants.out/outcomes.json`\n",
+    },
+    Case {
+        args: &[
+            "calibrate",
+            "cargo-mutants",
+            "--mutants-json",
+            "mutants.out",
+        ],
+        exit: 2,
+        stderr: "ripr: calibrate cargo-mutants requires --repo-exposure-json <path>; capture one with `ripr check --format repo-exposure-json > repo-exposure.json`, then pass `--repo-exposure-json repo-exposure.json`\n",
+    },
+    Case {
+        args: &["cache", "export"],
+        exit: 2,
+        stderr: "ripr: cache export requires --out NEW_DIRECTORY; pass a directory that does not exist yet and whose parent does, for example `ripr cache export --out ripr-cache-export`\n",
+    },
+    Case {
+        args: &["pr-ledger", "record", "--gate", "gate.json"],
+        exit: 2,
+        stderr: "ripr: pr-ledger record requires --pr-number <value>; pass the pull request number or a local identifier, for example `--pr-number 123`\n",
+    },
+    Case {
+        args: &[
+            "pr-ledger",
+            "record",
+            "--gate",
+            "gate.json",
+            "--pr-number",
+            "123",
+        ],
+        exit: 2,
+        stderr: "ripr: pr-ledger record requires --base <revision>; pass the pull request's base commit, for example `--base origin/main`\n",
+    },
+    Case {
+        args: &[
+            "pr-ledger",
+            "record",
+            "--gate",
+            "gate.json",
+            "--pr-number",
+            "123",
+            "--base",
+            "origin/main",
+        ],
+        exit: 2,
+        stderr: "ripr: pr-ledger record requires --head <revision>; pass the pull request's head commit, for example `--head HEAD`\n",
+    },
+    Case {
+        args: &["pr-review", "front-panel"],
+        exit: 2,
+        stderr: "ripr: pr-review front-panel requires at least one explicit artifact input; pass one, for example `--pr-guidance target/ripr/review/comments.json` (run `ripr help pr-review` for the list)\n",
+    },
+    Case {
+        args: &["reports", "gap-ledger"],
+        exit: 2,
+        stderr: "ripr: reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH; pass one source, for example `--check-output check.json` saved by `ripr check --format json > check.json`\n",
+    },
 ];
 
 #[test]

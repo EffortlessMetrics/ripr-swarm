@@ -821,7 +821,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     }
     Ok((
         root,
-        output.ok_or("cache export requires --out NEW_DIRECTORY")?,
+        output.ok_or("cache export requires --out NEW_DIRECTORY; pass a directory that does not exist yet and whose parent does, for example `ripr cache export --out ripr-cache-export`")?,
     ))
 }
 
