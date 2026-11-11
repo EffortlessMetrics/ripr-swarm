@@ -128,13 +128,15 @@ This changes the emitted stub only; classifier credit rules are unchanged.
 
 The human `ripr repair` / `ripr agent repair --phase before` start prints
 `Run the new test: <command>` before the continue line when the recommended
-test's exact command is established, spelled like the stub run command. An
-integration file runs as `--test TARGET NAME` only when the package's own
-target layout names its target (a plain cargo target name); a file the
-package does not register under `tests/` gets no line; a non-Rust file, a
-non-identifier test name, or a file outside any package gets no line. A
-`src/tests/` file is an inline module and runs by name. JSON output is
-unchanged.
+test's exact command is established, spelled like the stub run command. A file
+runs as `--test TARGET NAME` when the package's manifest or `tests/`
+discovery names its target and that name is a plain cargo target name
+(ASCII alphanumerics, `_`, `-`, not starting with `-`). An unregistered file
+under the package's `src/` (including `src/tests/`) is an inline module and
+runs by name. Every other case gets no line: an unregistered or unnamed file
+under `tests/`, a bench, example or other file outside `src/`, a non-Rust
+file, a non-identifier test name, or a file outside any package. JSON output
+is unchanged.
 
 ## Required Evidence
 

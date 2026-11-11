@@ -1928,22 +1928,27 @@ pub(crate) fn focused_test_run_command(
     let manifest = package_manifest_for(root, &integration)?;
     // The package's own target layout decides the route, not a `tests` path
     // component anywhere: `src/tests/pricing.rs` is an inline module file.
-    let under_package_tests = file
+    let relative = file
         .strip_prefix(manifest.parent().unwrap_or(Path::new("")))
-        .is_ok_and(|relative| relative.starts_with("tests"));
+        .ok();
+    let under_package_tests = relative.is_some_and(|relative| relative.starts_with("tests"));
+    // Only library/binary sources run an inline test by name; a bench,
+    // example or stray file would get a command that runs nothing.
+    let under_package_src = relative.is_some_and(|relative| relative.starts_with("src"));
     let (stub, target) = match integration_target_lookup(root, &manifest, &integration) {
         // A manifest `[[test]] name` is printed into a copyable command, so
         // only a plain cargo target name is offered; anything else fails
         // closed instead of being run by the developer's shell.
         TargetLookup::Name(name)
-            if !name.is_empty()
+            if !name.starts_with('-')
+                && !name.is_empty()
                 && name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
         {
             (integration, Some(name))
         }
-        TargetLookup::NotRegistered if !under_package_tests => (
+        TargetLookup::NotRegistered if !under_package_tests && under_package_src => (
             stub_at(TestStubPlacement::ExistingInlineModule {
                 file,
                 module_name: "tests".to_string(),
@@ -2548,6 +2553,11 @@ mod tests {
             Some(format!(
                 "cargo test --manifest-path {manifest} equal_threshold"
             ))
+        );
+        // A bench or example file has no by-name inline route.
+        assert_eq!(
+            focused_test_run_command(&root, "benches/pricing.rs", "t"),
+            None
         );
         // A manifest target name with shell syntax is never printed.
         std::fs::write(
