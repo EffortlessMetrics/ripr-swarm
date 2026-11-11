@@ -133,7 +133,30 @@ pub(crate) struct GapListFilter {
 }
 
 impl GapListFilter {
+    /// Narrowed membership: every explicit dimension, plus the default
+    /// exposure exclusion (#14327). With no `class` filter, `exposed` items
+    /// that are not repair-ready need no test-side action and are left out of
+    /// the walked set (a repair-ready exposed item stays: it is actionable); they are
+    /// counted by [`Self::default_excluded_exposed`] and named in the
+    /// document, never silently dropped. Any explicit `class` (including
+    /// `exposed`) matches exactly that class.
     fn matches(&self, item: &GapItem) -> bool {
+        self.matches_dimensions(item) && !self.excludes_exposed_by_default(item)
+    }
+
+    fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
+        self.class.is_none()
+            && item.class() == crate::domain::ExposureClass::Exposed.as_str()
+            && !item.repair_ready()
+    }
+
+    /// Items the default exposure exclusion removed: they satisfy every
+    /// other filter dimension but are `exposed` with no explicit `class`.
+    fn default_excluded_exposed(&self, item: &GapItem) -> bool {
+        self.matches_dimensions(item) && self.excludes_exposed_by_default(item)
+    }
+
+    fn matches_dimensions(&self, item: &GapItem) -> bool {
         if let Some(class) = self.class.as_deref()
             && item.class() != class
         {
@@ -221,6 +244,9 @@ struct GapListScope<'a> {
     requested: Option<&'a str>,
     filter: &'a GapListFilter,
     filtered: usize,
+    /// Selected items the default exposure exclusion left out (#14327); zero
+    /// whenever the caller named a `class`.
+    exposed_omitted: usize,
     /// Filtered items reached only by an unevaluated proof harness (#12921).
     proof_harness_only: usize,
 }
@@ -891,6 +917,12 @@ impl WorkspaceSession {
         // `selected` count stays the full stored selection so the document
         // never lies about what filtering removed.
         let filtered = selected_items.len();
+        let exposed_omitted = snapshot
+            .items
+            .iter()
+            .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
+            .filter(|item| filter.default_excluded_exposed(item))
+            .count();
         let proof_harness_only = selected_items
             .iter()
             .filter(|item| item.is_proof_harness_only())
@@ -911,6 +943,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
@@ -928,6 +961,7 @@ impl WorkspaceSession {
                 requested,
                 filter: &GapListFilter::default(),
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
@@ -1018,6 +1052,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                exposed_omitted,
                 proof_harness_only,
             };
             let probe = self.gap_list_document(
@@ -1078,6 +1113,7 @@ impl WorkspaceSession {
             requested,
             filter,
             filtered,
+            exposed_omitted,
             proof_harness_only,
         };
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
@@ -1262,6 +1298,16 @@ impl WorkspaceSession {
         // never test coverage; absent when zero.
         if scope.proof_harness_only > 0 {
             document["proof_harness_only"] = json!(scope.proof_harness_only);
+        }
+        // Additive (#14327): with no `class` filter the list leaves out
+        // `exposed` items (nothing to repair on the test side). Disclose the
+        // count and the route; absent when zero or when `class` was named.
+        // `total`, `eligible`, `selected` and `outcome` still describe the
+        // whole snapshot; only `filtered` and `items` narrow.
+        if scope.exposed_omitted > 0 {
+            document["exposed_omitted"] = json!(scope.exposed_omitted);
+            document["exposed_route"] =
+                json!("call ripr_list_gaps with class: \"exposed\" to list them");
         }
         Ok(document)
     }
@@ -3127,6 +3173,12 @@ mod tests {
     /// #7464 filter proof: distinct files, classes, languages, and
     /// commit-time repair readiness. No analysis runs.
     fn session_with_varied_findings() -> Result<WorkspaceSession, String> {
+        session_with_varied_findings_plus(Vec::new())
+    }
+
+    fn session_with_varied_findings_plus(
+        extra: Vec<crate::domain::Finding>,
+    ) -> Result<WorkspaceSession, String> {
         let mut ready = gaps::test_finding()?;
         ready.id = "finding:test:ready".to_string();
         if let Some(gap) = ready.canonical_gap.as_mut() {
@@ -3162,7 +3214,8 @@ mod tests {
         unlocalized.class = crate::domain::ExposureClass::NoStaticPath;
         unlocalized.language = None;
 
-        let findings = vec![ready, exposed_python, unready, unlocalized];
+        let mut findings = vec![ready, exposed_python, unready, unlocalized];
+        findings.extend(extra);
         let output = crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
@@ -3460,6 +3513,96 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
+    /// #14327: with no `class` filter the list leaves out `exposed` items that
+    /// are not repair-ready and discloses them as `exposed_omitted`; an
+    /// explicit class lists them, other items (including a repair-ready
+    /// exposed one) stay listed, and whole-snapshot counts do not shrink.
+    #[test]
+    fn default_gap_list_omits_exposed_and_discloses_the_count() -> Result<(), String> {
+        let mut gripped = gaps::test_finding()?;
+        gripped.id = "finding:test:exposed-gripped".to_string();
+        gripped.canonical_gap = None;
+        gripped.probe.id = crate::domain::ProbeId("probe:test:exposed-gripped".to_string());
+        gripped.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", 40, 1);
+        gripped.class = crate::domain::ExposureClass::Exposed;
+        let session = session_with_varied_findings_plus(vec![gripped])?;
+        let list = |filter: &GapListFilter| {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let default = list(&GapListFilter::default())?;
+        let mut ids = gap_ids(&default)?;
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "finding:test:unready".to_string(),
+                "gap:test:exposed-python".to_string(),
+                "gap:test:ready".to_string(),
+                "gap:test:unlocalized".to_string(),
+            ],
+            "{default}"
+        );
+        assert_eq!(default["exposed_omitted"], json!(1), "{default}");
+        assert!(
+            default["exposed_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("class: \"exposed\"")),
+            "{default}"
+        );
+        assert_eq!(default["filtered"], json!(4), "{default}");
+        assert_eq!(default["selected"], json!(5), "{default}");
+        assert_eq!(default["total"], json!(5), "{default}");
+        assert_eq!(default["page"]["returned"], json!(4), "{default}");
+        assert_eq!(default["filters"]["class"], Value::Null, "{default}");
+
+        let exposed = list(&GapListFilter {
+            class: Some("exposed".to_string()),
+            ..Default::default()
+        })?;
+        let mut ids = gap_ids(&exposed)?;
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "finding:test:exposed-gripped".to_string(),
+                "gap:test:exposed-python".to_string(),
+            ],
+            "{exposed}"
+        );
+        assert!(exposed.get("exposed_omitted").is_none(), "{exposed}");
+        assert!(exposed.get("exposed_route").is_none(), "{exposed}");
+        assert_eq!(exposed["filtered"], json!(2), "{exposed}");
+
+        // Another explicit class neither lists nor counts exposed items.
+        let weak = list(&GapListFilter {
+            class: Some("weakly_exposed".to_string()),
+            ..Default::default()
+        })?;
+        assert!(weak.get("exposed_omitted").is_none(), "{weak}");
+
+        // The count follows the other dimensions: this file holds the one
+        // gripped exposed item, so a file-narrowed default still discloses it.
+        let narrowed = list(&GapListFilter {
+            file: Some("src/limits.rs".to_string()),
+            ..Default::default()
+        })?;
+        assert!(narrowed.get("exposed_omitted").is_none(), "{narrowed}");
+        let checkout = list(&GapListFilter {
+            file: Some("src/checkout.rs".to_string()),
+            ..Default::default()
+        })?;
+        assert_eq!(checkout["exposed_omitted"], json!(1), "{checkout}");
+        assert_eq!(checkout["filtered"], json!(2), "{checkout}");
+        Ok(())
+    }
+
     /// dimensions combine conjunctively, and `offset`/`limit` page the
     /// narrowed set — while `selected` stays the full stored-selection count
     /// and `filters` echoes the request.

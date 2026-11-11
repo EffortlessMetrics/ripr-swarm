@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr_list_gaps` without a `class` filter now leaves out `exposed` items that are not repair-ready (they need no test-side action), and discloses them as `exposed_omitted` with an `exposed_route` hint instead of inviting a `ripr_get_gap` read per item. `filtered` counts the narrowed set; `total`, `eligible`, `selected` and `outcome` still describe the whole snapshot, and `class: "exposed"` lists them as before (#14327).

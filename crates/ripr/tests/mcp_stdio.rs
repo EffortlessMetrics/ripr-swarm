@@ -6540,7 +6540,12 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
-    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = session.call_tool(
+        "list",
+        "ripr_list_gaps",
+        json!({ "class": "exposed" }),
+        REPLY_TIMEOUT,
+    )?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     let item = items
@@ -6661,7 +6666,12 @@ fn truncated_seam_inventory_refuses_repair_card_over_stdio() -> Result<(), Strin
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
-    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = session.call_tool(
+        "list",
+        "ripr_list_gaps",
+        json!({ "class": "exposed" }),
+        REPLY_TIMEOUT,
+    )?;
     let list = structured_tool_success(&list, "ripr_list_gaps")?;
     let items = list["items"].as_array().ok_or("list omitted items")?;
     if !items
