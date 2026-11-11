@@ -128,6 +128,10 @@ project's whole-`target/` requirement above is unchanged, because the
 self-ignore file covers only `target/ripr`. `check` runs the guard before its
 first-run ignore note, so a tree an older ripr left unignored is judged as the
 run leaves it.
+The committed-source probe that names gitignored source files a diff cannot
+see skips ignored records inside a `target/ripr` tree, at the repository top
+or under a nested root: ripr's own output is not source, so it costs no walk
+of the cache and cannot fail a check through that probe's git calls.
 
 ### Doctor blocking and advisory marks (#9033)
 

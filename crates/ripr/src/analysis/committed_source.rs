@@ -889,6 +889,20 @@ fn snapshot_input(path: &[u8]) -> bool {
     std::str::from_utf8(path).is_ok_and(|path| super::language::snapshot_input(Path::new(path)))
 }
 
+/// An ignored record inside a `target/ripr` output tree (at the repository
+/// top or under a nested root), ripr's own self-ignoring output (#14315).
+fn ripr_output_path(path: &[u8]) -> bool {
+    let path = path.strip_suffix(b"/").unwrap_or(path);
+    let tree = b"target/ripr";
+    let nested = b"/target/ripr";
+    path == tree
+        || path.ends_with(nested)
+        || path.starts_with(b"target/ripr/")
+        || path
+            .windows(nested.len() + 1)
+            .any(|window| window == b"/target/ripr/")
+}
+
 fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
     let mut out = StatusRecords::default();
     let mut records = bytes.split(|byte| *byte == 0);
@@ -907,6 +921,12 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
             matches!(index_status, b'R' | b'C') || matches!(worktree_status, b'R' | b'C');
         let original = if has_original { records.next() } else { None };
         if *index_status == b'!' {
+            // ripr's own disposable output is never a source a diff could
+            // miss; once it ignores itself (#14315) it must not cost a walk
+            // of the cache, nor fail a check whose git probes do.
+            if ripr_output_path(path) {
+                continue;
+            }
             if let Some(directory) = path.strip_suffix(b"/") {
                 // A non-UTF-8 directory name keys no overlay lookup anyway.
                 if let Ok(directory) = utf8_path(directory) {
