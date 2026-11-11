@@ -1225,7 +1225,10 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     // becomes a baseline that silently stops guarding the cargo keys.
     let failures = instrument_failures(&report);
     if options.write_baseline && failures.is_empty() {
-        write_file(Path::new(BASELINE_PATH), &format!("{pretty}\n"))?;
+        write_file(
+            &crate::repo_root()?.join(BASELINE_PATH),
+            &format!("{pretty}\n"),
+        )?;
         println!("agent-eval: wrote baseline {BASELINE_PATH}");
     }
     println!(
