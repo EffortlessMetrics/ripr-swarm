@@ -722,6 +722,8 @@ Fixture coverage:
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
 - `attribute_continuation_lines_cover_the_span_and_fail_closed`
+- `multi_line_use_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `use_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
@@ -733,6 +735,14 @@ The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr
 argument list) are attribute text, like the single-line form, and seed no probe
 on either diff side (#10089). The closing line counts only when nothing follows
 the bracket, and an unclosed attribute marks nothing.
+
+The entries of a multi-line `use a::{ .. };` or `pub use a::{ .. };` declaration
+are import text, like the single-line form, and seed no probe on either diff
+side (#8389). The openers are exactly the single-line forms already skipped, so
+a visibility-qualified re-export (`pub(crate) use`) keeps its probes on every
+line. The closing line counts only when nothing follows the `;`, and a
+declaration that never closes, closes outside its braces, or holds a character
+no `use` tree can hold marks nothing.
 
 Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
