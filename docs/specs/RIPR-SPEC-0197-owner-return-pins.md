@@ -3309,7 +3309,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure` and
   `an_added_guard_follows_the_same_agreement_rule`. The corpus case is
-  `benchmarks/stub_quality/cases/D_unsafe_const`.
+  `benchmarks/stub_quality/cases/D_unsafe_const`. In the evidence-promotion
+  honesty corpus (RIPR-SPEC-0108), `rust_guard_operand_dropped_agreement`
+  (`fixtures/guard_operand_dropped_agreement`) stays `weakly_exposed` and
+  its positive control `rust_guard_operand_added_deciding_row`
+  (`fixtures/guard_operand_added_deciding_row`) stays `exposed`.
 - Short-circuit tails (#7969): `owner_pin/short_circuit.rs` unit tests
   `reads_homogeneous_comparison_chains_over_parameters`,
   `refuses_anything_that_can_call_panic_or_mix_operators`,
