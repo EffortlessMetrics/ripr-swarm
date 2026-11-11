@@ -881,7 +881,7 @@ pub(crate) fn validate_check_findings_artifact(
 
 fn check_findings_parse_refusal(label: &str, detail: &str) -> String {
     format!(
-        "agent verify {label} artifact is not a canonical check-findings artifact: {detail}; expected a check-findings JSON object (from `ripr check --format json`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+        "agent verify {label} artifact is not a canonical check-findings artifact: {detail}; expected a check-findings JSON object (from `{CHECK_FINDINGS_PRODUCER_COMMAND}`). Regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
     )
 }
 
@@ -3076,6 +3076,18 @@ mod tests {
 
     /// Matching current `producer.version` is not a substitution refusal.
     /// An incomplete envelope still fails as a canonical shape error.
+    /// The check-findings recovery names the producer that writes the
+    /// envelope verification requires; plain `--format json` lacks it.
+    #[test]
+    fn check_findings_refusal_names_the_enveloped_producer() {
+        let refusal = check_findings_parse_refusal("before", "the file holds a JSON array");
+        assert!(
+            refusal.contains("(from `ripr check --format check-findings-json`)"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("--format json`"), "{refusal}");
+    }
+
     #[test]
     fn serde_type_names_are_replaced_only_in_serde_phrasing() {
         assert_eq!(

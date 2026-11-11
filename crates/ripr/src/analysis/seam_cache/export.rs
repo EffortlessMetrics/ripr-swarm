@@ -307,14 +307,14 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         if error.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "cache export --out {}: its parent directory {} does not exist; create that directory first, or pass an --out inside an existing directory",
-                crate::output::path::human_path(&output),
-                crate::output::path::human_path(parent)
+                shown_path(&output),
+                shown_path(parent)
             )
         } else {
             format!(
                 "cache export --out {}: could not resolve its parent directory {}: {error}; pass an --out inside a directory you can read",
-                crate::output::path::human_path(&output),
-                crate::output::path::human_path(parent)
+                shown_path(&output),
+                shown_path(parent)
             )
         }
     })?;
@@ -328,7 +328,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     let config = load_for_root(root)?;
     let (key, files) = current_cache_keys_at(root, &config)?;
     fs::create_dir(&output).map_err(|error| {
-        let shown = crate::output::path::human_path(&output);
+        let shown = shown_path(&output);
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             format!(
                 "cache export --out {shown} already exists; --out must name a new directory that does not exist yet, so pass a fresh path (the export never merges into or replaces an existing one)"
@@ -378,6 +378,13 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         )
     })
 }
+
+/// Path text for export refusals. Analysis owns its own spelling so it never
+/// reaches into the output renderers; `/` keeps one separator on every host.
+fn shown_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::FileFacts;

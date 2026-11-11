@@ -9157,7 +9157,13 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains(&format!(
+                "--out-dir {out} is an existing file, but --out-dir names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out-dir is not a not-writable tree: {error}"
