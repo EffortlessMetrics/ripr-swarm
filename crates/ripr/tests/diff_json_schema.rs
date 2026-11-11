@@ -225,10 +225,19 @@ fn diff_json_conforms_to_the_published_schema_in_each_completion_state() -> Resu
         "empty": [empty["run_status"], empty["changed_seams"].as_array().map(Vec::len), empty["analysis_outcome"]["outcome"]["kind"]],
         "incomplete": [incomplete["run_status"], incomplete["analysis_outcome"]["analysis_complete"], incomplete["preview_languages"][0]["language"]],
     });
+    // The incomplete arm comes from a preview-language advisory, which only
+    // a build with the TypeScript adapter raises. A Rust-only build reports
+    // the same range as complete; it is still checked for conformance above,
+    // and the incomplete branch is then covered by the committed fixture.
+    let incomplete_arm = if cfg!(feature = "lang-typescript") {
+        json!(["diff_incomplete_full_repo_limited", false, "typescript"])
+    } else {
+        json!(["diff_complete_full_repo_limited", true, null])
+    };
     let expected = json!({
         "with_finding": ["diff_complete_full_repo_limited", true],
         "empty": ["diff_complete_full_repo_limited", 0, "no_scope"],
-        "incomplete": ["diff_incomplete_full_repo_limited", false, "typescript"],
+        "incomplete": incomplete_arm,
     });
     if observed == expected {
         Ok(())
