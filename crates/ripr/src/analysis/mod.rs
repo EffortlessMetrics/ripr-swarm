@@ -42,6 +42,7 @@ pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
@@ -121,9 +122,9 @@ pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS,
+    TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, is_ts_js_source_extension, route, ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{
@@ -131,8 +132,8 @@ pub(crate) use language::{
     with_concrete_discriminator,
 };
 pub use language::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
 pub(crate) use language::{

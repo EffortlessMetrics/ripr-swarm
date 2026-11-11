@@ -1643,13 +1643,17 @@ pub fn resolve_base_commit(
 /// Rust lines stay within the changed-line guard and whose admitted
 /// enabled-preview-language lines stay within those languages' budgets,
 /// named as a usable `--base` value (`main`, `origin/main`); ref order
-/// breaks ties. A branch whose diff the Rust, Python, or TypeScript
-/// guard would refuse is not a candidate (#9013, #10821). Callers that
-/// advise a `--base` repair must name this probed ref, never a hardcoded
-/// example, and must not name the base already in use.
+/// breaks ties. A branch whose diff exceeds the Rust, Python, or TypeScript
+/// changed-line limit is not a candidate (#9013, #10821). Since #13641 such
+/// a diff is no longer refused — it runs as a `limited_partial_scope`
+/// partition — so this screen is deliberately conservative: the advice names
+/// only a base whose run would be analyzed in full. Callers that advise a
+/// `--base` repair must name this probed ref, never a hardcoded example, and
+/// must not name the base already in use.
 pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     // #9013 / #10821: a candidate is only advice ripr can stand behind
-    // when the advised run would itself be analyzed. An unreadable or
+    // when the advised run would itself be analyzed (in full scope, #13641:
+    // an over-limit diff now degrades to a partial run). An unreadable or
     // invalid line guard — Rust always, and each enabled preview language
     // — yields no advice rather than advice the guard would refuse.
     let rust_line_limit = crate::analysis::language::diff_changed_rust_line_limit().ok()?;
