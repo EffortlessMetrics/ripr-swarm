@@ -32,6 +32,10 @@ impl SampleWorkspace {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        // `create_dir` refuses a path that already exists, so a leftover or
+        // planted directory of the same name is never reused.
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         let workspace = Self { root };
         for (path, text) in [
             ("Cargo.toml", MANIFEST),
