@@ -318,7 +318,10 @@ suite('Server resolver compatibility fallback', () => {
           `download fall-through must keep the download failure kind, got ${JSON.stringify(result)}`
         );
         assert.ok(
-          result.kind === 'download' || result.kind === 'http' || result.kind === 'manifest',
+          result.kind === 'download' ||
+            result.kind === 'network' ||
+            result.kind === 'http' ||
+            result.kind === 'manifest',
           `expected a download-family kind, got ${result.kind}`
         );
         assert.ok(

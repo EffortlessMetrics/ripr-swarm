@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #10730
+- #13641
 
 Linked PRs:
 
@@ -75,7 +76,21 @@ explainable refusal to repair from.
 4. Only enabled adapters are guarded: a Python-heavy diff under the default
    Rust-only language set is never refused by a guard for an adapter that
    will not run.
-5. In the `--json` limited artifact, `analysis_scope.basis` (and
+5. Since #13641 the guards measure the files the run analyzes, not the whole
+   diff. A diff over a changed-line limit (Rust or preview) degrades into the
+   bounded RIPR-PROP-0019 `limited_partial_scope` partition — the Rust
+   adapter's partition when Rust is enabled, otherwise one the pipeline
+   selects through the same selector — and the guard then applies to the
+   selected files only. A partition never splits a file: a file that alone
+   exceeds its own language's limit is left out (named in
+   `over_limit_files`) and the files that fit are still analyzed, so the
+   refusal in items 1-3 remains only when no changed file fits; that
+   refusal keeps the `diff_scope_oversized:` prefix and names the largest
+   file's line count and its language limit env (not a diff path), so the
+   `--json` basis follows the refusing language. Each file is judged against
+   its own language's limit, the partial line budget is clamped to the
+   smallest enabled limit, and only enabled languages' limits are read. The streaming parse guards and the index-file guard are unchanged.
+6. In the `--json` limited artifact, `analysis_scope.basis` (and
    `run_limitations[].basis`) name the budget that fired:
    `python_diff_scope_budget`, `typescript_diff_scope_budget`, or
    `rust_diff_scope_budget` for the pre-existing Rust guards — a field never
@@ -97,6 +112,18 @@ explainable refusal to repair from.
   `rust_diff_scope_budget` for both Rust refusals.
 - A Python-only oversized diff under the default Rust-only language set is
   not refused.
+- An over-limit diff with no single file over the limit degrades into
+  `limited_partial_scope` with a nonempty selected partition, the unselected
+  files named, and lower-bound uninspected counts — for Rust, for Python
+  without the Rust adapter, and for TypeScript under the Rust adapter's
+  partition (#13641).
+- An over-limit file that sorts first beside fitting files is left out
+  (`over_limit_files`, stop reason `file_exceeds_analysis_limit`) and the
+  fitting files are analyzed; an over-limit file alone still refuses.
+- The widen advice for a run with over-limit files names budgets that keep
+  every selected file and add the over-limit ones (their summed lines, not the
+  largest alone), so following it analyzes more, never trades an analyzed
+  file for the over-limit one (#13641 review).
 
 ## Non-Goals
 
@@ -112,15 +139,24 @@ explainable refusal to repair from.
 
 ## Acceptance Examples
 
-1. `ripr check --diff django.diff` with 2100 admitted changed Python lines
-   and the Python adapter enabled: exits non-zero with
-   `diff_scope_oversized: 2100 changed Python lines ...` naming
-   `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, `--path` and `--exclude`; `--json`
-   emits the limited artifact with `basis: "python_diff_scope_budget"`.
+1. `ripr check --diff django.diff` whose single `pkg/mod.py` carries 2100
+   admitted changed Python lines, with the Python adapter enabled: exits
+   non-zero with
+   `diff_scope_oversized: every one of the 1 changed file(s) ripr's enabled
+   adapters read exceeds its language's changed-line limit on its own
+   (largest: 2100 changed lines over the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES
+   limit (2000)) ...` naming `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, `--path` and
+   `--exclude` (a partition never splits a file, so no file fits, #13641);
+   `--json` emits the limited artifact with
+   `basis: "python_diff_scope_budget"`, the env the refusal names first.
 2. The same diff where 2001 of the lines are in `pkg/generated_models.py`:
-   the run proceeds; the generated file's lines do not count.
+   the run proceeds; the generated file's lines do not count, and the file is
+   never a partition candidate nor named in `over_limit_files` (#13641).
 3. `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=5000 ripr check --diff web.diff`:
    a 4500-line TypeScript diff is analyzed instead of refused.
+4. A 2400-line Python diff spread over three 800-line files: the run reports
+   `limited_partial_scope`, analyzes the first file, and discloses the other
+   two as uninspected instead of refusing (#13641).
 
 ## Test Mapping
 
@@ -132,7 +168,16 @@ explainable refusal to repair from.
   `preview_line_limits_pass_an_at_limit_diff`,
   `oversized_{python,typescript}_diff_is_refused_before_{python,typescript}_analysis`,
   `oversized_python_diff_passes_when_python_is_not_enabled`,
-  `generated_bulk_does_not_refuse_a_small_admitted_{python,typescript}_diff`.
+  `generated_bulk_does_not_refuse_a_small_admitted_{python,typescript}_diff`,
+  `{rust,python,typescript}_diff_over_the_changed_line_guard_degrades_into_partial_scope`,
+  `over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope`,
+  `lowered_python_limit_leaves_an_over_limit_py_out_beside_rust`,
+  `raised_typescript_limit_never_runs_over_limit_files_as_full_scope`.
+- `crates/ripr/src/analysis/language/rust/mod.rs` tests:
+  `changed_rust_line_guard_measures_the_selected_partition`,
+  `each_file_is_judged_against_its_own_language_limit`,
+  `following_over_limit_advice_analyzes_the_whole_diff`,
+  `partial_budgets_read_only_enabled_language_limits`.
 - `crates/ripr/src/output/limited_check.rs` tests:
   `python_budget_refusal_names_python_diff_scope_budget`,
   `typescript_budget_refusal_names_typescript_diff_scope_budget`,
@@ -143,7 +188,9 @@ explainable refusal to repair from.
 - `crates/ripr/src/analysis/pipeline.rs`: the two limits and env resolvers,
   `changed_language_line_count` (admission-filtered),
   `language_admits_changed_path`, `enforce_changed_language_line_limit`,
-  `enforce_changed_preview_line_limits`, and the dispatch-level call site.
+  `enforce_changed_preview_line_limits`, and the dispatch-level call site,
+  which measures the selected partition and selects one through
+  `select_partial_diff_scope` when the Rust adapter did not run (#13641).
 - `crates/ripr/src/output/limited_check.rs`: `diff_scope_basis` selects the
   typed basis for the `--json` limited artifact.
 - `crates/ripr/src/analysis/language/rust/mod.rs`: `diff_limit_env`,
