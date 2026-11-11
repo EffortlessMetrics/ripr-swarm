@@ -122,6 +122,23 @@ pub(crate) fn parse_policy_readiness_options(
         i += 1;
     }
 
+    super::super::refuse_output_naming_input(
+        "policy readiness",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--gate-decision", gate_decision.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--waiver-aging", waiver_aging.as_deref()),
+            ("--suppression-health", suppression_health.as_deref()),
+            ("--repo-config", repo_config.as_deref()),
+            ("--previous-readiness", previous_readiness.as_deref()),
+        ],
+    )?;
     Ok(PolicyReadinessOptions {
         root,
         gate_decision,
@@ -256,6 +273,23 @@ pub(crate) fn parse_policy_operations_options(
     let policy_readiness = policy_readiness
         .ok_or_else(|| "policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())?;
 
+    super::super::refuse_output_naming_input(
+        "policy operations",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--policy-readiness", Some(&policy_readiness)),
+            ("--waiver-aging", waiver_aging.as_deref()),
+            ("--suppression-health", suppression_health.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--preview-boundary", preview_boundary.as_deref()),
+        ],
+    )?;
     Ok(PolicyOperationsOptions {
         root,
         policy_readiness: Some(policy_readiness),
@@ -357,6 +391,14 @@ pub(crate) fn parse_policy_history_options(
         );
     }
 
+    super::super::refuse_output_naming_input(
+        "policy history",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--current", Some(&current)),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyHistoryOptions {
         root,
         current,
@@ -455,6 +497,14 @@ pub(crate) fn parse_policy_promotion_options(
         ))
     });
 
+    super::super::refuse_output_naming_input(
+        "policy promote",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--operations", Some(&operations)),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyPromotionOptions {
         root,
         target_mode,
@@ -573,6 +623,11 @@ pub(crate) fn parse_policy_preview_promotion_options(
         )
     });
 
+    super::super::refuse_output_naming_input(
+        "policy preview-promote",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--evidence", evidence.as_deref())],
+    )?;
     Ok(PolicyPreviewPromotionOptions {
         root,
         language,
@@ -639,6 +694,14 @@ pub(crate) fn parse_policy_waiver_aging_options(
         i += 1;
     }
 
+    super::super::refuse_output_naming_input(
+        "policy waiver-aging",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--ledger", ledger.as_deref()),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     Ok(PolicyWaiverAgingOptions {
         root,
         ledger,
@@ -687,6 +750,17 @@ pub(crate) fn parse_policy_suppression_health_options(
         i += 1;
     }
 
+    // The manifest is read relative to `--root`, so compare where it is read.
+    let manifest_read = if manifest.is_absolute() {
+        manifest.clone()
+    } else {
+        root.join(&manifest)
+    };
+    super::super::refuse_output_naming_input(
+        "policy suppression-health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--manifest", Some(&manifest_read))],
+    )?;
     Ok(PolicySuppressionHealthOptions {
         root,
         manifest,

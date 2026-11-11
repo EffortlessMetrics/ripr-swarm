@@ -370,6 +370,16 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
         );
     };
 
+    let source_flag = match &source {
+        GapDecisionLedgerSource::Records(_) => "--records",
+        GapDecisionLedgerSource::RepoExposure(_) => "--repo-exposure",
+        GapDecisionLedgerSource::CheckOutput(_) => "--check-output",
+    };
+    super::refuse_output_naming_input(
+        "reports gap-ledger",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[(source_flag, Some(source.path()))],
+    )?;
     Ok(GapDecisionLedgerOptions {
         root,
         source,
@@ -429,6 +439,11 @@ fn parse_typescript_limitations_options(
         return Err("reports ts-limitations requires --check-output PATH; pass the JSON saved by `ripr check --format json > check.json`".to_string());
     };
 
+    super::refuse_output_naming_input(
+        "reports ts-limitations",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--check-output", Some(&check_output))],
+    )?;
     Ok(TypeScriptLimitationsOptions {
         root,
         check_output,
@@ -492,6 +507,11 @@ fn parse_typescript_false_actionable_options(
         return Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string());
     };
 
+    super::refuse_output_naming_input(
+        "reports ts-false-actionable",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--corpus", Some(&corpus))],
+    )?;
     Ok(TypeScriptFalseActionableOptions {
         root,
         corpus,

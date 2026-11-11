@@ -286,6 +286,20 @@ fn parse_assistant_loop_proof_options(
         );
     }
 
+    super::refuse_output_naming_input(
+        "assistant-loop proof",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--agent-packet", agent_packet.as_deref()),
+            ("--before", before.as_deref()),
+            ("--after", after.as_deref()),
+            ("--receipt", receipt.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+        ],
+    )?;
     Ok(AssistantLoopProofOptions {
         root,
         pr_guidance,
@@ -352,6 +366,15 @@ fn parse_assistant_loop_health_options(
         return Err("assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof --pr-guidance PATH`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`".to_string());
     }
 
+    let proof_inputs: Vec<(&str, Option<&std::path::Path>)> = proofs
+        .iter()
+        .map(|proof| ("--proof", Some(proof.as_path())))
+        .collect();
+    super::refuse_output_naming_input(
+        "assistant-loop health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &proof_inputs,
+    )?;
     Ok(AssistantLoopHealthOptions {
         root,
         proofs,

@@ -302,11 +302,22 @@ impl BaselineCreateParseState {
     }
 
     fn into_options(self) -> Result<BaselineCreateOptions, String> {
+        let from = self.from.ok_or_else(|| {
+            "baseline create requires --from <gate-decision.json> or --from-check <check.json>"
+                .to_string()
+        })?;
+        let from_flag = if self.from_check {
+            "--from-check"
+        } else {
+            "--from"
+        };
+        super::refuse_output_naming_input(
+            "baseline create",
+            &[("--out", &self.out)],
+            &[(from_flag, Some(&from))],
+        )?;
         Ok(BaselineCreateOptions {
-            from: self.from.ok_or_else(|| {
-                "baseline create requires --from <gate-decision.json> or --from-check <check.json>"
-                    .to_string()
-            })?,
+            from,
             from_check: self.from_check,
             out: self.out,
             dry_run: self.dry_run,
@@ -345,15 +356,24 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
         i += 1;
     }
 
+    let baseline = baseline.ok_or_else(|| {
+        "baseline diff requires --baseline <path>; add `--baseline <path>` to the command"
+            .to_string()
+    })?;
+    let current = current.ok_or_else(|| {
+        "baseline diff requires --current <path>; add `--current <path>` to the command".to_string()
+    })?;
+    super::refuse_output_naming_input(
+        "baseline diff",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--baseline", Some(&baseline)),
+            ("--current", Some(&current)),
+        ],
+    )?;
     Ok(BaselineDiffOptions {
-        baseline: baseline.ok_or_else(|| {
-            "baseline diff requires --baseline <path>; add `--baseline <path>` to the command"
-                .to_string()
-        })?,
-        current: current.ok_or_else(|| {
-            "baseline diff requires --current <path>; add `--current <path>` to the command"
-                .to_string()
-        })?,
+        baseline,
+        current,
         out,
         out_md,
     })
@@ -404,15 +424,26 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
         i += 1;
     }
 
+    let baseline = baseline.ok_or_else(|| {
+        "baseline update requires --baseline <path>; add `--baseline <path>` to the command"
+            .to_string()
+    })?;
+    let current = current.ok_or_else(|| {
+        "baseline update requires --current <path>; add `--current <path>` to the command"
+            .to_string()
+    })?;
+    // `--out` naming `--baseline` is the documented in-place update (the
+    // default when `--out` is omitted); only `--current` is protected.
+    if let Some(out) = out.as_deref() {
+        super::refuse_output_naming_input(
+            "baseline update",
+            &[("--out", out)],
+            &[("--current", Some(&current))],
+        )?;
+    }
     Ok(BaselineUpdateOptions {
-        baseline: baseline.ok_or_else(|| {
-            "baseline update requires --baseline <path>; add `--baseline <path>` to the command"
-                .to_string()
-        })?,
-        current: current.ok_or_else(|| {
-            "baseline update requires --current <path>; add `--current <path>` to the command"
-                .to_string()
-        })?,
+        baseline,
+        current,
         out,
         remove_resolved,
         migrate_legacy_identities,
