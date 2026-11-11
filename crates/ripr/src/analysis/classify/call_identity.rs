@@ -3289,6 +3289,83 @@ pub(super) fn bare_name_renames_another_function(
     false
 }
 
+/// Whether the module scope a bare call of the owner's name resolves in
+/// can only bind that name through globs of the standard library (`use
+/// std::cmp::*;` around a bare `max(..)` beside a changed crate-level `max`,
+/// #14069). That module has no import or item of the name and does not glob
+/// its parent, so nothing there names the owner: the call is the standard
+/// function, or it does not compile.
+///
+/// Decided at the first module scope only, and only when a standard glob
+/// was read on the way. A function-body scope is passed through when it
+/// binds nothing by that name and holds no glob other than standard-library
+/// ones (a body-level standard glob may not export the name at all, so it
+/// never decides alone: the enclosing module must also offer no route to
+/// the owner). Fails open on any
+/// unreadable glob, a glob rooted anywhere else, a `std`/`core`/`alloc` name
+/// the scope rebinds, and an owner with no placeable call identity.
+pub(super) fn bare_name_bound_only_by_std_globs(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let spells_std_glob = index.files().get(&test.file).is_some_and(|facts| {
+        let source: &str = &facts.source;
+        source.contains("::*")
+            && STD_ROOTS
+                .iter()
+                .any(|root| source.contains(&format!("{root}::")))
+    });
+    if !spells_std_glob {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(scopes) = test_scope.scopes.as_deref() else {
+        return false;
+    };
+    let name = owner.name.trim_start_matches("r#");
+    let raw_name = format!("r#{name}");
+    let binds = |scope: &NameScope| {
+        scope.block_binds(name)
+            || scope.block_binds(&raw_name)
+            || scope.imports_of(name).next().is_some()
+            || scope.imports_of(&raw_name).next().is_some()
+            || scope.defines.contains(name)
+            || scope.local_bindings.contains_key(name)
+    };
+    let std_globs_only = |scope: &NameScope| {
+        scope.globs.iter().all(|glob| {
+            glob.as_ref().is_some_and(|path| {
+                path.first().is_some_and(|root| {
+                    STD_ROOTS.contains(&root.as_str())
+                        && !scope.child_modules.contains(root)
+                        && scope.imports_of(root).next().is_none()
+                })
+            })
+        })
+    };
+    let mut std_glob_seen = false;
+    for scope in &scopes.scopes {
+        if binds(scope) || !std_globs_only(scope) {
+            return false;
+        }
+        std_glob_seen |= !scope.globs.is_empty();
+        if !scope.fn_body {
+            return std_glob_seen;
+        }
+    }
+    false
+}
+
+/// Crate roots of the standard library, as a glob import spells them.
+const STD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
+
 /// Whether `source` spells `as <name>` (or `as r#<name>`) at identifier
 /// boundaries, or the name straight after a comment: the text every renaming
 /// import of `name` contains. A cheap necessary condition only; comments,
@@ -3316,8 +3393,9 @@ fn source_spells_rename_to(source: &str, name: &str) -> bool {
 }
 
 /// Whether every free-call spelling of the owner's name in `test` is bare
-/// and that bare name is a renaming import of another function (#14069):
-/// the test then calls the other function and never the owner. A qualified
+/// and that bare name is a renaming import of another function, or is bound
+/// only by standard-library globs (#14069): the test then calls the other
+/// function and never the owner. A qualified
 /// spelling (`super::discount(..)`) or a value mention that may still reach
 /// the owner keeps the prior relation.
 pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
@@ -3325,9 +3403,11 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
     owner: &FunctionSummary,
     test: &TestSummary,
 ) -> bool {
-    // The rename check comes first: its text prefilter answers almost every
-    // test without masking and scanning the body.
-    if !bare_name_renames_another_function(index, owner, test) {
+    // The binding checks come first: their text prefilters answer almost
+    // every test without masking and scanning the body.
+    if !bare_name_renames_another_function(index, owner, test)
+        && !bare_name_bound_only_by_std_globs(index, owner, test)
+    {
         return false;
     }
     let qualifiers = call_qualifiers(&test.body, &owner.name);
@@ -6560,6 +6640,245 @@ fn integration_rename_case() {
             );
         }
         for name in KEPT_CASES.into_iter().chain(["qualified_and_bare_case"]) {
+            assert_eq!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the owner call keeps its direct relation"
+            );
+        }
+        Ok(())
+    }
+
+    /// #14069 fixture: a changed crate-level `max` beside test modules that
+    /// reach a bare `max(..)` through different scopes.
+    const STD_GLOB_LIB: &str = "\
+pub fn max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[cfg(test)]
+mod std_glob_only {
+    use std::cmp::*;
+
+    #[test]
+    fn std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_only {
+    #[test]
+    fn body_std_glob_only_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod std_and_parent_globs {
+    use super::*;
+    use std::collections::*;
+
+    #[test]
+    fn std_and_parent_globs_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_under_parent_glob {
+    use super::*;
+
+    #[test]
+    fn body_std_glob_under_parent_glob_case() {
+        use std::collections::*;
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod explicit_import_beside_std_glob {
+    use super::max;
+    use std::collections::*;
+
+    #[test]
+    fn explicit_import_beside_std_glob_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod rebound_std_root {
+    mod std {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use std::cmp::*;
+
+    #[test]
+    fn rebound_std_root_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod qualified_beside_std_glob {
+    use std::cmp::*;
+
+    #[test]
+    fn qualified_beside_std_glob_case() {
+        assert_eq!(crate::max(3, 3), 3);
+    }
+}
+";
+
+    const STD_GLOB_INTEGRATION: &str = "\
+use std::cmp::*;
+
+#[test]
+fn integration_std_glob_case() {
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_OWN_CRATE_INTEGRATION: &str = "\
+use modules::*;
+use std::collections::*;
+
+#[test]
+fn integration_own_crate_glob_case() {
+    let _seen: HashSet<u32> = HashSet::new();
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_CASES: [&str; 3] = [
+        "std_glob_only_case",
+        "body_std_glob_only_case",
+        "integration_std_glob_case",
+    ];
+
+    const STD_GLOB_KEPT_CASES: [&str; 6] = [
+        "std_and_parent_globs_case",
+        "body_std_glob_under_parent_glob_case",
+        "explicit_import_beside_std_glob_case",
+        "rebound_std_root_case",
+        "qualified_beside_std_glob_case",
+        "integration_own_crate_glob_case",
+    ];
+
+    fn std_glob_index() -> RustIndex {
+        index(&[
+            ("src/lib.rs", STD_GLOB_LIB),
+            ("tests/std_glob.rs", STD_GLOB_INTEGRATION),
+            ("tests/own_glob.rs", STD_GLOB_OWN_CRATE_INTEGRATION),
+        ])
+    }
+
+    fn std_glob_parts<'a>(
+        index: &'a RustIndex,
+        test_name: &str,
+    ) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "max")
+            .ok_or("owner `max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == test_name)
+            .ok_or_else(|| format!("test `{test_name}` must be indexed"))?;
+        Ok((owner, test))
+    }
+
+    /// #14069: a module that offers the owner's bare name only through
+    /// standard-library globs calls the standard function, not the owner.
+    #[test]
+    fn a_name_bound_only_by_std_globs_is_not_a_call_of_the_owner() -> Result<(), String> {
+        let index = std_glob_index();
+        for name in STD_GLOB_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: only a standard glob can bind the bare name"
+            );
+            assert!(
+                test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: every call is the standard function"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // The scope answer alone: only a qualified owner call keeps the
+        // relation while the bare name is still standard-bound.
+        let (owner, qualified) = std_glob_parts(&index, "qualified_beside_std_glob_case")?;
+        assert!(bare_name_bound_only_by_std_globs(&index, owner, qualified));
+        for name in STD_GLOB_KEPT_CASES
+            .into_iter()
+            .filter(|name| *name != "qualified_beside_std_glob_case")
+        {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: another route may bind the bare name"
+            );
+        }
+        Ok(())
+    }
+
+    /// #14069 through the related-test relation `ripr check` uses.
+    #[test]
+    fn a_std_glob_bound_call_relates_by_name_only() -> Result<(), String> {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation,
+        };
+        let index = std_glob_index();
+        let (owner, _) = std_glob_parts(&index, "std_glob_only_case")?;
+        let probe = Probe {
+            id: ProbeId("probe:test".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("a > b".to_string()),
+            expression: "a > b".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related = super::super::related_tests::find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        let reason_of = |name: &str| {
+            related
+                .iter()
+                .find(|(test, _)| test.name == name)
+                .map(|(_, reason)| *reason)
+        };
+        for name in STD_GLOB_CASES {
+            assert_ne!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the test calls the standard `max`, never the owner"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
             assert_eq!(
                 reason_of(name),
                 Some(RelationReason::DirectOwnerCall),
