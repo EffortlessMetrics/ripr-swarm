@@ -4555,9 +4555,10 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
         ExposureClass::StaticUnknown,
         Some(StaticLimitKind::UnsupportedSyntax),
     );
-    // The old value was already outside the band, a non-literal argument, a
-    // positional band, an operator the evaluation does not model and a value on
-    // the band edge are not decided.
+    // The old value was already outside the band, a non-literal argument, an
+    // operator the evaluation does not model and a value on the band edge are
+    // not decided. (A positional band is read since #13723,
+    // `approx_band_tests.rs`.)
     for (old, new, assertion) in [
         (
             "3.0 * radius * radius",
@@ -4568,11 +4569,6 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
             "3.14159 * radius * radius",
             "3.2 * radius * radius",
             "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
-        ),
-        (
-            "3.14159 * radius * radius",
-            "3.2 * radius * radius",
-            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
         ),
         (
             "3.14159 * radius ** 2",

@@ -1,6 +1,8 @@
 use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
-use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, parse_expression, python_band_reading,
+};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
@@ -44,7 +46,15 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+    static_limit_for_focused_change(
+        line_text,
+        None,
+        None,
+        &focus,
+        owner,
+        PythonBandSource::default(),
+        related_candidates,
+    )
 }
 
 /// A test that rebinds the owner's module object (`route.response = fake`,
@@ -121,9 +131,10 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
-    owner_source: &str,
+    source: PythonBandSource<'_>,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
+    let owner_source = source.text;
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
         return Some(PythonStaticLimit {
@@ -311,7 +322,14 @@ pub(super) fn static_limit_for_focused_change(
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
         && matches!(
-            python_band_reading(old_line_text, trimmed, owner, related_candidates, focus),
+            python_band_reading(
+                old_line_text,
+                trimmed,
+                owner,
+                source,
+                related_candidates,
+                focus
+            ),
             PythonBandReading::Unread
         )
     {
@@ -734,7 +752,10 @@ fn receiver_is_rebound_from_non_stdlib_functools(imports: &[PythonImport], recei
 /// as functools` or `from helpers import functools`). `import functools as
 /// ft` then `@ft.lru_cache` is the same binding unless `ft` is also rebound.
 /// Call arguments are already dropped by `expr_full_name`.
-fn is_imported_functools_memoization_decorator(decorator: &str, imports: &[PythonImport]) -> bool {
+pub(super) fn is_imported_functools_memoization_decorator(
+    decorator: &str,
+    imports: &[PythonImport],
+) -> bool {
     if let Some((receiver, method)) = decorator.rsplit_once('.') {
         if !is_functools_memoization_name(method) {
             return false;

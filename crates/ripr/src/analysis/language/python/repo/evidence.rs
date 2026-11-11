@@ -838,19 +838,26 @@ fn build_behavior_item(
     // The same credited test the finding classifier sees, so a live reader
     // beside a rebinding test is not limited here while its finding is
     // exposed (#10354).
-    let static_limit =
-        static_limit_for_focused_change(text, None, None, &focus, owner, "", candidates)
-            .or_else(|| {
-                module_object_rebind_limit(
-                    text,
-                    None,
-                    owner,
-                    candidates,
-                    alignment.credited.as_ref().filter(|_| alignment.observes()),
-                )
-            })
-            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
-            .map(|limit| limit.kind);
+    let static_limit = static_limit_for_focused_change(
+        text,
+        None,
+        None,
+        &focus,
+        owner,
+        super::super::approx_band::PythonBandSource::default(),
+        candidates,
+    )
+    .or_else(|| {
+        module_object_rebind_limit(
+            text,
+            None,
+            owner,
+            candidates,
+            alignment.credited.as_ref().filter(|_| alignment.observes()),
+        )
+    })
+    .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
+    .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
