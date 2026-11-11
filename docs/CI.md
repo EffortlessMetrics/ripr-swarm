@@ -243,7 +243,7 @@ A native queue base is not a trusted code source. A speculative `G2` can have
 `base_ref == refs/heads/main`. B/G remain composition data only. Initial intake,
 admission (including the composition action), review recheck and final intake
 use the same literal reviewed source commit, currently
-`abbe32369c5b0587613f331ec5bd6f22f5bef934`. The publisher policy at that commit
+`1b6bae558bd5895057726544b9c6baca63effb97`. The publisher policy at that commit
 is disabled. Updating main or a candidate cannot enable it or alter this code.
 
 The complete orchestration is called by immutable SHA from `merge-queue.yml`.

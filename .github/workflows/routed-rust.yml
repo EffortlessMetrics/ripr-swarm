@@ -43,7 +43,7 @@ jobs:
       - name: Check out protected intake evaluator only
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: abbe32369c5b0587613f331ec5bd6f22f5bef934
+          ref: 1b6bae558bd5895057726544b9c6baca63effb97
           path: .queue-trusted
           sparse-checkout: |
             .github/actions/pr-candidate-admission
@@ -55,7 +55,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
+          TRUSTED_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
         run: |
           set -euo pipefail
           trusted="$GITHUB_WORKSPACE/.queue-trusted"
@@ -175,7 +175,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha=abbe32369c5b0587613f331ec5bd6f22f5bef934
+          sha=1b6bae558bd5895057726544b9c6baca63effb97
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission source SHA is missing or invalid"; exit 1; }
           if [ -e "$GITHUB_WORKSPACE/.admission-trusted" ] || [ -L "$GITHUB_WORKSPACE/.admission-trusted" ]; then
             echo "::error::trusted admission destination is present in the candidate checkout"
@@ -422,7 +422,7 @@ jobs:
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: abbe32369c5b0587613f331ec5bd6f22f5bef934
+          ref: 1b6bae558bd5895057726544b9c6baca63effb97
           path: .admission-trusted
           sparse-checkout: |
             .github/actions/pr-candidate-admission
@@ -437,7 +437,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.admission.outputs.pr }}
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
-          TRUSTED_ADMISSION_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
+          TRUSTED_ADMISSION_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
         run: |
           set -euo pipefail
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
@@ -602,7 +602,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_SHA: abbe32369c5b0587613f331ec5bd6f22f5bef934
+          TRUSTED_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
           EXPECTED_INTAKE: ${{ needs.intake.outputs.intake_json }}
         run: |
           set -euo pipefail

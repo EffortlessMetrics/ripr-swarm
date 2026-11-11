@@ -4,7 +4,7 @@
 use crate::workflow_lifecycle::event_declarations;
 
 pub const GENERATION: &str = "  CI_LIFECYCLE_GENERATION: merge-queue-v1";
-const CONTROL_SOURCE: &str = "abbe32369c5b0587613f331ec5bd6f22f5bef934";
+const CONTROL_SOURCE: &str = "1b6bae558bd5895057726544b9c6baca63effb97";
 const HEAVY: &str =
     "{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}";
 
@@ -92,7 +92,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let intake = job(source, "intake").unwrap_or("");
     for binding in [
         "labels: [self-hosted, linux, x64, ci-control]",
-        "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
+        "ref: 1b6bae558bd5895057726544b9c6baca63effb97",
         "checks: read",
         "queue_intake.py",
         "policy/queue-publisher.toml",
@@ -207,7 +207,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     for binding in [
-        "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
+        "ref: 1b6bae558bd5895057726544b9c6baca63effb97",
         "sparse-checkout: |\n            .github/actions/pr-candidate-admission\n            policy/queue-publisher.toml",
         "--head \"$EXPECTED_HEAD\"",
         ".head.sha == $head",
@@ -452,7 +452,7 @@ mod tests {
             ("--expected-env EXPECTED_INTAKE", ""),
             ("\"$INTAKE_RECHECK\" == success", "true"),
             (
-                "ref: abbe32369c5b0587613f331ec5bd6f22f5bef934",
+                "ref: 1b6bae558bd5895057726544b9c6baca63effb97",
                 "ref: ${{ github.event.merge_group.base_sha }}",
             ),
         ] {
