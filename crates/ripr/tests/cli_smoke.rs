@@ -36717,6 +36717,86 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     Ok(())
 }
 
+/// #14238: a revision range typed where one revision is expected is answered
+/// as a range. A fixture with one configured remote would otherwise send the
+/// reader to `git fetch origin` for a branch name Git forbids. The suggested
+/// base then loads, and a misspelt plain branch keeps the fetch advice.
+#[test]
+fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("base-revision-range");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    assert!(add.status.success(), "fixture must gain `origin`: {add:?}");
+    let root_arg = root.display().to_string();
+
+    let control = run_ripr(&["check", "--root", &root_arg, "--base", "no-such-branch"]);
+    assert_eq!(control.status.code(), Some(2), "{control:?}");
+    let control_stderr = String::from_utf8_lossy(&control.stderr);
+    assert!(
+        control_stderr.contains("git fetch origin") && !control_stderr.contains("revision range"),
+        "fixture precondition: a misspelt plain branch gets the fetch advice: {control_stderr}"
+    );
+
+    for (range, start) in [
+        ("HEAD..HEAD", "HEAD"),
+        ("HEAD...HEAD", "HEAD"),
+        ("HEAD~0..", "HEAD~0"),
+    ] {
+        let output = run_ripr(&["check", "--root", &root_arg, "--base", range]);
+        assert_eq!(output.status.code(), Some(2), "{range}: {output:?}");
+        assert!(output.stdout.is_empty(), "{range}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("`{range}` is a revision range"))
+                && stderr.contains("`--base` takes one revision")
+                && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
+            "{range}: the refusal must name the range and the base to pass: {stderr}"
+        );
+        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+            assert!(
+                !stderr.contains(wrong),
+                "{range}: a range must get no `{wrong}` advice: {stderr}"
+            );
+        }
+        let suggested = run_ripr(&["check", "--root", &root_arg, "--base", start]);
+        assert!(
+            suggested.status.success(),
+            "{range}: the suggested `--base {start}` must load: {suggested:?}"
+        );
+    }
+
+    let head = run_ripr(&[
+        "diff",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD..HEAD~0",
+    ]);
+    assert_eq!(head.status.code(), Some(2), "{head:?}");
+    let head_stderr = String::from_utf8_lossy(&head.stderr);
+    assert!(
+        head_stderr.contains("`--head` takes one revision")
+            && head_stderr.contains("Pass the range's end: `--head HEAD~0`")
+            && !head_stderr.contains("git fetch"),
+        "the head refusal must name its own flag and the range's end: {head_stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
 /// An ancestor revision past the start of history (`HEAD~5`) is not fixed by
 /// adding a remote; the repair says the history is shorter, and an empty
 /// `--base` names itself instead of quoting an empty ref.
