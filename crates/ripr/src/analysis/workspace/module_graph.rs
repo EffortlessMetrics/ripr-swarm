@@ -275,26 +275,6 @@ where
             }
         }
         if owner_reaches_production {
-            // `cargo test` in the nearest package runs its `[lib]`/`[[bin]]`
-            // unit tests, so only that package's production reach counts;
-            // an ancestor's `mod inner;` across a nested manifest, or a
-            // bench/example root, compiles the file in another build.
-            let nearest = nearest_manifest_dir(workspace_root, &absolute)
-                .map(|dir| lexical(&normalize(&dir)));
-            let nearest_reaches = nearest.is_some_and(|dir| {
-                // An ancestor reaching first may have stopped the owner
-                // loop before the nearest package was walked.
-                walks
-                    .entry(dir.clone())
-                    .or_insert_with(|| PackageWalk::new(workspace_root, &dir))
-                    .as_mut()
-                    .is_some_and(|walk| {
-                        walk.find(workspace_root, &targets) == Some(Origin::Production)
-                    })
-            });
-            if nearest_reaches {
-                context.module_graph_reached.insert(relative);
-            }
             continue;
         }
         // Only a package walk can prove a file unreached.

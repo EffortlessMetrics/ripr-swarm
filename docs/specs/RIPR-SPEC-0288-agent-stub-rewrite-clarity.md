@@ -128,24 +128,19 @@ This changes the emitted stub only; classifier credit rules are unchanged.
 
 The human `ripr repair` / `ripr agent repair --phase before` start prints `Run
 the new test: <command>` before the continue line when the recommended test's
-exact command is established, spelled like the stub run command. A file runs
-as `--test TARGET NAME` when the package's manifest or `tests/` discovery
-names its target and that name is a plain cargo target name (ASCII
-alphanumerics, `_`, `-`, not starting with `-`). Otherwise the file runs by
-name only when a target `cargo test` runs compiles it: a resolved module edge
-from a `[lib]` or `[[bin]]` root of its nearest package reaches it
-(`apply_module_graph_evidence` records it in `module_graph_reached`; a reach
-only from a test, bench or example root, or from an ancestor package across a
-nested manifest, does not count), and its source role is a production subject,
-test evidence or production-like test infrastructure. Not being an orphan is
-not enough: an incomplete walk (an unresolved `cfg_if!` or `#[path]` edge, an
-unreadable file, or the file bound) cannot place the file, so it gets no
-command rather than one that runs 0 tests. For example, `src/tests/` declared
-from the library runs by name. The manifest path renders natively, so a
-literal `\` in a Unix checkout root is kept. Every other case gets no line: a
-file no resolved edge reaches, a bench, example or build script, a registered
-target ripr cannot name, a non-Rust file, a non-identifier test name, or a
-file outside any package. JSON output is unchanged.
+exact command is established, spelled like the stub run command: a file in an
+integration target runs as `--test TARGET NAME` when the package's manifest or
+`tests/` discovery names that target (`harness = false`, `required-features`
+and an unestablished `autotests` leave it unnamed) and the name is a plain
+cargo target name (ASCII alphanumerics, `_`, `-`, not starting with `-`). The
+manifest path renders natively, so a literal `\` in a Unix checkout root is
+kept. Every other case gets no line, the packet's name filter staying the only
+hint: inline module tests (whether a by-name run reaches one depends on `[lib]
+test`, `cfg` and feature gates and `#[path]` resolution that a static walk
+cannot settle, and a wrong filter runs 0 tests and exits 0), `src/tests/`
+module files, benches, examples and build scripts, a registered target ripr
+cannot name, a non-Rust file, a non-identifier test name, or a file outside
+any package. JSON output is unchanged.
 
 ## Required Evidence
 
@@ -170,7 +165,7 @@ file outside any package. JSON output is unchanged.
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate`
 - `crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification`
 - `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_names_the_target_or_refuses`
-- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_needs_a_positive_module_reach`
+- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_keeps_a_literal_backslash_unix_root`
 - `crates/ripr/src/cli/commands/agent.rs::tests::human_stdout_names_the_focused_test_command_when_known`
 - `crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_repair_start_prints_one_next_command_inside_a_line_budget`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`

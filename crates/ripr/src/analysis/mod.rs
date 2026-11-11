@@ -227,7 +227,6 @@ pub(crate) fn executable_test_function_names(
 }
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
-pub(crate) use workspace::SourceRole;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::changed_source_files_absent_from_worktree;

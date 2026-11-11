@@ -133,12 +133,6 @@ pub(crate) struct SourceRoleContext {
     /// file and line. rustc may compile them, but ripr cannot compose their
     /// module context, so their evidence is incomplete. They still seed.
     pub(crate) module_graph_unresolved_routes: BTreeMap<PathBuf, (PathBuf, usize)>,
-    /// Relative paths a resolved module edge from a `[lib]` or `[[bin]]`
-    /// root of their nearest package reaches (#14320): positive evidence
-    /// that `cargo test` in that package compiles them. Test, bench, example
-    /// and ancestor-package reaches are not recorded. Absence proves
-    /// nothing; an incomplete walk leaves a file in none of these sets.
-    pub(crate) module_graph_reached: BTreeSet<PathBuf>,
 }
 
 impl SourceRoleContext {
