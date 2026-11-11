@@ -386,12 +386,15 @@ languages), a config-less root runs built-in defaults including the
 zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
-Each git invocation a refresh runs is bounded like `ripr check` (#14386):
+The git invocations of a refresh's check (diff load and committed-source
+probe) are bounded like `ripr check` (#14386):
 `RIPR_GIT_TIMEOUT` in the server's `env` (whole seconds, `0` disables the
 deadline) when set, else the same 300-second default. MCP has no
 `--git-timeout` flag. An invalid value fails the attempt closed with
 `config_invalid`, never a silent default; the environment is read by the
 server process, so a fix needs a server restart.
+Other git reads, such as the repair-card currentness probe, keep their own
+fixed 60-second deadline.
 
 Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
