@@ -331,7 +331,23 @@ pub(in crate::app) fn location_miss_hint(
         .get_key_value(&wanted)
         .or_else(|| same_file.iter().next())
     {
-        let first_line = lines.iter().next().copied().unwrap_or_default();
+        // Suggest only a selector that resolves to exactly one finding: a
+        // line shared by several findings (or by another matching file)
+        // would refuse as ambiguous on retry.
+        let suggestion = lines
+            .iter()
+            .map(|line| format!("{file}:{line}"))
+            .find(|candidate| {
+                matches!(
+                    select_finding(findings, candidate),
+                    FindingSelection::Unique(_)
+                )
+            });
+        let suggestion = match suggestion {
+            Some(candidate) => format!("select one as {candidate}"),
+            None => "every listed line holds several findings, so select one by its probe id"
+                .to_string(),
+        };
         let listed = lines
             .iter()
             .take(MAX_LISTED)
@@ -351,7 +367,7 @@ pub(in crate::app) fn location_miss_hint(
             n => format!(" {n} other files matching that path also have findings."),
         };
         return Some(format!(
-            " Findings in {file} are on {noun} {listed}{more}; select one as {file}:{first_line}.{others}{column_note}"
+            " Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
         ));
     }
     let files = other_files
@@ -654,12 +670,12 @@ mod tests {
         ];
         assert_eq!(
             location_miss_hint(&findings, std::path::Path::new(""), "src/lib.rs:9999").as_deref(),
-            Some(" Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:3.")
+            Some(" Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9.")
         );
         assert_eq!(
             location_miss_hint(&findings, std::path::Path::new(""), "./src\\lib.rs:1:2").as_deref(),
             Some(
-                " Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:3. Selectors are file:line; drop the column."
+                " Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9. Selectors are file:line; drop the column."
             )
         );
         assert_eq!(
@@ -701,6 +717,24 @@ mod tests {
             )
             .as_deref(),
             Some(" Findings in src/lib.rs are on line 4; select one as src/lib.rs:4.")
+        );
+        // Line 3 holds two findings, so `src/lib.rs:3` would refuse as
+        // ambiguous; the suggestion is the line that resolves uniquely.
+        assert!(matches!(
+            select_finding(&findings, "src/lib.rs:3"),
+            FindingSelection::Ambiguous(_)
+        ));
+        assert!(matches!(
+            select_finding(&findings, "src/lib.rs:9"),
+            FindingSelection::Unique(_)
+        ));
+        // When every line is shared, no location selector is suggested.
+        let shared = vec![finding("probe:a", 3, None), finding("probe:b", 3, None)];
+        assert_eq!(
+            location_miss_hint(&shared, std::path::Path::new(""), "src/lib.rs:9999").as_deref(),
+            Some(
+                " Findings in src/lib.rs are on line 3; every listed line holds several findings, so select one by its probe id."
+            )
         );
         // Not location-shaped: ids and bare words get no location hint.
         for selector in [
