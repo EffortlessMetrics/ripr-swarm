@@ -4388,6 +4388,11 @@ pub fn no_else(total: u32) {
         log(total / 3)
     }
 }
+
+pub fn split_condition(total: u32, vip: bool) -> u32 {
+    if vip
+        && total > 1 { 4 } else { 5 }
+}
 "#;
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
         let return_shapes = facts
