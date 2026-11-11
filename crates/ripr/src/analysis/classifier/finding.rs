@@ -896,7 +896,10 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             if !(before_ok && after_ok) {
                 continue;
             }
-            if wildcard_patterns.iter().any(|pattern| pattern.contains(&at)) {
+            if wildcard_patterns
+                .iter()
+                .any(|pattern| pattern.contains(&at))
+            {
                 continue;
             }
             let tail = body[from..].trim_start();
@@ -1893,10 +1896,7 @@ mod tests {
         }
         // Discarding a separate call must not invalidate a real binding.
         assert_eq!(
-            bound_identifiers_from_owner_calls(
-                "let amount = tax(100); let _ = tax(200);",
-                "tax"
-            ),
+            bound_identifiers_from_owner_calls("let amount = tax(100); let _ = tax(200);", "tax"),
             vec!["amount".to_string()]
         );
         assert!(oracle_binds_sink_identity(

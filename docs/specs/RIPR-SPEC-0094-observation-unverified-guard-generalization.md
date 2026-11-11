@@ -667,6 +667,11 @@ keep their existing token rule.
 Proof for the wildcard distinction:
 `owner_binding_scan_never_treats_a_wildcard_as_a_bound_name` and
 `discarded_owner_result_cannot_confirm_an_unrelated_wildcard_assertion`.
+The public producer fixtures `wildcard_owner_discard` and `wildcard_owner_named`
+retain one finding and an extracted assertion each. Their independent
+RIPR-SPEC-0108 cases pin weak discarded-result credit and exposed named-binding
+credit, including the related test identity. The discarded assertion accepts
+both tax rates; the named assertion rejects the old nine-percent rate.
 
 The owner-return pin (#4478) is then the path that credits an exact pin
 such as `assert_eq!(sku_family("BOLT-M8"), "BOLT")`. Its return-path gate
