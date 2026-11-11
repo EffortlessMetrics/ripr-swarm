@@ -139,6 +139,10 @@ fn inspection_discovery_discloses_observed_cache_writes() -> Result<(), String> 
                 "fresh inspection changed {path:?}"
             );
         }
+        assert!(
+            after.contains_key(Path::new("target/ripr/.gitignore")),
+            "a fresh {verb} that created target/ripr must mark it self-ignoring"
+        );
         // New entries outside the declared cache output are writes too; the
         // cache-presence assertion above must not excuse them. The cache
         // writer may create the `target` / `target/ripr` directory chain on
