@@ -984,6 +984,12 @@ fn review_comments_with_admission(
         &analysis_scope,
         analysis_outcome.as_ref(),
     );
+    let rendered_json = output::counted_findings::attach_review(
+        &rendered_json,
+        options.check_output.as_deref(),
+        &diff_text,
+        &render_context,
+    )?;
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,

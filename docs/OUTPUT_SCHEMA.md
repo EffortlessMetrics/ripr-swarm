@@ -10476,15 +10476,56 @@ unsupported versions, and `unjoinable` all permit **zero clearance**.
 counts, matching seam/gap IDs, file/owner proximity, changed-owner placement,
 nor matching base/head/diff metadata establishes a counted-finding join.
 
-A future positive contract must originate with the individual finding and bind
-its disposition to the same evaluated head, base, exact diff, producer build,
-effective analysis configuration/options and run completeness. Duplicate or
-conflicting claims, suppression, stale/cross-diff inputs, missing bindings and
-unsupported producers must grant no credit. Raw membership alone is insufficient:
-the consumer still owns its exact post-filter counted set, exclusions, and
-unknown-class/cap reconciliation. Version 1 creates no such binding or positive
-join. It does not fix a consumer pinned to RIPR 0.10.0; release and intentional
-pin adoption remain separate work (EffortlessMetrics/ripr#1779).
+### Finding-origin dispositions (version 1)
+
+`counted_finding_dispositions` is a separate optional collection in check JSON
+and base/head review JSON. It never upgrades independent seam or ledger cards.
+A complete producer record has `status: complete`,
+`basis: complete_raw_findings_before_consumer_filters`, `analysis_binding`,
+`findings_sha256`, and one `dispositions` entry per individual `Finding.id`.
+Each entry names `finding_id`, `classification`, `status`, `gap_state`, and
+`reason`. Probe IDs and canonical gap groups are not membership identities.
+
+The initial positive static route supports only the Rust producer's typed
+`cross_language_oracle_visibility_unresolved` finding with `no_static_path`,
+no related Rust tests, and `candidate_current` source. This names the external
+oracle limitation; it is not a coverage claim. Ordinary known gap findings
+remain `actionable`; exposed findings remain `already_observed`. Other typed
+limits or unknown actionability are `unjoinable`; non-current source is
+`outside_basis`. A generic test suggestion does not change any disposition.
+
+The binding names the evaluated head commit, requested base commit, actual
+merge-base diff origin, SHA-256 of exact diff bytes, clean exact producer build
+and package version, finding-affecting configuration identity, separate
+count-policy identity, mode, selected languages and unchanged-test scope.
+The count-policy digest includes effective severity and overrides using a
+representation tied to that exact producer build. Initially only complete,
+committed, clean-worktree Rust runs with unchanged tests included qualify.
+Dirty/unknown builds, unbound Perl facts, suppression/owner opt-outs, partial
+analysis, conflicting expressions and capped findings grant no positive basis.
+Review checks live root/base/head and configuration, verifies the complete raw
+manifest digest, reconstructs the same finding-origin dispositions, and
+reconciles each class total. Missing/unsupported/malformed contracts produce
+`status: unjoinable`, `reason: missing_or_invalid_producer_basis`, and no entries.
+The digest detects inconsistency; it is not a producer signature or permission
+to trust an artifact from an unauthenticated source.
+
+A consumer must obtain its **complete post-filter counted ID set** under its
+own count policy, then verify every ID occurs exactly once in this complete raw
+manifest. It must preserve suppression, non-production, outside-head,
+dependency and declaration exclusions, reject unknown-class/cap ambiguity,
+and reconcile the resulting set with the aggregate before granting credit.
+Only a `joined` / `static_limitation` disposition on an ID actually in that
+set is eligible. Unrelated actionable IDs must remain counted. Raw membership,
+matching totals, seam labels, or a partial set cannot establish this basis.
+The producer does not know or replace a downstream filter policy.
+
+Focused proof: `cargo test -p ripr --lib counted_findings` and
+`cargo test -p ripr --lib counted_check_join`. The latter retains all three
+historical changed-literal findings and ten unrelated guidance cards.
+This source contract does not fix a consumer pinned to RIPR 0.10.0; release,
+intentional pin adoption and consumer hosted proof remain separate work
+(EffortlessMetrics/ripr#1779).
 
 JSON shape:
 

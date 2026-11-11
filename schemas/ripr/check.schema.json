@@ -14,6 +14,176 @@
     "findings"
   ],
   "properties": {
+    "counted_finding_dispositions": {
+      "description": "Separate finding-origin dispositions; raw membership is not authority for downstream filtered counts. See OUTPUT_SCHEMA.md for required complete-basis reconciliation.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "status": {
+              "const": "complete"
+            },
+            "basis": {
+              "const": "complete_raw_findings_before_consumer_filters"
+            },
+            "analysis_binding": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "producer_version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "analysis_config_identity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mode": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "producer_commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "head_commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "base_commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "diff_base_commit": {
+                  "type": "string",
+                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                },
+                "diff_sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "count_policy_identity": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "languages": {
+                  "const": [
+                    "rust"
+                  ]
+                },
+                "include_unchanged_tests": {
+                  "const": true
+                }
+              },
+              "required": [
+                "producer_version",
+                "analysis_config_identity",
+                "mode",
+                "producer_commit",
+                "head_commit",
+                "base_commit",
+                "diff_base_commit",
+                "diff_sha256",
+                "count_policy_identity",
+                "languages",
+                "include_unchanged_tests"
+              ]
+            },
+            "findings_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "dispositions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "finding_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "classification": {
+                    "enum": [
+                      "exposed",
+                      "weakly_exposed",
+                      "reachable_unrevealed",
+                      "no_static_path",
+                      "infection_unknown",
+                      "propagation_unknown",
+                      "static_unknown"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "joined",
+                      "unjoinable",
+                      "outside_basis"
+                    ]
+                  },
+                  "gap_state": {
+                    "enum": [
+                      "static_limitation",
+                      "actionable",
+                      "already_observed",
+                      "unknown"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "finding_id",
+                  "classification",
+                  "status",
+                  "gap_state",
+                  "reason"
+                ]
+              }
+            }
+          },
+          "required": [
+            "schema_version",
+            "status",
+            "basis",
+            "analysis_binding",
+            "findings_sha256",
+            "dispositions"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "status": {
+              "const": "unjoinable"
+            },
+            "reason": {
+              "const": "missing_or_invalid_producer_basis"
+            },
+            "dispositions": {
+              "type": "array",
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "schema_version",
+            "status",
+            "reason",
+            "dispositions"
+          ]
+        }
+      ]
+    },
     "schema_version": { "const": "0.2" },
     "tool": { "const": "ripr" },
     "status": {

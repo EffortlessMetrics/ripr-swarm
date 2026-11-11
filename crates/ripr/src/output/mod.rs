@@ -16,6 +16,7 @@ pub(crate) mod check_file_fact_cache;
 pub(crate) mod ci_summary;
 pub(crate) mod compact_json;
 pub(crate) mod count_noun;
+pub(crate) mod counted_findings;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
 pub(crate) mod discriminator_line;

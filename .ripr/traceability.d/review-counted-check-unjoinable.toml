@@ -1,9 +1,12 @@
 [[extend]]
 id = "RIPR-SPEC-0068"
 tests = [
+  "crates/ripr/src/output/counted_findings/tests.rs::finding_origin_static_disposition_preserves_unrelated_actionable_finding",
+  "crates/ripr/src/output/counted_findings/tests.rs::changed_binding_or_incomplete_basis_never_receives_credit",
+  "crates/ripr/src/output/counted_findings/tests.rs::suppression_duplicate_and_conflicting_raw_rows_fail_closed",
   "crates/ripr/src/output/review_comments/tests/counted_check_join.rs::seam_and_ledger_renderers_disclose_unjoinable_on_every_route",
   "crates/ripr/src/output/review_comments/tests/counted_check_join.rs::hosted_16619_projection_never_assigns_three_probes_to_ten_cards",
   "crates/ripr/src/output/review_comments/tests/counted_check_join.rs::matching_or_conflicting_labels_cannot_upgrade_the_unjoinable_contract",
 ]
-code = ["crates/ripr/src/output/review_comments/mod.rs"]
+code = ["crates/ripr/src/output/counted_findings.rs", "crates/ripr/src/output/review_comments/mod.rs"]
 outputs = ["schemas/ripr/review-comments.schema.json", "schemas/ripr/check.schema.json"]

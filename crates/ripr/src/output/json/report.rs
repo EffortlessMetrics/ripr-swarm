@@ -794,6 +794,12 @@ pub(crate) fn render_with_config(
         );
     }
     out.push_str("}\n");
+    crate::output::counted_findings::append_check(
+        &mut out,
+        output,
+        config,
+        findings_bound.is_some(),
+    );
     out
 }
 

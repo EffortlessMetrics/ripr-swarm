@@ -128,7 +128,11 @@ Every rendered review card must include:
   rendering route establishes an individual counted-check disposition. Absent,
   malformed or unsupported contracts also grant zero clearance. The document's
   `producer_version` names the renderer only, not a shared analysis run.
-  Positive joins and downstream post-filter counting remain separate work
+  A separate `counted_finding_dispositions` collection may carry direct
+  finding-origin dispositions under the complete, versioned producer binding
+  documented in OUTPUT_SCHEMA.md. It never relabels these seam cards. The
+  consumer must reconcile its complete post-filter counted identity set before
+  any credit; raw membership and equal counts are insufficient
   (EffortlessMetrics/ripr#1779).
 - a card repair summary — a projection of the canonical repair
   packet (RIPR-SPEC-0061), never a packet contract of its own:
