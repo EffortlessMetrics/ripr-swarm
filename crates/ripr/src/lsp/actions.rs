@@ -2628,16 +2628,22 @@ fn copy_seam_packet_target(
     target
 }
 
+/// The related test the editor opens for a seam. A test linked only by
+/// proximity (same file, same module, a token substring) never runs the
+/// seam, so its oracle belongs to other code, and it is never offered: with
+/// no other related test there is no navigation, matching the witness fix
+/// site (#5354).
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
-    seam.evidence
-        .related_tests
-        .iter()
+    let tests = &seam.evidence.related_tests;
+    let call_bearing = || {
+        tests
+            .iter()
+            .filter(|test| !test.relation_reason.is_proximity_only())
+    };
+    call_bearing()
         .find(|test| test.oracle_strength == OracleStrength::Strong)
         .or_else(|| {
-            seam.evidence
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            call_bearing().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
         })
         .map(Arc::as_ref)
 }

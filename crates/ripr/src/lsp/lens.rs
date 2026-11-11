@@ -21,10 +21,7 @@ use super::actions::related_test_navigation_route;
 use super::client_features::ClientFeatureProfile;
 use super::uri::{file_uri_for_path, file_uris_match};
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
-use crate::domain::{
-    ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTest, RelationConfidence,
-    SymbolId,
-};
+use crate::domain::{ExposureClass, Finding, LanguageStatus, RelatedTest, SymbolId};
 use std::path::Path;
 use std::time::Duration;
 use tower_lsp_server::ls_types::{CodeLens, Command, Position, Range, Uri};
@@ -285,11 +282,10 @@ fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
 /// honest target. Fail closed: a finding with no static path, no related test,
 /// or a file that did not parse never navigates, and neither does a test that
 /// is not an existing file inside the workspace root (the same check
-/// `ripr.showRelatedTest` applies). Selection mirrors the navigate code
-/// action's `best_related_test_for_editor` over the finding's own
-/// `related_tests` (the list the title count comes from, so count and target
-/// agree): a strong-oracle test first, else the lowest relation-confidence
-/// rank, ties to the earliest listed.
+/// `ripr.showRelatedTest` applies). Selection is the witness fix site
+/// (`DiagnosticWitness::selected_related_test`), so the lens opens the test
+/// hover and related information name; a test linked only by proximity is
+/// never the target (#5354).
 ///
 /// Containment and `is_file` are filesystem reads, so they run only for the
 /// one selected test per lens, never for every related test.
@@ -301,29 +297,10 @@ fn lens_navigation_test<'a>(
     {
         return None;
     }
-    let test = finding
-        .related_tests
-        .iter()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            finding
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })?;
+    let test = crate::domain::DiagnosticWitness::selected_related_test(finding)?;
     let path = related_test_path(snapshot, test);
     (super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file())
         .then_some(test)
-}
-
-fn relation_confidence_rank(confidence: Option<RelationConfidence>) -> u8 {
-    match confidence {
-        Some(RelationConfidence::High) => 0,
-        Some(RelationConfidence::Medium) => 1,
-        Some(RelationConfidence::Low) => 2,
-        Some(RelationConfidence::Opaque) => 3,
-        None => 4,
-    }
 }
 
 fn related_test_path(snapshot: &AnalysisSnapshot, test: &RelatedTest) -> std::path::PathBuf {
@@ -547,8 +524,8 @@ mod tests {
     use crate::app::Mode;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
-        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationConfidence,
+        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use crate::lsp::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
     use crate::lsp::state::{AnalysisSnapshot, RefreshMetadata};
@@ -1493,6 +1470,37 @@ mod tests {
         ranked.related_tests[2].relation_confidence = Some(RelationConfidence::High);
         if opened(ranked)? != "test_2" {
             return Err("the highest-confidence test must be opened".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_never_opens_a_proximity_only_test_over_a_calling_one() -> Result<(), String> {
+        // #5354: a same-file test with a strong oracle on other code is not
+        // where the change is checked; the test that calls the owner is.
+        let root = navigation_root("proximity")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let mut finding = exposed_finding(2);
+        finding.related_tests[0].oracle_strength = OracleStrength::Strong;
+        finding.related_tests[0].relation_reason =
+            Some(crate::domain::RelationReason::SameTestFile);
+        finding.related_tests[1].relation_reason =
+            Some(crate::domain::RelationReason::DirectOwnerCall);
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding.clone()]);
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        let opened = target_of(&command)?
+            .get("test_name")
+            .and_then(|name| name.as_str())
+            .map(str::to_string);
+        if opened.as_deref() != Some("test_1") {
+            return Err(format!("expected the calling test_1, opened {opened:?}"));
+        }
+        // With only the proximity row left there is no honest target.
+        finding.related_tests.truncate(1);
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if command.command == OPEN_RELATED_TEST_COMMAND {
+            return Err("a proximity-only test must not be a lens target".to_string());
         }
         Ok(())
     }
