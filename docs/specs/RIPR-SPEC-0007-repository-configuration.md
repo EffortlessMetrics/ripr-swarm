@@ -101,11 +101,13 @@ relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
 
 ### Self-ignoring default output tree
 
-Once a workspace output guard has proven `target/ripr` contained, ripr gives
+Once a workspace output guard has established that `target/ripr` is contained, ripr gives
 that tree a `target/ripr/.gitignore` containing `*`: immediately when the tree
-already exists, otherwise on the first atomic write that creates it. ripr's
-own default output therefore never appears in `git status` and needs no
-`.gitignore` edit from the user. The guard itself creates no directory, so a
+already exists, otherwise on the first atomic write into it under the same
+path spelling the guard used. ripr's own default output therefore stays out of
+`git status` and needs no `.gitignore` edit from the user; a tree written under
+a different spelling is marked by the next guarded run, and until then the
+artifact-ignore probe reports it as uncovered. The guard itself creates no directory, so a
 command that refuses after its guard leaves nothing behind. The file is
 created exclusively and never rewritten: a user's own `target/ripr/.gitignore`
 is kept as written. ripr never creates or edits the repository's own

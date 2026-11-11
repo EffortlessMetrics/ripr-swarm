@@ -113,6 +113,10 @@ fn first_check_leaves_git_status_clean_without_a_gitignore_chore() -> Result<(),
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stderr.contains(".gitignore"), "{stderr}");
     assert!(!stdout.contains(".gitignore"), "{stdout}");
+    assert_eq!(
+        git_stdout(&scratch.0, &["status", "--porcelain"])?,
+        status_before
+    );
     // `pilot` writes its packet under target/ripr/pilot; the first write
     // into the guarded tree gives it the self-ignore file.
     let pilot = Command::new(env!("CARGO_BIN_EXE_ripr"))

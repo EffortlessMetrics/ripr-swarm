@@ -19,7 +19,7 @@ pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String>
     let cache_dir_env = std::env::var("RIPR_CACHE_DIR").ok();
     ensure_default_output_contained_with(root, cache_dir_env.as_deref())?;
     // An explicit `RIPR_CACHE_DIR` waives the check above, so the default tree
-    // self-ignores only once it is proven contained on its own.
+    // self-ignores only once it is established as contained on its own.
     if cache_dir_env.is_none_or(|value| value.trim().is_empty())
         || ensure_default_output_contained_with(root, None).is_ok()
     {
@@ -48,15 +48,15 @@ pub(crate) const DEFAULT_OUTPUT_ROOT: &str = "target/ripr";
 pub(crate) const DEFAULT_OUTPUT_ROOT_GITIGNORE: &str =
     "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n";
 
-/// `{root}/target/ripr` trees a workspace output guard has proven contained
+/// `{root}/target/ripr` trees a workspace output guard has established as contained
 /// in this process, in lexical absolute form. Writes below one of them mark it
-/// self-ignoring ([`mark_self_ignoring_output_root`]).
-/// The flag records that the tree's ignore file is known present, so later
-/// writes skip the filesystem check.
-static SELF_IGNORING_OUTPUT_ROOTS: std::sync::Mutex<Vec<(std::path::PathBuf, bool)>> =
+/// self-ignoring ([`mark_self_ignoring_output_root`]). Presence of the ignore
+/// file is re-checked on each such write (one `lstat`), so a tree deleted and
+/// recreated inside a long-lived LSP or MCP process is marked again.
+static SELF_IGNORING_OUTPUT_ROOTS: std::sync::Mutex<Vec<std::path::PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 
-fn self_ignoring_output_roots() -> std::sync::MutexGuard<'static, Vec<(std::path::PathBuf, bool)>> {
+fn self_ignoring_output_roots() -> std::sync::MutexGuard<'static, Vec<std::path::PathBuf>> {
     match SELF_IGNORING_OUTPUT_ROOTS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -92,32 +92,31 @@ fn register_self_ignoring_output_root(root: &Path) {
     let Some(tree) = lexical_absolute(&root.join(DEFAULT_OUTPUT_ROOT)) else {
         return;
     };
-    let present = write_self_ignore_file(&tree);
+    write_self_ignore_file(&tree);
     let mut roots = self_ignoring_output_roots();
-    match roots.iter_mut().find(|(known, _)| *known == tree) {
-        Some(entry) => entry.1 |= present,
-        None => roots.push((tree, present)),
+    if !roots.contains(&tree) {
+        roots.push(tree);
     }
 }
 
 /// Called after an atomic write created `dir`: when `dir` lies in a guarded
-/// `target/ripr` tree, give that tree its self-ignore file.
+/// `target/ripr` tree, give that tree its self-ignore file. Matching is
+/// lexical; a writer that spells the tree differently from its guard (another
+/// symlinked spelling of the same directory) is simply not matched, and the
+/// next guard call marks the then-existing tree.
 fn mark_self_ignoring_output_root(dir: &Path) {
-    if self_ignoring_output_roots()
-        .iter()
-        .all(|(_, present)| *present)
-    {
+    if self_ignoring_output_roots().is_empty() {
         return;
     }
     let Some(dir) = lexical_absolute(dir) else {
         return;
     };
-    let mut roots = self_ignoring_output_roots();
-    if let Some(entry) = roots
-        .iter_mut()
-        .find(|(tree, present)| !*present && dir.starts_with(tree))
-    {
-        entry.1 = write_self_ignore_file(&entry.0);
+    let tree = self_ignoring_output_roots()
+        .iter()
+        .find(|tree| dir.starts_with(tree))
+        .cloned();
+    if let Some(tree) = tree {
+        write_self_ignore_file(&tree);
     }
 }
 
