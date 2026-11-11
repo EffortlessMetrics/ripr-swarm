@@ -3176,7 +3176,11 @@ fn include_limitation_reach(
             continue;
         }
         match target_context_roots(&limitation.parent, index, src_dirs) {
-            Some(roots) if roots.iter().all(|root| root_is_unimportable_target(root)) => {
+            Some(roots)
+                if roots
+                    .iter()
+                    .all(|root| root_is_unimportable_target(index, root)) =>
+            {
                 reach.extend(roots);
             }
             _ => return IncludeReach::Workspace,
@@ -3185,14 +3189,21 @@ fn include_limitation_reach(
     IncludeReach::Roots(reach)
 }
 
-/// The text of a fragment the index does not hold, when it is readable,
-/// bounded, UTF-8 and mounts nothing.
+/// The text of a fragment the index does not hold, when it resolves inside
+/// the repository and is readable, bounded, UTF-8 and mounts nothing.
 fn unindexed_inert_fragment(index: &RustIndex, fragment: &Path) -> Option<String> {
     let root = index
         .workspace_authority
         .as_ref()
         .map(|authority| authority.root.as_path())?;
-    let bytes = std::fs::read(root.join(fragment)).ok()?;
+    // The same boundary the include producer keeps: a path that resolves
+    // outside the repository (a symlink) is never read.
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let target = std::fs::canonicalize(root.join(fragment)).ok()?;
+    if !target.starts_with(&canonical_root) {
+        return None;
+    }
+    let bytes = std::fs::read(&target).ok()?;
     if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
         return None;
     }
@@ -3220,12 +3231,16 @@ fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
 
 /// Whether `root` is an integration test, bench or example crate root: a
 /// crate no other crate can depend on, so nothing it defines is importable.
-fn root_is_unimportable_target(root: &Path) -> bool {
-    root.parent()
-        .and_then(Path::file_name)
-        .is_some_and(|directory| {
-            directory == "tests" || directory == "benches" || directory == "examples"
-        })
+/// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
+/// root is importable and answers no.
+fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
+    !index.member_crates.is_custom_lib_path_root(root)
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|directory| {
+                directory == "tests" || directory == "benches" || directory == "examples"
+            })
 }
 
 /// Whether source text may hold an out-of-line `mod name;`, read lexically

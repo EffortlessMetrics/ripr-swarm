@@ -2641,9 +2641,11 @@ not themselves a static propagation proof.
   gets. A fragment with no possible binding leaves placement on. One that
   may bind an assertion macro turns placement off only for the including
   crate when that crate is an integration test, bench or example root, which
-  nothing can import, and its crate-local sites stay charged to that crate;
+  nothing can import (a `[lib] path` moved under `tests/` is a library and
+  does not count), and its crate-local sites stay charged to that crate;
   inside a library or binary it keeps the workspace-wide refusal. A dynamic
-  expression, a missing, unreadable or oversized target, a fragment that
+  expression, a missing, unreadable or oversized target, a path that
+  resolves outside the repository through a symlink, a fragment that
   mounts a file, and a fragment that is itself a module of some crate keep
   the workspace-wide refusal too. The fragment's items stay unread, so a
   test that reaches a fragment's function by import, glob or path is not
@@ -2652,6 +2654,8 @@ not themselves a static propagation proof.
   `a_read_inert_fragment_in_the_library_leaves_its_tests_credited`,
   `an_unread_mounting_or_binding_fragment_keeps_the_refusal`,
   `a_fragments_namesake_is_never_taken_for_the_owner`,
+  `a_library_rooted_under_tests_is_not_an_unimportable_crate`,
+  `a_fragment_symlinked_out_of_the_repository_is_not_read`,
   `the_glob_alone_and_an_unresolved_include_are_the_two_baselines`). The same
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the

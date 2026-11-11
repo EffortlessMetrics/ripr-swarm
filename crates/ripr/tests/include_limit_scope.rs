@@ -284,6 +284,55 @@ fn an_unread_mounting_or_binding_fragment_keeps_the_refusal() -> Result<(), Stri
     )
 }
 
+/// A `[lib] path` under `tests/` is a library other crates can import, so
+/// a fragment that may bind an assertion macro there is not confined to it.
+#[test]
+fn a_library_rooted_under_tests_is_not_an_unimportable_crate() -> Result<(), String> {
+    let workspace = "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\"dep\"]\n";
+    let member = "[package]\nname = \"dep\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"tests/lib.rs\"\n\n[dependencies]\ndemo = { path = \"..\" }\n";
+    let binding = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+    let nested = "mod frag { include!(\"fixtures/frag.rs\"); }\n";
+    check(
+        &[(
+            "a binding fragment in a custom library root",
+            vec![
+                ("Cargo.toml", workspace.to_string()),
+                ("src/b.rs", own_unit()),
+                ("dep/Cargo.toml", member.to_string()),
+                ("dep/tests/lib.rs", nested.to_string()),
+                ("dep/tests/fixtures/frag.rs", binding.to_string()),
+            ],
+        )],
+        &ExposureClass::StaticUnknown,
+    )
+}
+
+/// A fragment path that resolves outside the repository through a symlink is
+/// never read: the include keeps the workspace-wide refusal.
+#[cfg(unix)]
+#[test]
+fn a_fragment_symlinked_out_of_the_repository_is_not_read() -> Result<(), String> {
+    let repo = TempRepo::create(&[
+        ("src/b.rs", &own_unit()),
+        (
+            "tests/it.rs",
+            "mod frag { include!(\"fixtures/frag.rs\"); }\n",
+        ),
+    ])?;
+    let outside = repo.root.with_extension("outside.rs");
+    std::fs::write(&outside, PLAIN).map_err(|error| error.to_string())?;
+    let fixtures = repo.root.join("tests/fixtures");
+    let linked = std::fs::create_dir_all(&fixtures)
+        .and_then(|()| std::os::unix::fs::symlink(&outside, fixtures.join("frag.rs")))
+        .map_err(|error| error.to_string());
+    let class = linked.and_then(|()| repo.class());
+    let _ = std::fs::remove_file(&outside);
+    match class? {
+        ExposureClass::StaticUnknown => Ok(()),
+        other => Err(format!("symlinked fragment: got {other:?}")),
+    }
+}
+
 #[test]
 fn a_fragments_namesake_is_never_taken_for_the_owner() -> Result<(), String> {
     let library = |b: String| {
