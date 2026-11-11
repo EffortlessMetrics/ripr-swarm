@@ -183,13 +183,9 @@ pub(crate) fn resolve_test_stub(
             let location = analysis::locate_seam_file_at_with_config(root, config, id)
                 .map_err(TestStubError::Operational)?
                 .ok_or_else(not_found)?;
-            let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
-                root,
-                config,
-                std::slice::from_ref(&location.file),
-                &[],
-            )
-            .map_err(TestStubError::Operational)?;
+            let scoped =
+                analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+                    .map_err(TestStubError::Operational)?;
             scoped
                 .require_complete_evidence("test stub")
                 .map_err(TestStubError::Operational)?;
@@ -591,12 +587,10 @@ fn narrowed_ambiguity(
         reason,
         || match scoped {
             Some(relative) => {
-                let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
-                    root,
-                    config,
-                    &[relative],
-                    &[],
-                )?;
+                // The complete file-scope inventory reuses its result, so
+                // several ambiguous findings in one file classify it once.
+                let scoped =
+                    analysis::inventory_file_guidance_at_with_config(root, config, &relative)?;
                 scoped.require_complete_evidence("test stub")?;
                 Ok(scoped.classified)
             }
@@ -2150,8 +2144,27 @@ mod tests {
                 "src/lib.rs",
                 "y: 3",
                 "several seams".to_string(),
-                ids,
+                ids.clone(),
                 &mut index,
+            );
+            // A second ambiguous finding in the same file reuses the file's
+            // complete classified inventory instead of rebuilding the
+            // workspace index (#14369 review).
+            let (again, rebuilds) = analysis::index_build_probe::observe(|| {
+                narrowed_ambiguity(
+                    &root,
+                    &config,
+                    "src/lib.rs",
+                    "y: 3",
+                    "several seams".to_string(),
+                    ids.clone(),
+                    &mut index,
+                )
+            });
+            assert_eq!(again, decision, "the reused decision is the same");
+            assert_eq!(
+                rebuilds, 0,
+                "a repeated ambiguity reuses the file inventory"
             );
             // The printed `--seam-id` command, run as printed, must produce
             // the same seam's stub; it is located by the uncapped seam walk
