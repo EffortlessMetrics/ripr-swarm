@@ -456,7 +456,9 @@ annotation) whose statement ends on the line with `;`, with balanced brackets,
 and whose initializer, read outside quoted text, carries no `<` or `>`
 (comparisons, generics and casts alike), `=`, `!`, `?` other than optional
 chaining, `&&`, `||`, `;`, `in`, `instanceof`, `typeof`, `function`, `await`
-or `yield` (`const desc = Object.getOwnPropertyDescriptor(raw, key);`). A line
+or `yield`, no comment and no template interpolation `${`, with any run of
+whitespace read as one space
+(`const desc = Object.getOwnPropertyDescriptor(raw, key);`). A line
 without the closing `;` may continue into a condition on the next line and
 keeps the fallback presentation. When the line qualifies, the finding presents
 family `return_value` and delta `value` instead (#14381). Every analysis

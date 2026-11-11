@@ -7503,13 +7503,13 @@ fn plain_value_declaration_recognizer_is_closed() {
     for line in [
         "    const desc = Object.getOwnPropertyDescriptor(raw, key);",
         "  let total: number = base - bonus;",
-        "var label = `${name}: ok`;",
+        "var label = `name: ok`;",
         "  const cache: Map<string, number> = new Map();",
         "  const first = items[0]?.name;",
         "  const text = \"a > b\";",
         "  const $el = query('#root');",
         "  const quoted = 'it\\'s > x';",
-        "  const shown = `${count} items`;",
+        "  const spaced =\tbase\t-\tbonus;",
     ] {
         assert!(
             is_typescript_plain_value_declaration(line),
@@ -7542,6 +7542,11 @@ fn plain_value_declaration_recognizer_is_closed() {
         "  const $el = query('#root')",
         "  const x = compute(a); // a > b",
         "  const re = /'/;",
+        "  const label = `${ready ? 'yes' : 'no'}`;",
+        "  const shown = `${count} items`;",
+        "  const present = key\tin\tobj;",
+        "  const kind = typeof\tvalue;",
+        "  const sum = a /* note */ + b;",
     ] {
         assert!(
             !is_typescript_plain_value_declaration(line),

@@ -357,7 +357,18 @@ pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
     {
         return false;
     }
-    let code = without_quoted_text(initializer).replace("?.", ".");
+    // A template interpolation runs code the quote blanking would hide
+    // (`${ready ? 'yes' : 'no'}`), so any `${` keeps the fallback.
+    if initializer.contains("${") {
+        return false;
+    }
+    // Any whitespace run (tabs included) reads as one space, so the
+    // word-bounded markers below see `key\tin\tobj` as `key in obj`.
+    let code = without_quoted_text(initializer)
+        .replace("?.", ".")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let padded = format!(" {code} ");
     ![
         "<",
@@ -368,6 +379,8 @@ pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
         "&&",
         "||",
         ";",
+        "//",
+        "/*",
         " in ",
         " instanceof ",
         "typeof ",
