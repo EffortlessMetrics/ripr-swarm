@@ -317,7 +317,7 @@ fn drive_before_phase_inner(
         Ok(document) => document,
         Err(error) => {
             if let Some(prior) = prior_artifacts
-                && let Err(restore_error) = prior.restore()
+                && let Err(restore_error) = prior.restore_after_failure(&error)
             {
                 // Rollback itself failed: the start did not complete and
                 // prior state may be clobbered, so this is not a clean
@@ -338,15 +338,28 @@ fn drive_before_phase_inner(
 
 /// The shared workflow artifacts a gap-bound start may write, as found before
 /// the start (#9103). A refused start restores each to that state: a prior
-/// file keeps its bytes (a refusal before any write touches nothing), and only
+/// file keeps its bytes (a typed refusal before any write touches nothing), and only
 /// a file this invocation created is removed. An earlier gap projection or a
 /// seam workflow baseline therefore survives a stale-gap, not-ready or
-/// dirty-premise refusal and a partial publication failure.
+/// dirty-premise refusal and a partial publication failure. Post-write
+/// restoration still lacks ownership safety against non-cooperating writers
+/// (#13452); the typed no-write refusal must bypass it entirely.
 struct GapWorkflowArtifactBackup {
     entries: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
 }
 
 impl GapWorkflowArtifactBackup {
+    fn restore_after_failure(self, error: &BeforePhaseError) -> Result<(), String> {
+        // A typed start refusal precedes every workflow write. Restoring a
+        // captured pathname here would overwrite or remove another writer's
+        // intervening file despite this invocation having nothing to undo.
+        // This does not make post-write restoration ownership-safe (#13452).
+        if matches!(error, BeforePhaseError::Refused(_)) {
+            return Ok(());
+        }
+        self.restore()
+    }
+
     const ARTIFACTS: [&'static str; 3] = [
         "target/ripr/workflow/before.check-findings.json",
         crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT,
@@ -923,6 +936,45 @@ mod tests {
     }
 
     #[test]
+    fn gap_typed_refusal_preserves_intervening_files() -> Result<(), String> {
+        // The foreign writer acts after capture and immediately before the
+        // failure handler. No comparison can authorize undoing its writes.
+        for prior_exists in [false, true] {
+            let root = test_root("gap-refusal-foreign-writer")?;
+            let result = (|| -> Result<(), String> {
+                let workflow = root.join("target/ripr/workflow");
+                std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+                if prior_exists {
+                    for artifact in GapWorkflowArtifactBackup::ARTIFACTS {
+                        std::fs::write(root.join(artifact), b"prior bytes")
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                let backup = GapWorkflowArtifactBackup::capture(&root);
+                for artifact in GapWorkflowArtifactBackup::ARTIFACTS {
+                    std::fs::write(root.join(artifact), b"intervening writer")
+                        .map_err(|e| e.to_string())?;
+                }
+                let refusal = BeforePhaseError::Refused("not started".to_string());
+                backup.restore_after_failure(&refusal)?;
+                for artifact in GapWorkflowArtifactBackup::ARTIFACTS {
+                    if std::fs::read(root.join(artifact)).map_err(|e| e.to_string())?
+                        != b"intervening writer"
+                    {
+                        return Err(format!(
+                            "typed refusal changed foreign {artifact}, prior_exists={prior_exists}"
+                        ));
+                    }
+                }
+                Ok(())
+            })();
+            std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+            result?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gap_artifact_backup_restores_prior_bytes_and_removes_only_new_files() -> Result<(), String> {
         let root = test_root("gap-backup")?;
         let result = (|| -> Result<(), String> {
@@ -937,7 +989,9 @@ mod tests {
             // A failed start overwrote one prior file and created the other.
             std::fs::write(&snapshot, b"overwritten").map_err(|e| e.to_string())?;
             std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
-            backup.restore()?;
+            backup.restore_after_failure(&BeforePhaseError::Other(CommandError::Failure(
+                "partial publication".to_string(),
+            )))?;
             if std::fs::read(&snapshot).map_err(|e| e.to_string())? != b"sentinel-snapshot"
                 || std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline"
             {

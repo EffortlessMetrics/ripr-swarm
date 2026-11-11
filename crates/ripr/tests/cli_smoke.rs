@@ -9828,6 +9828,86 @@ fn check_ignore_flip_shim(allowed: u32) -> Result<(PathBuf, String), Box<dyn std
     Ok((shim_dir, path))
 }
 
+#[cfg(all(unix, feature = "lang-typescript"))]
+#[test]
+fn gap_prewrite_refusal_preserves_a_foreign_writer()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = String::from_utf8(run_command("sh", None, &["-c", "command -v git"])?.stdout)?;
+    for prior_exists in [false, true] {
+        let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("gap-refusal-writer"))?;
+        let root = fixture.0.as_path();
+        init_producer_fixture_repo(root)?;
+        std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)?;
+        let artifacts = [
+            "before.check-findings.json",
+            "gap-repair-packet.json",
+            "attempt-baseline.json",
+        ];
+        if prior_exists {
+            for artifact in artifacts {
+                std::fs::write(workflow.join(artifact), b"prior bytes")?;
+            }
+        }
+        let shim_dir = RepairBuildIgnoreFixture::new(unique_temp_workspace("gap-refusal-git"))?;
+        std::fs::create_dir_all(&shim_dir.0)?;
+        let shim = shim_dir.0.join("git");
+        // Base resolution is after backup capture but before any workflow
+        // write. The foreign writer also leaves an independent witness that
+        // distinguishes reaching this boundary from an earlier CLI refusal.
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = 'ripr-13452-missing-base^{commit}' ]; then\n    for file in before.check-findings.json gap-repair-packet.json attempt-baseline.json; do\n      printf 'intervening writer' > \"$RIPR_TEST_WORKFLOW/$file\" || exit 90\n    done\n    printf 'injected' > \"$RIPR_TEST_WORKFLOW/injected\" || exit 91\n    exit 1\n  fi\ndone\nexec \"$RIPR_TEST_REAL_GIT\" \"$@\"\n",
+        )?;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))?;
+        let path = format!("{}:{}", shim_dir.0.display(), std::env::var("PATH")?);
+        let root_arg = root.display().to_string();
+        let workflow_arg = workflow.display().to_string();
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--gap-id",
+                "gap:typescript:typescript_preview:deadbeef",
+                "--base",
+                "ripr-13452-missing-base",
+                "--phase",
+                "before",
+                "--json",
+            ],
+            &[
+                ("PATH", path.as_str()),
+                ("RIPR_TEST_WORKFLOW", workflow_arg.as_str()),
+                ("RIPR_TEST_REAL_GIT", real_git.trim()),
+            ],
+        )?;
+        assert_eq!(std::fs::read(workflow.join("injected"))?, b"injected");
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("does not name a commit"));
+        for artifact in artifacts {
+            assert_eq!(
+                std::fs::read(workflow.join(artifact))?,
+                b"intervening writer",
+                "{artifact}, prior_exists={prior_exists}"
+            );
+        }
+        let attempts = root.join("target/ripr/repair-attempts");
+        if attempts.exists() {
+            for entry in std::fs::read_dir(attempts)? {
+                assert!(!entry?.path().join("attempt.json").exists());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// #13452: a Git-ignore answer that flips between the early admission and the
 /// first shared workflow write must refuse before anything shared is written,
 /// not at the later attempt-publication recheck after the files were replaced.
