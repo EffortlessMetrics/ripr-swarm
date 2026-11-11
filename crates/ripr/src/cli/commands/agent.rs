@@ -7145,10 +7145,6 @@ mod before_phase_stdout_tests {
         Ok(())
     }
 
-    /// #7204: a stdout-only driver must see the ambiguity, so the `--json`
-    /// continuation carries the additive flag and the plain summary replaces
-    /// the bare after-edit directive with the warning and the clean-state
-    /// restart route.
     /// #14320: the human summary names the exact native test command just
     /// before the continue step; `--json` stays the unchanged continuation.
     #[test]
@@ -7180,6 +7176,10 @@ mod before_phase_stdout_tests {
         Ok(())
     }
 
+    /// #7204: a stdout-only driver must see the ambiguity, so the `--json`
+    /// continuation carries the additive flag and the plain summary replaces
+    /// the bare after-edit directive with the warning and the clean-state
+    /// restart route.
     #[test]
     fn ambiguous_baseline_is_disclosed_on_stdout_in_both_modes() -> Result<(), String> {
         let ambiguous = BeforePhaseAttemptContinuation {
