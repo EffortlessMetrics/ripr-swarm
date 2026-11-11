@@ -5706,7 +5706,13 @@ mod tests {
         // #12952: the framework-shadow and dotted-module honesty fixtures each
         // retain one weak `no_strong_oracle` error-path card. Their exact
         // exception credit is withheld; both cards remain packet-eligible.
-        if (direct, no_strong, orthogonal, family_selection) != (22, 38, 31, 1) {
+        // #13621: `python_guarded_field_value_untaken` downgrades a guarded
+        // field value no test enters; its weak card names the `total < 0`
+        // discriminator, one more direct-aligned card.
+        // #12126: `python_coarse_{sign, residue, text_length}` keep a coarse
+        // projection of the changed owner result weakly exposed; each weak
+        // finding carries one orthogonal card, three more in total.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 34, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

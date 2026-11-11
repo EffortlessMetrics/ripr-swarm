@@ -5,7 +5,7 @@
 //! any of these outputs fails here instead of silently taxing every agent turn.
 //! A deliberate cut lowers the ceiling in the same change; a deliberate
 //! addition must justify raising it.
-use super::{run_command, unique_external_workspace};
+use super::{printed_path, run_command, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -60,7 +60,9 @@ fn run(project: &Path, args: &[&str]) -> TestResult<String> {
     );
     // Measure with the absolute root replaced by a fixed token, so the
     // budget does not depend on how long the checkout path is.
-    let root = project.to_string_lossy().into_owned();
+    // `printed_path` is the spelling the binary prints (verbatim prefix folded,
+    // `/` separators on Windows), so the measurement is host-path independent.
+    let root = printed_path(project);
     Ok(String::from_utf8(output.stdout)?.replace(&root, "<root>"))
 }
 
@@ -85,6 +87,10 @@ fn agent_facing_outputs_stay_inside_their_byte_budgets() -> TestResult {
     let json = run(
         &project,
         &["check", "--diff", "change.diff", "--format", "json"],
+    )?;
+    let terse = run(
+        &project,
+        &["check", "--diff", "change.diff", "--format", "json-terse"],
     )?;
     let github = run(
         &project,
@@ -131,6 +137,149 @@ Hidden:
     );
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
+    within("check --format json-terse", &terse, 46_500);
     within("check --format github", &github, 3_300);
+    Ok(())
+}
+
+/// #13673: the brief states the before/after snapshot and verify commands once
+/// under `next`; per-seam `verification` carries only the suggested test.
+#[test]
+fn agent_brief_states_workflow_commands_once() -> TestResult {
+    let project = workspace("agent-brief-budget")?;
+    let brief = run(
+        &project,
+        &["agent", "brief", "--diff", "change.diff", "--json"],
+    )?;
+    for command in ["before_snapshot_command", "after_snapshot_command"] {
+        assert_eq!(
+            brief.matches(command).count(),
+            1,
+            "{command} must appear once, not per seam:\n{brief}"
+        );
+    }
+    assert!(!brief.contains("\"verify_command\""), "{brief}");
+    within("agent brief --json", &brief, 8_900);
+    Ok(())
+}
+
+/// #13803: the human `agent repair --phase before` start prints the next
+/// command once (stdout), keeps the fields an agent acts on (target, edit
+/// boundary with its terminality, redirect stop condition), and stays inside
+/// a line ceiling. Stderr repeats none of stdout's result lines.
+#[test]
+fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResult {
+    let root = super::repair_route_workspace("agent repair start budget")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = super::run_ripr_with_env(
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            super::REPAIR_ROUTE_SEAM,
+            "--phase",
+            "before",
+        ],
+        &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    let next = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("stdout must carry the next command:\n{stdout}"))?;
+    assert!(
+        next.starts_with("ripr continue ") && next.contains("--attempt repair-attempt-"),
+        "{next}"
+    );
+    let combined = format!("{stdout}{stderr}");
+    assert_eq!(
+        combined.matches(next).count(),
+        1,
+        "the next command must print exactly once across stdout and stderr:\n{combined}"
+    );
+    for field in [
+        "Repair prepared for seam ",
+        "edit one test file: tests/pricing.rs",
+        "fails the repair attempt terminally",
+        "assertion shape: ",
+    ] {
+        assert!(stdout.contains(field), "stdout lost `{field}`:\n{stdout}");
+    }
+    assert!(
+        stderr.contains("write this command's output outside the repo"),
+        "the redirect stop condition must stay:\n{stderr}"
+    );
+    for repeated in [
+        "repair started. Next:",
+        "is waiting for your test",
+        "attempt manifest: ",
+        "attempt next command",
+    ] {
+        assert!(
+            !stderr.contains(repeated),
+            "stderr must not repeat `{repeated}` from stdout:\n{stderr}"
+        );
+    }
+    let lines = combined.lines().count();
+    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 15)");
+    assert!(
+        lines <= 15,
+        "agent repair start grew to {lines} lines, over its 15-line budget:\n{combined}"
+    );
+    Ok(())
+}
+
+/// The task-first `ripr repair <id>` stdout is the start summary followed by
+/// the handoff card. The card must not repeat what the summary just printed
+/// (changed behavior, assertion shape, continue command, packet route,
+/// attempt id), and the whole stdout stays inside a byte budget.
+#[test]
+fn ripr_repair_start_does_not_repeat_the_summary_in_the_card() -> TestResult {
+    let root = super::repair_route_workspace("ripr repair start budget")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = super::run_ripr_with_env(
+        &["repair", super::REPAIR_ROUTE_SEAM, "--root", &root_arg],
+        &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
+    );
+    // The binary prints `/` separators on Windows, so fold the root the same way
+    // it is printed instead of replacing the backslash spelling of the argument.
+    let stdout = String::from_utf8(output.stdout)?.replace(&printed_path(&root), "<root>");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    // Positive: the summary and the card's own lines are both present.
+    for kept in [
+        "Repair prepared for seam ",
+        "assertion shape: ",
+        "Next, after the test edit: ripr continue ",
+        "Repair brief for this gap",
+        "  Ready to repair. The repair has started and is waiting for your test.",
+        "  Files you may change: ",
+        "  Done when: ",
+    ] {
+        assert!(stdout.contains(kept), "stdout lost `{kept}`:\n{stdout}");
+    }
+    // Negative: the card does not restate the summary.
+    for repeated in [
+        "  Changed behavior: ",
+        "  Suggested assertion: ",
+        "  Next: write the test, then run",
+        "  Repair attempt: ",
+        "  Machine-readable details (JSON): ",
+    ] {
+        assert!(
+            !stdout.contains(repeated),
+            "the card repeats `{repeated}` from the start summary:\n{stdout}"
+        );
+    }
+    assert_eq!(
+        stdout.matches("ripr continue ").count(),
+        1,
+        "the continue command must print once:\n{stdout}"
+    );
+    within("ripr repair start (stdout)", &stdout, 1_450);
     Ok(())
 }

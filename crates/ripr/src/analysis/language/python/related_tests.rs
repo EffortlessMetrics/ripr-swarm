@@ -17,11 +17,21 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod dunder_protocol;
 mod project_names;
+mod test_local_shadow;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
-pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
+pub(super) use dunder_protocol::body_exercises_dunder_protocol;
+pub(super) use project_names::{
+    ProjectNameIndex, apply_project_module_names, apply_project_module_names_with,
+    owner_import_modules_for,
+};
+use test_local_shadow::test_local_module_shadows;
+pub(super) use test_local_shadow::{
+    TestLocalShadow, TestLocalShadowIndex, apply_test_local_shadows,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -38,8 +48,12 @@ pub(super) enum PythonRelationKind {
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
     /// constant, directly or through a module function it calls with literal
-    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    /// arguments, and distinguishes the old and new values
+    /// (`module_value.rs`, #9423, #12950).
     ModuleValueCall,
+    /// A resolved module string reader returns different values, but the
+    /// selected membership assertion accepts both (#12950).
+    ModuleValueRead,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -68,6 +82,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
+            Self::ModuleValueRead => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -89,6 +104,7 @@ impl PythonRelationKind {
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
+                | Self::ModuleValueRead
         )
     }
 
@@ -108,6 +124,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
+            Self::ModuleValueRead => "module_value_reader_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -146,6 +163,7 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    dunder_index: Option<Rc<DunderOwnerIndex>>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
     alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
@@ -182,9 +200,15 @@ impl<'a> RelatedCandidateMemo<'a> {
         owners: &[PythonOwner],
         all_tests: &'a [PythonTest],
     ) -> Vec<HelperOwnerCallCandidate<'a>> {
+        let by_class = Rc::clone(
+            self.dunder_index
+                .get_or_insert_with(|| Rc::new(dunder_owner_index(owners))),
+        );
         self.helpers
             .entry(owner_key(owner))
-            .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
+            .or_insert_with(|| {
+                helper_owner_call_candidates_indexed(owner, owners, all_tests, Some(&by_class))
+            })
             .clone()
     }
 
@@ -299,12 +323,83 @@ pub(super) fn helper_owner_call_candidates<'a>(
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
+    helper_owner_call_candidates_indexed(owner, owners, all_tests, None)
+}
+
+/// Dunder methods of each (file, class), as positions in the run's owners.
+/// Built once per run so a helper's reaching dunders are found without
+/// scanning every owner (#13776).
+pub(super) type DunderOwnerIndex = HashMap<(PathBuf, String), Vec<usize>>;
+
+pub(super) fn dunder_owner_index(owners: &[PythonOwner]) -> DunderOwnerIndex {
+    let mut by_class = DunderOwnerIndex::new();
+    for (position, owner) in owners.iter().enumerate() {
+        if !owner.class_path.is_empty() && dunder_method_class(owner).is_some() {
+            by_class
+                .entry((owner.file.clone(), owner.class_path.clone()))
+                .or_default()
+                .push(position);
+        }
+    }
+    by_class
+}
+
+/// The same-class dunder owners whose `self.` call path reaches the method
+/// `owner` (`__setitem__` for `Cache.getsizeof`, `__getitem__` for
+/// `LFUCache.__touch`), or `None` for an owner no dunder is known to reach.
+fn dunder_entry_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Option<Vec<&'o PythonOwner>> {
+    if owner.class_facts.dunder_entries.is_empty()
+        || owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+        || is_dunder_name(&owner.name)
+    {
+        return None;
+    }
+    let wanted = |candidate: &PythonOwner| {
+        candidate.file == owner.file
+            && candidate.class_path == owner.class_path
+            && owner.class_facts.dunder_entries.contains(&candidate.name)
+            && dunder_method_class(candidate).is_some()
+    };
+    let callers: Vec<&PythonOwner> = match by_class {
+        Some(by_class) => by_class
+            .get(&(owner.file.clone(), owner.class_path.clone()))
+            .into_iter()
+            .flatten()
+            .filter_map(|position| owners.get(*position))
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+        None => owners
+            .iter()
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+    };
+    (!callers.is_empty()).then_some(callers)
+}
+
+pub(super) fn helper_owner_call_candidates_indexed<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Vec<HelperOwnerCallCandidate<'a>> {
     let top_level_function = |candidate: &PythonOwner| {
         candidate.owner_kind == Some(OwnerKind::Function)
             && candidate.class_path.is_empty()
             && candidate.qualified_name == candidate.name
     };
-    if !top_level_function(owner)
+    let callers: Vec<&PythonOwner> = if let Some(callers) =
+        dunder_entry_callers(owner, owners, by_class)
+    {
+        callers
+    } else if !top_level_function(owner)
         || owners
             .iter()
             .filter(|other| {
@@ -314,7 +409,17 @@ pub(super) fn helper_owner_call_candidates<'a>(
             != 1
     {
         return Vec::new();
-    }
+    } else {
+        module_function_callers(owner, owners, top_level_function)
+    };
+    helper_candidates_from_callers(callers, all_tests)
+}
+
+fn module_function_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+    top_level_function: impl Fn(&PythonOwner) -> bool,
+) -> Vec<&'o PythonOwner> {
     let mut frontier = vec![owner.name.clone()];
     let mut callers: Vec<&PythonOwner> = Vec::new();
     for _ in 0..MAX_HELPER_CALLER_DEPTH {
@@ -345,6 +450,13 @@ pub(super) fn helper_owner_call_candidates<'a>(
         }
         frontier = next;
     }
+    callers
+}
+
+fn helper_candidates_from_callers<'a>(
+    callers: Vec<&PythonOwner>,
+    all_tests: &'a [PythonTest],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     let token = crate::analysis::cancellation::current_token();
@@ -741,7 +853,6 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             // name (#13675) is the owner's only for a test under its project.
             ambiguous.module == module
                 && (owner_paths.contains(&ambiguous.module)
-                    || owner.reexport_modules.contains(&ambiguous.module)
                     || module_name_identifies_owner_for(owner, module, &test.file))
         })
     };
@@ -927,7 +1038,6 @@ fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
-    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -947,70 +1057,17 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
                     || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
-                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
-    })
+    }) || parsed_receiver_rebound(body, var)
 }
 
-/// A complete single-line target can enclose the name without every bracket
-/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
-/// than treating every surrounding bracket as a binding: `values[(r)]` still
-/// reads `r`, including when it occurs inside a tuple assignment target.
-fn enclosing_bracketed_target_binds(
-    body: &str,
-    idx: usize,
-    var: &str,
-    parsed_target_line: &mut Option<usize>,
-) -> bool {
-    use rustpython_parser::ast::{Expr, Mod, Stmt};
-
-    // Only a bracketed occurrence needs this fallback. In particular the
-    // original `r = Owner(...)` initializer must not count as a rebind.
-    if !body[..idx]
-        .trim_end_matches([' ', '\t'])
-        .ends_with(['(', '['])
-        || !body[idx + var.len()..]
-            .trim_start_matches([' ', '\t'])
-            .starts_with([')', ']'])
-    {
-        return false;
-    }
-    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
-    // A failed lookup applies to every occurrence of this name on the line.
-    // Do not repeatedly parse wide tuple expressions containing many reads.
-    if *parsed_target_line == Some(line_start) {
-        return false;
-    }
-    *parsed_target_line = Some(line_start);
-    let line = body[line_start..].lines().next().unwrap_or_default().trim();
-    let path = Path::new("<protocol-entry-target>");
-    // Preserve inline suites by parsing the actual line first. Only an
-    // incomplete header needs a synthetic suite. Both attempts keep the
-    // common parser's nesting/tree budget and never execute user code.
-    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
-        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
-    });
-    let Ok(Mod::Module(module)) = parsed else {
-        return false;
-    };
-    let binds = |target: &Expr| {
-        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
-            && super::sink_alignment::target_binds_name(target, var)
-    };
-    module.body.iter().any(|stmt| match stmt {
-        Stmt::Assign(assign) => assign.targets.iter().any(binds),
-        Stmt::For(loop_) => binds(&loop_.target),
-        Stmt::AsyncFor(loop_) => binds(&loop_.target),
-        Stmt::With(with) => with
-            .items
-            .iter()
-            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
-        Stmt::AsyncWith(with) => with
-            .items
-            .iter()
-            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
-        _ => false,
-    })
+/// The shared scope collector reads complete targets across physical lines and
+/// through compound suites. Count bindings beyond the one constructor binding;
+/// a tuple RHS, subscript index or call argument never binds the name. Keep the
+/// textual guards above for their existing conservative unsupported boundaries.
+fn parsed_receiver_rebound(body: &str, var: &str) -> bool {
+    super::sink_alignment::parse_test_function_scope(body)
+        .is_some_and(|(_, statements)| super::module_constants::body_rebinds_name(&statements, var))
 }
 
 /// Whether the `var` occurrence just after `before` and just before `after`
@@ -1461,7 +1518,11 @@ pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) 
 /// import (`from pkg.cache import Cache as C`), or a member of an imported
 /// owner module (`cache.Cache`). A bare `Cache` with no such import, or one
 /// imported from another module, is a different class.
-fn test_references_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+pub(super) fn test_references_owner_class(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> bool {
     test_uses_owner_class(
         test,
         owner,
@@ -1873,9 +1934,13 @@ pub(super) fn module_callees_named(
         {
             callees.push(import.alias.clone());
         }
+        // The package name must still identify the owner's package for this test:
+        // a same-project plain module or a rival root can shadow it (#13745,
+        // #13786), exactly as it gates `submodule_receivers` (#13988).
         let reexporting_package = reexported
             && import.source_module.is_empty()
-            && owner.reexport_modules.contains(&import.imported);
+            && owner.reexport_modules.contains(&import.imported)
+            && module_name_identifies_owner_for(owner, &import.imported, &test.file);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));
@@ -2199,7 +2264,7 @@ pub(super) fn import_module_may_be_owners(
 ) -> bool {
     // Without an ambiguous src-layout name every module identifies the owner;
     // answer before formatting the dotted submodule name.
-    if owner.ambiguous_src_modules.is_empty() {
+    if owner.ambiguous_src_modules.is_empty() && owner.test_local_shadows.is_empty() {
         return true;
     }
     if import.source_module.is_empty() {
@@ -2401,12 +2466,16 @@ pub(super) fn apply_src_module_ambiguity<'a>(
             };
             let rival_roots =
                 rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
-            if !rival_roots.is_empty() {
+            // A plain module of the same project spelled like the re-exporting
+            // package loads instead of it on some `sys.path` orders, exactly as
+            // for the owner's own short name (#13786).
+            let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
+            if !rival_roots.is_empty() || shadowed {
                 ambiguous.push(AmbiguousSrcModule {
                     module: module.clone(),
                     owner_root,
                     rival_roots,
-                    shadowed: false,
+                    shadowed,
                 });
             }
         }
@@ -2462,7 +2531,15 @@ fn path_is_under(file: &Path, root: &Path) -> bool {
 /// identifies the owner only for a test under the owner's project root that
 /// is not inside a rival's (deeper) project root; anywhere else the import is
 /// as likely to be the rival's module, so it fails closed.
-fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file: &Path) -> bool {
+pub(super) fn module_name_identifies_owner_for(
+    owner: &PythonOwner,
+    module: &str,
+    test_file: &Path,
+) -> bool {
+    // A test-local module of the same name is ahead on `sys.path` (#13706).
+    if test_local_module_shadows(owner, module, test_file) {
+        return false;
+    }
     let Some(ambiguous) = owner
         .ambiguous_src_modules
         .iter()
@@ -3277,7 +3354,9 @@ pub(super) fn strong_tests_import_only_rival_modules(
     strong_tests: &[&RelatedTest],
     all_tests: &TestLookup<'_>,
 ) -> bool {
-    if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
+    if (owner.ambiguous_src_modules.is_empty() && owner.test_local_shadows.is_empty())
+        || strong_tests.is_empty()
+    {
         return false;
     }
     strong_tests.iter().all(|related_test| {

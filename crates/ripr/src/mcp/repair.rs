@@ -1358,8 +1358,11 @@ pub(super) mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2639,7 +2642,8 @@ pub(super) mod tests {
             RECEIPT_FIXTURE_SEAM,
             &retained_packet_path,
             Some(finished.repair_attempt_id.as_str()),
-        )?;
+        )
+        .map_err(|error| error.message())?;
         let reading = AgentReceiptReading::from_value(&receipt);
         if reading.status.as_deref() != Some(case.producer_status)
             || reading.movement.as_deref() != Some(case.movement)

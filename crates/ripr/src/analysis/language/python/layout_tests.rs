@@ -227,3 +227,362 @@ fn a_lone_nested_project_lib_module_is_not_its_bare_name() -> Result<(), String>
     }
     Ok(())
 }
+
+const PKG_INIT: &str = "from .core import limit\n";
+const PKG_TEST: &str = "from pkg import limit\n\n\ndef test_limit():\n    assert limit(10) == False\n    assert limit(11) == True\n";
+
+fn project_package_files(test_path: &str) -> Vec<(&str, &str)> {
+    vec![
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/b/pyproject.toml", PROJECT),
+        ("svc/a/pkg/__init__.py", PKG_INIT),
+        ("svc/b/pkg/__init__.py", PKG_INIT),
+        ("svc/a/pkg/core.py", CORE_PY),
+        ("svc/b/pkg/core.py", CORE_PY),
+        (test_path, PKG_TEST),
+    ]
+}
+
+#[test]
+fn a_nested_project_package_reexport_resolves_for_its_own_project() -> Result<(), String> {
+    // Positive control for #13737: `svc/a/pkg/__init__.py` re-exports
+    // `limit`, so `from pkg import limit` in project a reaches it.
+    let finding = analyze_one_line(
+        "layout-reexport-own",
+        &project_package_files("svc/a/tests/test_core.py"),
+        "svc/a/pkg/core.py",
+        2,
+    )?;
+    if finding.class != ExposureClass::Exposed {
+        return Err(format!("own-project re-export gave {:?}", finding.class));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_sibling_project_package_reexport_credits_nothing() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "layout-reexport-sibling",
+        &project_package_files("svc/b/tests/test_core.py"),
+        "svc/a/pkg/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("project b's `from pkg import limit` credited project a".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_package_reexport_name_is_not_claimed_outside_every_project() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "layout-reexport-outside",
+        &project_package_files("tests/test_core.py"),
+        "svc/a/pkg/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("a repo-root test credited a project-relative package name".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_package_reexport_without_a_project_marker_claims_no_bare_name() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "layout-reexport-no-marker",
+        &[
+            ("svc/a/pkg/__init__.py", PKG_INIT),
+            ("svc/a/pkg/core.py", CORE_PY),
+            ("svc/a/tests/test_core.py", PKG_TEST),
+        ],
+        "svc/a/pkg/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("an unmarked project claimed a bare package name".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_package_reexport_beside_a_same_named_module_claims_no_bare_name() -> Result<(), String> {
+    // `pkg.py` beside `pkg/__init__.py`: the name identifies neither.
+    let mut files = project_package_files("svc/a/tests/test_core.py");
+    files.push(("svc/a/pkg.py", CORE_PY));
+    let finding = analyze_one_line("layout-reexport-twin", &files, "svc/a/pkg/core.py", 2)?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("a `pkg` name shared with `pkg.py` credited the package".to_string());
+    }
+    Ok(())
+}
+
+/// Repo-scan counterpart: the class `build_repo_evidence` (the production
+/// path of repository scans) gives line 2 of `owner_file` (#13737).
+fn repo_scan_class(
+    label: &str,
+    files: &[(&str, &str)],
+    owner_file: &str,
+) -> Result<ExposureClass, String> {
+    let root = super::reexport_tests::unique_tempdir(label)?;
+    files.iter().try_for_each(|(path, contents)| {
+        super::reexport_tests::write_file(&root.join(path), contents)
+    })?;
+    let input = repo::select_repo_input_with_limit(
+        &root,
+        repo::RepoWorkingSetLimit {
+            limit: 800,
+            source: repo::RepoWorkingSetCapSource::Default,
+        },
+    );
+    let evidence = repo::build_repo_evidence(&input, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    let mut matching = evidence.findings.iter().filter(|finding| {
+        finding.probe.location.line == 2
+            && normalized_path(&finding.probe.location.file) == owner_file
+    });
+    let finding = matching
+        .next()
+        .ok_or_else(|| format!("{label}: no finding for line 2 of {owner_file}"))?;
+    if matching.next().is_some() {
+        return Err(format!("{label}: more than one finding for {owner_file}:2"));
+    }
+    Ok(finding.class.clone())
+}
+
+fn flat_scan_files(test_project: &str) -> Vec<(&'static str, &'static str)> {
+    let test_path = match test_project {
+        "a" => "svc/a/tests/test_core.py",
+        "b" => "svc/b/tests/test_core.py",
+        _ => "tests/test_core.py",
+    };
+    vec![
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/b/pyproject.toml", PROJECT),
+        ("svc/a/core.py", CORE_PY),
+        ("svc/b/core.py", CORE_PY),
+        (test_path, STRONG_TEST),
+    ]
+}
+
+#[test]
+fn repo_scan_credits_a_nested_project_test_importing_a_flat_module() -> Result<(), String> {
+    let class = repo_scan_class("scan-flat-own", &flat_scan_files("a"), "svc/a/core.py")?;
+    if class != ExposureClass::Exposed {
+        return Err(format!("own-project strong test gave {class:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_scan_does_not_credit_a_sibling_project_test_for_a_flat_module() -> Result<(), String> {
+    let class = repo_scan_class("scan-flat-sibling", &flat_scan_files("b"), "svc/a/core.py")?;
+    if class == ExposureClass::Exposed {
+        return Err("a sibling project's `core` test credited svc/a/core.py".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_scan_does_not_credit_a_test_outside_the_project() -> Result<(), String> {
+    let class = repo_scan_class(
+        "scan-flat-outside",
+        &flat_scan_files("root"),
+        "svc/a/core.py",
+    )?;
+    if class == ExposureClass::Exposed {
+        return Err("a repo-root test credited a project-relative name".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_scan_does_not_credit_a_flat_name_without_a_project_marker() -> Result<(), String> {
+    let files = [
+        ("svc/a/core.py", CORE_PY),
+        ("svc/a/tests/test_core.py", STRONG_TEST),
+    ];
+    let class = repo_scan_class("scan-no-marker", &files, "svc/a/core.py")?;
+    if class == ExposureClass::Exposed {
+        return Err("an unmarked project claimed a bare module name".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_scan_credits_a_package_reexport_to_its_own_project_only() -> Result<(), String> {
+    for (test_project, own) in [("a", true), ("b", false)] {
+        let test_path = format!("svc/{test_project}/tests/test_core.py");
+        let class = repo_scan_class(
+            &format!("scan-reexport-{test_project}"),
+            &project_package_files(&test_path),
+            "svc/a/pkg/core.py",
+        )?;
+        if own != (class == ExposureClass::Exposed) {
+            return Err(format!(
+                "`from pkg import limit` in project {test_project} gave {class:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn assert_not_exposed_both_modes(
+    label: &str,
+    files: &[(&str, &str)],
+    owner_file: &str,
+) -> Result<(), String> {
+    let diff = analyze_one_line(&format!("{label}-diff"), files, owner_file, 2)?;
+    if diff.class == ExposureClass::Exposed {
+        return Err(format!("{label}: diff mode gave Exposed"));
+    }
+    let scan = repo_scan_class(&format!("{label}-scan"), files, owner_file)?;
+    if scan == ExposureClass::Exposed {
+        return Err(format!("{label}: repo scan gave Exposed"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_root_package_rival_withholds_a_project_package_reexport_import() -> Result<(), String> {
+    // A repo-root `pkg/__init__.py` defines its own `limit`; a root test doing
+    // `from pkg import limit` binds that one, not svc/a's re-exported one.
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/pkg/__init__.py", PKG_INIT),
+        ("svc/a/pkg/core.py", CORE_PY),
+        ("pkg/__init__.py", CORE_PY),
+        ("tests/test_core.py", PKG_TEST),
+    ];
+    assert_not_exposed_both_modes("root-package-rival", &files, "svc/a/pkg/core.py")
+}
+
+#[test]
+fn a_test_local_module_shadows_a_flat_project_module_in_both_modes() -> Result<(), String> {
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/core.py", CORE_PY),
+        ("svc/a/tests/core.py", CORE_PY),
+        ("svc/a/tests/test_core.py", STRONG_TEST),
+    ];
+    assert_not_exposed_both_modes("shadow-flat", &files, "svc/a/core.py")
+}
+
+#[test]
+fn a_test_local_module_shadows_a_project_package_reexport_in_both_modes() -> Result<(), String> {
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/pkg/__init__.py", PKG_INIT),
+        ("svc/a/pkg/core.py", CORE_PY),
+        ("svc/a/tests/pkg.py", CORE_PY),
+        ("svc/a/tests/test_core.py", PKG_TEST),
+    ];
+    assert_not_exposed_both_modes("shadow-package", &files, "svc/a/pkg/core.py")
+}
+
+#[test]
+fn a_capped_repo_run_records_no_project_names() -> Result<(), String> {
+    for test_project in ["a", "b"] {
+        let root = super::reexport_tests::unique_tempdir(&format!("scan-capped-{test_project}"))?;
+        for (path, contents) in flat_scan_files(test_project) {
+            super::reexport_tests::write_file(&root.join(path), contents)?;
+        }
+        // Production files take cap priority, so the limit of 3 selects both
+        // `core.py` files and the one evidence file that sorts first, the
+        // project's `test_core.py`; this extra test file sorts last and is
+        // capped. The selected test would credit its own project's `core` if
+        // the cap did not withhold project-relative names.
+        super::reexport_tests::write_file(
+            &root.join("zz/test_extra.py"),
+            "def test_extra():\n    assert True\n",
+        )?;
+        let input = repo::select_repo_input_with_limit(
+            &root,
+            repo::RepoWorkingSetLimit {
+                limit: 3,
+                source: repo::RepoWorkingSetCapSource::Default,
+            },
+        );
+        let evidence = repo::build_repo_evidence(&input, &root);
+        let _ = std::fs::remove_dir_all(&root);
+        if input.counts.capped != 1 || input.counts.selected != 3 {
+            return Err(format!(
+                "fixture did not select the project test and cap the extra file: {:?}",
+                input.counts
+            ));
+        }
+        if !input
+            .test_files
+            .iter()
+            .any(|file| normalized_path(file) == format!("svc/{test_project}/tests/test_core.py"))
+        {
+            return Err("the project's test file was not selected".to_string());
+        }
+        if evidence
+            .findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed)
+        {
+            return Err(format!(
+                "a capped run credited a project-relative name for the project {test_project} test"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_project_root_init_reexport_does_not_relate_a_repo_root_test() -> Result<(), String> {
+    // `svc/a/__init__.py` is the project itself; its re-export must not give
+    // `svc/a/core.py` a bare name usable by a test outside the project.
+    let files = [
+        ("svc/a/pyproject.toml", PROJECT),
+        ("svc/a/__init__.py", PKG_INIT),
+        ("svc/a/core.py", CORE_PY),
+        ("tests/test_core.py", STRONG_TEST),
+    ];
+    assert_not_exposed_both_modes("project-root-init", &files, "svc/a/core.py")
+}
+
+#[test]
+fn one_shadow_index_reused_across_owner_slices_matches_the_per_slice_wrapper() -> Result<(), String>
+{
+    use super::related_tests::{TestLocalShadowIndex, apply_test_local_shadows};
+    use super::source_facts::extract_source_facts;
+    let files: Vec<PathBuf> = ["core.py", "other.py", "tests/core.py", "tests/test_core.py"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let owners_of = |path: &str| extract_source_facts(Path::new(path), CORE_PY).owners;
+    let (mut shadowed_wrapper, mut plain_wrapper) = (owners_of("core.py"), owners_of("other.py"));
+    apply_test_local_shadows(&mut shadowed_wrapper, files.iter());
+    apply_test_local_shadows(&mut plain_wrapper, files.iter());
+    let index = TestLocalShadowIndex::build(files.iter());
+    let (mut shadowed_index, mut plain_index) = (owners_of("core.py"), owners_of("other.py"));
+    index.apply(&mut shadowed_index);
+    index.apply(&mut plain_index);
+    if shadowed_wrapper
+        .iter()
+        .all(|owner| owner.test_local_shadows.is_empty())
+    {
+        return Err("fixture: `core.py` was not shadowed by `tests/core.py`".to_string());
+    }
+    if plain_wrapper
+        .iter()
+        .any(|owner| !owner.test_local_shadows.is_empty())
+    {
+        return Err("fixture: `other.py` was shadowed".to_string());
+    }
+    let shadows = |owners: &[PythonOwner]| {
+        owners
+            .iter()
+            .map(|owner| owner.test_local_shadows.clone())
+            .collect::<Vec<_>>()
+    };
+    if shadows(&shadowed_wrapper) != shadows(&shadowed_index)
+        || shadows(&plain_wrapper) != shadows(&plain_index)
+    {
+        return Err("a reused index disagrees with the per-slice wrapper".to_string());
+    }
+    Ok(())
+}

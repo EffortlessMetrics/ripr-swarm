@@ -7,7 +7,7 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn write_file(path: &Path, contents: &str) -> Result<(), String> {
+pub(super) fn write_file(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("create_dir_all({}): {err}", parent.display()))?;
@@ -15,7 +15,7 @@ fn write_file(path: &Path, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|err| format!("write({}): {err}", path.display()))
 }
 
-fn unique_tempdir(label: &str) -> Result<PathBuf, String> {
+pub(super) fn unique_tempdir(label: &str) -> Result<PathBuf, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| format!("clock: {err}"))?

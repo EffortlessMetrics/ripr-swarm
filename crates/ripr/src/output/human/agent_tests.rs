@@ -111,9 +111,12 @@ fn output(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }
@@ -332,18 +335,36 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         lines[1],
         "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"
     );
+    // RIPR-SPEC-0429: the staged-evidence states follow the record directly.
     assert_eq!(
         lines[2],
+        "stages=reach:yes,infect:weak,propagate:yes,observe:yes,discriminate:weak"
+    );
+    assert_eq!(
+        lines[3],
         "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion"
     );
-    assert_eq!(lines[3], "next=ripr explain --format agent probe:a");
+    assert_eq!(lines[4], "next=ripr explain --format agent probe:a");
     // #13516: the verification record is last and repeats the header's full
     // counts (2 findings, 1 exposed); no outcome means refused.
     assert_eq!(
-        lines[4],
+        lines[5],
         "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
     );
-    assert_eq!(lines.len(), 5, "{text}");
+    assert_eq!(lines.len(), 6, "{text}");
+}
+
+/// RIPR-SPEC-0429: a record-free terminal run (done=) prints no `stages=`
+/// line; a `stages=` token is only emitted for records the run lists.
+#[test]
+fn record_free_terminal_runs_print_no_stages_line() {
+    let done = rendered(&output(vec![finding(
+        "probe:ok",
+        ExposureClass::Exposed,
+        4,
+    )]));
+    assert!(done.contains("\ndone="), "{done}");
+    assert!(!done.contains("stages="), "{done}");
 }
 
 /// #13157: all three compact check drill-ins retain the same source
@@ -496,6 +517,25 @@ fn exposed_only_run_is_done_with_no_gap_lines_or_next() {
 }
 
 #[test]
+fn exposed_only_run_with_unanalyzed_files_stops_instead_of_done() {
+    let mut blocked = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    blocked.unanalyzed_working_tree = true;
+    let text = rendered(&blocked);
+    assert!(text.contains("\nunanalyzed=uncommitted_edits|"), "{text}");
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(text.contains("\nunanalyzed=gitignored|"), "{text}");
+    assert!(
+        text.contains("\ndone=no weak or unobserved gap left"),
+        "{text}"
+    );
+}
+
+#[test]
 fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     let text = rendered(&output(vec![finding(
         "probe:np",
@@ -591,7 +631,8 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
         finding("probe:enum", ExposureClass::StaticUnknown, 316),
     ]));
     assert!(!text.contains("stop="), "{text}");
-    assert!(text.contains(" gaps=0 "), "{text}");
+    // #13803: the listed open row is counted beside `gaps=0`.
+    assert!(text.contains(" gaps=0 unconfirmed_gaps=1 "), "{text}");
     assert!(
         text.contains("\nopen=a static limit leaves reach unconfirmed"),
         "{text}"
@@ -652,6 +693,7 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let text = rendered(&output(vec![fixed]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("unconfirmed_gaps="), "{text}");
     assert!(!text.contains("|id=probe:fixed"), "{text}");
     assert!(
         text.lines()
@@ -881,6 +923,44 @@ fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> 
 }
 
 #[test]
+fn empty_report_over_unanalyzed_files_stops_instead_of_done() {
+    let mut untracked = output(Vec::new());
+    untracked.unanalyzed_working_tree = true;
+    untracked.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&untracked);
+    assert!(
+        text.contains("\nunanalyzed=uncommitted_edits|fix="),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nunanalyzed=untracked|files=src/new.rs|fix=git add -N PATH"),
+        "{text}"
+    );
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(Vec::new());
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(
+        text.contains("\nunanalyzed=gitignored|files=gen/a.rs|fix=git add -f -N PATH"),
+        "{text}"
+    );
+    // Gitignored source is disclosed but the shared verification owner never
+    // refuses on it, so the clean claim stands (negative control).
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+    assert!(!text.contains("stop=changes were not analyzed"), "{text}");
+
+    // Negative: untracked paths without an unanalyzed or working-tree read
+    // are not this run's concern, so a clean report stays `done=`.
+    let mut quiet = output(Vec::new());
+    quiet.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&quiet);
+    assert!(!text.contains("unanalyzed="), "{text}");
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+}
+
+#[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);
     base_side.source_currentness = SourceCurrentness::BaseDeleted;
@@ -994,6 +1074,8 @@ fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
         vec![
             "#ripr explain agent static-advisory class=weakly_exposed",
             "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a",
+            // RIPR-SPEC-0429: the staged-evidence states follow the record.
+            "stages=reach:yes,infect:weak,propagate:yes,observe:yes,discriminate:weak",
             "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion",
             "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
             "next=ripr context --root repo --at probe:a",
@@ -1063,6 +1145,7 @@ fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
         "{text}"
     );
     assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("offers no guided repair"), "{text}");
     assert!(!text.contains("\nstop="), "{text}");
     assert!(
         text.contains("static advisory, not runtime proof"),
@@ -1165,6 +1248,51 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
         "{drill}"
     );
     assert!(!drill.contains("nothing more is fixable"), "{drill}");
+}
+
+/// A preview run whose only finding already reads exposed (the agent's new
+/// test closed it) ends with `done=`, not the advisory `stop=` that says a
+/// test-side improvement "may still be possible". Negative control: the weak
+/// preview gap above keeps its `stop=`.
+#[test]
+fn check_agent_exposed_preview_finding_reads_done_not_stop() {
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![exposed]));
+    assert!(text.contains(" exposed=1"), "{text}");
+    assert!(
+        text.contains(
+            "\ndone=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("may still be possible"), "{text}");
+    let weak = rendered(&output(vec![preview_weak_gap("probe:a", 2)]));
+    assert!(weak.contains("\nstop=preview-language"), "{weak}");
+    assert!(!weak.contains("\ndone="), "{weak}");
+    // The explain drill-in for the same exposed preview finding agrees.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let drill = explained(&exposed);
+    assert!(
+        drill.contains("\ndone=preview-language evidence is advisory only; a related test appears to notice this change"),
+        "{drill}"
+    );
+    assert!(!drill.contains("\nstop="), "{drill}");
+    assert!(!drill.contains("co-located test"), "{drill}");
+    // A static-limited exposed preview finding fails closed on both surfaces.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.class = ExposureClass::Exposed;
+    limited.activation.missing_discriminators.clear();
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let limited_check = rendered(&output(vec![limited.clone()]));
+    assert!(!limited_check.contains("\ndone="), "{limited_check}");
+    let limited_drill = explained(&limited);
+    assert!(!limited_drill.contains("\ndone="), "{limited_drill}");
 }
 
 /// A preview finding without a producer-established discriminator has nothing
@@ -1422,6 +1550,102 @@ fn check_agent_incomplete_run_does_not_claim_repairable() -> Result<(), String> 
     assert!(text.contains("analysis=incomplete"), "{text}");
     assert!(!text.contains("repairable="), "{text}");
     assert!(!text.contains("next=ripr agent repair"), "{text}");
+    Ok(())
+}
+
+/// #13803: a preview gap is never a counted `gaps=` entry, but the header
+/// must not read `gaps=0` alone beside the listed gap record and its `open=`
+/// line. `unconfirmed_gaps=` counts it in every route state (startable,
+/// blocked, no route), and stays absent when nothing unconfirmed is listed.
+#[test]
+fn check_agent_header_counts_a_listed_preview_gap_as_unconfirmed() -> Result<(), String> {
+    let header = |text: &str| text.lines().next().unwrap_or_default().to_string();
+    let config = RiprConfig::default();
+    let committed = CheckDiffProvenance::CommittedHistory;
+
+    let routed = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &config,
+        Some(&gap_route_drill_in("probe:a")),
+        committed,
+    );
+    assert_eq!(
+        header(&routed),
+        "#ripr agent static-advisory base=origin/main findings=1 gaps=0 unconfirmed_gaps=1 repairable=1 weakly_exposed=1",
+        "{routed}"
+    );
+    assert!(routed.contains("|missing=pct == 50|"), "{routed}");
+    assert!(routed.contains("\nopen=preview-language"), "{routed}");
+
+    let blocked_route = crate::app::FindingDrillIn::Commands(
+        crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+            crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                finding_id: "probe:a".to_string(),
+                gap_id: "gap:python:src/lib.rs:pricing:predicate_boundary:predicate:pct==50"
+                    .to_string(),
+                base: "origin/main".to_string(),
+                uncommitted_files: vec!["src/lib.rs".to_string()],
+            }),
+        ),
+    );
+    let blocked = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &config,
+        Some(&blocked_route),
+        committed,
+    );
+    assert_eq!(
+        header(&blocked),
+        "#ripr agent static-advisory base=origin/main findings=1 gaps=0 unconfirmed_gaps=1 weakly_exposed=1",
+        "{blocked}"
+    );
+
+    let unrouted = render(
+        &output(vec![preview_weak_gap("probe:a", 2)]),
+        &config,
+        None,
+        committed,
+    );
+    assert!(
+        header(&unrouted).contains(" gaps=0 unconfirmed_gaps=1 "),
+        "{unrouted}"
+    );
+
+    // A confirmed gap beside the preview one: the preview record is not
+    // listed (only `limits=` counts it), so the header counts nothing
+    // unconfirmed.
+    let mixed = rendered(&output(vec![
+        weak_gap("probe:rust", 3),
+        preview_weak_gap("probe:py", 4),
+    ]));
+    assert!(header(&mixed).contains(" gaps=1 "), "{mixed}");
+    assert!(!mixed.contains("unconfirmed_gaps="), "{mixed}");
+
+    // An exposed preview finding, a static-limited preview gap and a preview
+    // finding of a non-gap class are not unconfirmed gaps.
+    let mut exposed = preview_weak_gap("probe:e", 2);
+    exposed.class = ExposureClass::Exposed;
+    let mut limited = preview_weak_gap("probe:l", 2);
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let mut unknown = preview_weak_gap("probe:u", 2);
+    unknown.class = ExposureClass::StaticUnknown;
+    for negative in [exposed, limited, unknown] {
+        let text = rendered(&output(vec![negative]));
+        assert!(!text.contains("unconfirmed_gaps="), "{text}");
+    }
+
+    // An incomplete analysis lists no limited records, so it counts no
+    // preview gaps.
+    let incomplete = render(
+        &outcome_output(
+            crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+            vec![python_card_gap("probe:a")],
+        )?,
+        &config,
+        Some(&gap_route_drill_in("probe:a")),
+        committed,
+    );
+    assert!(!incomplete.contains("unconfirmed_gaps="), "{incomplete}");
     Ok(())
 }
 

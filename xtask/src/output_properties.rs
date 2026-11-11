@@ -493,14 +493,97 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
             "invalid legend template {invalid}"
         );
     }
-    assert_eq!(
-        terse_value["dropped_aliases"],
-        serde_json::json!(["suggested_next_action"])
-    );
+    let aliases = terse_value["dropped_aliases"]
+        .as_array()
+        .ok_or("expected dropped_aliases")?;
+    assert_eq!(aliases.first(), Some(&Value::from("suggested_next_action")));
     assert!(
         terse_value["findings"][0]
             .get("suggested_next_action")
             .is_none()
+    );
+    // #13673: per finding, terse drops an activation alias exactly when the
+    // full copy is non-empty and equal to activation's; otherwise it is kept
+    // verbatim. Full JSON always carries both arrays (the schema lists them
+    // as optional for terse, so this test holds the full-json guarantee).
+    let full_findings = full["findings"].as_array().ok_or("full findings")?;
+    let terse_findings = terse_value["findings"].as_array().ok_or("terse findings")?;
+    assert_eq!(full_findings.len(), terse_findings.len());
+    for alias in ["observed_values", "missing_discriminators"] {
+        let mut any_dropped = false;
+        for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings) {
+            let value = full_finding
+                .get(alias)
+                .ok_or(format!("full json lacks {alias}"))?;
+            let droppable = value.as_array().is_some_and(|items| !items.is_empty())
+                && full_finding["activation"].get(alias) == Some(value);
+            if droppable {
+                any_dropped = true;
+                assert!(terse_finding.get(alias).is_none(), "{alias} kept");
+                assert_eq!(terse_finding["activation"][alias], *value, "{alias}");
+            } else {
+                assert_eq!(terse_finding.get(alias), Some(value), "{alias} dropped");
+            }
+        }
+        assert_eq!(
+            aliases.contains(&Value::from(alias)),
+            any_dropped,
+            "dropped_aliases lists {alias} exactly when a finding dropped it"
+        );
+    }
+    // #13673: `canonical_gap_id` and basis-free `evidence_stages` rows drop
+    // exactly when they restate their owner, and the dropped value is
+    // recoverable from that owner.
+    let stage_order = ["reach", "infect", "propagate", "observe", "discriminate"];
+    let (mut gap_dropped, mut stages_dropped) = (false, false);
+    for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings) {
+        if let Some(id) = full_finding.get("canonical_gap_id") {
+            let restated = full_finding["canonical_gap"].get("id") == Some(id);
+            assert_eq!(terse_finding.get("canonical_gap_id").is_none(), restated);
+            gap_dropped |= restated;
+        }
+        if let Some(rows) = full_finding.get("evidence_stages") {
+            let rebuilt: Vec<Value> = stage_order
+                .iter()
+                .map(|stage| {
+                    serde_json::json!({
+                        "stage": stage,
+                        "state": full_finding["ripr"][stage]["state"],
+                        "confidence": full_finding["ripr"][stage]["confidence"],
+                    })
+                })
+                .collect();
+            let restated = rows.as_array() == Some(&rebuilt);
+            assert_eq!(terse_finding.get("evidence_stages").is_none(), restated);
+            stages_dropped |= restated;
+        }
+    }
+    assert_eq!(
+        aliases.contains(&Value::from("canonical_gap_id")),
+        gap_dropped
+    );
+    assert_eq!(
+        aliases.contains(&Value::from("evidence_stages")),
+        stages_dropped
+    );
+    assert!(
+        gap_dropped && stages_dropped,
+        "fixture must exercise both aliases"
+    );
+    // The schema's terse branch cannot tie a missing action to its alias
+    // without a version bump, so the producer invariant is held here.
+    for terse_finding in terse_findings {
+        if terse_finding.get("suggested_next_action").is_none() {
+            assert!(aliases.contains(&Value::from("suggested_next_action")));
+        }
+    }
+    assert!(
+        full_findings
+            .iter()
+            .any(|finding| finding["observed_values"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())),
+        "fixture must exercise a non-empty activation alias"
     );
     assert_eq!(
         terse_value["findings"][0]["recommended_next_step"],

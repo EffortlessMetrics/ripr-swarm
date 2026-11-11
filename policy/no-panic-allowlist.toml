@@ -1267,3 +1267,22 @@ receiver_fingerprint = "run_git(&root, &[\"commit\", \"-m\", \"edit\"])"
 [allow.last_seen]
 line = 12042
 column = 5
+
+[[allow]]
+id = "panic-0095"
+path = "crates/ripr/tests/repair_check_recommended_start.rs"
+family = "expect"
+classification = "test_only"
+explanation = "Test helper: the quoting self-test's local expect closure asserts each split shape and returns the mismatch as an Err; the closure is the only expect source in this test file"
+owner = "core/analysis"
+expires = "2027-05-31"
+count = 10
+
+[allow.selector]
+kind = "call"
+container = "shell_split_reads_both_bound_root_quoting_forms"
+callee = "expect"
+
+[allow.last_seen]
+line = 1135
+column = 5
