@@ -13575,7 +13575,14 @@ fn let_bound_owner_call<'a>(
     let next = &rest[..end];
     let after = &rest[end + 1..];
     let tail_of_line = &after[..after.find('\n').unwrap_or(after.len())];
-    if !(next.starts_with("assert_eq!") || next.starts_with("assert!"))
+    // A lone-equality `assert!(v == e)` opens the statement in place of the
+    // `assert_eq!`; a bool owner's bare `assert!(v)` keeps the scalar route.
+    let opener = if !bare_condition && is_plain_macro(&assertion.text, "assert") {
+        "assert!"
+    } else {
+        "assert_eq!"
+    };
+    if !next.starts_with(opener)
         || !contains_as_whole_word(next, operand)
         || !tail_of_line.trim().is_empty()
         || assertion.line != next_line
