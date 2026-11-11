@@ -26,7 +26,7 @@
 //!
 //! Every case first asserts its fixture: the source diff alone produces
 //! exactly one predicate finding at each generated changed line, over the
-//! intended expression. A relation can therefore never hold over a workspace
+//! intended expression, and no finding anywhere else. A relation can therefore never hold over a workspace
 //! that was not analyzed. A control test shows the comparison is able to
 //! fail: dropping one source section from the diff is reported as a
 //! difference. These are static classes; nothing here claims a runtime
@@ -400,7 +400,7 @@ fn differences(before: &Value, after: &Value, allowed: &[&str]) -> Vec<String> {
 
 /// Asserts the source diff alone analyzed every generated change: exactly one
 /// predicate finding per module, at the changed line, over the changed
-/// expression.
+/// expression, and nothing away from the changed lines.
 fn assert_fixture(subject: &Subject, output: &CheckOutput) -> Result<(), String> {
     for (index, module) in subject.modules.iter().enumerate() {
         let path = Subject::path(index);
@@ -422,6 +422,21 @@ fn assert_fixture(subject: &Subject, output: &CheckOutput) -> Result<(), String>
         if finding.probe.expression.trim() != expression {
             return Err(format!(
                 "finding in {path} is `{}`, not the changed `{expression}`",
+                finding.probe.expression
+            ));
+        }
+    }
+    // Nothing outside the generated changed lines may be reported.
+    for finding in &output.findings {
+        let expected = subject.modules.iter().enumerate().any(|(index, module)| {
+            finding.probe.location.line == Subject::source(index, module, true).1
+                && finding.probe.location.file.ends_with(Subject::path(index))
+        });
+        if !expected {
+            return Err(format!(
+                "fixture produced a finding away from the changed lines: {}:{} `{}`",
+                finding.probe.location.file.display(),
+                finding.probe.location.line,
                 finding.probe.expression
             ));
         }
@@ -614,8 +629,10 @@ fn dropping_a_source_section_is_reported_as_a_difference() -> Result<(), String>
         &partial,
         &[INPUT_IDENTITY, CHANGED_FILE_COUNT, CHANGED_LINE_COUNT],
     );
-    if changed.is_empty() {
-        return Err("the comparison missed a dropped source section".to_string());
+    if !changed.iter().any(|path| path.starts_with(".findings")) {
+        return Err(format!(
+            "the comparison did not report the findings for a dropped source section: {changed:?}"
+        ));
     }
     Ok(())
 }
@@ -640,6 +657,24 @@ fn allowed_fields_exist_and_describe_the_diff() -> Result<(), String> {
         return Err(format!(
             "one unrelated section moved {found:?}, expected {expected:?}"
         ));
+    }
+    // `Noise::Modified` names one more file and adds one more line.
+    for pointer in [
+        "/analysis_outcome/outcome/counts/changed_file_count",
+        "/analysis_outcome/outcome/counts/changed_line_count",
+    ] {
+        let count = |report: &Value| {
+            report
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .ok_or_else(|| format!("report has no count at {pointer}"))
+        };
+        let (before, after) = (count(&base.report)?, count(&noisy)?);
+        if after != before + 1 {
+            return Err(format!(
+                "{pointer} went from {before} to {after} for one added line in one unrelated file"
+            ));
+        }
     }
     Ok(())
 }
