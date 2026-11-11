@@ -165,8 +165,11 @@ reached the caller.
 - **Unusable report input**: `ripr reports gap-ledger` with a source that
   is readable but not valid JSON or not that source kind's shape, and
   `ripr policy readiness` with a supplied input that is missing, unreadable,
-  not JSON, empty, or another artifact, exit `2` and name the flag, path and
-  cause on stderr. The `blocked` ledger or `config_error` readiness report is
+  not a JSON object, or empty, a baseline delta, waiver aging, suppression
+  health or previous readiness input whose `kind` names another report, or a
+  gate decision without `status` and `summary`, exit `2` and name the flag,
+  path and cause on stderr. Calibration and repo-config inputs get only the
+  object and non-empty checks. The `blocked` ledger or `config_error` readiness report is
   still written first, so it replaces an earlier report at `--out` instead of
   leaving a stale one for a later step to read (#14311).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
