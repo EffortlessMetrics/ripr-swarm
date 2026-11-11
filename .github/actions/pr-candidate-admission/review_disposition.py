@@ -86,7 +86,7 @@ NEGATION = re.compile(
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
-    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)\b"
+    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
     r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
@@ -238,9 +238,13 @@ def strip_negated_change(line: str) -> str:
     def replace(match: re.Match[str]) -> str:
         before = line[: match.start()]
         after = line[match.end() :]
+        # #14355: a cue only refutes the phrase in its own clause. A comma
+        # resets the clause, so "The Devin thread was a false positive, no code
+        # change needed." is resolved work, not a refutation.
+        before_clause = before.rsplit(",", 1)[-1]
         if (
             NEGATED_CHANGE_TAIL.match(after)
-            and not REFUTES_NEGATION.search(before)
+            and not REFUTES_NEGATION.search(before_clause)
             and not REFUTATION_AFTER.search(after)
         ):
             return " "
@@ -526,6 +530,26 @@ def self_test() -> None:
         ("REVIEW_READY\nResolved with no code change needed.", True),
         ("REVIEW_READY\nThree Devin threads resolved, no code changes needed.", True),
         ("REVIEW_READY\nResolved without a code change.", True),
+        # #14355: a comma resets the clause, so a benign cue earlier in the
+        # sentence does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            True,
+        ),
+        ("REVIEW_READY\nGemini isn't available, no changes needed.", True),
+        # #14355: a hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            True,
+        ),
         ("REVIEW_READY\nCode change needed.", False),
         ("REVIEW_READY\nA change is needed.", False),
         ("REVIEW_READY\nChanges required.", False),

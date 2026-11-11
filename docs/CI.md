@@ -112,10 +112,11 @@ A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still
 refuse. The phrase is stripped only when it ends a sentence and no recognized
-refutation cue appears before or after it in that sentence; the rest of the
-line is scanned separately, so `No code change needed. The build is red.` and
-`No changes are needed. That is false.` still refuse (#14355). The cue sets are
-closed enumerations, so a phrasing outside them is not detected. The check is
+refutation cue appears before it in the same clause or after it in the same
+sentence; a comma resets the clause. The rest of the line is scanned
+separately, so `No code change needed. The build is red.` and `No changes are
+needed. That is false.` still refuse (#14355). The cue sets are closed
+enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
 

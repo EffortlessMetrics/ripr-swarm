@@ -307,7 +307,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-11T11:00:28Z";
-    let cases: [(&str, bool); 52] = [
+    let cases: [(&str, bool); 57] = [
         // The strip-exercising control: this admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", true),
         (
@@ -316,6 +316,29 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
         ),
         // Control that does not exercise the strip: no "needed"/"required".
         ("REVIEW_READY\nResolved without a code change.", true),
+        // A comma resets the clause, so a benign cue earlier in the sentence
+        // does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nGemini isn't available, no changes needed.",
+            true,
+        ),
+        // A hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            true,
+        ),
         ("REVIEW_READY\nCode change needed.", false),
         ("REVIEW_READY\nA change is needed.", false),
         ("REVIEW_READY\nChanges required.", false),
