@@ -146,6 +146,9 @@ impl McpServer {
             Some(source) => source,
             None => {
                 let probe_root = root.clone();
+                // A probe that could not finish keeps committed history, the
+                // same fallback the selection owner takes for a failed probe;
+                // `requested_source: "default"` still discloses the choice.
                 tokio::task::spawn_blocking(move || default_refresh_source(&probe_root))
                     .await
                     .unwrap_or(workspace::RefreshSource::Committed)

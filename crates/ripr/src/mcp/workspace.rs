@@ -2451,7 +2451,7 @@ pub(crate) mod after_worktree_findings_hook {
 /// repair card when its source custody is not established (#7357).
 pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
     format!(
-        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh without `source` for committed repair cards"
+        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh with source `committed` for committed repair cards"
     )
 }
 
