@@ -255,6 +255,122 @@ pub(in crate::app) fn selector_matches_file_line(
         || wanted.ends_with(&format!("/{stored}"))
 }
 
+/// Where the findings of this scope are, for a `file:line` selector that
+/// matched none (#14384): the lines that do hold findings in the named file,
+/// or, when the file holds none, the files that do. `None` for a selector
+/// that is not location-shaped. The listing comes from the analyzed findings
+/// only; the typed selector is never echoed into a command.
+pub(in crate::app) fn location_miss_hint(
+    findings: &[Finding],
+    root: &std::path::Path,
+    selector: &str,
+) -> Option<String> {
+    const MAX_LISTED: usize = 5;
+    if ["probe:", "repo-probe:", "gap:", "seam:"]
+        .iter()
+        .any(|prefix| selector.starts_with(prefix))
+    {
+        return None;
+    }
+    let (selector_file, selector_line) = selector.rsplit_once(':')?;
+    if selector_line.parse::<usize>().is_err() {
+        return None;
+    }
+    // `file:line:column` splits as file `file:line`; matching is per line.
+    let (selector_file, column_given) = match selector_file.rsplit_once(':') {
+        Some((file, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => {
+            (file, true)
+        }
+        _ => (selector_file, false),
+    };
+    let wanted = normalize_locator_path(selector_file);
+    if wanted.is_empty() || !(wanted.contains(['/', '.'])) {
+        return None;
+    }
+    let column_note = if column_given {
+        " Selectors are file:line; drop the column."
+    } else {
+        ""
+    };
+    if findings.is_empty() {
+        return Some(format!(
+            " This scope has no findings, so no location can match.{column_note}"
+        ));
+    }
+    // Keyed by file so a suffix selector (`lib.rs`) that matches several
+    // files never mixes their lines under one name.
+    let mut same_file =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    let mut other_files = std::collections::BTreeSet::<String>::new();
+    let root_prefix = normalize_locator_path(&crate::analysis::stable_path_text(root));
+    for finding in findings {
+        let file = crate::analysis::stable_path_text(&finding.probe.location.file);
+        let stored = normalize_locator_path(file.as_ref());
+        let matches = stored == wanted
+            || stored.ends_with(&format!("/{wanted}"))
+            || wanted.ends_with(&format!("/{stored}"));
+        // Shown root-relative: a fresh run stores absolute paths, and the
+        // suffix match accepts the relative form the user types.
+        let stored = match stored.strip_prefix(&format!("{root_prefix}/")) {
+            Some(relative) if !root_prefix.is_empty() && !relative.is_empty() => {
+                relative.to_string()
+            }
+            _ => stored,
+        };
+        if matches {
+            same_file
+                .entry(stored)
+                .or_default()
+                .insert(finding.probe.location.line);
+        } else {
+            other_files.insert(stored);
+        }
+    }
+    // An exact path match leads; otherwise the first matching file.
+    if let Some((file, lines)) = same_file
+        .get_key_value(&wanted)
+        .or_else(|| same_file.iter().next())
+    {
+        let first_line = lines.iter().next().copied().unwrap_or_default();
+        let listed = lines
+            .iter()
+            .take(MAX_LISTED)
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = lines.len().saturating_sub(MAX_LISTED);
+        let more = if more > 0 {
+            format!(" (and {more} more)")
+        } else {
+            String::new()
+        };
+        let noun = if lines.len() == 1 { "line" } else { "lines" };
+        let others = match same_file.len().saturating_sub(1) {
+            0 => String::new(),
+            1 => " 1 other file matching that path also has findings.".to_string(),
+            n => format!(" {n} other files matching that path also have findings."),
+        };
+        return Some(format!(
+            " Findings in {file} are on {noun} {listed}{more}; select one as {file}:{first_line}.{others}{column_note}"
+        ));
+    }
+    let files = other_files
+        .iter()
+        .take(MAX_LISTED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = other_files.len().saturating_sub(MAX_LISTED);
+    let more = if more > 0 {
+        format!(" (and {more} more)")
+    } else {
+        String::new()
+    };
+    Some(format!(
+        " No finding in this scope is in {wanted:?}; findings are in {files}{more}.{column_note}"
+    ))
+}
+
 /// Normalize a path for locator matching: convert `\` to `/`, drop a leading
 /// `./`, and trim a trailing `/`. Lets the path a user copies from `check`
 /// output (or types naturally) match the stored form regardless of platform
@@ -268,8 +384,8 @@ fn normalize_locator_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        FindingSelection, location_selector_needs_syntax_hint, normalize_locator_path,
-        select_finding, selector_matches_file_line,
+        FindingSelection, location_miss_hint, location_selector_needs_syntax_hint,
+        normalize_locator_path, select_finding, selector_matches_file_line,
     };
     use crate::domain::{
         ActivationEvidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, Probe,
@@ -525,6 +641,81 @@ mod tests {
             super::select_finding_for_gap_hash(&findings, &classified, "gap:0000000000000000"),
             FindingSelection::NoMatch
         ));
+    }
+
+    /// #14384: a location miss names where the findings are instead of
+    /// only pointing at a separate listing run.
+    #[test]
+    fn location_miss_hint_names_lines_files_and_the_column_form() {
+        let findings = vec![
+            finding("probe:a", 3, None),
+            finding("probe:b", 3, None),
+            finding("probe:c", 9, None),
+        ];
+        assert_eq!(
+            location_miss_hint(&findings, std::path::Path::new(""), "src/lib.rs:9999").as_deref(),
+            Some(" Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:3.")
+        );
+        assert_eq!(
+            location_miss_hint(&findings, std::path::Path::new(""), "./src\\lib.rs:1:2").as_deref(),
+            Some(
+                " Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:3. Selectors are file:line; drop the column."
+            )
+        );
+        assert_eq!(
+            location_miss_hint(&findings, std::path::Path::new(""), "nofile.rs:1").as_deref(),
+            Some(" No finding in this scope is in \"nofile.rs\"; findings are in src/lib.rs.")
+        );
+        assert_eq!(
+            location_miss_hint(&[], std::path::Path::new(""), "src/lib.rs:1").as_deref(),
+            Some(" This scope has no findings, so no location can match.")
+        );
+        // A suffix that matches several files never mixes their lines: the
+        // first file's lines are listed and the rest are counted.
+        let mut other = finding("probe:d", 2, None);
+        other.probe.location = SourceLocation::new("crates/b/src/lib.rs", 2, 1);
+        let mut third = finding("probe:e", 7, None);
+        third.probe.location = SourceLocation::new("crates/a/src/lib.rs", 7, 1);
+        let spread = vec![finding("probe:a", 3, None), other, third];
+        assert_eq!(
+            location_miss_hint(&spread, std::path::Path::new(""), "lib.rs:99").as_deref(),
+            Some(
+                " Findings in crates/a/src/lib.rs are on line 7; select one as crates/a/src/lib.rs:7. 2 other files matching that path also have findings."
+            )
+        );
+        assert_eq!(
+            location_miss_hint(&spread, std::path::Path::new(""), "src/lib.rs:99").as_deref(),
+            Some(
+                " Findings in src/lib.rs are on line 3; select one as src/lib.rs:3. 2 other files matching that path also have findings."
+            )
+        );
+        // A fresh run stores absolute paths; the hint shows them
+        // root-relative, which the suffix match resolves.
+        let mut absolute = finding("probe:f", 4, None);
+        absolute.probe.location = SourceLocation::new("/work/repo/src/lib.rs", 4, 1);
+        assert_eq!(
+            location_miss_hint(
+                &[absolute],
+                std::path::Path::new("/work/repo"),
+                "src/lib.rs:1"
+            )
+            .as_deref(),
+            Some(" Findings in src/lib.rs are on line 4; select one as src/lib.rs:4.")
+        );
+        // Not location-shaped: ids and bare words get no location hint.
+        for selector in [
+            "probe:missing",
+            "probe:src/lib.rs:3",
+            "gap:rust:x",
+            "nocolon",
+            "src/lib.rs:abc",
+        ] {
+            assert_eq!(
+                location_miss_hint(&findings, std::path::Path::new(""), selector),
+                None,
+                "{selector}"
+            );
+        }
     }
 
     #[test]

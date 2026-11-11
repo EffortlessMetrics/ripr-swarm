@@ -377,6 +377,12 @@ pub(crate) fn no_finding_matched_fresh_run(
         }
         message
     };
+    // #14384: a location miss names where this scope's findings are, so the
+    // next selector needs no separate listing run.
+    if let Some(hint) = super::selector::location_miss_hint(&output.findings, root, selector) {
+        message.push('.');
+        message.push_str(&hint);
+    }
     append_fresh_run_language_limits(&mut message, output);
     message
 }
@@ -518,11 +524,20 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             &explain_navigation_list_command(&navigation),
             &limitation,
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched(
-            selector,
-            &explain_navigation_list_command(&navigation),
-            None,
-        )),
+        FindingSelection::NoMatch => {
+            let mut message = no_finding_matched(
+                selector,
+                &explain_navigation_list_command(&navigation),
+                None,
+            );
+            if let Some(hint) =
+                super::selector::location_miss_hint(&findings, &input.root, selector)
+            {
+                message.push('.');
+                message.push_str(&hint);
+            }
+            Err(message)
+        }
     }
 }
 #[cfg(test)]

@@ -25118,6 +25118,86 @@ fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #14384: a `file:line` miss names where the findings are, on the fresh
+/// route and on both artifact routes, and exits 2. The suggested selector
+/// then resolves, so the hint is a usable next step.
+#[test]
+fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Result<(), String> {
+    let fixture = SampleDiffFixture::new("location-miss-hint")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("last-check.json").display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--write-artifact",
+        &artifact,
+    ]);
+    assert_success(&check);
+    let routes: [Vec<&str>; 3] = [
+        vec![
+            "explain",
+            "--root",
+            &root,
+            "--diff",
+            &diff,
+            "src/lib.rs:9999",
+        ],
+        vec![
+            "explain",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "src/lib.rs:9999",
+        ],
+        vec![
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "--at",
+            "src/lib.rs:9999",
+        ],
+    ];
+    for args in &routes {
+        let output = run_ripr(args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(2) {
+            return Err(format!("{args:?} must exit 2: {stderr}"));
+        }
+        if !stderr.contains("no finding matched \"src/lib.rs:9999\"")
+            || !stderr.contains("Findings in src/lib.rs are on line")
+        {
+            return Err(format!(
+                "{args:?} miss must name the finding lines: {stderr}"
+            ));
+        }
+        let line: String = stderr
+            .split("select one as src/lib.rs:")
+            .nth(1)
+            .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect())
+            .unwrap_or_default();
+        if line.is_empty() {
+            return Err(format!("{args:?} miss must suggest a selector: {stderr}"));
+        }
+        let suggested = format!("src/lib.rs:{line}");
+        let retry = run_ripr(&["explain", "--root", &root, "--from", &artifact, &suggested]);
+        if !retry.status.success() {
+            return Err(format!(
+                "suggested selector {suggested:?} must resolve: {}",
+                String::from_utf8_lossy(&retry.stderr)
+            ));
+        }
+    }
+    Ok(())
+}
+
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
 
 /// End-to-end three-step flow: `check --write-artifact` once, then
