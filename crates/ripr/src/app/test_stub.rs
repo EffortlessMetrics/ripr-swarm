@@ -1895,6 +1895,65 @@ pub(crate) fn run_command(
     }
 }
 
+/// The native command that runs one named Rust test in `test_file` (#14320),
+/// spelled exactly as `ripr agent stub` spells its run command: an
+/// integration file under `tests/` runs as `--test TARGET NAME` once its
+/// cargo target name is established, and an inline `#[cfg(test)]` module
+/// test runs by name in its owning package. `None` when the file is not a
+/// Rust file, the name is not a plain identifier, no package owns the file,
+/// or an integration target cannot be named: no command is offered rather
+/// than one that would run nothing or a different test.
+pub(crate) fn focused_test_run_command(
+    root: &Path,
+    test_file: &str,
+    test_name: &str,
+) -> Option<String> {
+    let file = PathBuf::from(test_file.replace('\\', "/"));
+    let plain_name = !test_name.is_empty()
+        && test_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !plain_name || file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+        return None;
+    }
+    let in_tests_dir = file
+        .components()
+        .any(|component| component.as_os_str() == "tests");
+    let placement = if in_tests_dir {
+        TestStubPlacement::ExistingIntegrationFile { file }
+    } else {
+        TestStubPlacement::ExistingInlineModule {
+            file,
+            module_name: "tests".to_string(),
+            offset: 0,
+        }
+    };
+    let stub = RustTestStub {
+        placement,
+        test_name: test_name.to_string(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+    };
+    let manifest = package_manifest_for(root, &stub)?;
+    let target = if in_tests_dir {
+        match integration_target_lookup(root, &manifest, &stub) {
+            TargetLookup::Name(name) => Some(name),
+            TargetLookup::NotRegistered | TargetLookup::Unresolved => return None,
+        }
+    } else {
+        None
+    };
+    let manifest = root.join(&manifest);
+    let manifest = manifest
+        .strip_prefix(".")
+        .unwrap_or(&manifest)
+        .to_string_lossy()
+        .replace('\\', "/");
+    run_command(&shell_arg(&manifest), &stub, target.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2424,6 +2483,67 @@ mod tests {
             Some("cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary")
         );
         assert_eq!(run_command("crates/a/Cargo.toml", &integration, None), None);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_names_the_target_or_refuses() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-run-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let manifest = root.join("Cargo.toml").to_string_lossy().replace('\\', "/");
+        let manifest = shell_arg(&manifest);
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "src/lib.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} equal_threshold"
+            ))
+        );
+        // No exact command: a non-identifier name, a non-Rust file, or a
+        // file outside any package.
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "a b; rm"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "tests/test_pricing.py", "test_x"),
+            None
+        );
+        let orphan = root.join("orphan");
+        std::fs::create_dir_all(orphan.join("tests")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&orphan, "tests/pricing.rs", "t"),
+            None
+        );
+        // `autotests = false` without an entry leaves the target unnamed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\nautotests = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

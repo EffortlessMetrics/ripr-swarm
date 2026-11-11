@@ -769,6 +769,7 @@ fn persist_before_repair_attempt(
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
         typescript_test_cache_guidance,
+        focused_test_command: focused_test_command(root, &packet_text),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -857,6 +858,17 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
+}
+
+/// The exact native command for the packet's suggested Rust test (#14320),
+/// read from the first packet's `recommended_test`. `None` when the packet
+/// names no file or test name, or no exact command can be established.
+fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let test = value.pointer("/packets/0/recommended_test")?;
+    let file = test.get("file")?.as_str()?;
+    let name = test.get("name")?.as_str()?;
+    crate::app::test_stub::focused_test_run_command(root, file, name)
 }
 
 #[cfg(test)]
