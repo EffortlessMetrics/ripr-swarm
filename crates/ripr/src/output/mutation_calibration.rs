@@ -3931,7 +3931,7 @@ mod tests {
         let hostile = "replace <T as Into<U>>::into with a|b @octocat <script>x</script>";
         let command = "cargo test -- 'a|b' <filter>";
         let mutants = serde_json::json!({"mutants":[
-            {"id":"m`1","file":"src/lib.rs","line":2,"operator":generic,"outcome":"missed"},
+            {"id":"m1","file":"src/lib.rs","line":2,"operator":generic,"outcome":"missed"},
             {"id":"m|2","file":"src/absent.rs","line":7,"operator":hostile,"outcome":"missed","test_command":command},
             {"id":"m`3`","file":"src/lib.rs","line":9,"operator":"replace > with <","outcome":"missed"}
         ]})
