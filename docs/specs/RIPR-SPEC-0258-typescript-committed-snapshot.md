@@ -464,6 +464,8 @@ existing rules and limits.
   controls;
   `destructured_config_writes_refuse_but_unrelated_patterns_keep_credit` and
   `wrapped_commonjs_exports_track_destructured_config_writes` pin nested rebinding/member writes and unrelated destructuring controls;
+  `fixtures/typescript_snapshot_destructured_config_write` and its honesty
+  corpus case pin the medium public result independently of golden updates;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
   `snapshot_whose_counter_cannot_be_named_stays_medium`,

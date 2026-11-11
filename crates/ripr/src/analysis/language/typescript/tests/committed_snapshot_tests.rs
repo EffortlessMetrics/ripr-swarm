@@ -2620,7 +2620,7 @@ fn destructured_config_writes_refuse_but_unrelated_patterns_keep_credit() -> Res
             OracleStrength::Strong,
         ),
         ("[...other] = input;", OracleStrength::Strong),
-        ("({...other} = input);", OracleStrength::Strong),
+        ("({value: {...other}} = input);", OracleStrength::Strong),
         (
             "[config.testEnvironment] = ['node'];",
             OracleStrength::Strong,
