@@ -821,5 +821,33 @@ fn refresh_honors_the_analysis_table_like_ripr_check() -> Result<(), String> {
             "MCP and ripr check must agree under ripr.toml: {configured_classes:?} vs {cli_configured:?}"
         ));
     }
+
+    // The mode alone must reach the analysis, not only the disclosed label:
+    // `instant` indexes changed files only, so with unchanged tests still
+    // included the unchanged test drops out and the boundary reads
+    // `no_static_path` again.
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"instant\"\n")
+        .map_err(|error| error.to_string())?;
+    let (instant_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if instant_classes.is_empty()
+        || instant_classes
+            .iter()
+            .any(|class| class != "no_static_path")
+    {
+        return Err(format!(
+            "mode = instant must index changed files only over MCP: {instant_classes:?}"
+        ));
+    }
+    if profile_mode != "instant" || desired_mode != "instant" {
+        return Err(format!(
+            "the session must disclose instant: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_instant = cli_classes(&root)?;
+    if cli_instant != instant_classes {
+        return Err(format!(
+            "MCP and ripr check must agree under mode = instant: {instant_classes:?} vs {cli_instant:?}"
+        ));
+    }
     Ok(())
 }
