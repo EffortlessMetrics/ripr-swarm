@@ -88,10 +88,15 @@ profile fields.
   registration carries one change-and-delete watcher for analyzed source
   files (#14099): an event for a file that is not open and no longer holds
   the bytes the committed snapshot consumed (deleted, renamed away, or
-  rewritten outside the editor) schedules one diagnostics refresh, and an
-  event for unchanged bytes schedules none. Test files the snapshot did not
-  record as consumed are not covered; clients without dynamic registration
-  must refresh manually;
+  rewritten outside the editor) schedules one diagnostics refresh. For a
+  Rust source the snapshot recorded as consumed, an event for unchanged
+  bytes schedules none. Other sources have no recorded bytes to compare:
+  they are covered only while they carry committed diagnostics, and a
+  Changed event for one always refreshes. The glob matches files, so a
+  folder deletion is covered only when the client reports the files (or the
+  folder itself) anyway. Test files the snapshot did not record as consumed
+  are not covered; clients without dynamic registration must refresh
+  manually;
 - the session-configuration transport (RIPR-SPEC-0136).
 
 ### Captured RIPR experimental blocks

@@ -65,7 +65,10 @@ pub(super) struct CommittedSources<'a> {
 ///   committed diagnostics: `Changed` has nothing to compare against, and
 ///   `Deleted` must be confirmed by the file actually being gone.
 /// - A deleted directory drifts when it is gone and covered a committed
-///   source or a diagnostics URI.
+///   source or a diagnostics URI. The registered source glob does not match
+///   a directory, so this only helps a client that reports one anyway.
+/// - A committed source replaced by a link that resolves outside the root
+///   drifts without its new target being read.
 pub(super) fn events_drift_committed_sources(
     committed: &CommittedSources<'_>,
     changes: &[FileEvent],
@@ -92,7 +95,12 @@ fn event_drifts_committed_source(
         return false;
     };
     let Some(relative) = file_uri_relative_to_root(committed.root, &event.uri) else {
-        return false;
+        // The entry no longer resolves under the root. If its lexical place
+        // still names a committed source, that source was replaced by a link
+        // pointing outside: drift, without reading the new target.
+        return path
+            .strip_prefix(committed.root)
+            .is_ok_and(|lexical| committed.consumed.digest(lexical).is_some());
     };
     if committed.consumed.digest(&relative).is_some() {
         return committed
@@ -294,6 +302,30 @@ mod tests {
             .map_err(|err| format!("mkdir: {err}"))?;
         std::fs::create_dir_all(root.0.join("pkg")).map_err(|err| format!("mkdir: {err}"))?;
         assert!(!drifts(&root.0, &sources, &carried, &pkg, &[]));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_source_replaced_by_an_outside_link_drifts() -> Result<(), String> {
+        let root = temp_root("retarget")?;
+        let outside = temp_root("retarget-outside")?;
+        let analyzed = b"pub fn f() {}\n";
+        write(&outside.0, "src/other.rs", analyzed)?;
+        let sources = consumed(&[("src/lib.rs", analyzed)]);
+        let changed = [event(&root.0, "src/lib.rs", FileChangeType::CHANGED)?];
+        let uncommitted = [event(&root.0, "src/extra.rs", FileChangeType::CHANGED)?];
+        let link = |name: &str| {
+            std::os::unix::fs::symlink(outside.0.join("src/other.rs"), root.0.join(name))
+                .map_err(|err| format!("symlink {name}: {err}"))
+        };
+        link("src/lib.rs")?;
+        link("src/extra.rs")?;
+
+        // Same bytes behind the link, but the committed entry left the root.
+        assert!(drifts(&root.0, &sources, &[], &changed, &[]));
+        // An outside link at a path with no commitment stays excluded.
+        assert!(!drifts(&root.0, &sources, &[], &uncommitted, &[]));
         Ok(())
     }
 
