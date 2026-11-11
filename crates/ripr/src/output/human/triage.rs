@@ -725,7 +725,7 @@ pub(crate) fn render_human_triage(
         } else {
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
-        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        let listed = hidden_window(&triage.omitted);
         // #7643: when the omitted set mixes currentness categories, the
         // count line's clauses cannot be connected to individual bullets;
         // append each finding's category so the reader can tell an
@@ -744,7 +744,7 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in triage.omitted.iter().take(listed) {
+        for finding in &listed {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -806,12 +806,7 @@ pub(crate) fn render_human_triage(
         // rerun to read them.
         let mut listed_classes: Vec<&ExposureClass> = Vec::new();
         for class in ExposureClass::ALL.iter() {
-            if triage
-                .omitted
-                .iter()
-                .take(listed)
-                .any(|finding| finding.class == *class)
-            {
+            if listed.iter().any(|finding| finding.class == *class) {
                 listed_classes.push(class);
             }
         }
@@ -825,10 +820,14 @@ pub(crate) fn render_human_triage(
                 ));
             }
         }
-        let remaining = triage.omitted.len() - listed;
+        let remaining = triage.omitted.len() - listed.len();
         if remaining > 0 {
+            // The window above holds the highest-priority omitted findings,
+            // so the remainder names its own class mix: the reader can see
+            // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                unlisted_class_mix(&triage.omitted, &listed)
             ));
         }
     }
@@ -841,6 +840,44 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The omitted findings the `Hidden:` list names. Within the window every
+/// omitted finding is listed in the report's file and line order. Beyond it,
+/// the window keeps the findings the check-JSON findings budget would keep
+/// (candidate-current gap classes first, `exposed` and non-candidate evidence
+/// last), still printed in file and line order, so a large diff does not spend
+/// the list on the alphabetically first files while later gaps go unnamed.
+fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
+        return omitted.to_vec();
+    }
+    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .collect();
+    kept.sort_unstable();
+    kept.into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Class counts of the omitted findings outside the listed window, in the
+/// plain vocabulary and class order of the rows above.
+fn unlisted_class_mix(omitted: &[&Finding], listed: &[&Finding]) -> String {
+    let listed_ids: BTreeSet<&str> = listed.iter().map(|finding| finding.id.as_str()).collect();
+    ExposureClass::ALL
+        .iter()
+        .filter_map(|class| {
+            let count = omitted
+                .iter()
+                .filter(|finding| finding.class == *class)
+                .filter(|finding| !listed_ids.contains(finding.id.as_str()))
+                .count();
+            (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -860,11 +897,8 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    triage
-        .omitted
-        .iter()
-        .take(HIDDEN_FINDINGS_LISTED)
-        .copied()
+    hidden_window(&triage.omitted)
+        .into_iter()
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
