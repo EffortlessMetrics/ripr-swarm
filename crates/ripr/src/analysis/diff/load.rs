@@ -2107,8 +2107,13 @@ fn missing_ref_repair(
 /// it. `--base` gets the range's start, `--head` its end. An end is quoted
 /// as a command only when [`range_end_is_plain`] holds; otherwise, and for
 /// an open range that lacks the wanted end, the advice names the end in
-/// words. `None` when `missing_ref` is not a range.
+/// words. `None` when `missing_ref` is not a range, which includes the two
+/// revision forms whose free text may hold dots: a commit-message search
+/// (`:/fix..`, `main^{/fix..}`) and an index or tree path (`:../file`).
 fn revision_range_repair(missing_ref: &str, flag: &str) -> Option<String> {
+    if missing_ref.starts_with(':') || missing_ref.contains("^{/") {
+        return None;
+    }
     let (start, end) = missing_ref
         .split_once("...")
         .or_else(|| missing_ref.split_once(".."))?;
@@ -5038,6 +5043,10 @@ mod tests {
             "refs/heads/main",
             "a.b",
             "",
+            // Free text that may hold dots is not a range.
+            ":/fix the parser..",
+            "main^{/wip..done}",
+            ":../src/lib.rs",
         ] {
             assert_eq!(revision_range_repair(single, "--base"), None, "{single}");
             assert_eq!(revision_range_repair(single, "--head"), None, "{single}");

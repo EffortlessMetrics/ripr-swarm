@@ -186,8 +186,9 @@ advice: the refusal says the flag takes one revision and that ripr builds the
 range itself, and names the value to pass, the range's start for `--base` and
 its end for `--head` (#14238). An end is quoted as a command only when it is
 non-empty, not option-shaped and spelled with revision characters alone;
-otherwise the advice names the end in words. The analysis still does not run
-(exit 2).
+otherwise the advice names the end in words. A commit-message search
+(`:/text`, `<rev>^{/text}`) and a leading-colon path are not ranges, whatever
+their text holds. The analysis still does not run (exit 2).
 
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
