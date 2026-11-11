@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           fail() { echo "$1" >&2; exit 1; }
-          [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+          [[ "$PROFILE" == qualification || "$PROFILE" == merge-group ]] || fail 'Unknown admitted profile'
           [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
           for value in "$HEAD_SHA" "$BASE_SHA" "$SUBJECT" "$TREE" "$GENERATION"; do
             [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
@@ -89,7 +89,20 @@ jobs:
           [[ "$GITHUB_WORKFLOW_SHA" == "$GENERATION" ]] || fail 'Wrong workflow generation'
           [[ "$(git rev-parse HEAD)" == "$SUBJECT" ]] || fail 'Wrong source checkout'
           [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE" ]] || fail 'Wrong integration tree'
-          [[ "$(git show -s --format=%P HEAD)" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+          if [[ "$PROFILE" == qualification ]]; then
+            [[ "$(git show -s --format=%P HEAD)" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+          fi
+
+      - name: Verify actual native merge-group subject
+        if: inputs.proof_profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          base-sha: ${{ inputs.base_sha }}
+          subject-sha: ${{ inputs.subject_sha }}
+          subject-tree: ${{ inputs.subject_tree }}
+          workflow-generation: ${{ inputs.workflow_generation }}
+          request-id: ${{ inputs.request_id }}
 
   release-proof:
     name: Perl and release proof

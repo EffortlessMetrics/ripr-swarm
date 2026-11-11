@@ -37,6 +37,7 @@ jobs:
     timeout-minutes: 45
     env:
       SELECTOR_CONSUMER_ENABLED: "true"
+      REQUIRE_SUBSET_SUCCESS: ${{ inputs.proof_profile == 'merge-group' }}
 
     steps:
       # Native merge-ready preflight admits H/B/T before invoking this inactive template.
@@ -75,6 +76,12 @@ jobs:
             if ($tree -cne $env:ADMITTED_TREE) { throw 'Wrong integration tree' }
             $parents = git show -s --format=%P HEAD
             if ($LASTEXITCODE -ne 0 -or $parents -cne "$($env:ADMITTED_BASE) $($env:ADMITTED_HEAD)") { throw 'Wrong integration parents' }
+          } elseif ($env:PROOF_PROFILE -eq 'merge-group') {
+            foreach ($value in @($env:ADMITTED_BASE, $env:ADMITTED_TREE)) {
+              if ($value -cnotmatch '^[0-9a-f]{40}$') { throw 'Missing native group identity' }
+            }
+            if ($tree -cne $env:ADMITTED_TREE) { throw 'Wrong native group tree' }
+            # The required next step verifies native event, request and composition.
           } elseif ($env:PROOF_PROFILE -eq 'diagnostic') {
             if ($actual -cne $env:ADMITTED_HEAD) { throw 'Wrong diagnostic source' }
           } else { throw 'Unknown proof profile' }
@@ -84,6 +91,17 @@ jobs:
              producer_run = $env:GITHUB_RUN_ID; producer_attempt = $env:GITHUB_RUN_ATTEMPT;
              workflow_ref = $env:GITHUB_WORKFLOW_REF; workflow_sha = $env:GITHUB_WORKFLOW_SHA } |
              ConvertTo-Json | Set-Content -LiteralPath target/windows-subset-source.json
+
+      - name: Verify actual native merge-group subject
+        if: inputs.proof_profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          base-sha: ${{ inputs.base_sha }}
+          subject-sha: ${{ inputs.subject_sha }}
+          subject-tree: ${{ inputs.subject_tree }}
+          workflow-generation: ${{ inputs.workflow_generation }}
+          request-id: ${{ inputs.request_id }}
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
@@ -1035,21 +1053,24 @@ jobs:
           try { $consumer | python - 2>&1 | Tee-Object -FilePath target/subset-selector-literal.log -ErrorAction Stop
             $nativeExit = $LASTEXITCODE; Set-Content -LiteralPath target/subset-selector-literal.status -Value $nativeExit -ErrorAction Stop
           } catch { [Console]::Error.WriteLine($_); exit 1 }
-          # Preserve the advisory verdict; missing receipt/log/status remains a hard failure.
+          # Retain the verdict; the final evidence gates enforce the selected profile.
           exit 0
 
       # Verdicts go to the job log, the step summary, and
       # target/windows-subset-verdict.md -- the same three copies the full
       # suite above keeps -- because none of them is gated, so a reader who
       # can see the run must be able to see the verdict. This step never
-      # fails on a FAIL verdict; the next step owns the non-advisory evidence
-      # contract.
+      # fails on a FAIL verdict; the final gates own profile-specific enforcement.
       - name: Summarize subset verdicts
         shell: bash
         run: |
           {
-            printf '## Windows advisory subset (#4938)\n\n'
-            printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+            if [ "${REQUIRE_SUBSET_SUCCESS:-false}" = true ]; then
+              printf '## Windows required queue subset\n\nAll test/lint verdicts must pass for native queue qualification.\n\n'
+            else
+              printf '## Windows advisory subset (#4938)\n\n'
+              printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+            fi
             for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
@@ -1084,6 +1105,10 @@ jobs:
               exit 1
             fi
             status="$(cat "target/${label}.status")" || exit 1
+            if [ "${REQUIRE_SUBSET_SUCCESS:-false}" = true ] && [ "$status" != "0" ]; then
+              echo "${label}: native queue qualification requires a passing verdict" >&2
+              exit 1
+            fi
             if [ "$label" != subset-clippy ] && [ "$status" = "0" ]; then
               executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
               if [ "$executed" -eq 0 ]; then
@@ -1097,7 +1122,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
           paths = [Path("target/subset-selector-literal.log"), Path("target/subset-selector-literal.status"), Path("target/selector-literal/receipt.json")]
           if not all(p.is_file() and p.stat().st_size for p in paths):
@@ -1109,6 +1134,8 @@ jobs:
               raise SystemExit("selector receipt/log malformed or inconsistent")
           if status != (0 if receipt["state"] == "PASS" else 1):
               raise SystemExit("selector native status disagrees with retained receipt")
+          if os.environ.get("REQUIRE_SUBSET_SUCCESS") == "true" and receipt["state"] != "PASS":
+              raise SystemExit("native queue qualification requires selector PASS")
           cleanup = receipt.get("staging_cleanup", {}).get("state")
           producer_cleanup = receipt.get("producer_cleanup", {}).get("state")
           if producer_cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and producer_cleanup != "REMOVED"):

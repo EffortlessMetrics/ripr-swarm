@@ -121,6 +121,56 @@ fn expected_job_with_recovery_quote_repair() -> Result<String, String> {
         );
         expected = expected.replacen(before, after, 1);
     }
+    // Explicit forward repairs preserve comparison of the complete selector
+    // oracle and native producer. Never normalize the selector step away.
+    for (before, after) in [
+        (
+            r###"      SELECTOR_CONSUMER_ENABLED: "true"
+"###,
+            r###"      SELECTOR_CONSUMER_ENABLED: "true"
+      REQUIRE_SUBSET_SUCCESS: ${{ inputs.proof_profile == 'merge-group' }}
+"###,
+        ),
+        (
+            "          # Preserve the advisory verdict; missing receipt/log/status remains a hard failure.",
+            "          # Retain the verdict; the final evidence gates enforce the selected profile.",
+        ),
+        (
+            "      # fails on a FAIL verdict; the next step owns the non-advisory evidence\n      # contract.",
+            "      # fails on a FAIL verdict; the final gates own profile-specific enforcement.",
+        ),
+        (
+            r###"            printf '## Windows advisory subset (#4938)\n\n'
+            printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+"###,
+            r###"            if [ "${REQUIRE_SUBSET_SUCCESS:-false}" = true ]; then
+              printf '## Windows required queue subset\n\nAll test/lint verdicts must pass for native queue qualification.\n\n'
+            else
+              printf '## Windows advisory subset (#4938)\n\n'
+              printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+            fi
+"###,
+        ),
+        (
+            "          python - <<'PY'\n          import json\n          from pathlib import Path\n          paths =",
+            "          python - <<'PY'\n          import json, os\n          from pathlib import Path\n          paths =",
+        ),
+        (
+            r###"              raise SystemExit("selector native status disagrees with retained receipt")
+"###,
+            r###"              raise SystemExit("selector native status disagrees with retained receipt")
+          if os.environ.get("REQUIRE_SUBSET_SUCCESS") == "true" and receipt["state"] != "PASS":
+              raise SystemExit("native queue qualification requires selector PASS")
+"###,
+        ),
+    ] {
+        assert_eq!(
+            expected.matches(before).count(),
+            1,
+            "verdict repair anchor drift"
+        );
+        expected = expected.replacen(before, after, 1);
+    }
     Ok(expected)
 }
 

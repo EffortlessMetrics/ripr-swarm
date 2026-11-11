@@ -205,6 +205,76 @@ inventory. Inspect current source, exact head, review findings and native state
 before any consequential request. Do not infer readiness from a missing or
 skipped check, a quiet PR, or an earlier green result.
 
+### Exact-head native intake consumer (#4838)
+
+The staged `queue_intake.py` evaluator in the trusted admission bundle consumes
+the existing `hermes.queue-intake.v2` protocol from
+[Hermes PR #55](https://github.com/EffortlessMetrics/hermes-deploy/pull/55).
+It performs only bounded GitHub reads. Protected-base code and
+`policy/queue-publisher.toml` authenticate the configured numeric publisher App
+and check name; candidate JSON cannot select an issuer. The configuration is
+explicitly disabled until the real App binding is verified and installed through
+the coordinated activation transaction. This source does not activate Hermes,
+mint a token, publish a required result or change protections.
+
+The consumer joins an actual singleton native B/G entry to the current exact H,
+requires its unique completed App-authenticated enqueue receipt, validates its
+expiry and authority/producer generation, and verifies G's exact producer
+objects and modes. The admitted target may differ from protected B; H's earlier
+admission base need not equal G's later base. Native membership and the receipt
+are read again after source observation and compared with the initially frozen
+observation at finalization. Changed or ambiguous intake refuses.
+
+Hermes enqueues before attaching the native-entry receipt to its H check. Initial
+admission can wait for that publication only after observing one active,
+authenticated successful H check without receipt text. Conclusively withdrawn
+historical checks with distinct check and request identities do not make that
+active authority ambiguous. It freezes the check, App, H, request,
+authority summary and native membership while waiting. The publication window
+is 30 seconds, with two-second intervals and at most 16 observations. Missing
+checks, malformed evidence, revocation of the active authority and identity
+changes refuse immediately.
+An incomplete check never authorizes source checkout or proof. The existing
+transport timeout and request bound still apply; the publication window does
+not cancel an in-flight socket operation. A late receipt cannot complete
+admission after the pending window expires. Both the post-source-read check and
+the final expected-intake check remain immediate and do not retry.
+
+`cargo test -p repo-policy --test queue_intake` exercises the shipped evaluator
+with fake API observations, including head/entry/issuer/source/expiry negatives
+and currentness changes. These tests establish consumer behavior, not a live
+publisher, installed capacity, native enqueue or protected landing. The cutover
+caller must run this control before any candidate checkout or shared-cache work;
+the support stage alone does not change event subscriptions or allocate jobs.
+
+### Actual-G callable source preparation (#8082)
+
+The existing Rust, Windows subset, Python wheel, feature/release/MSRV/VS Code
+and printed-command leaves accept an explicit `merge-group` proof profile.
+Their existing `qualification` profile still requires the PR test merge's
+`[B,H]` parents. The new profile uses the shared
+`.github/actions/verify-merge-group-subject` source verifier instead: it checks
+the native event/ref/repository, exact G checkout and tree, native B, workflow
+generation and run/attempt, then verifies that G's content is the admitted
+singleton H composed with B. It observes G's real parents rather than inventing
+PR-style parents for a squash group.
+
+The canonical version-3 subject records those identities and its digest. The
+Rust leaf additionally requires the complete caller receipt and frozen
+constituent binding to match its own observation. Wrong event, bare H, dirty
+tracked source, changed run/attempt, caller-receipt substitution or additional
+unadmitted composition fails before product setup. Existing qualification and
+diagnostic behavior and mandatory payloads remain available; no filtered
+nextest denominator or proof-result reuse is introduced.
+
+This is backwards-compatible source preparation. The caller has not selected
+the profile or connected #8082's complete leaf portfolio by this change.
+Native G execution, Windows runner behavior, H/App admission, cache continuity,
+required-context migration and protected M remain separate acceptance work.
+The initial singleton is a measured canary contract; multi-constituent support
+requires a reviewed constituent/composition model. Parent-shape acceptance in
+the verifier does not grant a per-PR native queue merge-method override.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it

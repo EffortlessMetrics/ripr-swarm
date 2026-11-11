@@ -107,7 +107,7 @@ jobs:
           actual=$(git rev-parse HEAD)
           [[ "$actual" == "$SUBJECT" ]] || fail 'Wrong source checkout'
           if [[ "$CALLED" == true ]]; then
-            [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+            [[ "$PROFILE" == qualification || "$PROFILE" == merge-group ]] || fail 'Unknown admitted profile'
             [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
             for value in "$HEAD_SHA" "$BASE_SHA" "$TREE" "$GENERATION"; do
               [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
@@ -116,13 +116,24 @@ jobs:
             actual_tree=$(git rev-parse 'HEAD^{tree}')
             [[ "$actual_tree" == "$TREE" ]] || fail 'Wrong integration tree'
             parents=$(git show -s --format=%P HEAD)
-            [[ "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+            [[ "$PROFILE" == merge-group || "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
           else
             case "$GITHUB_EVENT_NAME" in
               pull_request|schedule|workflow_dispatch) ;;
               *) fail 'Unsupported standalone event' ;;
             esac
           fi
+
+      - name: Verify actual native merge-group subject
+        if: inputs.proof_profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          base-sha: ${{ inputs.base_sha }}
+          subject-sha: ${{ inputs.subject_sha }}
+          subject-tree: ${{ inputs.subject_tree }}
+          workflow-generation: ${{ inputs.workflow_generation }}
+          request-id: ${{ inputs.request_id }}
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 

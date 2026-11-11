@@ -98,6 +98,9 @@ impl Scratch {
         Ok(())
     }
     fn run(&self, script: &str) -> Result<bool, String> {
+        self.run_with_requirement(script, false)
+    }
+    fn run_with_requirement(&self, script: &str, required: bool) -> Result<bool, String> {
         let path = self.0.join("replay.sh");
         fs::write(&path, script).map_err(|e| e.to_string())?;
         let bash = bash_path(
@@ -110,6 +113,10 @@ impl Scratch {
             .current_dir(&self.0)
             .env_remove("BASH_ENV")
             .env_remove("ENV")
+            .env(
+                "REQUIRE_SUBSET_SUCCESS",
+                if required { "true" } else { "false" },
+            )
             .output()
             .map_err(|e| e.to_string())?;
         match output.status.code() {
@@ -148,6 +155,27 @@ fn guard_accepts_successful_executed_tests_and_native_advisory_failures() -> Res
             scratch.run(&guard)?,
             "valid nonzero advisory status {status:?} rejected"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn group_guard_rejects_each_nonzero_verdict() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let guard = body("Fail on missing or empty subset evidence")?;
+    scratch.valid()?;
+    assert!(scratch.run_with_requirement(&guard, true)?);
+    for label in LABELS {
+        for status in ["1\n", "101\n", "255\n"] {
+            scratch.valid()?;
+            fs::write(scratch.0.join(format!("target/{label}.status")), status)
+                .map_err(|e| e.to_string())?;
+            assert!(
+                !scratch.run_with_requirement(&guard, true)?,
+                "native queue accepted {label} status {status:?}"
+            );
+            assert!(scratch.run(&guard)?, "advisory verdict behavior changed");
+        }
     }
     Ok(())
 }
