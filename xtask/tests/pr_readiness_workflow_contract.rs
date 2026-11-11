@@ -353,7 +353,9 @@ fn retained_publication_contract(config: &str) -> Result<(), String> {
     let mut events = publication_events(config)?;
     events.sort();
     if events != ["opened", "reopened", "synchronize"] {
-        return Err(format!("retained UB publication events changed: {events:?}"));
+        return Err(format!(
+            "retained UB publication events changed: {events:?}"
+        ));
     }
     Ok(())
 }
@@ -364,7 +366,8 @@ fn retained_review_configuration_preserves_publication_policy() -> Result<(), St
 }
 
 #[test]
-fn retained_publication_policy_rejects_missing_changed_and_malformed_events() -> Result<(), String> {
+fn retained_publication_policy_rejects_missing_changed_and_malformed_events() -> Result<(), String>
+{
     let config = repo_file(".ub-review.toml")?;
     retained_publication_contract(&config)?;
     for event in ["opened", "synchronize", "reopened"] {
