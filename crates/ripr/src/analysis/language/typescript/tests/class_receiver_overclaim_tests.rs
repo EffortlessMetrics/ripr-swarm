@@ -23,6 +23,7 @@ const OTHER_URL_CLASS: &str = "export class Url {\n  constructor(input = \"\") {
 enum Subject {
     Origin,
     Constructor,
+    StaticScheme,
 }
 
 fn test_source(import_line: &str, body: &str) -> String {
@@ -73,6 +74,7 @@ fn relation_with(
                 && match subject {
                     Subject::Origin => owner.name == "origin",
                     Subject::Constructor => owner.method_kind == TypeScriptMethodKind::Constructor,
+                    Subject::StaticScheme => owner.name == "scheme",
                 }
         })
         .collect();
@@ -257,6 +259,96 @@ fn a_local_binding_of_the_class_name_shadows_the_owner() -> Result<(), String> {
     assert_withheld(&file_class, Subject::Constructor, "file-level class")?;
     let param = "import { expect, it } from \"vitest\";\n\nit(\"x\", (Url: any) => {\n  const url = new Url(\"https://x\");\n  expect(url.protocol).toBe(\"https\");\n});\n";
     assert_withheld(param, Subject::Constructor, "test callback parameter")?;
+    Ok(())
+}
+
+/// The shadow must hold when the test also imports the owner's class: the
+/// import binding is a second route to the same constructor name, and a
+/// body-local `class` declaration of that name is what `new` reaches.
+#[test]
+fn a_body_local_class_shadows_the_owner_the_test_imports() -> Result<(), String> {
+    let import = "import { Url } from \"../src/u\";";
+    assert_credited(
+        &test_source(import, CTOR_BODY),
+        Subject::Constructor,
+        "owner import control",
+    )?;
+    let local_class = format!("  class Url {{ protocol = \"\"; }}\n{CTOR_BODY}");
+    assert_withheld(
+        &test_source(import, &local_class),
+        Subject::Constructor,
+        "body-local class under the owner's named import",
+    )?;
+    let alias = "import { Url as Link } from \"../src/u\";";
+    let link_body = CTOR_BODY.replace("Url", "Link");
+    assert_credited(
+        &test_source(alias, &link_body),
+        Subject::Constructor,
+        "alias import control",
+    )?;
+    let local_link = format!("  class Link {{ protocol = \"\"; }}\n{link_body}");
+    assert_withheld(
+        &test_source(alias, &local_link),
+        Subject::Constructor,
+        "body-local class under the owner's alias import",
+    )?;
+    let default_import = "import Link from \"../src/u\";";
+    let default_relation = |body: &str| {
+        relation_with(
+            &default_files(DEFAULT_URL_CLASS),
+            &test_source(default_import, body),
+            Subject::Constructor,
+        )
+    };
+    if default_relation(&link_body)?.is_none() {
+        return Err("default import control: expected credit".to_string());
+    }
+    if let Some(reason) = default_relation(&local_link)? {
+        return Err(format!(
+            "body-local class under the owner's default import: expected no credit, got {reason:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// A static method is reached through the class name, so the same shadow
+/// applies: `Url.scheme(..)` under a body-local `class Url` calls the local
+/// class, whether the test imports the owner by name or under an alias.
+#[test]
+fn a_body_local_class_shadows_the_owner_of_a_static_method() -> Result<(), String> {
+    const STATIC_URL_CLASS: &str = "export class Url {\n  static scheme(input: string): string {\n    return input.split(\":\")[0];\n  }\n}\n";
+    const CALL: &str = "  expect(Url.scheme(\"https://x\")).toBe(\"https\");";
+    const LOCAL: &str = "  class Url { static scheme(_: string) { return \"https\"; } }\n";
+    let relate = |import: &str, body: &str| {
+        relation_with(
+            &[("src/u.ts", STATIC_URL_CLASS)],
+            &test_source(import, body),
+            Subject::StaticScheme,
+        )
+    };
+    for (label, import, rename) in [
+        ("named import", "import { Url } from \"../src/u\";", None),
+        (
+            "alias import",
+            "import { Url as Link } from \"../src/u\";",
+            Some("Link"),
+        ),
+    ] {
+        let rename = |text: &str| match rename {
+            Some(local) => text.replace("Url", local),
+            None => text.to_string(),
+        };
+        let call = rename(CALL);
+        if relate(import, &call)?.is_none() {
+            return Err(format!("{label} control: expected credit, got none"));
+        }
+        let shadowed = format!("{}{call}", rename(LOCAL));
+        if let Some(reason) = relate(import, &shadowed)? {
+            return Err(format!(
+                "{label} under a body-local class: expected no relation, got {reason:?}"
+            ));
+        }
+    }
     Ok(())
 }
 

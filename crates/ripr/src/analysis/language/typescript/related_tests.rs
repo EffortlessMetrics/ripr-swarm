@@ -2777,6 +2777,7 @@ pub(crate) fn receiver_owner_call_relation(
                         workspace_root,
                     )
                     && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                    && !body_declares_class_named(&test.body_text, &import.local)
                 {
                     constructor_names.push(import.local.clone());
                 }
@@ -3270,6 +3271,7 @@ pub(crate) fn class_names_for_class_method_owner(
     let mut names = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
         && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+        && !body_declares_class_named(&test.body_text, class_name)
         && !enclosing_scope_shadows(test, class_name)
     {
         push_unique_string(&mut names, class_name.to_string());
@@ -3282,6 +3284,7 @@ pub(crate) fn class_names_for_class_method_owner(
         }
         if import.imported.as_deref() == Some(class_name)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !body_declares_class_named(&test.body_text, &import.local)
             && !enclosing_scope_shadows(test, &import.local)
         {
             push_unique_string(&mut names, import.local.clone());
@@ -3326,7 +3329,10 @@ pub(crate) fn constructor_names_for_method_owner(
         }
     }
     // A constructor name the test scope or body rebinds (`const Cart =
-    // class {}`, `const shop = {...}`) constructs something else.
+    // class {}`, `class Cart {}`, `const shop = {...}`) constructs something
+    // else. The body-local `class` declaration is checked here as well as on
+    // the bare class name, because the test's own import of the owner would
+    // otherwise put the shadowed name straight back.
     names.retain(|name| {
         let local = name.split('.').next().unwrap_or(name);
         !test
@@ -3334,6 +3340,7 @@ pub(crate) fn constructor_names_for_method_owner(
             .iter()
             .any(|binding| binding.name == local)
             && !local_identifier_declared_in_test_body(&test.body_text, local)
+            && !body_declares_class_named(&test.body_text, local)
     });
     names
 }
