@@ -659,9 +659,12 @@ fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
 /// default) the boundary is `exposed`; with
 /// `[analysis] include_unchanged_tests = false` the test is out of the index
 /// and the same predicate reads `no_static_path`.
-fn write_unchanged_test_workspace() -> Result<PathBuf, String> {
+/// The guard is installed before any fallible setup, so a failed write or
+/// commit still removes the fixture.
+fn write_unchanged_test_workspace() -> Result<(PathBuf, FixtureGuard), String> {
     let root = workspace_name("analysis-table");
     let _ = std::fs::remove_dir_all(&root);
+    let guard = FixtureGuard { root: root.clone() };
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
     std::fs::write(
@@ -688,7 +691,7 @@ fn write_unchanged_test_workspace() -> Result<PathBuf, String> {
     )
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "candidate")?;
-    Ok(root)
+    Ok((root, guard))
 }
 
 /// The sorted exposure classes `ripr_list_gaps` reports after one refresh,
@@ -770,8 +773,7 @@ fn cli_classes(root: &Path) -> Result<Vec<String>, String> {
 
 #[test]
 fn refresh_honors_the_analysis_table_like_ripr_check() -> Result<(), String> {
-    let root = write_unchanged_test_workspace()?;
-    let _guard = FixtureGuard { root: root.clone() };
+    let (root, _guard) = write_unchanged_test_workspace()?;
 
     // Control, no ripr.toml: the unchanged test is indexed, so the boundary
     // is exposed, the session runs draft, and MCP agrees with the CLI.

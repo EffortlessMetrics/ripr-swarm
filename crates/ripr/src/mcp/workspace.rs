@@ -2055,9 +2055,9 @@ impl SessionProfile {
             SessionConfigPosture::DetectedNotLoaded => Some(
                 "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
             ),
-            SessionConfigPosture::BuiltInDefaults => {
-                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
-            }
+            SessionConfigPosture::BuiltInDefaults => Some(
+                "no workspace ripr.toml was loaded at server startup; each ripr_refresh re-resolves it, so a ripr.toml added after startup applies to the next refresh before it is visible here",
+            ),
         }
     }
 }
