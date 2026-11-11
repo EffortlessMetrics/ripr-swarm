@@ -550,10 +550,45 @@ fn narrowed_ambiguity(
             narrowed = true;
         }
     }
-    validate_ambiguity(root, config, candidates, narrowed, reason, || {
-        analysis::inventory_classified_seams_at_with_config(root, config)
-            .map(|(classified, _)| classified)
-    })
+    // Every candidate came from one `--at` line, so the file's own classified
+    // seams hold them all. Classifying the whole workspace here cost a cold
+    // repo-wide evidence walk per ambiguous finding (about 16 minutes on
+    // ripr-swarm, #14369); the file-scoped classification is the one
+    // `inventory_entry_facts` already trusts, and it fails closed when its
+    // evidence is incomplete.
+    let scoped = scoped_file(root, file);
+    validate_ambiguity(
+        root,
+        config,
+        candidates,
+        narrowed,
+        reason,
+        || match scoped {
+            Some(relative) => {
+                let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                    root,
+                    config,
+                    &[relative],
+                    &[],
+                )?;
+                scoped.require_complete_evidence("test stub")?;
+                Ok(scoped.classified)
+            }
+            None => {
+                #[cfg(test)]
+                WORKSPACE_AMBIGUITY_INVENTORIES.with(|count| count.set(count.get() + 1));
+                analysis::inventory_classified_seams_at_with_config(root, config)
+                    .map(|(classified, _)| classified)
+            }
+        },
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-workspace inventories `narrowed_ambiguity` loaded on this thread.
+    static WORKSPACE_AMBIGUITY_INVENTORIES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 /// The validation half of `narrowed_ambiguity`, with the classified inventory
@@ -2099,6 +2134,7 @@ mod tests {
                 .map(|seam| seam.id().as_str().to_string())
                 .collect::<Vec<_>>();
             assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
+            let before = WORKSPACE_AMBIGUITY_INVENTORIES.with(std::cell::Cell::get);
             let decision = narrowed_ambiguity(
                 &root,
                 &config,
@@ -2109,6 +2145,13 @@ mod tests {
                 &mut index,
             );
             let _ = std::fs::remove_dir_all(&root);
+            // #14369: candidates from one file are validated against that
+            // file's classified seams, never a whole-workspace inventory.
+            assert_eq!(
+                WORKSPACE_AMBIGUITY_INVENTORIES.with(std::cell::Cell::get),
+                before,
+                "a file-scoped ambiguity must not classify the whole workspace"
+            );
             Ok(decision)
         };
         let decision = decide("narrow-weak", &weak)?;
