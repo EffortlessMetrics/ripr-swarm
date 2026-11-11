@@ -623,8 +623,9 @@ fail-closed and every other shape keeps the ordinary reading. It requires:
   (another type may implement `PartialEq<&str>` differently), never
   rebound, and the owner to have no other callers;
 - an owner-call argument fact binding the parameter to exactly the new
-  literal, with no locally rebound assertion macro that could discard the
-  call;
+  literal, and no assertion macro name rebound anywhere in the indexed
+  workspace, since a rebound macro could discard the call. This is a
+  workspace-wide condition, as in RIPR-SPEC-0353;
 - the chain to be the owner's first decision and to end its expression. No
   `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
   `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
