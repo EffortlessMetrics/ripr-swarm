@@ -137,16 +137,11 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    // The selectors are parsed in both modes, so a malformed declaration
-    // still fails a run that builds nothing.
-    let enumerated =
-        read_file_policy_test_commands(policy_path).and_then(|commands| match enumeration {
-            CoverageEnumeration::Enumerate => accept_file_policy_coverage(|| {
-                validate_test_covered_by_recorded(policy_path, &commands, &mut diagnostics)
-            })
-            .map(Some),
-            CoverageEnumeration::SkipUnaffectedChangeSet => Ok(None),
-        });
+    let enumerated = coverage_for(
+        enumeration,
+        read_file_policy_test_commands(policy_path),
+        |commands| validate_test_covered_by_recorded(policy_path, commands, &mut diagnostics),
+    );
     let coverage = match enumerated {
         Ok(coverage) => coverage,
         Err(error) => {
@@ -217,9 +212,7 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
     );
-    if result.is_ok() && coverage.is_some() {
-        // A run that skipped enumeration retains no subject: the sidecar
-        // would otherwise vouch for coverage this run did not observe.
+    if retains_coverage_subject(result.is_ok(), coverage.as_deref()) {
         // The sidecar only serves the Windows advisory admission step, which
         // refuses a report without it. A passing policy run must not become a
         // failure where git HEAD is unavailable (source export, no commits), so
@@ -279,6 +272,32 @@ const PACKET_NATIVE_SUBJECTS: [&str; 2] = [
     "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
     "native_packet_pilot_consumes_the_summary_artifact",
 ];
+
+/// The coverage this run observed: `Some` after an accepted enumeration,
+/// `None` when the enumeration was skipped. The selectors are parsed in both
+/// modes, so a malformed declaration still fails a run that builds nothing.
+/// `enumerate` is the only place a Cargo build can start, and it is not called
+/// when the enumeration is skipped.
+fn coverage_for(
+    enumeration: CoverageEnumeration,
+    commands: Result<Vec<FilePolicyTestCommand>, String>,
+    enumerate: impl FnOnce(&[FilePolicyTestCommand]) -> Result<Vec<TestCoverageObservation>, String>,
+) -> Result<Option<Vec<TestCoverageObservation>>, String> {
+    let commands = commands?;
+    match enumeration {
+        CoverageEnumeration::Enumerate => {
+            accept_file_policy_coverage(|| enumerate(&commands)).map(Some)
+        }
+        CoverageEnumeration::SkipUnaffectedChangeSet => Ok(None),
+    }
+}
+
+/// Whether a finished run keeps its retained coverage subject. A failed run
+/// never does. Neither does a run that skipped enumeration: the sidecar would
+/// otherwise vouch for coverage this run did not observe.
+fn retains_coverage_subject(passed: bool, coverage: Option<&[TestCoverageObservation]>) -> bool {
+    passed && coverage.is_some()
+}
 
 /// Report rows for the coverage disclosure: one per observation, or the
 /// single not-enumerated row when the enumeration was skipped.
@@ -873,6 +892,64 @@ mod tests {
         assert!(skipped[0].starts_with("not_enumerated;"));
         assert!(!skipped[0].contains("applicable; selected="));
         assert!(super::coverage_disclosure_items(Some(&[])).is_empty());
+    }
+
+    /// #13705: the skipped mode never reaches the enumerator (the only place
+    /// a Cargo build starts), still refuses a malformed declaration, and
+    /// retains no coverage subject. The enumerating mode calls it once and
+    /// keeps the packet acceptance boundary.
+    #[test]
+    fn skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject() -> Result<(), String>
+    {
+        use super::CoverageEnumeration::{Enumerate, SkipUnaffectedChangeSet};
+        let commands = || Ok(packet_commands().to_vec());
+
+        let mut calls = 0;
+        let skipped = super::coverage_for(SkipUnaffectedChangeSet, commands(), |_| {
+            calls += 1;
+            Err("the enumerator must not run".to_string())
+        })?;
+        if skipped.is_some() || calls != 0 {
+            return Err(format!("skip enumerated: {skipped:?}, calls={calls}"));
+        }
+        if super::retains_coverage_subject(true, skipped.as_deref()) {
+            return Err("a skipped run retained a coverage subject".to_string());
+        }
+
+        for mode in [Enumerate, SkipUnaffectedChangeSet] {
+            let malformed =
+                super::coverage_for(mode, Err("malformed selector".to_string()), |_| {
+                    Err("the enumerator must not run".to_string())
+                });
+            if malformed.as_ref().err().map(String::as_str) != Some("malformed selector") {
+                return Err(format!("{mode:?} lost the parse error: {malformed:?}"));
+            }
+        }
+
+        let mut calls = 0;
+        let enumerated = super::coverage_for(Enumerate, commands(), |_| {
+            calls += 1;
+            packet_observations(super::FilePolicyHost::current()?)
+        })?;
+        let Some(coverage) = enumerated else {
+            return Err("enumeration produced no coverage".to_string());
+        };
+        if calls != 1 || !super::retains_coverage_subject(true, Some(&coverage)) {
+            return Err(format!("enumeration calls={calls} or subject not retained"));
+        }
+        if super::retains_coverage_subject(false, Some(&coverage)) {
+            return Err("a failed run retained a coverage subject".to_string());
+        }
+        // The acceptance boundary still applies: an enumeration that lost the
+        // packet selectors is refused, not accepted as coverage.
+        let refused = super::coverage_for(Enumerate, commands(), |_| Ok(Vec::new()));
+        if !refused
+            .as_ref()
+            .is_err_and(|error| error.contains("packet coverage selector absent"))
+        {
+            return Err(format!("empty enumeration was accepted: {refused:?}"));
+        }
+        Ok(())
     }
 
     // Literal selectors and subjects are independent of the production table.
