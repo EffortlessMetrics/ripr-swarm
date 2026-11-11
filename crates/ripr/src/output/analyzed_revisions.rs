@@ -66,6 +66,20 @@ pub(crate) fn is_working_tree_read(output: &crate::app::CheckOutput) -> bool {
         .is_some_and(|revisions| revisions.working_tree)
 }
 
+/// `true` when a committed-history run compared `HEAD` with a base that
+/// already contains it: the merge base the diff started from is `HEAD`
+/// itself while the base tip is another commit. The range is then empty by
+/// construction (a branch that is behind its base, or already merged into
+/// it), which is a different cause from "no file in a language ripr
+/// analyzes". A working-tree read is excluded: its diff ends at the tree, not
+/// at `HEAD`. Unresolved commits never establish it.
+pub(crate) fn head_is_contained_in_base(revisions: &AnalyzedRevisions) -> bool {
+    !revisions.working_tree
+        && revisions.merge_base_commit.is_some()
+        && revisions.merge_base_commit == revisions.head_commit
+        && revisions.base_commit != revisions.head_commit
+}
+
 /// Names at most three paths, then `and N more`, after `display` escapes
 /// each one for its surface.
 pub(crate) fn name_paths(paths: &[String], display: impl Fn(&str) -> String) -> String {
@@ -145,6 +159,55 @@ pub(crate) fn committed_history_ignored_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #14265: only a committed-history run whose merge base is `HEAD`
+    /// while the base tip is another commit establishes "HEAD is already
+    /// contained in the base".
+    #[test]
+    fn head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead() {
+        let contained = AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("b".repeat(40)),
+            merge_base_commit: Some("a".repeat(40)),
+            loaded_diff_origin: None,
+            head_commit: Some("a".repeat(40)),
+            working_tree: false,
+        };
+        assert!(head_is_contained_in_base(&contained));
+
+        // The same commits read through the working tree end at the tree.
+        let mut working_tree = contained.clone();
+        working_tree.working_tree = true;
+        assert!(!head_is_contained_in_base(&working_tree));
+
+        // An ordinary feature branch: the merge base is behind HEAD.
+        let mut diverged = contained.clone();
+        diverged.head_commit = Some("c".repeat(40));
+        assert!(!head_is_contained_in_base(&diverged));
+
+        // Base tip equal to HEAD is the #13036 state (no separate merge
+        // base is recorded), not this one.
+        let mut same = contained.clone();
+        same.base_commit = Some("a".repeat(40));
+        same.merge_base_commit = None;
+        assert!(!head_is_contained_in_base(&same));
+        let mut same_with_origin = contained.clone();
+        same_with_origin.base_commit = Some("a".repeat(40));
+        assert!(!head_is_contained_in_base(&same_with_origin));
+
+        // Unresolved commits never establish it, including two unknowns
+        // that would otherwise compare equal.
+        let mut no_merge_base = contained.clone();
+        no_merge_base.merge_base_commit = None;
+        assert!(!head_is_contained_in_base(&no_merge_base));
+        let mut no_head = contained.clone();
+        no_head.head_commit = None;
+        assert!(!head_is_contained_in_base(&no_head));
+        let mut neither = contained;
+        neither.merge_base_commit = None;
+        neither.head_commit = None;
+        assert!(!head_is_contained_in_base(&neither));
+    }
 
     fn revisions(working_tree: bool) -> AnalyzedRevisions {
         AnalyzedRevisions {

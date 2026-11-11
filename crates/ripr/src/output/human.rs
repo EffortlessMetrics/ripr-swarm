@@ -304,6 +304,20 @@ fn no_changed_files_in_range(output: &CheckOutput) -> bool {
         })
 }
 
+/// True when the range held no changed files because the compared base
+/// already contains `HEAD` (#14265): the branch is behind its base or merged
+/// into it, so the diff from their merge base is empty by construction.
+fn head_already_in_base(output: &CheckOutput) -> bool {
+    output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0)
+        && output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+}
+
 /// #13036: a range with changed files but no checkable behavior is usually a
 /// tests-only diff (the agent committed its tests, then used the commit before
 /// them as the base). Say so and name the fix, without claiming which it is.
@@ -340,6 +354,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         // no behavior; say what was not checked instead of "No findings".
         // #13036: an empty diff is a different cause from "no analyzable
         // language"; name the real one so the reader looks at the base.
+        // #14265: a base that already contains HEAD is a third cause; name
+        // it so the reader looks at which branch they are on, not at languages.
+        _ if no_source_examined(output) && head_already_in_base(output) => {
+            "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) && no_changed_files_in_range(output) => {
             "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
         }
@@ -1815,6 +1834,62 @@ mod tests {
             assert!(rendered.contains("analysis incomplete"));
             assert!(rendered.contains("this is not a clean result"));
             assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
+    }
+
+    /// #14265: a base that already contains HEAD (a branch behind its base,
+    /// or merged into it) gets its own headline in both human forms. The
+    /// three neighbouring states keep theirs: base commit equal to HEAD
+    /// (#13036), the same commits read through the working tree, and a
+    /// range that did change files.
+    #[test]
+    fn a_base_that_already_contains_head_names_that_cause_in_the_headline() -> Result<(), String> {
+        const CONTAINED: &str = "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n";
+        const EMPTY_DIFF: &str = "Nothing to check: the diff against the comparison base is empty";
+        const NO_LANGUAGE: &str =
+            "Nothing to check: no changed source file in a language ripr analyzes was available";
+        let config = RiprConfig::default();
+        let no_scope = crate::analysis_outcome::AnalysisOutcomeKind::NoScope;
+        let behind = |working_tree: bool| crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("9f8e7d6c5b4a".to_string()),
+            merge_base_commit: Some("1a2b3c4d5e6f".to_string()),
+            loaded_diff_origin: None,
+            head_commit: Some("1a2b3c4d5e6f".to_string()),
+            working_tree,
+        };
+
+        let mut contained = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        contained.analyzed_revisions = Some(behind(false));
+        let same_commit = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        let mut working_tree = contained.clone();
+        working_tree.analyzed_revisions = Some(behind(true));
+        // A docs-only range: files changed, none in an analyzed language.
+        let mut changed_files = empty_range_output(
+            Some("origin/main"),
+            crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines,
+            1,
+        )?;
+        changed_files.analyzed_revisions = Some(behind(false));
+
+        for (label, output, headline) in [
+            ("contained", &contained, CONTAINED),
+            ("same commit", &same_commit, EMPTY_DIFF),
+            ("working tree", &working_tree, NO_LANGUAGE),
+            ("changed files", &changed_files, NO_LANGUAGE),
+        ] {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(rendered.contains(headline), "{label}: {rendered}");
+                for other in [CONTAINED, EMPTY_DIFF, NO_LANGUAGE] {
+                    if other != headline {
+                        assert!(!rendered.contains(other), "{label}: {rendered}");
+                    }
+                }
+            }
         }
         Ok(())
     }

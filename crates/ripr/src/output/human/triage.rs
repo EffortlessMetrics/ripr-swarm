@@ -452,6 +452,25 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && output
+                    .analyzed_revisions
+                    .as_ref()
+                    .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+            {
+                // #14265: the base is ahead of HEAD and HEAD has no commit of
+                // its own, so committing "a change" is not the missing step
+                // the generic line implies: the reader is on a branch that is
+                // behind or already merged. Name that, then the two real moves.
+                if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or to check the last commit run `ripr check --base HEAD~1`\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or commit a change and re-run\n"
+                    ));
+                }
+            } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
