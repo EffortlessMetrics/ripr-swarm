@@ -28482,6 +28482,107 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// #14265: a branch that is behind its base (or already merged into it) has
+/// an empty range because the base contains HEAD, not because no file is in
+/// an analyzed language. The headline and the next action say so and never
+/// suggest `--worktree` or committing as the missing step. Both `HEAD~1`
+/// arms run on a real repository, with an ordinary feature branch as the
+/// control.
+#[test]
+fn check_on_a_branch_its_base_already_contains_names_that_cause() -> Result<(), String> {
+    const CONTAINED: &str = "Nothing to check: HEAD is already contained in the comparison base";
+    let root = unique_temp_workspace("head-contained-in-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"head-contained\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|err| format!("write .gitignore: {err}"))?;
+    for (step, body) in ["a + b", "a + b + 1", "a + b + 2"].iter().enumerate() {
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub fn add(a: i32, b: i32) -> i32 {{ {body} }}\n"),
+        )
+        .map_err(|err| format!("write lib.rs: {err}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", &format!("step {step}")])?;
+    }
+    // `main` is at the third commit; `behind` sits one commit back and
+    // `first` on the root commit, so each has no commit `main` lacks.
+    run_git(&root, &["branch", "behind", "HEAD~1"])?;
+    run_git(&root, &["branch", "first", "HEAD~2"])?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    for (branch, expected_move, absent_move) in [
+        (
+            "behind",
+            "or to check the last commit run `ripr check --base HEAD~1`",
+            "or commit a change and re-run",
+        ),
+        ("first", "or commit a change and re-run", "--base HEAD~1"),
+    ] {
+        run_git(&root, &["checkout", "-q", branch])?;
+        let output = run_ripr(&["check", "--root", &root_str]);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let action = "Safe next action: HEAD is already contained in `main` (it has no commit that `main` lacks), so there is no diff; switch to the branch that has your change, ";
+        if !stdout.contains(CONTAINED)
+            || !stdout.contains(action)
+            || !stdout.contains(expected_move)
+            || stdout.contains(absent_move)
+        {
+            return Err(format!(
+                "{branch}: a branch behind `main` must name the contained-HEAD cause and its moves; got:\n{stdout}"
+            ));
+        }
+        for wrong in [
+            "no changed source file in a language ripr analyzes",
+            "--worktree",
+            "which is the comparison base",
+        ] {
+            if stdout.contains(wrong) {
+                return Err(format!(
+                    "{branch}: the contained-HEAD result must not print `{wrong}`; got:\n{stdout}"
+                ));
+            }
+        }
+        // An explicit base reaches the same headline.
+        let explicit = run_ripr(&["check", "--root", &root_str, "--base", "main"]);
+        assert_success(&explicit);
+        let explicit_stdout = String::from_utf8_lossy(&explicit.stdout);
+        if !explicit_stdout.contains(CONTAINED) {
+            return Err(format!(
+                "{branch}: `--base main` must name the contained-HEAD cause; got:\n{explicit_stdout}"
+            ));
+        }
+    }
+
+    // Control: a branch with its own commit is an ordinary range.
+    run_git(&root, &["checkout", "-q", "-b", "feature", "behind"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b + 9 }\n",
+    )
+    .map_err(|err| format!("write feature lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "feature"])?;
+    let control = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&control);
+    let control_stdout = String::from_utf8_lossy(&control.stdout);
+    if control_stdout.contains("already contained in") {
+        return Err(format!(
+            "a branch with its own commit must not be reported as contained; got:\n{control_stdout}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #13644: a bare human `ripr check` on a clean base branch whose HEAD has a
 /// parent analyzes the last commit and says so, so a caller does not spend a
 /// call on `nothing in scope`. JSON keeps the empty-range contract, and a
