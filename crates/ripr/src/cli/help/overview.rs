@@ -86,6 +86,9 @@ Global flags (accepted in any position, before or after the command, except on r
                   token is always this global flag, never another flag's
                   value.
 
+Flag values: `--name value` and `--name=value` are the same on every command;
+tokens after a literal `--` are left as written.
+
 Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check

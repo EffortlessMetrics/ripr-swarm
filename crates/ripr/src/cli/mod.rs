@@ -23,9 +23,9 @@ mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
-#[doc(hidden)]
-pub use parse::extract_global_verbose;
 pub(crate) use parse::reconcile_root;
+#[doc(hidden)]
+pub use parse::{extract_global_verbose, split_long_flag_values};
 pub(crate) use suggest::unknown_argument;
 
 #[doc(hidden)]
@@ -125,6 +125,9 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // a standalone `cli_refusal` document to stdout; exit code and stderr
     // prose are unchanged. The argv copy is only read for that request check.
     usage_refusal::reset();
+    // #14292: `--name=value` means `--name value` on every command family;
+    // the rewrite runs once here, before every reader of argv below.
+    let args = parse::split_long_flag_values(args);
     let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
     if let Err(error) = &outcome {

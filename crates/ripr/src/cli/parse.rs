@@ -71,6 +71,54 @@ fn emit_attached_terminal_stdin_note(
     }
 }
 
+/// Split every `--name=value` token into `--name` and `value` (#14292).
+///
+/// Each command parser matches whole tokens, so without this boundary
+/// rewrite the near-universal `--format=json` spelling was refused as an
+/// unknown argument on every command. The rewrite has one owner and runs
+/// once on argv before global `--verbose` extraction, the JSON-refusal
+/// request check and command dispatch, so every command family accepts
+/// both spellings with identical meaning.
+///
+/// Only long flags whose name is ASCII alphanumerics and hyphens split, at
+/// the first `=`; the value keeps any later `=`. An empty value
+/// (`--root=`) becomes an empty value token, which the owning parser
+/// refuses as it would `--root ""`. `argv[0]`, short flags, positional
+/// values and every token after a literal `--` are left unchanged.
+#[doc(hidden)]
+pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut literal = false;
+    for (index, arg) in args.into_iter().enumerate() {
+        if index == 0 || literal {
+            out.push(arg);
+            continue;
+        }
+        if arg == "--" {
+            literal = true;
+            out.push(arg);
+            continue;
+        }
+        match long_flag_value(&arg) {
+            Some((name, value)) => {
+                out.push(name.to_string());
+                out.push(value.to_string());
+            }
+            None => out.push(arg),
+        }
+    }
+    out
+}
+
+fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
+    let (name, value) = arg.split_once('=')?;
+    let bare = name.strip_prefix("--")?;
+    let mut chars = bare.chars();
+    let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '-');
+    (first_ok && rest_ok).then_some((name, value))
+}
+
 /// Extract every global `-v`/`--verbose` occurrence from argv, reporting
 /// whether at least one was present (#5009).
 ///
@@ -133,6 +181,67 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn split_long_flag_values_rewrites_only_long_flag_assignments() {
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--format=json",
+                "--base=origin/main",
+                "--path=src/a=b.rs",
+                "--root=",
+                "--quiet",
+                "-v",
+                "positional=1",
+                "-x=1",
+                "--=x",
+                "--bad name=x",
+            ])),
+            args(&[
+                "ripr",
+                "check",
+                "--format",
+                "json",
+                "--base",
+                "origin/main",
+                "--path",
+                "src/a=b.rs",
+                "--root",
+                "",
+                "--quiet",
+                "-v",
+                "positional=1",
+                "-x=1",
+                "--=x",
+                "--bad name=x",
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_leaves_argv0_and_tokens_after_double_dash() {
+        assert_eq!(
+            split_long_flag_values(args(&["--root=.", "check", "--", "--format=json"])),
+            args(&["--root=.", "check", "--", "--format=json"])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_feeds_the_same_command_as_the_spaced_spelling() {
+        assert_eq!(
+            parse_args(split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--format=json",
+                "--base=main"
+            ]))),
+            parse_args(args(&[
+                "ripr", "check", "--format", "json", "--base", "main"
+            ]))
+        );
     }
 
     #[test]
