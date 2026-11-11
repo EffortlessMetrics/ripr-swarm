@@ -782,7 +782,21 @@ pub(crate) fn probes_for_file_with_relations(
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
-            probes.extend(retargeted);
+            // #14132: two changed bindings that are operands of one predicate
+            // (`let hix = ..; let tix = ..; if hix < tix`) each retarget to
+            // it. The predicate is one changed behavior, so it keeps the one
+            // probe the first changed binding seeded.
+            for seeded in retargeted {
+                let already_retargeted = probes.iter().any(|kept| {
+                    kept.binding_relation.is_some()
+                        && kept.probe.family == seeded.probe.family
+                        && kept.probe.location.line == seeded.probe.location.line
+                        && kept.probe.expression == seeded.probe.expression
+                });
+                if !already_retargeted {
+                    probes.push(seeded);
+                }
+            }
             continue;
         }
         // #11400: a changed `const` value is its readers' new return value.
