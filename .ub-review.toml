@@ -12,9 +12,9 @@ head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
-# Retain publication settings for the original admitted passes. The repository
-# Actions subscriber is retired under #4842; this configuration remains for
-# explicitly invoked review tools and does not request an external review.
+# Retain the original publication policy for explicit review consumers.
+# Repository Actions no longer subscribes to development review events;
+# this tool configuration does not request a workflow or authorize a merge.
 post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to

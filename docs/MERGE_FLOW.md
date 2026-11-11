@@ -36,10 +36,11 @@ numeric App binding in protected-base `policy/queue-publisher.toml` remains
 disabled until verified activation; the final result rechecks the same receipt.
 Wheel ABI, Windows/macOS and GUI test contracts retain their qualified platforms.
 
-Until activation is verified, retain the reviewed candidate and its evidence.
-An explicitly selected bootstrap transaction belongs to the activation owner;
-ordinary development must not fall back to label CI. Source, rehearsed, active
-and accepted remain separate states.
+Until this generation is activated, distinguish the installed predecessor from
+this final source. Its required H qualification remains available to selected,
+reviewed candidates as described below. This source cannot recreate that retired
+label subscriber; its installation requires the coordinated activation transaction.
+Source, rehearsed, active and accepted remain separate states.
 
 ## Who owns the change
 
@@ -47,6 +48,15 @@ Development publication, updates and review use no Actions workflow. The final
 source removes the protected bootstrap event roots; installing it is conditional
 on truthful H admission and qualified G execution. See
 [the event inventory](CI.md#development-events-and-retired-bootstrap-route).
+
+The #12973 auxiliary-retirement stage retains the installed required H producer.
+This cumulative final source removes it only in the coordinated cutover. While
+GitHub still requires that check before enqueue, each delivery owner may request its
+`merge-ready` qualification for the selected, reviewed candidate. Native queue
+activation alone does not replace H qualification with cheap admission. The
+final caller cutover must qualify and enforce that replacement before retiring
+the label route; later publisher or control-profile prerequisites do not block
+this independently landable auxiliary-event retirement.
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.

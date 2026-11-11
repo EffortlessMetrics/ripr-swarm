@@ -66,9 +66,12 @@ Every normal swarm slice should finish the same way:
   no Actions run;
 - after verified activation, use the [native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
   for the selected candidate and inspect its required exact-subject results;
-  until then retain the reviewed candidate and evidence. The installed legacy
-  label route is reserved for an explicitly selected activation-owner bootstrap,
-  not ordinary development or an automatic fallback;
+  before this final source is installed, request the predecessor required H
+  qualification through `merge-ready` when it is still needed before enqueue.
+  The delivery owner may
+  do this after review; auxiliary event retirement does not install cheap H
+  admission or make the existing producer unavailable. Installing this final
+  caller requires the coordinated replacement and retires that label route;
 - merge only when clean and current;
 - remove generated residue, isolated targets, and stale local branches or
   worktrees that are no longer needed.
