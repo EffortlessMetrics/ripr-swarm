@@ -165,40 +165,45 @@ pub(super) fn code_lens_response(
         return Vec::new();
     };
     let age = snapshot.refresh.age();
+    let rendered: Vec<(CodeLens, Option<&SymbolId>)> = lens_findings(uri, snapshot)
+        .map(|finding| {
+            (
+                finding_to_code_lens(snapshot, finding, age, client_features),
+                finding.probe.owner.as_ref(),
+            )
+        })
+        .collect();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    // The owner of each emitted lens's finding, parallel to `lenses`.
-    let mut owners: Vec<Option<&SymbolId>> = Vec::new();
-    for finding in lens_findings(uri, snapshot) {
-        let lens = finding_to_code_lens(snapshot, finding, age, client_features);
-        let owner = finding.probe.owner.as_ref();
-        // Several probes on one line (a predicate and its returned value) often
-        // read identically; one lens per distinct line and title keeps the
-        // editor from stacking repeated text. Probes on neighbouring changed
-        // lines of one function usually read identically too, so a lens that
-        // repeats an earlier lens of the same owner is dropped and the first
-        // one stands for the function. Hover and diagnostics still cover every
-        // finding on its own line.
-        let repeat = lenses
-            .iter_mut()
-            .zip(&owners)
-            .find(|(seen, seen_owner)| {
-                seen.command == lens.command
-                    && (seen.range == lens.range || (owner.is_some() && **seen_owner == owner))
-            })
-            .map(|(seen, _)| seen);
-        match repeat {
-            // The surviving lens sits on the topmost of the rows it stands for.
-            Some(seen) => {
-                if lens.range.start.line < seen.range.start.line {
-                    seen.range = lens.range;
+    for (lens, owner) in &rendered {
+        // Probes on neighbouring changed lines of one function usually read
+        // identically, so every lens of an owner that repeats the same title,
+        // command and arguments moves to the topmost of those rows (#14362).
+        // Hover and diagnostics still cover every finding on its own line.
+        let mut lens = lens.clone();
+        if owner.is_some() {
+            for (other, other_owner) in &rendered {
+                if other_owner == owner
+                    && other.command == lens.command
+                    && other.range.start.line < lens.range.start.line
+                {
+                    lens.range = other.range;
                 }
             }
-            None => {
-                lenses.push(lens);
-                owners.push(owner);
-            }
+        }
+        // Several probes on one line (a predicate and its returned value) often
+        // read identically; one lens per distinct line and title keeps the
+        // editor from stacking repeated text, including lenses of different
+        // functions that land on the same row.
+        if !lenses
+            .iter()
+            .any(|seen| seen.range == lens.range && seen.command == lens.command)
+        {
+            lenses.push(lens);
         }
     }
+    // Moving a lens up can leave the list out of row order; keep it sorted
+    // so clients that render in response order stay top to bottom.
+    lenses.sort_by_key(|lens| lens.range.start.line);
     lenses
 }
 
@@ -219,8 +224,9 @@ fn lens_findings<'a>(
         .filter(|finding| finding_matches_uri(finding, uri, &snapshot.root))
 }
 
-/// The findings whose code lens sits on the zero-based `line` of `uri`, so
-/// hover can list every finding the lens (or lenses) on that line summarize.
+/// The findings whose own lens row is the zero-based `line` of `uri`, so hover
+/// on a changed line lists every finding recorded there, even when the lens
+/// for those findings is shown once on the function's topmost row.
 pub(super) fn lens_findings_at_line<'a>(
     uri: &'a Uri,
     snapshot: &'a AnalysisSnapshot,
@@ -939,17 +945,17 @@ mod tests {
             })
             .collect();
         let lines: Vec<u32> = survivors.iter().map(|(line, _)| *line).collect();
-        if lines != vec![9, 19, 9] {
+        if lines != vec![9, 9, 19] {
             return Err(format!(
-                "expected survivors on lines [9, 19, 9] in snapshot order, got {survivors:?}"
+                "expected survivors on lines [9, 9, 19] in row order, got {survivors:?}"
             ));
         }
-        if survivors[0].1 == survivors[2].1 || !survivors[2].1.contains('5') {
+        if survivors[0].1 == survivors[1].1 || !survivors[1].1.contains('5') {
             return Err(format!(
                 "the distinct title on line 9 must survive: {survivors:?}"
             ));
         }
-        if survivors[0].1 != survivors[1].1 {
+        if survivors[0].1 != survivors[2].1 {
             return Err(format!(
                 "same-count lenses must share a title: {survivors:?}"
             ));
@@ -983,6 +989,25 @@ mod tests {
         if lines != vec![1, 3, 7, 8] {
             return Err(format!(
                 "expected one lens for the function on its top row plus the distinct and ownerless rows, got {lines:?}"
+            ));
+        }
+
+        // A nested function whose identical lens lands on the row the outer
+        // function's lens moves to: one lens on that row, not two stacked.
+        let outer_low = make_finding("src/lib.rs", 13, ExposureClass::Exposed, 2, None);
+        let mut nested = make_finding("src/lib.rs", 12, ExposureClass::Exposed, 2, None);
+        nested.probe.owner = Some(SymbolId("owner::nested".to_string()));
+        let outer_high = make_finding("src/lib.rs", 12, ExposureClass::Exposed, 2, None);
+        let stacked =
+            make_snapshot_with_findings("/workspace", vec![outer_low, nested, outer_high]);
+        let stacked_lines: Vec<u32> =
+            code_lens_response(&uri, Some(&stacked), &ClientFeatureProfile::unsupported())
+                .iter()
+                .map(|lens| lens.range.start.line)
+                .collect();
+        if stacked_lines != vec![11] {
+            return Err(format!(
+                "identical lenses moved onto one row must collapse, got {stacked_lines:?}"
             ));
         }
         Ok(())

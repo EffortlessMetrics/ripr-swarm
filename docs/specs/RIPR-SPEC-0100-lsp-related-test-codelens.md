@@ -120,8 +120,10 @@ A lens click does something useful for its own row (#13389):
   an earlier lens from a finding with the same probe owner is dropped, and the
   surviving lens moves to the topmost of those rows. Neighbouring changed lines
   of one function therefore show one lens instead of a copy above each line.
-  Findings with no recorded owner keep one lens per row. Diagnostics and line
-  hover still cover each finding on its own row (#14362).
+  Findings with no recorded owner are not merged across rows. The row-level
+  collapse above still applies after a lens moves, and lenses are returned in
+  row order. Diagnostics and line hover still cover each finding on its own row
+  (#14362).
 - The navigation target is part of the lens-view identity, so a changed target
   triggers `workspace/codeLens/refresh`.
 - Navigation opens a file only. It adds no actionability, repair data or
