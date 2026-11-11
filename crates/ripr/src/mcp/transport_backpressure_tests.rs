@@ -132,6 +132,7 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
             admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            idle_interrupt: None,
         },
         requests: requests.clone(),
         admitted: admitted.clone(),
@@ -221,6 +222,7 @@ fn direct_transport<W: AsyncWrite + Unpin>(writer: W) -> BoundedTransport<&'stat
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        idle_interrupt: None,
     }
 }
 async fn require_request<R, W>(

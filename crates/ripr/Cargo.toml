@@ -102,7 +102,7 @@ bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
-tokio = { version = "1", features = ["rt-multi-thread", "io-std", "io-util", "time", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "io-util", "time", "macros", "sync", "signal"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tower-lsp-server = "0.23.0"
 # The Service trait only, for the layer that answers `$/` requests the
