@@ -1823,3 +1823,88 @@ fn an_unrelated_trait_with_the_entry_methods_name_is_not_reach() -> Result<(), S
     );
     not_withheld(&lib, "unrelated same-named method")
 }
+
+#[test]
+fn two_bare_traits_of_one_name_in_sibling_modules_are_not_reach() -> Result<(), String> {
+    // Both modules declare a bare `Render` and implement it for `f64`; the
+    // blanket in `a` is bounded by `a`'s `Render`, but the changed owner is
+    // `b`'s impl. One file declares both, so the identity must be per module.
+    let lib = "pub mod a {
+    pub trait Render {
+        fn render(&self) -> String;
+    }
+    impl Render for f64 {
+        fn render(&self) -> String {
+            format!(\"{self:?}\")
+        }
+    }
+    pub trait ToText {
+        fn to_text(&self) -> String;
+    }
+    impl<T: Render> ToText for T {
+        fn to_text(&self) -> String {
+            self.render()
+        }
+    }
+}
+
+pub mod b {
+    pub trait Render {
+        fn render(&self) -> String;
+    }
+    impl Render for f64 {
+        fn render(&self) -> String {
+            if *self == 0.0 && self.is_sign_negative() {
+                return \"-0.0\".to_string();
+            }
+            format!(\"{self:?}\")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::a::ToText;
+
+    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+}
+";
+    let before = "                return \"-0.0\".to_string();";
+    let after = "                return String::from(\"-0.0\");";
+    let findings = edited(lib, before, after)?;
+    if findings.iter().any(limited) {
+        return Err(format!(
+            "sibling-module traits: an unbound blanket dispatch must not read as reach, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_blanket_call_on_another_receiver_type_is_not_reach() -> Result<(), String> {
+    // The test calls the blanket entry on `u8`, whose own `Render` impl is not
+    // the changed `f64` owner.
+    let lib = blanket(
+        "    #[test]
+    fn small_number_renders() {
+        assert_eq!(7u8.to_text(), \"7\");
+    }
+",
+    )
+    .replacen(
+        "#[cfg(test)]",
+        "impl Render for u8 {
+    fn render(&self) -> String {
+        format!(\"{self}\")
+    }
+}
+
+#[cfg(test)]",
+        1,
+    );
+    not_withheld(&lib, "other receiver type")
+}

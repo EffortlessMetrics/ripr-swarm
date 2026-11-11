@@ -9200,6 +9200,18 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
+    /// A method declared in `trait trait_name` at the root of `src/lib.rs`: the
+    /// trait's one declaring module, which a bare trait identity needs (#6732).
+    fn blanket_trait_decl(name: &str, trait_name: &str) -> FunctionSummary {
+        let mut decl = function("src/lib.rs", name);
+        decl.id = SymbolId(format!("src/lib.rs::{name}"));
+        decl.item.has_self_param = true;
+        decl.item.container = FunctionContainer::Trait {
+            trait_name: trait_name.to_string(),
+        };
+        decl
+    }
+
     fn impl_function(file: &str, name: &str, impl_segment: &str) -> FunctionSummary {
         let mut owner = function(file, name);
         owner.id = SymbolId(format!("{file}::{impl_segment}::{name}"));
@@ -9333,9 +9345,15 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             line: 3,
             name: "render".to_string(),
             text: "self.render()".into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner.clone(), blanket],
+            functions: vec![
+                owner.clone(),
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
             tests: vec![test_with_call(
                 "src/lib.rs",
                 "negative_zero_keeps_its_sign",
@@ -9360,9 +9378,15 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             line: 3,
             name: "render".to_string(),
             text: "self.render()".into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner.clone(), blanket],
+            functions: vec![
+                owner.clone(),
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
             tests: vec![test_with_call(
                 "tests/blanket.rs",
                 "negative_zero",
@@ -9396,9 +9420,16 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             line: 3,
             name: "render".to_string(),
             text: "self.render()".into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner.clone(), other, blanket],
+            functions: vec![
+                owner.clone(),
+                other,
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
             tests: vec![{
                 let mut test = test_with_call(
                     "tests/blanket.rs",

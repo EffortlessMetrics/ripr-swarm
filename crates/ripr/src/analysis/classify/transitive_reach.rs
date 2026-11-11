@@ -3955,21 +3955,29 @@ fn blanket_impl_bound_paths(header: &str, param: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether `name` denotes one trait across the whole index: at most one file
-/// declares a `trait name`, and no impl names a differently spelled path to a
-/// trait with this last segment (`b::Render`, `Render<u16>`). Without that the
-/// bare name could be any of them at the use site, and nothing here reads the
-/// test's imports, so the identity is not established.
+/// Whether `name` denotes one trait across the whole index: exactly one
+/// module declares a `trait name`, and no impl names a differently spelled path
+/// to a trait with this last segment (`b::Render`, `Render<u16>`). Without that
+/// the bare name could be any of them at the use site (two `trait Render` in
+/// sibling modules of one file, or a trait from another crate), and nothing
+/// here reads the test's imports, so the identity is not established.
 fn bare_trait_identity_unique<'f>(
     name: &str,
     functions: impl Iterator<Item = &'f FunctionSummary>,
 ) -> bool {
-    let mut declaring_files: BTreeSet<&std::path::Path> = BTreeSet::new();
+    // A declared trait method's id is its file and module path plus its name,
+    // so the id without its last segment names the declaring module.
+    let mut declaring_modules: BTreeSet<&str> = BTreeSet::new();
     for function in functions {
         if let FunctionContainer::Trait { trait_name } = &function.item.container
             && trait_name == name
         {
-            declaring_files.insert(function.file.as_path());
+            let module = function
+                .id
+                .0
+                .rsplit_once("::")
+                .map_or(function.id.0.as_str(), |(module, _)| module);
+            declaring_modules.insert(module);
         }
         if let Some(path) = blanket_impl_header(function)
             .as_deref()
@@ -3988,7 +3996,7 @@ fn bare_trait_identity_unique<'f>(
             }
         }
     }
-    declaring_files.len() <= 1
+    declaring_modules.len() == 1
 }
 
 /// Whether the blanket impl `entry` provably dispatches to `owner`'s impl:
@@ -6883,6 +6891,18 @@ fn real() {}
         function
     }
 
+    /// A method declared in `trait trait_name` at the crate root: the trait's
+    /// one declaring module, which a bare trait identity needs.
+    fn trait_decl(name: &str, trait_name: &str) -> FunctionSummary {
+        let mut function = make_fn_with_body(name, Vec::new(), String::new());
+        function.id = SymbolId(format!("src/lib.rs::{name}"));
+        function.item.has_self_param = true;
+        function.item.container = FunctionContainer::Trait {
+            trait_name: trait_name.to_string(),
+        };
+        function
+    }
+
     #[test]
     fn blanket_impl_header_reads_type_param_and_bounds() {
         let header = "<T: Render + Clone> ToText for T";
@@ -6944,9 +6964,15 @@ fn real() {}
             line: 1,
             name: "to_text".to_string(),
             text: "(-0.0f64).to_text()".into(),
-        }];
+        }]
+        .into();
         let index = index_with(
-            vec![render_f64.clone(), to_text_blanket],
+            vec![
+                render_f64.clone(),
+                to_text_blanket,
+                trait_decl("render", "Render"),
+                trait_decl("to_text", "ToText"),
+            ],
             vec![test.clone()],
         );
         assert!(test_reaches_trait_owner_through_blanket_impl(
@@ -7020,7 +7046,15 @@ fn real() {}
             "impl <T: Scale> Wrap for T",
             vec![("scale", "self.scale()")],
         );
-        let index = index_with(vec![scale_f64, blanket], Vec::new());
+        let index = index_with(
+            vec![
+                scale_f64,
+                blanket,
+                trait_decl("scale", "Scale"),
+                trait_decl("wrap", "Wrap"),
+            ],
+            Vec::new(),
+        );
         let graph = ReachGraph::build(&index);
         let expanded = graph.entry_receiver_types("wrap", &HashSet::new(), "scale");
         assert!(expanded.is_some_and(|types| {
@@ -7084,7 +7118,8 @@ fn real() {}
                 line: 2,
                 name: "render".to_string(),
                 text: "x.render()".into(),
-            }];
+            }]
+            .into();
             function
         };
         let mut test = make_test("via_helper", vec!["text_of"]);
@@ -7093,7 +7128,8 @@ fn real() {}
             line: 1,
             name: "text_of".to_string(),
             text: "text_of(&-0.0f64)".into(),
-        }];
+        }]
+        .into();
         let index = index_with(vec![render_f64.clone(), helper], vec![test.clone()]);
         assert!(!test_reaches_trait_owner_through_blanket_impl(
             &test,

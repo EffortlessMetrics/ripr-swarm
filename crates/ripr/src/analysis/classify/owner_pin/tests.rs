@@ -2505,7 +2505,7 @@ fn item_container_stops_at_the_nearest_item() {
         Some(FunctionContainer::TraitImpl {
             trait_path: "Show".to_string(),
             self_ty: "Wrapper<T>".to_string(),
-            impl_generics: None,
+            impl_generics: Some("<T>".to_string()),
         })
     );
     assert_eq!(
