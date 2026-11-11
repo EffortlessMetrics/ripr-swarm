@@ -130,14 +130,20 @@ REFUTES_NEGATION = re.compile(
     re.IGNORECASE,
 )
 # A refutation after the phrase counts only when the remainder starts with a
-# demonstrative/pronoun subject ("That is false", "It is a lie", "I deny it")
-# or the cue itself ("Incorrect.", "Wrong.", "Not so."). Ordinary prose that
-# merely contains a cue word ("Nothing is wrong", "The wrong file") does not.
+# demonstrative/pronoun subject ("That is false", "It is a lie", "I deny it"),
+# a demonstrative plus a short noun ("That claim is false", "The above is
+# false"), or the cue itself ("Incorrect.", "Wrong.", "Not so."). Ordinary
+# prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
+# does not.
 REFUTATION_AFTER = re.compile(
     r"^[ \t]*[.!;]?[ \t]*"
     r"(?:"
     r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:that|this)[ \t]+(?:claim|statement|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
+    r"|the[ \t]+above\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
     r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)"
     r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case|accurate|right)|false|untrue|a[ \t]+lie)\b"
     r")",
@@ -584,6 +590,8 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. Not true.", False),
         ("REVIEW_READY\nNo changes are needed. That isn't true.", False),
         ("REVIEW_READY\nNo changes are needed. This isn't correct.", False),
+        ("REVIEW_READY\nNo changes are needed. That claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The above is false.", False),
         ("REVIEW_READY\nNo changes are needed. All green.", True),
         # #14355: ordinary prose with a cue word is not a refutation.
         ("REVIEW_READY\nNo changes are needed. Nothing is wrong.", True),
