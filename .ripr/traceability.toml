@@ -10037,6 +10037,7 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::a_limits_only_refusal_does_not_name_a_gap_the_header_denies",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::syntax_errors_keep_partial_json_for_all_path_spellings",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::valid_files_do_not_acquire_parse_limitations",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_nonportable_source_path_keeps_bounded_parser_cause",

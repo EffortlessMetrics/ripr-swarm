@@ -1116,7 +1116,7 @@ verify=complete|outcome=O|findings=N|exposed=N
   it on purpose (`node_modules/`, `.venv/`, generated output), it is almost
   never the agent's edit, and the human/GitHub notes and this JSON field keep
   disclosing it. Reasons: `outcome_missing`,
-  `no_behavior_in_scope`, `analysis_incomplete`, `gaps_remain`,
+  `no_behavior_in_scope`, `analysis_incomplete`, `unexposed_findings_remain`,
   `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`. It is independent of `done=`, is static
   evidence only, and does not replace running the tests.

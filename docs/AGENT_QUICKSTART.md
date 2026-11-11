@@ -180,7 +180,7 @@ subset:
   Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the
