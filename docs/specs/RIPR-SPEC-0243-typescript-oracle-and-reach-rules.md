@@ -378,6 +378,12 @@ shadows and uncalled function values remain separate from runner registrations.
   catches still withholds). The finalizer's own assertions, assertions
   outside the `try`, and benign finalizers keep collection. This is not
   general promise dataflow or runner semantics.
+  In particular, this rule does not detect a finalizer that fails through an
+  expression rather than an explicit jump, such as
+  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
+  Those failures can replace the pending completion at runtime, but do not by
+  themselves trigger this rule's withholding of the try/catch assertions
+  (#8613).
 - (Amended 2026-11-11, #8286.) A returned or awaited `.then(callback)`
   supplies no assertions when the callback is a `function*` or
   `async function*` expression, with zero or one parameter: a native promise
@@ -388,12 +394,6 @@ shadows and uncalled function values remain separate from runner registrations.
   only assertion-like code is in the dormant callback reads `static_unknown`
   (RIPR-SPEC-0246 rule 4). This is not general generator execution, iterator
   consumption or promise type analysis.
-  In particular, this rule does not detect a finalizer that fails through an
-  expression rather than an explicit jump, such as
-  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
-  Those failures can replace the pending completion at runtime, but do not by
-  themselves trigger this rule's withholding of the try/catch assertions
-  (#8613).
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
