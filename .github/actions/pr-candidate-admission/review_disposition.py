@@ -597,6 +597,8 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. The statement is false.", False),
         ("REVIEW_READY\nNo changes are needed. The claim is false.", False),
         ("REVIEW_READY\nNo changes are needed. The assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The finding is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The report is false.", False),
         ("REVIEW_READY\nNo changes are needed. This statement is untrue.", False),
         ("REVIEW_READY\nNo changes are needed. All green.", True),
         # #14355: ordinary prose with a cue word is not a refutation.
