@@ -3726,4 +3726,303 @@ mod tests {
             Ok(found) => Err(format!("an unknown attempt produced a binding: {found:?}")),
         }
     }
+
+    // ------------------------------------------------------------------
+    // Durable-attempt apply phase: retained binding load and apply record.
+    // ------------------------------------------------------------------
+
+    /// A real durable attempt over the prepare fixture, optionally retaining a
+    /// prepare binding artifact with the given bytes.
+    struct ApplyFixture {
+        prepared: PrepareFixture,
+        attempt_id: crate::app::repair_attempt::RepairAttemptId,
+        verified: VerifiedSelection,
+    }
+
+    fn apply_fixture(tag: &str, binding: Option<&[u8]>) -> Result<ApplyFixture, String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        let fixture = prepare_fixture(tag)?;
+        let root = fixture.root.path();
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+        let packet_text = r#"{"seam_id":"seam-under-test","allowed_edit_surface":["tests/test_pricing.py"],"forbidden_files":[]}"#;
+        let packet = workflow.join("packet.json");
+        let before = workflow.join("before-attempt.json");
+        let baseline = workflow.join("baseline.json");
+        let binding_path = workflow.join("binding.json");
+        write_text(&packet, packet_text)?;
+        write_text(&before, "{\"before\":true}\n")?;
+        let policy = edit_cage_policy_from_packet(packet_text, "seam-under-test")?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        let mut sources = vec![
+            BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &before,
+            },
+            BeforeArtifactSource {
+                role: "agent_packet",
+                path: &packet,
+            },
+            BeforeArtifactSource {
+                role: "edit_cage_baseline",
+                path: &baseline,
+            },
+        ];
+        if let Some(bytes) = binding {
+            std::fs::write(&binding_path, bytes).map_err(|error| error.to_string())?;
+            sources.push(BeforeArtifactSource {
+                role: BINDING_ARTIFACT_ROLE,
+                path: &binding_path,
+            });
+        }
+        let begun = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id: "seam-under-test",
+            sources: &sources,
+            expected_repository_head: None,
+            next_command_suffix: None,
+            store: None,
+        })?;
+        let prepared = prepare_with(
+            &fixture,
+            "trust-manifest.json",
+            "att-test-1",
+            &granted(),
+            &policy,
+            "before.json",
+        )?;
+        // The prepare record is a compatibility projection; the apply record
+        // test needs the path free to observe what write_apply_record_from
+        // publishes.
+        std::fs::remove_file(&prepared.record_path).map_err(|error| error.to_string())?;
+        Ok(ApplyFixture {
+            attempt_id: begun.manifest.repair_attempt_id.clone(),
+            verified: prepared.verified,
+            prepared: fixture,
+        })
+    }
+
+    fn retained_artifact(
+        fixture: &ApplyFixture,
+        role: &str,
+    ) -> Result<crate::app::repair_attempt::RepairAttemptArtifact, String> {
+        let manifest = crate::app::repair_attempt::load_repair_attempt_manifest_from(
+            fixture.prepared.root.path(),
+            None,
+            &fixture.attempt_id,
+        )?;
+        crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, role)
+            .cloned()
+            .ok_or_else(|| format!("fixture attempt retains no `{role}` artifact"))
+    }
+
+    fn after_for(
+        fixture: &ApplyFixture,
+    ) -> Result<crate::app::repair_attempt::RepairAttemptAfter, String> {
+        Ok(crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: fixture.attempt_id.clone(),
+            repository_head: fixture.prepared.head.clone(),
+            delta_sha256: format!("sha256:{}", "a".repeat(64)),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            packet_sha256: retained_artifact(fixture, "agent_packet")?.sha256,
+            focused_result: None,
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Compliant,
+                changed_paths: vec!["tests/test_pricing.py".to_string()],
+                violations: Vec::new(),
+            },
+            line_ending_only_paths: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn retained_binding_load_distinguishes_absent_valid_and_malformed_artifacts()
+    -> Result<(), String> {
+        // No binding role: the attempt is simply not trust-bound.
+        let plain = apply_fixture("retained-none", None)?;
+        let found =
+            load_retained_binding_from(plain.prepared.root.path(), None, &plain.attempt_id)?;
+        if found.is_some() {
+            return Err("an attempt without a binding artifact loaded one".to_string());
+        }
+
+        // Valid binding: parsed value and the digest with the prefix removed.
+        let bytes = b"{\"phase\":\"prepare\"}\n";
+        let bound = apply_fixture("retained-valid", Some(bytes))?;
+        let retained =
+            load_retained_binding_from(bound.prepared.root.path(), None, &bound.attempt_id)?
+                .ok_or("a bound attempt loaded no binding")?;
+        if retained.artifact_sha256 != sha256_hex(bytes) {
+            return Err(format!(
+                "retained digest must be the bare sha256 of the artifact bytes: {}",
+                retained.artifact_sha256
+            ));
+        }
+        if retained.value != serde_json::json!({"phase": "prepare"}) {
+            return Err(format!("retained value was not parsed: {}", retained.value));
+        }
+
+        // Duplicate keys and non-UTF-8 bytes are refused with typed reasons
+        // even though the artifact digest matches its manifest entry.
+        let cases: [(&str, &[u8], &str); 2] = [
+            ("dup", b"{\"a\":1,\"a\":2}", "is not well-formed JSON"),
+            ("utf8", &[0xff, 0xfe, b'{', b'}'], "is not UTF-8"),
+        ];
+        for (label, content, needle) in cases {
+            let fixture = apply_fixture(&format!("retained-{label}"), Some(content))?;
+            match load_retained_binding_from(
+                fixture.prepared.root.path(),
+                None,
+                &fixture.attempt_id,
+            ) {
+                Err(error) if error.contains(needle) => {}
+                other => return Err(format!("case `{label}` expected `{needle}`: {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn apply_record_publishes_only_digests_restated_from_the_retained_artifacts()
+    -> Result<(), String> {
+        let bytes = b"{\"phase\":\"prepare\"}\n";
+        let fixture = apply_fixture("apply-record", Some(bytes))?;
+        let root = fixture.prepared.root.path();
+        let claimed = sha256_hex(bytes);
+        let after = after_for(&fixture)?;
+        let record_path = root.join(APPLY_RECORD_COMPAT_PATH);
+
+        let write = |claimed: &str, after: &crate::app::repair_attempt::RepairAttemptAfter| {
+            write_apply_record_from(
+                root,
+                None,
+                &fixture.attempt_id,
+                claimed,
+                &fixture.verified,
+                AUTHORITY_IDENTITY,
+                after,
+            )
+        };
+
+        // Refusals first, each rebuilt from the positive control's inputs
+        // with exactly one identity changed; none may publish a record.
+        let mut bad_packet = after.clone();
+        bad_packet.packet_sha256 = format!("sha256:{}", "b".repeat(64));
+        let mut bad_patch = after.clone();
+        bad_patch.delta_sha256 = "sha256:not-a-digest".to_string();
+        let fabricated = "c".repeat(64);
+        let cases: Vec<(&str, Result<PathBuf, String>, &str)> = vec![
+            (
+                "fabricated binding digest",
+                write(&fabricated, &after),
+                "binding-artifact digest that does not match",
+            ),
+            (
+                "prefixed claimed digest",
+                write(&format!("sha256:{claimed}"), &after),
+                "binding-artifact digest that does not match",
+            ),
+            (
+                "packet digest left the retained artifacts",
+                write(&claimed, &bad_packet),
+                "packet digest leaves the retained artifacts",
+            ),
+            (
+                "malformed patch digest",
+                write(&claimed, &bad_patch),
+                "malformed patch digest",
+            ),
+        ];
+        for (label, result, needle) in cases {
+            match result {
+                Err(error) if error.contains(needle) => {}
+                other => return Err(format!("case `{label}` expected `{needle}`: {other:?}")),
+            }
+            if record_path.exists() {
+                return Err(format!(
+                    "case `{label}` published a record despite refusing"
+                ));
+            }
+        }
+
+        // Positive control: the same inputs publish an apply record whose
+        // identities come from the retained artifacts, not from the caller.
+        let path = write(&claimed, &after)?;
+        if path != record_path {
+            return Err(format!("record published at {}", path.display()));
+        }
+        let record =
+            parse_strict_json(&std::fs::read_to_string(&path).map_err(|error| error.to_string())?)?;
+        let packet_sha = retained_artifact(&fixture, "agent_packet")?.sha256;
+        let before_sha = retained_artifact(&fixture, "before_snapshot")?.sha256;
+        let patch_sha = "a".repeat(64);
+        let text = |pointer: &str| record.pointer(pointer).and_then(Value::as_str);
+        if text("/phase") != Some("apply")
+            || text("/binding_artifact_sha256") != Some(claimed.as_str())
+            || text("/durable_attempt_id") != Some(fixture.attempt_id.as_str())
+            || text("/input/packet_sha256") != Some(packet_sha.trim_start_matches("sha256:"))
+            || text("/input/before_snapshot_sha256")
+                != Some(before_sha.trim_start_matches("sha256:"))
+            || text("/apply/patch_sha256") != Some(patch_sha.as_str())
+            || text("/apply/cage_status") != Some("compliant")
+            || text("/apply/repository_head_after") != Some(fixture.prepared.head.as_str())
+            || record.pointer("/apply/changed_paths")
+                != Some(&serde_json::json!(["tests/test_pricing.py"]))
+            || record.pointer("/apply/current") != Some(&Value::Bool(true))
+        {
+            return Err(format!("apply record lost a bound identity: {record}"));
+        }
+
+        // A binding artifact whose bytes drifted from the manifest digest is
+        // refused even though the caller still claims the original digest.
+        let binding = retained_artifact(&fixture, BINDING_ARTIFACT_ROLE)?;
+        std::fs::remove_file(&record_path).map_err(|error| error.to_string())?;
+        write_text(&root.join(&binding.path), "{\"phase\":\"tampered\"}\n")?;
+        if write(&claimed, &after).is_ok() {
+            return Err("a drifted binding artifact published an apply record".to_string());
+        }
+        if record_path.exists() {
+            return Err("a drifted binding artifact left a record behind".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn apply_record_refuses_an_attempt_that_retains_no_binding() -> Result<(), String> {
+        let fixture = apply_fixture("apply-unbound", None)?;
+        let after = after_for(&fixture)?;
+        let result = write_apply_record_from(
+            fixture.prepared.root.path(),
+            None,
+            &fixture.attempt_id,
+            &"0".repeat(64),
+            &fixture.verified,
+            AUTHORITY_IDENTITY,
+            &after,
+        );
+        match result {
+            Err(error) if error.contains("missing its retained python repair-trust binding") => {}
+            other => {
+                return Err(format!(
+                    "an unbound attempt wrote an apply record: {other:?}"
+                ));
+            }
+        }
+        if fixture
+            .prepared
+            .root
+            .path()
+            .join(APPLY_RECORD_COMPAT_PATH)
+            .exists()
+        {
+            return Err("a refused apply record left a file behind".to_string());
+        }
+        Ok(())
+    }
 }
