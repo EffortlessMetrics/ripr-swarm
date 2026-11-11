@@ -1155,6 +1155,7 @@ fn added_string_arm_input(
     }
     if !super::activation::call_parameter_names(owner).contains(parameter)
         || parameter_is_rebound(&owner.body, parameter)
+        || !chain_is_first_decision(&owner.body, &probe.expression)
     {
         return None;
     }
@@ -1165,6 +1166,40 @@ fn added_string_arm_input(
         .filter_map(|fact| fact.value.split_once(" = "))
         .any(|(name, value)| name.trim() == parameter && value.trim() == added.1)
         .then(|| added.1.clone())
+}
+
+/// Whether nothing in the owner before `chain` can take a call away from it
+/// (#10856 for this reading): the chain occurs once in the owner's text, and
+/// the body before it holds no `if`, `match`, loop, `return`, `break`,
+/// `continue`, `?`, match arm, closure or other short-circuit. An early return
+/// on another parameter (`if strict { return false; }`) would keep a test
+/// that passes the new literal from ever evaluating the chain. Strings and
+/// comments are masked; a chain ripr cannot find exactly once declines.
+fn chain_is_first_decision(function: &str, chain: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(function);
+    let masked_chain = crate::analysis::extract::mask_comments_and_strings(chain);
+    let masked_chain = masked_chain.trim();
+    if masked.len() != function.len() || masked_chain.is_empty() {
+        return false;
+    }
+    let mut found = masked.match_indices(masked_chain).map(|(at, _)| at);
+    let (Some(at), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    // The signature (up to the body's opening brace) is not control flow.
+    let Some((_, head)) = masked[..at].split_once('{') else {
+        return false;
+    };
+    if head.contains(['?', '|']) || head.contains("&&") || head.contains("=>") {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !head.split(|ch: char| !is_word(ch)).any(|word| {
+        matches!(
+            word,
+            "if" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
+        )
+    })
 }
 
 /// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
@@ -2010,6 +2045,38 @@ mod tests {
         let rebound =
             added_string_arm_evidence(shadowed, before, after, &["flag = \"--verbose\""], false);
         assert_ne!(rebound.state, StageState::Yes, "{}", rebound.summary);
+        // An early return on another parameter can keep the input away
+        // from the chain, and so can an earlier `?` or `match` arm.
+        for diverted in [
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    if strict { return false; }\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, gate: Option<()>) -> Option<bool> {\n    gate?;\n    Some(flag == \"-v\" || flag == \"--verbose\")\n}\n",
+            "pub fn pick(flag: &str, mode: u8) -> bool {\n    match mode { 0 => false, _ => flag == \"-v\" || flag == \"--verbose\" }\n}\n",
+        ] {
+            let evidence = added_string_arm_evidence(
+                diverted,
+                before,
+                after,
+                &["flag = \"--verbose\""],
+                false,
+            );
+            assert_ne!(
+                evidence.state,
+                StageState::Yes,
+                "{diverted}: {}",
+                evidence.summary
+            );
+        }
+        // A struct-literal field (the agent-eval shape) is not diverted, and
+        // the literal-first spelling reads the same.
+        let field = "pub fn pick(flag: &str) -> Options {\n    Options {\n        retries: 3,\n        verbose: \"-v\" == flag || \"--verbose\" == flag,\n    }\n}\n";
+        let flipped = added_string_arm_evidence(
+            field,
+            "\"-v\" == flag",
+            "\"-v\" == flag || \"--verbose\" == flag",
+            &["flag = \"--verbose\""],
+            false,
+        );
+        assert_eq!(flipped.state, StageState::Yes, "{}", flipped.summary);
         // An `&&` chain, a duplicated literal and a non-literal arm decline.
         for (before, after) in [
             ("flag == \"-v\"", "flag == \"-v\" && flag == \"--verbose\""),
