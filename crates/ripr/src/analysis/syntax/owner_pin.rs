@@ -3055,7 +3055,7 @@ fn owner_pin_assertions_with_matches(
         } else if function.async_token().is_some()
             && !function.attrs().any(|attr| {
                 let test = function.syntax();
-                tokio_test_runs_body(&attr, test) || async_std_test_runs_body(&attr, test)
+                tokio_test_runs_body(&attr, test) || argument_free_async_test_runs_body(&attr, test)
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
@@ -4141,8 +4141,8 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
-    if is_async_std_test_path(&path) {
-        return async_std_test_runs_body(attr, test);
+    if argument_free_async_test_crate(&path).is_some() {
+        return argument_free_async_test_runs_body(attr, test);
     }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
@@ -4342,16 +4342,36 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
         })
 }
 
-/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
-fn is_async_std_test_path(path: &str) -> bool {
-    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
+/// Async test attributes that take the body of an `async fn` and run it to
+/// completion on their own runtime, failing the test when the body panics:
+/// `(crate, path)`. `#[async_std::test]` blocks on the async_std runtime;
+/// `#[actix_rt::test]` and `#[actix_web::test]` expand to a `#[test]` that
+/// blocks on an Actix `System` (#14073). Each is admitted only without
+/// arguments (see [`argument_free_async_test_runs_body`]).
+const ARGUMENT_FREE_ASYNC_TESTS: &[(&str, &str)] = &[
+    ("async_std", "async_std::test"),
+    ("actix_rt", "actix_rt::test"),
+    ("actix_web", "actix_web::test"),
+];
+
+/// The crate of an [`ARGUMENT_FREE_ASYNC_TESTS`] path, rooted or not. Only the
+/// exact crate-qualified path: same shadowing rule as `tokio::test`, so
+/// `actix_web::rt::test` and `actix_rt::test_helper` name nothing here.
+fn argument_free_async_test_crate(path: &str) -> Option<&'static str> {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    ARGUMENT_FREE_ASYNC_TESTS
+        .iter()
+        .find(|(_, test_path)| *test_path == unrooted)
+        .map(|(krate, _)| *krate)
 }
 
-/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
-/// completion on the async_std runtime. `async_std` must be the crate in the
-/// test's module under the same rule as `tokio`. Only a bare attribute or empty
-/// `()` is admitted; any other argument refuses.
-fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+/// Whether `attr` is an [`ARGUMENT_FREE_ASYNC_TESTS`] attribute on an
+/// `async fn` and runs the body to completion on that crate's runtime. The
+/// crate must be the crate in the test's module under the same rule as
+/// `tokio`. Only a bare attribute or empty `()` is admitted; any other
+/// argument refuses (`#[actix_rt::test(system = "..")]` swaps the runtime
+/// that runs the body).
+fn argument_free_async_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
     }
@@ -4361,16 +4381,18 @@ fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     let Some(path) = attr.path() else {
         return false;
     };
-    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+    let Some(krate) =
+        argument_free_async_test_crate(&path.syntax().text().to_string().replace(' ', ""))
+    else {
         return false;
-    }
+    };
     let Some(module) = test.parent() else {
         return false;
     };
-    extern_crate_path_holds(&module, "async_std") && async_std_test_has_no_arguments(attr)
+    extern_crate_path_holds(&module, krate) && async_test_has_no_arguments(attr)
 }
 
-fn async_std_test_has_no_arguments(attr: &ast::Attr) -> bool {
+fn async_test_has_no_arguments(attr: &ast::Attr) -> bool {
     match attr.meta() {
         Some(ast::Meta::PathMeta(_)) => true,
         Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
@@ -4833,8 +4855,15 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] =
-    &["serial_test", "tokio", "async_std", "rstest", "test_case"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &[
+    "serial_test",
+    "tokio",
+    "async_std",
+    "actix_rt",
+    "actix_web",
+    "rstest",
+    "test_case",
+];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -4985,8 +5014,12 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
     }
-    if unrooted.starts_with("async_std::") {
-        return trusted.contains(&"async_std") && is_async_std_test_path(&path);
+    if let Some((krate, _)) = ARGUMENT_FREE_ASYNC_TESTS.iter().find(|(krate, _)| {
+        unrooted
+            .strip_prefix(krate)
+            .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return trusted.contains(krate) && argument_free_async_test_crate(&path) == Some(*krate);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");

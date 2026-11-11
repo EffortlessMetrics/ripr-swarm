@@ -3634,6 +3634,64 @@ fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refus
 }
 
 #[test]
+fn an_actix_test_runtime_runs_an_async_test_body_and_other_shapes_refuse() {
+    // #14073: both attributes expand to a `#[test]` that blocks on the body
+    // on an Actix `System`.
+    for attributes in [
+        "#[actix_rt::test]",
+        "#[::actix_rt::test]",
+        "#[actix_rt::test()]",
+        "#[actix_web::test]",
+        "#[::actix_web::test]",
+        "#[actix_web::test]\n#[serial_test::serial]",
+        "extern crate actix_rt;\n#[actix_rt::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An argument swaps the runtime that runs the body.
+        "#[actix_rt::test(system = \"other::System\")]",
+        // A local `actix_rt` / `actix_web` shadows the crate.
+        "mod actix_rt { pub use other::test; }\n#[actix_rt::test]",
+        "use other as actix_web;\n#[actix_web::test]",
+        // Not the admitted paths.
+        "#[actix_web::rt::test]",
+        "#[actix_rt::test_helper]",
+        "#[actix::test]",
+        // The other crate's attribute elsewhere in the module must hold too.
+        "mod actix_web { pub use other::test; }\n#[actix_web::test]\nasync fn decoy() {}\n#[actix_rt::test]",
+        "#[actix_rt::test]\n#[ignore]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A sync `fn` under the attribute does not compile, so it refuses.
+    let sync =
+        "use demo::weight;\n#[actix_rt::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert!(weight_admitted(sync).is_empty());
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[actix_web::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "actix must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
+#[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         "#[tokio::test]",
