@@ -9498,6 +9498,30 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         manifest["repair_attempt_id"]
     );
     assert_eq!(manifest["after"]["current"], true);
+    // The public seam-selected receipt must use this attempt's retained packet,
+    // including when a standalone workflow has left unrelated shared bytes.
+    for stale_shared in [false, true] {
+        if stale_shared {
+            std::fs::write(
+                root.join("target/ripr/workflow/agent-packet.json"),
+                b"foreign standalone packet",
+            )?;
+        }
+        let repeated = run_ripr(&[
+            "agent",
+            "receipt",
+            "--root",
+            &root_arg,
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            "67fc764ba37d77bd",
+            "--json",
+        ]);
+        assert_success(&repeated);
+        let repeated: serde_json::Value = serde_json::from_slice(&repeated.stdout)?;
+        assert_eq!(repeated["repair_attempt"]["attempt_id"], attempt_id);
+    }
     let wrong_seam = run_ripr(&[
         "agent",
         "receipt",

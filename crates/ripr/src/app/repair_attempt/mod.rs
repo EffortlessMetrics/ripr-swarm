@@ -428,13 +428,6 @@ pub(crate) fn receipt_binding_from(
     let root_display = bound_root(&root.to_string_lossy());
     let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
     let root = store.canonical_root().to_path_buf();
-    let packet = std::fs::read(packet_path).map_err(|error| {
-        format!(
-            "read repair packet {} failed: {error}",
-            packet_path.display()
-        )
-    })?;
-    let packet_sha256 = sha256_bytes(&packet);
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
@@ -491,6 +484,22 @@ pub(crate) fn receipt_binding_from(
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
         })?
     };
+    // Implicit seam selection is bound to the sole durable attempt. Shared
+    // packets belong to standalone workflows and may be absent or unrelated.
+    let retained_packet;
+    let packet_path = if attempt_id.is_none() {
+        retained_packet = root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
+        retained_packet.as_path()
+    } else {
+        packet_path
+    };
+    let packet = std::fs::read(packet_path).map_err(|error| {
+        format!(
+            "read repair packet {} failed: {error}",
+            packet_path.display()
+        )
+    })?;
+    let packet_sha256 = sha256_bytes(&packet);
     let mut policy = edit_cage_policy_from_packet(
         std::str::from_utf8(&packet)
             .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,

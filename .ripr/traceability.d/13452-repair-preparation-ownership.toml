@@ -1,7 +1,9 @@
 [[extend]]
 id = "RIPR-SPEC-0011"
-code = ["crates/ripr/src/cli/mod.rs", "crates/ripr/src/cli/commands/agent.rs", "crates/ripr/src/app/repair_attempt/mod.rs", "crates/ripr/src/output/file_write.rs"]
+code = ["crates/ripr/src/cli/mod.rs", "crates/ripr/src/cli/commands/agent.rs", "crates/ripr/src/app/repair_attempt/mod.rs", "crates/ripr/src/output/file_write.rs", "crates/ripr/src/app/agent_status.rs"]
 tests = [
+  "crates/ripr/tests/cli_smoke.rs::agent_repair_phases_materialize_snapshots_and_verify_json",
+  "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "crates/ripr/src/app/repair_attempt/mod.rs::publication_rejects_replaced_temporary_without_deleting_foreign_bytes",
   "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::late_build_ignore_refusal_preserves_shared_workflow",
   "crates/ripr/tests/cli_smoke/repair_workflow_ownership.rs::late_refusal_preserves_intervening_shared_commands",

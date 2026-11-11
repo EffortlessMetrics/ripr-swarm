@@ -334,17 +334,13 @@ impl AgentStatusReport {
             })
     }
 
-    /// #10984: a current gap-bound attempt that finished with its own retained
-    /// receipt showing the gap closed. A gap-bound route never writes the
-    /// legacy seam workflow files, so their absence says nothing about it.
-    /// Only a non-legacy gap binding, a `finished` disposition at a current
-    /// head and a receipt issued from retained terminal evidence qualify;
-    /// every pending, refused, stale, unconfirmed or unavailable attempt
-    /// keeps absent legacy artifacts counted.
-    fn has_current_finished_gap_attempt(&self) -> bool {
+    /// A current attempt with a retained receipt showing the gap closed does
+    /// not depend on legacy workflow projections. Both seam and gap before
+    /// phases now retain their inputs under the attempt (#13452).
+    /// Pending, refused, stale, legacy or unavailable attempts never qualify.
+    fn has_current_finished_attempt(&self) -> bool {
         self.repair_attempts.iter().any(|attempt| {
-            attempt.gap_base.is_some()
-                && !attempt.legacy_gap_binding
+            !attempt.legacy_gap_binding
                 && attempt.disposition == "finished"
                 && attempt.head_current == Some(true)
                 && matches!(
@@ -356,7 +352,7 @@ impl AgentStatusReport {
 
     pub(crate) fn status(&self) -> &'static str {
         let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
-            && !self.has_current_finished_gap_attempt();
+            && !self.has_current_finished_attempt();
         if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
@@ -7986,7 +7982,7 @@ mod tests {
 
         let mut seam_bound = finished();
         seam_bound.gap_base = None;
-        assert_eq!(report(seam_bound).status(), "incomplete");
+        assert_eq!(report(seam_bound).status(), "complete");
 
         let mut legacy = finished();
         legacy.legacy_gap_binding = true;
