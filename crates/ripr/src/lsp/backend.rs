@@ -1731,8 +1731,8 @@ impl Backend {
 
     /// Re-anchor the diagnostics-input watchers (#4896) at the current
     /// effective root: a registration left on a previous root would miss
-    /// the new root's ledger and branch changes. Callers must not hold the
-    /// root transition guard.
+    /// the new root's ledger, branch, and Python presence changes. Callers
+    /// must not hold the root transition guard.
     async fn sync_diagnostics_input_watch(&self) {
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
@@ -1781,7 +1781,7 @@ impl Backend {
                     .log_message(
                         MessageType::INFO,
                         format!(
-                            "ripr does not watch the gap ledger or .git/HEAD: {reason}; refresh manually after those change"
+                            "ripr does not watch root diagnostics or Python presence: {reason}; refresh manually after those change"
                         ),
                     )
                     .await;
@@ -1802,7 +1802,7 @@ impl Backend {
                 self.client
                     .log_message(
                         MessageType::WARNING,
-                        format!("ripr diagnostics input watching unavailable: {error}"),
+                        format!("ripr root input watching unavailable: {error}"),
                     )
                     .await;
             }
@@ -4687,7 +4687,7 @@ fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
-/// source file directly under a root source-directory marker (`src` or
+/// source file at the root or under a root source-directory marker (`src` or
 /// `tests`), classified with the canonical detector vocabulary —
 /// source-directory marker, excluded directories, generated file names,
 /// `.py` extension. Presence-only: the file is never read, so deleted files
@@ -4696,6 +4696,9 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
     let Some(relative) = root_relative_components(root, path) else {
         return false;
     };
+    if relative.len() == 1 {
+        return is_detectable_python_source_name(&relative[0]);
+    }
     let Some((marker, below)) = relative.split_first() else {
         return false;
     };
@@ -4781,9 +4784,9 @@ fn root_relative_components_on(
 /// Return whether a watched path can change the effective analysis input.
 /// Cargo inputs remain recursive for workspace members. The diagnostics
 /// inputs (root gap ledger, root `.git/HEAD`) and the Python inputs
-/// are root-scoped — root marker presence and detectable `.py` source below
-/// root `src`/`tests` are what this reload path tracks; Python outside those
-/// roots is not a detection input and stays unwatched.
+/// are root-scoped — root marker presence and detectable `.py` source at the
+/// root or below root `src`/`tests` drive configuration reloads. Python in
+/// arbitrary child trees is not a detection input and stays unwatched.
 pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
     workspace_input_kind(root, path).is_some()
 }
@@ -4843,8 +4846,9 @@ fn javascript_led_source_globs() -> Vec<LSPAny> {
 }
 
 /// Watchers for the diagnostics inputs of `root` (#4896): exactly the root
-/// ledger and root `.git/HEAD`, never nested copies. Clients such as VS Code
-/// match a string glob against the absolute path, so a bare relative string
+/// ledger, root `.git/HEAD`, and direct root Python source, never nested
+/// copies. Clients such as VS Code match string globs against absolute paths,
+/// so a bare relative string
 /// never fires; the patterns are a `RelativePattern` anchored at the root
 /// when the client supports it, otherwise absolute string globs. Returns
 /// `Err` when no reliable pattern exists; `workspace_input_kind` stays the
@@ -4853,13 +4857,16 @@ fn diagnostics_input_watchers(
     root: &Path,
     relative_pattern_support: bool,
 ) -> Result<Vec<LSPAny>, String> {
+    // Python presence shares the existing root-transition registration, not
+    // the unanchored source-directory patterns. Its events still classify as
+    // PythonSourcePresence and reload config through the canonical detector.
+    let patterns = DIAGNOSTICS_INPUT_PATHS.iter().copied().chain(["*.py"]);
     if relative_pattern_support {
         let base = file_uri_for_path(root)?;
-        return Ok(DIAGNOSTICS_INPUT_PATHS
-            .iter()
+        return Ok(patterns
             .map(|relative| {
                 serde_json::json!({
-                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
+                    "globPattern": {"baseUri": base.as_str(), "pattern": relative}
                 })
             })
             .collect());
@@ -4875,11 +4882,13 @@ fn diagnostics_input_watchers(
         ));
     }
     let absolute = absolute.trim_end_matches('/');
-    Ok(DIAGNOSTICS_INPUT_PATHS
-        .iter()
+    Ok(patterns
         .map(|relative| serde_json::json!({"globPattern": format!("{absolute}/{relative}")}))
         .collect())
 }
+
+#[cfg(test)]
+mod flat_python_watch_tests;
 
 #[cfg(test)]
 mod workspace_input_tests {
@@ -5166,9 +5175,15 @@ mod workspace_input_tests {
             );
         }
 
-        // Python that detection never reads: root level and non-source
-        // directories are irrelevant to no-config detection.
-        assert_eq!(workspace_input_kind(&root, &root.join("app.py")), None);
+        // Flat source is a configuration input; arbitrary child trees are not.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("app.py")),
+            Some(WorkspaceInputKind::PythonSourcePresence)
+        );
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("generated_app.py")),
+            None
+        );
         assert_eq!(
             workspace_input_kind(&root, &root.join("scripts").join("app.py")),
             None
@@ -5242,14 +5257,18 @@ mod workspace_input_tests {
             )
             .collect::<BTreeSet<_>>();
 
-        // The diagnostics inputs follow root transitions, so they are never
-        // part of this once-per-session registration.
+        // Diagnostics and flat Python presence follow root transitions, so they
+        // register separately from this once-per-session set.
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn dynamic_watchers_anchor_diagnostics_inputs_at_the_root() -> Result<(), String> {
-        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"];
+        let expected = [
+            "target/ripr/reports/gap-decision-ledger.json",
+            ".git/HEAD",
+            "*.py",
+        ];
         let root = std::env::temp_dir().join("ripr-workspace-input-root");
         let globs = |relative_pattern_support| {
             diagnostics_input_watchers(&root, relative_pattern_support).map(|watchers| {
@@ -5279,7 +5298,7 @@ mod workspace_input_tests {
         let plain = globs(false)?;
         assert_eq!(plain, expected_absolute);
         for glob in plain.iter().filter_map(|glob| glob.as_str()) {
-            assert!(!glob.contains('*'), "{glob} must not be workspace-wide");
+            assert!(!glob.contains("**"), "{glob} must not be workspace-wide");
         }
         Ok(())
     }
@@ -5296,7 +5315,7 @@ mod workspace_input_tests {
                 ));
             }
             // A RelativePattern base is a URI, not a glob, so it still works.
-            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() {
+            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() + 1 {
                 return Err(format!(
                     "{} must still anchor a RelativePattern",
                     root.display()

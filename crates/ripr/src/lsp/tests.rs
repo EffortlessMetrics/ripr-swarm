@@ -573,14 +573,18 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             .iter()
             .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
             .ok_or_else(|| format!("no diagnostics-input registration: {registrations:?}"))?;
-        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"]
-            .iter()
-            .map(|relative| {
-                serde_json::json!({
-                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
-                })
+        let expected = [
+            "target/ripr/reports/gap-decision-ledger.json",
+            ".git/HEAD",
+            "*.py",
+        ]
+        .iter()
+        .map(|relative| {
+            serde_json::json!({
+                "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
             })
-            .collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
                 "diagnostics watchers not root-anchored: {diagnostics}"

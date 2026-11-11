@@ -136,9 +136,10 @@ pub(crate) fn detect_python_project(root: &Path) -> bool {
     PYTHON_PROJECT_MARKERS
         .iter()
         .any(|marker| root.join(marker).is_file())
+        || root_contains_detectable_python(root)
         || PYTHON_SOURCE_DIR_MARKERS
             .iter()
-            .any(|marker| dir_contains_python_source(&root.join(marker)))
+            .any(|marker| dir_contains_python_source(&root.join(marker), true))
 }
 
 /// Project-marker files that make a nested directory a Python package root.
@@ -224,7 +225,7 @@ pub(crate) fn is_detectable_python_source_name(name: &str) -> bool {
 /// exactly as `detect_python_project` consumes it. Presence-only: the bound
 /// value is this boolean, never a per-file enumeration.
 pub(crate) fn source_dir_contains_detectable_python(root: &Path, marker: &str) -> bool {
-    dir_contains_python_source(&root.join(marker))
+    dir_contains_python_source(&root.join(marker), true)
 }
 
 fn canonical_marker_name<'a>(candidates: &[&'a str], name: &str) -> Option<&'a str> {
@@ -249,7 +250,13 @@ fn canonical_marker_name_on<'a>(
     })
 }
 
-fn dir_contains_python_source(dir: &Path) -> bool {
+/// Presence of regular, non-generated Python source directly at the root.
+/// Reuses the project walk without descending into arbitrary child trees.
+pub(crate) fn root_contains_detectable_python(root: &Path) -> bool {
+    dir_contains_python_source(root, false)
+}
+
+fn dir_contains_python_source(dir: &Path, recursive: bool) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -262,11 +269,11 @@ fn dir_contains_python_source(dir: &Path) -> bool {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_dir() {
+        if recursive && file_type.is_dir() {
             if is_python_excluded_dir_everywhere(name) {
                 continue;
             }
-            if dir_contains_python_source(&path) {
+            if dir_contains_python_source(&path, true) {
                 return true;
             }
         } else if file_type.is_file() && is_detectable_python_source_path(&path, name) {
