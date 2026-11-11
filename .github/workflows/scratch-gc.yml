@@ -20,9 +20,18 @@ name: Scratch GC
 # shared .github/actions/ci-scratch-lease authority deletes a per-run tree only
 # while holding the flock lease of a terminal job this repository owns.
 
+# Manual only since 2026-11-11 (#4984). Every job here needs a self-hosted
+# runner from one of the three pools, and none has accepted a job since at
+# least 2026-11-09: 95 of the last 100 scheduled fires ended `cancelled` after
+# all three pool jobs waited 30 minutes in the queue and the next fire replaced
+# them. Required work runs on the GitHub-hosted leg, which has no persistent
+# scratch disk to reclaim, and the inline rust-gates.yml reclaim still runs on
+# any self-hosted job that does start. A timer that only queues is noise that
+# reads as 48 cancelled runs a day, so the half-hourly schedule is off.
+# To bring the timer back with the pools, restore:
+#   schedule:
+#     - cron: "17,47 * * * *"
 on:
-  schedule:
-    - cron: "17,47 * * * *"
   workflow_dispatch:
 
 permissions:
