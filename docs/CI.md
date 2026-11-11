@@ -135,11 +135,12 @@ pushes, labels and review comments start no workflow. All development proof,
 useful advisory feedback and review remain in the owning session. A skipped job
 or cheap wrapper is still allocation and is not an exception.
 
-The refreshed #4842 preparation at #12973 removes 42 automatic event roots
-from 29 workflow files while preserving the installed required H producer.
-That auxiliary retirement is independently landable before the later publisher
-and control-profile cutover. This final slice removes the remaining label/main
-caller roots and the label-conflict/staleness
+The narrowed #4842 preparation at #12973 removes 41 automatic event roots
+from 28 workflow files while preserving the installed required H producer and
+legacy main-health sentinel. That auxiliary retirement is independently
+landable before the dependent incident-probe redesign and later publisher/control
+cutover. This cumulative final source retains the manual incident-probe redesign
+and removes the remaining label/main caller roots and label-conflict/staleness
 recovery workflows. The hard-cut observer becomes a named explicit release or
 incident audit, with no automatic main trigger. The 16 remaining specialty
 maintenance/deep schedules are constrained to inspected names and exact cadences;
