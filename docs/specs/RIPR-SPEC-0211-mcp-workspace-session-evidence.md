@@ -929,9 +929,10 @@ failed request cannot relabel it. The route is a bounded current-state rerun,
 not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
 with an explicit non-command limitation rather than truncating executable text.
 
-For failed saved-worktree refresh, MCP retry examples retain the requested
-worktree source when the operator corrects or omits a base. Discovery states
-the committed default separately from opt-in saved tracked edits. Unsaved and
+For a failed refresh, MCP retry examples retain the requested source
+(committed or worktree) when the operator corrects or omits a base. Discovery states
+the `ripr check`-parity default (saved tracked edits when any exist, committed
+otherwise) and the explicit `committed`/`worktree` overrides. Unsaved and
 untracked exclusions remain unchanged. Worktree cards and readiness follow the
 producer-custody rules above: offered only with an established agreement,
 withheld with the cause otherwise.

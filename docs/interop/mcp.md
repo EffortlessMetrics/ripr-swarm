@@ -135,7 +135,8 @@ outside-MCP route.
 When the repository's default branch is not `main` or `master` (for example
 `trunk`) and there is no `origin/main`, the default base cannot be resolved and
 `ripr_refresh` fails with `analysis_failed` naming candidate branches. Retry
-`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
+`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`, plus
+`"source": "committed"` to keep committed input on a dirty tree): it is
 the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
 flag. Each refresh states its own base, so omitting `base` returns to the
 default branch. The additions are explicit-base-only so a base-less caller
@@ -628,10 +629,11 @@ omit findings. If the complete recovery exceeds its 4096-byte recovery-text budg
 the refusal explains that literal recovery is unavailable; it never emits a
 truncated command.
 
-Failed worktree refreshes preserve `source: "worktree"` in their MCP retry
-examples, including default-base, explicit invalid-base and configuration-repair recovery. Correct
-the base without silently changing the source. Ordinary committed requests
-retain omission semantics.
+Failed refreshes preserve the requested source (`source: "committed"` or
+`source: "worktree"`) in their MCP retry examples, including default-base,
+explicit invalid-base and configuration-repair recovery. Correct the base
+without silently changing the source: an omitted `source` takes the default
+input selection, which reads saved tracked edits on a dirty tree.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
