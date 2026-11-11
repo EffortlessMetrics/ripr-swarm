@@ -2920,7 +2920,7 @@ fn has_closure_syntax(text: &str) -> bool {
 /// `masked` with each `||` that follows an operand removed. An operand ends in
 /// an identifier character, a closing bracket, `?`, or a string or character
 /// literal; a `||` after an operator, an opening bracket, `,`, `=`, a label or
-/// a keyword such as `move`, `async` or `return` opens a closure and is kept.
+/// a keyword such as `move`, `mut`, `async` or `return` opens a closure and is kept.
 /// `original` is the same text before masking (equal length). The operand
 /// check reads code from `masked`; only a masked tail is read from `original`,
 /// and only a literal there counts, so comment text never ends an operand.
@@ -2963,7 +2963,18 @@ fn follows_operand(masked: &str, original: &str, at: usize) -> bool {
     }) && !labelled
         && !matches!(
             last_word,
-            "move" | "async" | "static" | "const" | "return" | "break" | "yield" | "in" | "else"
+            "move"
+                | "mut"
+                | "async"
+                | "gen"
+                | "use"
+                | "static"
+                | "const"
+                | "return"
+                | "break"
+                | "yield"
+                | "in"
+                | "else"
         )
 }
 
@@ -3321,6 +3332,8 @@ mod tests {
             "break 'outer || x",
             "spawn(\n    // start now\n    || work())",
             "spawn(/* now */ || work())",
+            "spawn_with(&mut || work())",
+            "f(\"a\" // say \"x\"\n || g())",
         ] {
             assert!(has_closure_syntax(text), "{text}");
         }
