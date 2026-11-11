@@ -56,6 +56,16 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
             "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `{pointer}`."
         );
     }
+    // `git diff --staged`/`--cached` muscle memory: `ripr check` has no
+    // index-only mode and no near flag, so the bare refusal named nothing.
+    // Name what check already reads and the exact staged-only spelling.
+    if command == "check" && matches!(arg, "--staged" | "--cached") {
+        return format!(
+            "unknown {command} argument {arg:?}. `ripr check` already reads staged and \
+             unstaged changes together; for only the staged changes run \
+             `git diff --cached | ripr check --diff -`. Run `{pointer}`."
+        );
+    }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
