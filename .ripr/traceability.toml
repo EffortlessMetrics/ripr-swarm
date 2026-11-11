@@ -19766,7 +19766,6 @@ fixtures = [
   "fixtures/typescript_effect_owner_alias",
   "fixtures/typescript_caught_assertion",
   "fixtures/typescript_finally_completion",
-  "fixtures/typescript_generator_promise",
   "fixtures/ts_dead_assertion_after_return",
   "fixtures/ts_dead_assertion_after_try_finally",
   "fixtures/ts_dead_assertion_after_try_empty_catch",

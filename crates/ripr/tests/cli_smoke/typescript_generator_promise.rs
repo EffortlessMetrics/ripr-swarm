@@ -2,28 +2,49 @@
 //!
 //! A native promise invokes a `function*` callback only to create an
 //! iterator; the callback body, and any assertion in it, never runs.
+//!
+//! Runtime truth (Node 22.23.4, `node --test`, one test per run, no skips):
+//! every dormant body below passes with `return 31` in `src/total.ts`; every
+//! control body fails there at its strict equality, and all pass with 30.
 
-use super::{run_command, unique_temp_workspace, workspace_root};
+use super::{run_command, unique_temp_workspace};
 use serde_json::Value;
 use std::{fs, path::PathBuf};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+const PACKAGE: &str = r#"{
+  "name": "ripr-generator-promise-callback-controls",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/total.test.ts"
+  }
+}
+"#;
+
+const SOURCE: &str = "export async function total(): Promise<number> {\n  return 30;\n}\n";
+
+const DIFF: &str = "diff --git a/src/total.ts b/src/total.ts\n--- a/src/total.ts\n+++ b/src/total.ts\n@@ -1,3 +1,3 @@\n export async function total(): Promise<number> {\n-  return 29;\n+  return 30;\n }\n";
+
 struct Subject(PathBuf);
 
 impl Subject {
     fn new(body: &str) -> TestResult<Self> {
-        let fixture = workspace_root().join("fixtures/typescript_generator_promise");
         let root = unique_temp_workspace("typescript-generator-promise");
         fs::create_dir_all(std::env::temp_dir())?;
         fs::create_dir(&root)?;
         let subject = Self(root);
         fs::create_dir_all(subject.0.join("src"))?;
         fs::create_dir_all(subject.0.join("tests"))?;
-        for path in ["package.json", "ripr.toml", "src/total.ts"] {
-            fs::copy(fixture.join("input").join(path), subject.0.join(path))?;
+        for (path, text) in [
+            ("package.json", PACKAGE),
+            ("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n"),
+            ("src/total.ts", SOURCE),
+            ("change.diff", DIFF),
+        ] {
+            fs::write(subject.0.join(path), text)?;
         }
-        fs::copy(fixture.join("diff.patch"), subject.0.join("change.diff"))?;
         fs::write(
             subject.0.join("tests/total.test.ts"),
             format!(

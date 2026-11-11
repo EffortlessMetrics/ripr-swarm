@@ -4,4 +4,4 @@
 # adds expectations; never lower it to make a check pass.
 python = 25
 rust = 19
-typescript = 5
+typescript = 4

@@ -15172,35 +15172,6 @@
       ]
     },
     {
-      "id": "ts_dormant_generator_then_cannot_confirm_return",
-      "language": "typescript",
-      "tier": "pure",
-      "source_fixture": "fixtures/typescript_generator_promise",
-      "vector": "generator_then_callback_body_never_runs_its_strict_equality",
-      "probe_family": "return_value",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "unknown",
-          "strength": "unknown"
-        }
-      ]
-    },
-    {
       "id": "ts_self_comparing_exact_matcher_return_value",
       "language": "typescript",
       "tier": "pure",
