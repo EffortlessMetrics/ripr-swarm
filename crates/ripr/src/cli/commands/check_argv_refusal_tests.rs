@@ -178,6 +178,27 @@ fn committed_refuses_repo_scoped_formats_and_gap_ledger() -> Result<(), String> 
 }
 
 #[test]
+fn a_bare_argument_is_read_as_a_path_scope() -> Result<(), String> {
+    // #14307: the bare path reaches the --path refusal for a repo-scoped
+    // format, so it was parsed as a scope rather than refused as unknown.
+    let root = TempRoot::new("bare-path-scope")?;
+    let bare = refusal(&root, &["src/lib.rs", "--format", "repo-exposure-json"])?;
+    let flag = refusal(
+        &root,
+        &["--path", "src/lib.rs", "--format", "repo-exposure-json"],
+    )?;
+    if bare != flag || !bare.contains("--path/--exclude narrow a diff") {
+        return Err(format!("bare: {bare}\nflag: {flag}"));
+    }
+    // A dash-led token is still an unknown argument, not a path.
+    let dashed = refusal(&root, &["-x"])?;
+    if !dashed.contains("unknown check argument \"-x\"") {
+        return Err(format!("-x must stay unknown, got {dashed}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn path_and_exclude_are_refused_where_they_would_claim_an_unapplied_bound() -> Result<(), String> {
     let root = TempRoot::new("scope-refusals")?;
     let saved_arg = root.0.join("saved.json").to_string_lossy().into_owned();

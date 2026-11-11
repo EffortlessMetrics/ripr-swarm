@@ -221,8 +221,7 @@ Exit status: 0 for a completed run, including findings that are `exposed` or wea
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
-  ripr check
-  ripr check src/lib.rs   (only this changed file; same as --path src/lib.rs)
+  ripr check [src/lib.rs]   (a PATH keeps only that changed file, like --path)
   ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.

@@ -3687,29 +3687,6 @@ mod tests {
     }
 
     #[test]
-    fn check_reads_a_bare_argument_as_a_path_scope() {
-        // #14307: the bare path reaches the --path refusal for a repo-scoped
-        // format, so it was parsed as a scope rather than refused as unknown.
-        let bare = check(&args(&["src/lib.rs", "--format", "repo-exposure-json"]));
-        let flag = check(&args(&[
-            "--path",
-            "src/lib.rs",
-            "--format",
-            "repo-exposure-json",
-        ]));
-        assert!(
-            bare.as_ref()
-                .err()
-                .is_some_and(|message| message.contains("--path/--exclude narrow a diff")),
-            "{bare:?}"
-        );
-        assert_eq!(bare, flag);
-        assert!(
-            check(&args(&["-x"])).is_err_and(|message| message.contains("unknown check argument"))
-        );
-    }
-
-    #[test]
     fn check_rejects_unknown_argument() {
         assert_eq!(
             check(&args(&["--wat"])),
