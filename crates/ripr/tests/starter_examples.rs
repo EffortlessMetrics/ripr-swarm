@@ -43,7 +43,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
         std::fs::read_dir(from).map_err(|error| format!("read {}: {error}", from.display()))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("read {}: {error}", from.display()))?;
-        let target = to.join(entry.file_name());
+        let name = entry.file_name();
+        // Build output a contributor may have left behind is not part of the example.
+        if name == "target" || name == "node_modules" {
+            continue;
+        }
+        let target = to.join(name);
         if entry.path().is_dir() {
             copy_tree(&entry.path(), &target)?;
         } else {
