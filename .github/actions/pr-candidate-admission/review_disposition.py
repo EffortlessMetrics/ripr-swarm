@@ -109,14 +109,18 @@ NEGATED_CHANGE = re.compile(
 )
 # Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
 NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
-# A recognized cue before the phrase that refutes it, so it is not resolved work.
-# The cue may sit anywhere earlier in the same sentence; a cue in a prior
-# sentence does not reach across the '.' or ';'.
+# A recognized cue that refutes a negated change phrase, so it is not resolved
+# work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
+# sentence does not reach across the '.' or ';'. The same cue set is checked
+# after the phrase, so "No changes are needed. That is false." refuses.
+REFUTATION_CUE = re.compile(
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|wrong|not[ \t]+so|not[ \t]+the[ \t]+case"
+    r"|isn't|is[ \t]+not|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say"
+    r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
+    re.IGNORECASE,
+)
 REFUTES_NEGATION = re.compile(
-    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case|isn't|is[ \t]+not"
-    r"|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say|nobody[ \t]+could[ \t]+say"
-    r"|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b"
-    r"[^.;\n]*$",
+    REFUTATION_CUE.pattern + r"[^.;\n]*$",
     re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -205,16 +209,20 @@ def positive_line(line: str) -> bool:
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
-    #14355: the phrase is stripped only in statement position (it ends the
-    sentence) and only when no preceding cue refutes it. A refuted or
-    followed-by-blocker phrase stays in place, so the blocker scan still
-    refuses it.
+    #14355: the phrase is stripped only when it ends a sentence, no preceding
+    cue refutes it, and the remainder of the line carries no refutation cue.
+    A refuted or followed-by-blocker phrase stays in place, so the blocker scan
+    still refuses it.
     """
 
     def replace(match: re.Match[str]) -> str:
         before = line[: match.start()]
         after = line[match.end() :]
-        if NEGATED_CHANGE_TAIL.match(after) and not REFUTES_NEGATION.search(before):
+        if (
+            NEGATED_CHANGE_TAIL.match(after)
+            and not REFUTES_NEGATION.search(before)
+            and not REFUTATION_CUE.search(after)
+        ):
             return " "
         return match.group(0)
 
@@ -520,6 +528,16 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. The build is broken.", False),
         ("REVIEW_READY\nNo changes are needed. The build is failing.", False),
         ("REVIEW_READY\nNo code change needed. A fix is needed.", False),
+        # #14355: a refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", False),
+        ("REVIEW_READY\nNo changes are needed; that is false.", False),
+        ("REVIEW_READY\nNo changes are needed. That is not true.", False),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", False),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", False),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", False),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", False),
+        ("REVIEW_READY\nNo code change needed. Not so.", False),
+        ("REVIEW_READY\nNo changes are needed. All green.", True),
         # #14355: a refuted phrase is not resolved work.
         ("REVIEW_READY\nIt is not true that no changes are needed.", False),
         ("REVIEW_READY\nIt is false that no change is needed.", False),

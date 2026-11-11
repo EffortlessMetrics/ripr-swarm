@@ -307,7 +307,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-11T11:00:28Z";
-    let cases: [(&str, bool); 28] = [
+    let cases: [(&str, bool); 37] = [
         // The strip-exercising control: this admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", true),
         (
@@ -365,6 +365,19 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
             "REVIEW_READY\nNo code change needed. A fix is needed.",
             false,
         ),
+        // A refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", false),
+        ("REVIEW_READY\nNo changes are needed; that is false.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That is not true.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", false),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", false),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", false),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", false),
+        ("REVIEW_READY\nNo code change needed. Not so.", false),
+        ("REVIEW_READY\nNo changes are needed. All green.", true),
         // A refuted phrase is not resolved work.
         (
             "REVIEW_READY\nIt is not true that no changes are needed.",
