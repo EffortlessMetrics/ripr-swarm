@@ -751,6 +751,23 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #14325: a removed bare literal (`1200`, `"v1",`, `true`) carries
+            // no behavior beyond its value. When an added-side probe of a
+            // modeled family already pairs this exact text as its `before`,
+            // that probe judges the replaced value, so a second, base-side
+            // static-unknown catch-all would only keep verification refused
+            // for code no test can reach any more.
+            // The paired `before` may be cut to the literal's parser span,
+            // so a trailing `,`/`;` on the removed line still matches.
+            if family == ProbeFamily::StaticUnknown
+                && let Some(literal) = bare_literal_body(text)
+                && probes.iter().any(|seeded| {
+                    seeded.probe.family != ProbeFamily::StaticUnknown
+                        && matches!(seeded.probe.before.as_deref(), Some(before) if before == text || before == literal)
+                })
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -777,6 +794,57 @@ pub(crate) fn probes_for_file_with_relations(
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+/// True when a trimmed changed line is one literal and nothing else: a
+/// number (sign, digits, `_`, `.`, exponent and type suffix), `true`/`false`,
+/// or one quoted string/char with no interpolation, optionally followed by
+/// a single `,` or `;`. Anything with an operator, call, path or second
+/// token is not bare, so the removed-side probe stays (fail closed).
+#[cfg(test)]
+fn is_bare_literal_line(text: &str) -> bool {
+    bare_literal_body(text).is_some()
+}
+
+/// The literal of a bare-literal line without its trailing `,`/`;`, or
+/// `None` when the line is not one bare literal (see `is_bare_literal_line`).
+fn bare_literal_body(text: &str) -> Option<&str> {
+    let body = text
+        .strip_suffix(',')
+        .or_else(|| text.strip_suffix(';'))
+        .unwrap_or(text)
+        .trim_end();
+    if body.is_empty() {
+        return None;
+    }
+    if body == "true" || body == "false" {
+        return Some(body);
+    }
+    if let Some(open) = body.chars().next()
+        && (open == '"' || open == '\'')
+    {
+        let mut escaped = false;
+        for (index, character) in body.char_indices().skip(1) {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == open {
+                return (index + character.len_utf8() == body.len()).then_some(body);
+            }
+        }
+        return None;
+    }
+    let digits = body.strip_prefix('-').unwrap_or(body);
+    let numeric = !digits.contains("..")
+        && digits
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        && digits.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '.'
+        });
+    numeric.then_some(body)
 }
 
 /// Which changed lines of one diff side are structural delimiters
@@ -6080,6 +6148,112 @@ mod tests {
     /// whose `before` is the removed text; the removed side adds no second
     /// static-unknown catch-all. A rewrite that changes characters
     /// (`|` -> `&`) still keeps the removed side's static-unknown probe.
+    /// #14325: a changed tail literal (`1200` -> `1500`) is judged by the
+    /// added return-value probe, which pairs the removed text as `before`;
+    /// the removed literal adds no base-side static-unknown twin. A removed
+    /// literal with no paired added probe, and a removed non-literal line,
+    /// keep their removed-side probe.
+    #[test]
+    fn a_replaced_bare_literal_adds_no_base_side_static_unknown_twin() {
+        let index = |source: &str| {
+            let mut index = RustIndex::default();
+            index.insert_file_only(
+                PathBuf::from("src/lib.rs"),
+                crate::analysis::facts::FileFacts {
+                    source: source.into(),
+                    ..Default::default()
+                },
+            );
+            index
+        };
+        let head = "pub fn default_timeout_ms() -> u64 {\n    1500\n}\n";
+        // The parser reports the added tail literal as a return shape, as it
+        // does for `fn f() -> u64 { 1500 }` in a real index.
+        let probes = single_shape_probes(
+            "    1500",
+            "    1200",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("1200")),
+            "fixture: the added probe must pair the removed literal: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "1200"),
+            "a replaced bare literal must not get its own removed-side probe: {probes:?}"
+        );
+        // A trailing `,` on the removed line still pairs with the
+        // span-cut `before` of the added literal's probe.
+        let comma = single_shape_probes(
+            "    1500,",
+            "    1200,",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            "fn limits() -> [u64; 1] {\n    [\n    1500,\n    ]\n}\n",
+        );
+        assert!(
+            comma
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "fixture: the added literal must get a modeled probe: {comma:?}"
+        );
+        assert!(
+            comma
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown || probe.after.is_some()),
+            "a replaced literal with a trailing comma must not get a removed-side twin: {comma:?}"
+        );
+
+        // Control: removed with nothing added keeps the base-side probe.
+        let deleted = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: Vec::new(),
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "    1200".to_string(),
+            }],
+        };
+        let deleted_probes = probes_for_file(Path::new("workspace"), &deleted, &index(head));
+        assert!(
+            deleted_probes
+                .iter()
+                .any(|probe| probe.expression == "1200"),
+            "an unpaired removed literal keeps its removed-side probe: {deleted_probes:?}"
+        );
+    }
+
+    #[test]
+    fn bare_literal_lines_are_single_literals_only() {
+        for bare in [
+            "1200", "-3", "1_000u64", "2.5f32", "true", "\"v1\",", "'x';", "0x1F",
+        ] {
+            assert!(is_bare_literal_line(bare), "{bare} must read as bare");
+        }
+        for not_bare in [
+            "1..10",
+            "a | b",
+            "1 + 2",
+            "x",
+            "f(1)",
+            "\"a\" + b",
+            "1.max(2)",
+            "Some(1)",
+            "",
+            "\"unterminated",
+        ] {
+            assert!(
+                !is_bare_literal_line(not_bare),
+                "{not_bare} must not read as bare"
+            );
+        }
+    }
+
     #[test]
     fn reordered_replacement_does_not_repeat_the_removed_static_unknown() {
         let swap = |removed: &str, added: &str| ChangedFile {
