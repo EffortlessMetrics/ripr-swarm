@@ -115,6 +115,19 @@ a stronger test exists. Open `gate-decision.md` for the exact reason on each
 candidate. The same applies when a test changed in the pull request next to the
 gap: that candidate stays advisory with the reason stated.
 
+## When the summary says `blocked`
+
+`blocked` under First-run status means the pull-request analysis did not run,
+not that the pull request is blocked. The summary gives the reason on the next
+lines:
+
+- `Reason:` names a base branch that is not in the checkout. The generated
+  workflow checks out with `fetch-depth: 0`; a shallow checkout (a lower
+  `fetch-depth`, or another checkout action) cannot compare against the base.
+- `No pull request in this run` appears on a manual run (`workflow_dispatch`).
+  The repository-wide reports still run; the changed-behavior findings need a
+  pull request.
+
 ## Fork and Dependabot pull requests
 
 The generated workflow runs on `pull_request`, so a pull request from a fork or

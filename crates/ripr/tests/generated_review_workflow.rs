@@ -5477,3 +5477,48 @@ fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
     assert!(summary.contains("\n- Status: `advisory`\n"), "{summary}");
     Ok(())
 }
+
+/// #14148: the real `reports ci-summary` reads the run's event from the
+/// environment, and a manual run says it has no pull request where a
+/// `pull_request` run of the same tree does not.
+#[test]
+fn a_manual_run_summary_says_there_is_no_pull_request() -> Result<(), Box<dyn Error>> {
+    let root = replay::unique_temp_dir("manual-run-summary")?;
+    let summary = |event: &str| -> Result<String, Box<dyn Error>> {
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &[
+                "GITHUB_BASE_REF",
+                "GITHUB_EVENT_PATH",
+                "RIPR_UPLOAD_SARIF",
+                "RIPR_COMMENT_MODE",
+                "RIPR_GATE_BASELINE",
+                "RIPR_GATE_MODE",
+                "RIPR_PILOT_TIMEOUT_MS",
+            ],
+            &[("GITHUB_EVENT_NAME", event)],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "ci-summary failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    let manual = summary("workflow_dispatch");
+    let pull_request = summary("pull_request");
+    let _ = fs::remove_dir_all(&root);
+    let (manual, pull_request) = (manual?, pull_request?);
+    assert!(
+        manual.contains("#### First-run status\n- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced."),
+        "{manual}"
+    );
+    assert!(
+        !pull_request.contains("No pull request in this run"),
+        "{pull_request}"
+    );
+    Ok(())
+}

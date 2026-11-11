@@ -111,6 +111,9 @@ pub(crate) struct CiSummaryInput {
     pub(crate) root: PathBuf,
     /// The PR base branch the missing-start-here route names.
     pub(crate) base_ref: String,
+    /// `GITHUB_EVENT_NAME`, empty outside GitHub Actions. A set event other
+    /// than `pull_request` has no pull request to analyze (#14148).
+    pub(crate) event_name: String,
     /// `RIPR_UPLOAD_SARIF == "true"`.
     pub(crate) upload_sarif: bool,
     /// `github.event_name == "pull_request"`. The packet renders the diff
@@ -143,7 +146,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     };
     summary.headline(&input.gate_mode);
     summary.start_here();
-    summary.first_run_status(&input.base_ref);
+    summary.first_run_status(&input.base_ref, &input.event_name);
     summary.language_preview(&input.configured_languages);
     summary.front_panel();
     summary.recommended_next_test();
@@ -453,8 +456,28 @@ impl Summary {
         self.line("- Retry note: per-file facts computed before the deadline are written to `target/ripr/cache`; when the workflow restores that directory between runs, the retry resumes from them. Later whole-repo stages are not cached and can still need the larger deadline.");
     }
 
-    fn first_run_status(&mut self, base_ref: &str) {
+    /// A run with no pull request, named before the states it causes
+    /// (#14148). The packet runs its pull-request stages only for a
+    /// `pull_request` event, so a manual or push run has no PR repair cards
+    /// and the start-here packet reports them missing; without this line a
+    /// first manual run reads as broken. An unset event (a local run) and a
+    /// `pull_request` event print nothing.
+    fn no_pull_request(&mut self, event_name: &str) {
+        if event_name.is_empty() || event_name == "pull_request" {
+            return;
+        }
+        self.line(&format!(
+            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; the repository-wide reports in this summary still ran.",
+            code_span(event_name)
+        ));
+        self.line(
+            "- Next step: open or update a pull request to get changed-behavior findings for it.",
+        );
+    }
+
+    fn first_run_status(&mut self, base_ref: &str, event_name: &str) {
         self.line("#### First-run status");
+        self.no_pull_request(event_name);
         // #11161: when the producer refused to run, the downstream packets
         // carry missing/blocked states whose regeneration commands cannot
         // succeed — the author sees an unexplained "blocked". The refusal
@@ -580,6 +603,13 @@ impl Summary {
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
+        // #14148: a blocked packet carries its own reason; without it the
+        // reader sees a state token and a command, and the sentence that
+        // explains both sits inside the collapsed full report.
+        let reason = doc.optional(&["selected.message"]);
+        if !reason.is_empty() {
+            self.line(&format!("- Reason: {}", code_span(&reason)));
+        }
         self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
         self.status_row(&language, &format!("- Language: `{language}`"));
         self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));
