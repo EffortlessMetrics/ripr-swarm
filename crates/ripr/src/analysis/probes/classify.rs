@@ -749,6 +749,34 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("mod ")
         || text.starts_with("#")
         || is_visible_module_declaration(text)
+        || is_plain_extern_crate(text)
+}
+
+/// A plain `extern crate name;` (optionally visibility-qualified) only links a
+/// crate, the same way `use` imports one, so it holds no behavior for a test
+/// to notice (#14403). The renaming form (`extern crate core as std;`,
+/// `extern crate self as name;`) changes what a name means for the rest of the
+/// crate and stays probed, as does any line with trailing code.
+fn is_plain_extern_crate(text: &str) -> bool {
+    let rest = super::diff::strip_visibility(text);
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    body.strip_prefix("extern")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+        .and_then(|tail| tail.strip_prefix("crate"))
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            name != "self"
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// A visibility-qualified out-of-line `mod name;` declaration
@@ -1126,6 +1154,73 @@ mod tests {
         // `pub use` keeps its pre-existing ignore; the new helper must not
         // be what claims it.
         assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// #14403: a plain `extern crate name;` links a crate and has no behavior;
+    /// a renaming `extern crate a as b;` and any trailing code stay probed.
+    #[test]
+    fn plain_extern_crate_is_ignored_but_a_rename_is_not() {
+        for ignored in [
+            "extern crate alloc;",
+            "pub extern crate core;",
+            "pub(crate) extern crate serde_json;",
+            "extern  crate  std ;",
+            "extern crate r#async;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "extern crate core as std;",
+            "pub extern crate other as u32;",
+            "extern crate self as my_crate;",
+            "extern crate self;",
+            "extern crate alloc; fn go() {}",
+            "extern crate alloc",
+            "extern crate;",
+            "extern \"C\" fn go();",
+            "externcrate alloc;",
+            "extern cratex alloc;",
+            "extern crate 1alloc;",
+        ] {
+            assert!(!should_ignore_changed_line(kept), "`{kept}`");
+        }
+    }
+
+    /// Producer level: an added `extern crate alloc;` yields no probe, while a
+    /// renaming `extern crate core as std;` still yields one.
+    #[test]
+    fn diff_producer_ignores_plain_extern_crate_but_probes_a_rename() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "extern crate alloc;\nextern crate core as std;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`extern crate alloc;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a renaming `extern crate core as std;` must still be probed"
+        );
+        Ok(())
     }
 
     /// Producer level: an added `pub mod new;` yields no probe, while a
