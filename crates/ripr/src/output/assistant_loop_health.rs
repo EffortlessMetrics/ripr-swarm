@@ -313,14 +313,15 @@ pub(crate) fn assistant_loop_health_input_warnings(
         .flat_map(|proof| proof.warnings.iter())
         .filter(|warning| warning.kind == "missing_required_input")
         .map(|warning| {
-            let next = if warning.message.contains("ripr assistant-loop proof") {
+            let message = warning.message.trim_end_matches('.');
+            let next = if message.contains("ripr assistant-loop proof") {
                 ""
             } else {
                 "; regenerate it with `ripr assistant-loop proof` (`ripr assistant-loop proof --help` lists its inputs)"
             };
             match warning.source_artifact.as_deref() {
-                Some(source) => format!("assistant proof {source}: {}{next}", warning.message),
-                None => format!("{}{next}", warning.message),
+                Some(source) => format!("assistant proof {source}: {message}{next}"),
+                None => format!("{message}{next}"),
             }
         })
         .collect()

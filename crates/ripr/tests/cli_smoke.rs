@@ -6437,6 +6437,10 @@ fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
         &missing_arg,
         "--proof",
         &malformed_arg,
+        "--proof",
+        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/missing-required-proof.json",
+        "--proof",
+        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/unchanged-proof.json",
         "--out",
         &out_arg,
         "--out-md",
@@ -6444,10 +6448,22 @@ fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
     ])?;
     assert_success(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warnings: 2"), "{stderr}");
+    // Three unusable proofs warn; the usable unchanged proof's movement
+    // warning is analysis, not an input problem, and stays in the report.
+    assert!(stderr.contains("Warnings: 3"), "{stderr}");
     assert!(
-        stderr.contains("no-such-proof.json: Proof input is unreadable: the file does not exist"),
-        "a missing proof must say it does not exist: {stderr}"
+        stderr.contains(
+            "missing-required-proof.json: Proof input is missing selected seam and before/after movement context; regenerate it with `ripr assistant-loop proof`"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("unchanged-proof.json"), "{stderr}");
+    assert!(!stderr.contains(".;"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "no-such-proof.json: Proof input is unreadable: not found; pass the proof JSON"
+        ),
+        "a missing proof must say it is not found: {stderr}"
     );
     assert!(
         stderr.contains("not-json-proof.json: Proof input is malformed"),
@@ -6463,7 +6479,10 @@ fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
         !report.contains("missing required selected seam and movement evidence"),
         "the repair reason must carry the specific cause: {report}"
     );
-    assert!(report.contains("the file does not exist"), "{report}");
+    assert!(
+        report.contains("Proof input is unreadable: not found"),
+        "{report}"
+    );
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }

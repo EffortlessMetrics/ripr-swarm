@@ -159,16 +159,18 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
 }
 
 /// Read one `--proof` input for the health report. A missing file is the
-/// common case (a mistyped path), so it says so in plain words and names the
-/// producer instead of passing the OS errno through (#14371).
+/// common case (a mistyped path), so it uses the shared `not found` wording
+/// (#9851) and names the producer; other failures keep the OS detail (#14371).
 fn read_health_proof(path: &std::path::Path) -> Result<String, String> {
     crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
         if err.kind() == std::io::ErrorKind::NotFound {
-            "the file does not exist; pass the proof JSON that `ripr assistant-loop proof` wrote \
-             (its --out, by default target/ripr/reports/test-oracle-assistant-proof.json)"
-                .to_string()
+            format!(
+                "{detail}; pass the proof JSON that `ripr assistant-loop proof` wrote \
+                 (its --out, by default target/ripr/reports/test-oracle-assistant-proof.json)"
+            )
         } else {
-            format!("the file could not be read: {err}")
+            detail
         }
     })
 }
