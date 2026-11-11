@@ -155,6 +155,58 @@ fn run_route_stdout(
 }
 
 #[test]
+fn unauthorized_inventory_stops_before_retry_or_sleep() -> TestResult {
+    let runners = r#"{"runners":[{"status":"online","busy":false,"labels":[{"name":"em-ci"},{"name":"cx43"},{"name":"rust-medium"}]}]}"#;
+    let (output, summary, called, attempts) = run_route_env(
+        1,
+        1,
+        "HTTP 401: ghp_SECRET",
+        runners,
+        false,
+        &[("RUNNER_QUERY_RETRY_DELAY", "99")],
+    )?;
+    if !called || attempts != 1 {
+        return Err(format!("401 must stop after one inventory call, got {attempts}").into());
+    }
+    for expected in [
+        "router_target=github\nrouter_reason=runner_api_failed\n",
+        "runner_query=failed\n",
+        "runner_query_exit_code=1\n",
+        "runner_query_http=401\n",
+    ] {
+        if !output.contains(expected) {
+            return Err(format!("missing {expected:?} in {output}").into());
+        }
+    }
+    if !summary.contains("attempts: `1` of 3") || summary.contains("SECRET") {
+        return Err(format!("incorrect or unredacted failure summary: {summary}").into());
+    }
+    Ok(())
+}
+
+#[test]
+fn unauthorized_after_transient_failure_stops_at_that_attempt() -> TestResult {
+    let (output, summary, _, attempts) = run_route_env(
+        1,
+        99,
+        "",
+        "",
+        false,
+        &[
+            ("ERR_1", "HTTP 502: transient"),
+            ("ERR_2", "HTTP 401: rejected"),
+        ],
+    )?;
+    if attempts != 2 || !output.contains("runner_query_http=401\n") {
+        return Err(format!("expected terminal second-attempt 401: {attempts}, {output}").into());
+    }
+    if !summary.contains("attempts: `2` of 3") {
+        return Err(format!("incorrect attempt summary: {summary}").into());
+    }
+    Ok(())
+}
+
+#[test]
 fn persistent_failure_retries_three_times_then_reports_without_error_text() -> TestResult {
     for (status, error, http) in [
         (1, "Forbidden", "none"),
