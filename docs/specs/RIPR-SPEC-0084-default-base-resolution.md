@@ -186,9 +186,11 @@ advice: the refusal says the flag takes one revision and that ripr builds the
 range itself, and names the value to pass, the range's start for `--base` and
 its end for `--head` (#14238). An end is quoted as a command only when it is
 non-empty, not option-shaped and spelled with revision characters alone;
-otherwise the advice names the end in words. A commit-message search
-(`:/text`, `<rev>^{/text}`) and a leading-colon path are not ranges, whatever
-their text holds. The analysis still does not run (exit 2).
+otherwise the advice names the end in words. The separator is read only where
+Git reads one: dots inside a commit-message search (`<rev>^{/text}` up to its
+closing brace, `:/text` to the end of the value) and a leading-colon path are
+free text, so `HEAD^{/wip..done}` is one revision while `HEAD^{/fix}..HEAD`
+is a range. The analysis still does not run (exit 2).
 
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
@@ -382,6 +384,7 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants`
 - `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end`
 - `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice`
 - `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
 

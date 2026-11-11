@@ -2107,16 +2107,9 @@ fn missing_ref_repair(
 /// it. `--base` gets the range's start, `--head` its end. An end is quoted
 /// as a command only when [`range_end_is_plain`] holds; otherwise, and for
 /// an open range that lacks the wanted end, the advice names the end in
-/// words. `None` when `missing_ref` is not a range, which includes the two
-/// revision forms whose free text may hold dots: a commit-message search
-/// (`:/fix..`, `main^{/fix..}`) and an index or tree path (`:../file`).
+/// words. `None` when [`split_revision_range`] finds no range separator.
 fn revision_range_repair(missing_ref: &str, flag: &str) -> Option<String> {
-    if missing_ref.starts_with(':') || missing_ref.contains("^{/") {
-        return None;
-    }
-    let (start, end) = missing_ref
-        .split_once("...")
-        .or_else(|| missing_ref.split_once(".."))?;
+    let (start, end) = split_revision_range(missing_ref)?;
     let (wanted, wanted_name, forms) = if flag == "--head" {
         (
             end,
@@ -2139,6 +2132,34 @@ fn revision_range_repair(missing_ref: &str, flag: &str) -> Option<String> {
     Some(format!(
         "`{missing_ref}` is a revision range, and `{flag}` takes one revision: {forms}. {pass}"
     ))
+}
+
+/// Split a revision range at its first separator (`...` or `..`), reading
+/// the separator only where Git would. Dots inside a commit-message search
+/// are free text, not a separator: `<rev>^{/text}` ends at its closing
+/// brace, so `HEAD^{/wip..done}` is one revision while `HEAD^{/fix}..HEAD`
+/// is a range whose start is the search; `:/text` runs to the end of the
+/// value, and a leading-colon index or tree path (`:../file`) is a path.
+/// `None` for anything that holds no separator outside those forms.
+fn split_revision_range(revision: &str) -> Option<(&str, &str)> {
+    if revision.starts_with(':') {
+        return None;
+    }
+    let mut index = 0;
+    while index < revision.len() {
+        let rest = &revision[index..];
+        if rest.starts_with("^{/") {
+            // An unterminated search swallows the rest of the value.
+            index += rest.find('}')? + 1;
+        } else if rest.starts_with("...") {
+            return Some((&revision[..index], &rest[3..]));
+        } else if rest.starts_with("..") {
+            return Some((&revision[..index], &rest[2..]));
+        } else {
+            index += rest.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    None
 }
 
 /// Whether one end of a range is safe to quote inside a suggested command:
@@ -5046,11 +5067,42 @@ mod tests {
             // Free text that may hold dots is not a range.
             ":/fix the parser..",
             "main^{/wip..done}",
+            "main^{/wip...done}",
+            "main^{/unterminated..search",
             ":../src/lib.rs",
+            "caf\u{e9}.bar",
         ] {
             assert_eq!(revision_range_repair(single, "--base"), None, "{single}");
             assert_eq!(revision_range_repair(single, "--head"), None, "{single}");
         }
+    }
+
+    #[test]
+    fn revision_range_separator_is_read_outside_a_commit_message_search() {
+        // A search can be one end of a real range: the separator after its
+        // closing brace still splits, and dots inside the braces never do.
+        for (range, start, end) in [
+            ("HEAD^{/fix}..HEAD", "HEAD^{/fix}", "HEAD"),
+            ("HEAD^{/fix..more}...topic", "HEAD^{/fix..more}", "topic"),
+            ("main..HEAD^{/wip..done}", "main", "HEAD^{/wip..done}"),
+            ("v1^{/a}^{/b..c}..v2", "v1^{/a}^{/b..c}", "v2"),
+            ("caf\u{e9}..HEAD", "caf\u{e9}", "HEAD"),
+        ] {
+            assert_eq!(split_revision_range(range), Some((start, end)), "{range}");
+        }
+        // The search end is named in words, never quoted as a command; the
+        // plain end still is.
+        let base = revision_range_repair("HEAD^{/fix}..HEAD", "--base").unwrap_or_default();
+        assert!(
+            base.starts_with("`HEAD^{/fix}..HEAD` is a revision range, and `--base` takes one")
+                && base.ends_with("Pass the range's start revision alone"),
+            "{base}"
+        );
+        let head = revision_range_repair("HEAD^{/fix}..HEAD", "--head").unwrap_or_default();
+        assert!(
+            head.ends_with("Pass the range's end: `--head HEAD`"),
+            "{head}"
+        );
     }
 
     #[test]
@@ -5072,7 +5124,13 @@ mod tests {
             "fixture precondition: a plain missing branch gets the fetch advice, got: {control}"
         );
         for flag in ["--base", "--head"] {
-            for range in ["main..HEAD", "main...HEAD", "main..", "..main"] {
+            for range in [
+                "main..HEAD",
+                "main...HEAD",
+                "main..",
+                "..main",
+                "HEAD^{/fix}..HEAD",
+            ] {
                 let repair = missing_ref_repair(&dir, range, flag, None);
                 assert!(
                     repair.contains(&format!("`{range}` is a revision range"))

@@ -8139,6 +8139,7 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone",
+  "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice",
   "crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch"
 ]
