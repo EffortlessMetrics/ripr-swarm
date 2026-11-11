@@ -80,8 +80,9 @@ pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
     GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
     fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
-    inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    inline_unit_module_layout, invoked_callback_params, literal_module_path_targets,
+    macro_call_columns, module_item_scopes, passes_call_making_closure,
+    unconditionally_invoked_param_positions,
 };
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,

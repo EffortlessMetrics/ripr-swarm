@@ -86,11 +86,11 @@ use crate::analysis::syntax::{
     RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
-    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
-    source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    is_test_scoped_trusted_macro, literal_module_path_targets, local_empty_macro_names,
+    macro_binding_scan, owner_pin_assertions, owner_pin_matches_assertions,
+    parse_clean_source_file, pattern_pins, qualified_matches_paths, returns_leave_the_function,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
@@ -2906,28 +2906,46 @@ const UNINDEXED_MEMBER_ROOTS: &[&str] =
     &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
 const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
 
+/// The most files one unindexed member's `#[path]` chain may reach before
+/// the walk fails closed.
+const UNINDEXED_MEMBER_PATH_FILES: usize = 64;
+
 /// Whether an unindexed member's crate-root sources look like they could
 /// compile another crate's files. Unreadable, oversized, or missing crate
 /// roots fail closed: the member exists and its compilation effect is
 /// unknown. A readable crate root with no `include!` / `#[path]` is not a
 /// mount, so a namesake dependency of an indexed test crate does not
 /// disable placement.
+///
+/// #14260: a literal `#[path]` on a top-level `mod name;` whose target is a
+/// file inside the member's own directory names the member's own file, as a
+/// plain `mod name;` would. That file is read under the same rule instead
+/// of failing closed; a missing or unreadable one still fails closed.
 fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
-    let mut candidates: BTreeSet<PathBuf> = UNINDEXED_MEMBER_ROOTS
+    let mut pending: Vec<(PathBuf, bool)> = UNINDEXED_MEMBER_ROOTS
         .iter()
-        .map(|candidate| member_dir.join(candidate))
+        .map(|candidate| (member_dir.join(candidate), false))
         .collect();
     match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
         Ok(manifest) => {
             for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
-                candidates.insert(member_dir.join(relative));
+                pending.push((member_dir.join(relative), false));
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return true,
     }
+    let mut seen = BTreeSet::new();
     let mut inspected = false;
-    for path in candidates {
+    // `required`: a `#[path]` named the file, so its absence is not a guess
+    // that missed but a module whose source ripr cannot read.
+    while let Some((path, required)) = pending.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        if seen.len() > UNINDEXED_MEMBER_ROOTS.len() + UNINDEXED_MEMBER_PATH_FILES {
+            return true;
+        }
         match std::fs::read(&path) {
             Ok(bytes) => {
                 if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
@@ -2937,30 +2955,55 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
                     return true;
                 };
                 inspected = true;
-                if source_may_mount_foreign_files(source) {
+                let Some(literals) = own_path_literals(source) else {
                     return true;
+                };
+                for literal in literals {
+                    let Some(target) = member_own_file(&path, &literal, member_dir) else {
+                        return true;
+                    };
+                    pending.push((target, true));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return true,
         }
     }
     !inspected
 }
 
-fn source_may_mount_foreign_files(source: &str) -> bool {
+/// The `#[path]` literals of `source` when they are all it could mount
+/// through: no `include!`, no inner `#![path]`, and every `#[path` in the
+/// text is the one plain literal of a top-level out-of-line `mod name;`.
+/// `None` for anything else, which the caller reads as a foreign mount.
+fn own_path_literals(source: &str) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "include")
+    let includes = whole_word_offsets(&masked, "include")
         .into_iter()
         .any(|offset| {
             masked
                 .get(offset + "include".len()..)
                 .is_some_and(|rest| rest.trim_start().starts_with('!'))
-        })
-        || {
-            let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
-            compact.contains("#[path") || compact.contains("#![path")
-        }
+        });
+    let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if includes || compact.contains("#![path") {
+        return None;
+    }
+    let attributes = compact.matches("#[path").count();
+    if attributes == 0 {
+        return Some(Vec::new());
+    }
+    let literals = literal_module_path_targets(source)?;
+    (literals.len() == attributes).then_some(literals)
+}
+
+/// The existing file a `#[path = "literal"]` in `declaring` names, when it
+/// lies inside `member_dir` (canonical). A non-inline `#[path]` is relative
+/// to the declaring file's directory. Symlinks are followed first, so a link
+/// out of the member is not the member's own file.
+fn member_own_file(declaring: &Path, literal: &str, member_dir: &Path) -> Option<PathBuf> {
+    let target = declaring.parent()?.join(literal).canonicalize().ok()?;
+    (target.is_file() && target.starts_with(member_dir)).then_some(target)
 }
 
 impl TargetRoots {
