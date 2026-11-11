@@ -3,4 +3,5 @@
   a location has no finding: they name the finding lines when the file has a
   finding at another line, name the analyzed root when no file exists at that
   path, and otherwise give the run's changed-file, changed-line and candidate
-  counts. One sentence used to answer all of these (#14077).
+  counts, or say the file may not have been analyzed when the run was
+  incomplete. One sentence used to answer all of these (#14077).

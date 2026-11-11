@@ -471,16 +471,24 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
             "No file exists at {wanted_file:?} under the analyzed root `{root}`; a file location is read relative to that root, so check the spelling or pass `--root`"
         ));
     }
-    let mut cause = format!(
-        "{wanted_file:?} exists, but this run has no finding anywhere in it. ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none"
-    );
-    if let Some(outcome) = &output.analysis_outcome {
-        let counts = &outcome.counts;
-        cause.push_str(&format!(
-            ". This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
-            counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
-        ));
+    let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");
+    // Only a complete run supports "nothing there to report": an incomplete
+    // or partitioned run may never have analyzed the file, and a run with no
+    // producer outcome establishes neither.
+    let Some(outcome) = &output.analysis_outcome else {
+        return Some(cause);
+    };
+    if !outcome.kind.is_complete() || output.partial_scope.is_some() {
+        cause.push_str(
+            ". The analysis was incomplete, so that file may not have been analyzed; `ripr check` for the same scope lists what was left out",
+        );
+        return Some(cause);
     }
+    let counts = &outcome.counts;
+    cause.push_str(&format!(
+        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
+    ));
     Some(cause)
 }
 

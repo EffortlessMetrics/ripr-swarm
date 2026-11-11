@@ -8,7 +8,8 @@
 //! - the file has a finding at another line: the finding lines are named;
 //! - no file exists at that path under the analyzed root: the root is named;
 //! - the file exists and has no finding: the reason findings attach where
-//!   they do, with the run's changed-file, changed-line and candidate counts.
+//!   they do, with the run's changed-file, changed-line and candidate counts;
+//!   an incomplete run says instead that the file may not have been analyzed.
 //!
 //! The run carries counts, not the per-file changed-line set, so no clause
 //! says whether the named line itself changed.
@@ -242,6 +243,35 @@ fn a_miss_in_an_existing_file_without_findings_gives_the_run_counts() -> Result<
                 &run.1,
                 "This run read 1 changed file(s) and 3 changed line(s), 1 of them candidate line(s) ripr considers",
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// An incomplete run may never have analyzed the file, so it must not give
+/// the "nothing there to report" reason. Rust is switched off here, so the
+/// changed `src/lib.rs` has no finding because it was not analyzed.
+#[test]
+fn a_miss_in_an_incomplete_run_does_not_claim_the_file_was_analyzed() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
+    for (label, run) in [
+        ("explain", repo.explain("src/lib.rs:2")?),
+        ("context", repo.context("src/lib.rs:2")?),
+    ] {
+        require_miss(label, "src/lib.rs:2", &run, Some(NO_FINDING_IN_FILE))?;
+        require_contains(
+            label,
+            &run.1,
+            "The analysis was incomplete, so that file may not have been analyzed",
+        )?;
+        for complete_only in ["ripr reports a finding only on", "This run read"] {
+            if run.1.contains(complete_only) {
+                return Err(format!(
+                    "{label}: an incomplete run must not say {complete_only:?}: {}",
+                    run.1
+                ));
+            }
         }
     }
     Ok(())
