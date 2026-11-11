@@ -4,8 +4,9 @@
 //! document is byte-value identical to `json`. `json-terse` goes one layer
 //! further for LLM/agent consumers that pay per token on findings:
 //!
-//! 1. Repeated prose templates in `evidence_path`, `evidence`, `missing` and
-//!    `assertion_texts` are replaced by stable short codes (`E0001`, ...), and
+//! 1. Repeated prose templates in `evidence_path`, `evidence`, `missing`,
+//!    `assertion_texts` and the `ripr.<stage>.summary` strings (#13673) are
+//!    replaced by stable short codes (`E0001`, ...), and
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
 //!    exact original strings, in order.
@@ -19,9 +20,9 @@
 //!    when values match.
 //!
 //! What terse does *not* do: it never drops a finding, never changes a
-//! verdict/classification/severity/confidence, and never touches nested
-//! prose outside the four coded surfaces (ripr stage summaries,
-//! related-test oracle lines, repair cards stay inline). See
+//! verdict/classification/severity/confidence or `ripr` stage state and
+//! confidence, and never touches nested prose outside the coded surfaces
+//! (related-test oracle lines and repair cards stay inline). See
 //! `docs/OUTPUT_SCHEMA.md` "json-terse" for the consumer-facing contract.
 
 use serde_json::Value;
@@ -37,6 +38,10 @@ const PROSE_ARRAYS: [&str; 3] = ["evidence_path", "evidence", "missing"];
 
 /// Map field whose values (assertion source lines) are coded the same way.
 const ASSERTION_TEXTS: &str = "assertion_texts";
+
+/// Key of the prose summary inside each `ripr` stage object, coded like the
+/// prose arrays (#13673).
+const RIPR_SUMMARY_KEY: &str = "summary";
 
 /// Marker stamped at the document head so consumers can key on the rendering
 /// profile without sniffing for the legend.
@@ -97,6 +102,9 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
                 for text in assertions.values().filter_map(Value::as_str) {
                     coder.observe(text);
                 }
+            }
+            for text in ripr_stage_summaries(finding) {
+                coder.observe(text);
             }
         }
     }
@@ -228,7 +236,32 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
             }
         }
     }
+    // #13673: a stage summary usually repeats an `evidence` entry verbatim,
+    // so the two share one legend code.
+    if let Some(Value::Object(ripr)) = finding.get_mut("ripr") {
+        for stage in STAGE_ORDER {
+            if let Some(Value::Object(stage)) = ripr.get_mut(stage)
+                && let Some(summary) = stage.get_mut(RIPR_SUMMARY_KEY)
+                && let Some(code) = summary.as_str().and_then(|text| coder.code_for(text))
+            {
+                *summary = Value::String(code);
+            }
+        }
+    }
     drop_same_value_aliases(finding, coder);
+}
+
+/// The five `ripr.<stage>.summary` strings, a coded surface since #13673.
+fn ripr_stage_summaries(finding: &serde_json::Map<String, Value>) -> Vec<&str> {
+    let Some(Value::Object(ripr)) = finding.get("ripr") else {
+        return Vec::new();
+    };
+    STAGE_ORDER
+        .iter()
+        .filter_map(|stage| ripr.get(*stage))
+        .filter_map(|stage| stage.get(RIPR_SUMMARY_KEY))
+        .filter_map(Value::as_str)
+        .collect()
 }
 
 /// Omit only the documented aliases: equal values in unrelated fields do not
@@ -868,6 +901,67 @@ mod tests {
             Some("Reachable tests can plausibly activate this changed behavior")
         );
         assert_eq!(finding["note"], finding["language"]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_a_stage_summary_that_repeats_an_evidence_entry() -> Result<(), String> {
+        // #13673: the infect summary appears once in `ripr` and once in
+        // `evidence`; both copies share one code and expand back exactly.
+        let long = "Predicate compares `a` with `b`, and ripr can read no literal for either, so it cannot tell which side of the boundary a test reaches";
+        let short = "Short stage summary";
+        let full = serde_json::json!({"findings": [{
+            "id": "probe:a",
+            "ripr": {
+                "reach": {"state": "yes", "confidence": "high", "summary": short},
+                "observe": {"state": "yes", "confidence": "high", "summary": "E0001"},
+                "infect": {"state": "unknown", "confidence": "low", "summary": long},
+                "discriminate": {"state": "no", "confidence": "medium", "summary": long}
+            },
+            "evidence": [long, short]
+        }]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let legend = legend_of(&terse);
+        let finding = &terse["findings"][0];
+        let code = finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .ok_or("infect summary")?;
+        assert_ne!(code, long, "the repeated summary must be coded: {terse}");
+        assert_eq!(finding["evidence"][0], Value::String(code.to_string()));
+        assert_eq!(
+            finding["ripr"]["discriminate"]["summary"],
+            Value::String(code.to_string())
+        );
+        for stage in ["reach", "infect", "discriminate"] {
+            let expanded = expand_terse_string(
+                finding["ripr"][stage]["summary"]
+                    .as_str()
+                    .unwrap_or_default(),
+                &legend,
+            );
+            assert_eq!(
+                Value::String(expanded),
+                full["findings"][0]["ripr"][stage]["summary"]
+            );
+            assert_eq!(
+                finding["ripr"][stage]["state"],
+                full["findings"][0]["ripr"][stage]["state"]
+            );
+            assert_eq!(
+                finding["ripr"][stage]["confidence"],
+                full["findings"][0]["ripr"][stage]["confidence"]
+            );
+        }
+        // A literal summary spelled like a code reserves that code.
+        assert!(!legend.contains_key("E0001"), "{terse}");
+        assert_eq!(finding["ripr"]["observe"]["summary"], "E0001");
+        // Control: a short summary below the admission threshold stays inline.
+        assert_eq!(
+            finding["ripr"]["reach"]["summary"],
+            Value::String(short.to_string())
+        );
         Ok(())
     }
 }
