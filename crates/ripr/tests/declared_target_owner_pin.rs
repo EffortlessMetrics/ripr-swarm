@@ -43,9 +43,11 @@ impl Fixture {
         for (relative, text) in files {
             let path = fixture.0.join(relative);
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create directory {}: {error}", parent.display()))?;
             }
-            std::fs::write(path, text).map_err(|error| error.to_string())?;
+            std::fs::write(&path, text)
+                .map_err(|error| format!("write file {}: {error}", path.display()))?;
         }
         Ok(fixture)
     }

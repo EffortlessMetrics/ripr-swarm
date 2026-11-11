@@ -15521,6 +15521,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::a_glob_under_another_declared_target_does_not_bind_the_test_crate_root",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::only_an_explicit_target_path_is_a_declared_target_entry",
   "crates/ripr/tests/private_inherent_receiver.rs::undeclared_target_glob_keeps_the_cross_target_probe_weakly_exposed",
+  "crates/ripr/tests/declared_target_owner_pin.rs::a_declared_test_target_outside_tests_dir_pins_like_an_autodiscovered_one",
+  "crates/ripr/tests/declared_target_owner_pin.rs::an_undeclared_file_outside_the_layout_stays_unplaced",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::an_explicitly_declared_target_entry_is_a_recognized_root",
 ]
 fixtures = [
   "fixtures/rust_polling_helper_direct",
