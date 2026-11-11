@@ -307,12 +307,14 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-11T11:00:28Z";
-    let cases: [(&str, bool); 8] = [
+    let cases: [(&str, bool); 15] = [
+        // The strip-exercising control: this admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", true),
         (
             "REVIEW_READY\nThree Devin threads resolved, no code changes needed.",
             true,
         ),
+        // Control that does not exercise the strip: no "needed"/"required".
         ("REVIEW_READY\nResolved without a code change.", true),
         ("REVIEW_READY\nCode change needed.", false),
         ("REVIEW_READY\nA change is needed.", false),
@@ -322,6 +324,20 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
             "REVIEW_READY\nNo code change needed, but repairs required.",
             false,
         ),
+        // A refuted or followed-by-blocker phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt is not true that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nIt is false that no change is needed.", false),
+        ("REVIEW_READY\nNo changes are needed is false.", false),
+        ("REVIEW_READY\nNo code change needed is not correct.", false),
+        (
+            "REVIEW_READY\nNo changes are needed -- the build is red.",
+            false,
+        ),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        ("REVIEW_READY\nno findings, code change needed", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

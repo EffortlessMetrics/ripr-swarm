@@ -95,13 +95,23 @@ NEGATION = re.compile(
 # #14355: a negated change/repair phrase is not a blocker. "no code change needed"
 # and "no changes needed" describe resolved work, not a required repair. The
 # filler set is closed so an unrelated "no findings and code change needed" is
-# not swallowed; only the negated phrase is removed before the blocker scan, so
-# a genuine blocker elsewhere on the same line still refuses.
+# not swallowed. The phrase is stripped only in statement position: it must end
+# the sentence, and no preceding cue may refute it. A refuted phrase ("It is not
+# true that no changes are needed") or a phrase followed by other blocker prose
+# ("... -- the build is red") stays in place and still refuses.
 NEGATED_CHANGE = re.compile(
     r"\b(?:no|without)\b[ \t]+"
     r"(?:(?:a|an|any|further|code|source|production)[ \t]+){0,2}"
     r"(?:repairs?|changes?|fixes)\b[ \t]+"
     r"(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b",
+    re.IGNORECASE,
+)
+# Statement position: nothing but optional closing punctuation follows the phrase.
+NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*[.!]?[ \t]*$")
+# A cue before the phrase that refutes it, so it is not resolved work.
+REFUTES_NEGATION = re.compile(
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case|isn't|is[ \t]+not)\b"
+    r"[^.;\n]{0,40}$",
     re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -187,14 +197,33 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def strip_negated_change(line: str) -> str:
+    """Remove a negated change/repair phrase only when it is resolved work.
+
+    #14355: the phrase is stripped only in statement position (it ends the
+    sentence) and only when no preceding cue refutes it. A refuted or
+    followed-by-blocker phrase stays in place, so the blocker scan still
+    refuses it.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        before = line[: match.start()]
+        after = line[match.end() :]
+        if NEGATED_CHANGE_TAIL.match(after) and not REFUTES_NEGATION.search(before):
+            return " "
+        return match.group(0)
+
+    return NEGATED_CHANGE.sub(replace, line)
+
+
 def negation_hit(line: str) -> bool:
     """Whether ``line`` carries a blocker phrase outside a negated change phrase.
 
     #14355: "no code change needed" is a resolved-work statement, not a blocker.
-    Only the negated phrase is removed, so a genuine blocker elsewhere on the
-    same line still refuses.
+    Only an unrefuted statement-position phrase is removed, so a genuine blocker
+    elsewhere on the same line still refuses.
     """
-    return bool(NEGATION.search(NEGATED_CHANGE.sub(" ", line)))
+    return bool(NEGATION.search(strip_negated_change(line)))
 
 
 def comment_body_ready(body: str) -> bool:
@@ -460,6 +489,7 @@ def self_test() -> None:
         ("REVIEW_READY\nThis is no longer ready", False),
         ("REVIEW_READY\nRepairs are required before merge", False),
         # #14355: a negated change/repair phrase is resolved work, not a blocker.
+        # "Resolved with no code change needed." admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", True),
         ("REVIEW_READY\nThree Devin threads resolved, no code changes needed.", True),
         ("REVIEW_READY\nResolved without a code change.", True),
@@ -468,6 +498,14 @@ def self_test() -> None:
         ("REVIEW_READY\nChanges required.", False),
         ("REVIEW_READY\nRepairs required.", False),
         ("REVIEW_READY\nNo code change needed, but repairs required.", False),
+        # #14355: a refuted or followed-by-blocker phrase is not resolved work.
+        ("REVIEW_READY\nIt is not true that no changes are needed.", False),
+        ("REVIEW_READY\nIt is false that no change is needed.", False),
+        ("REVIEW_READY\nNo changes are needed is false.", False),
+        ("REVIEW_READY\nNo code change needed is not correct.", False),
+        ("REVIEW_READY\nNo changes are needed -- the build is red.", False),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", False),
+        ("REVIEW_READY\nno findings, code change needed", False),
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),

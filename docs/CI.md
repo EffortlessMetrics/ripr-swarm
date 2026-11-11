@@ -111,7 +111,9 @@ self-attest (unchanged), and retractions posted as issue comments are not read.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still
-refuse (#14355).
+refuse. The phrase counts only in statement position: a refuted form (`It is
+not true that no changes are needed`) or one followed by other blocker prose
+(`No changes are needed -- the build is red`) still refuses (#14355).
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
