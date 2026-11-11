@@ -513,7 +513,12 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
           });
         });
         request.on('error', (error) => {
-          finish({ kind: 'transport_failure', url: target, message: error.message });
+          // A raw socket error ("getaddrinfo ENOTFOUND host") does not say
+          // what was being fetched; the fetch timeout already names it.
+          const message = error.message.includes(target)
+            ? error.message
+            : `Could not fetch ${target}: ${error.message}`;
+          finish({ kind: 'transport_failure', url: target, message });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
 import * as path from 'path';
+import * as net from 'net';
 import { rootCertificates } from 'tls';
 import {
   ARCHIVE_MAX_BYTES,
@@ -23,6 +24,7 @@ import {
   ManagedServerInstallRequest,
   readManagedServerInstallation
 } from '../../src/managedServerInstall';
+import { classifyDownloadFailureKind } from '../../src/serverResolver';
 
 interface FixtureRoute {
   readonly status: number;
@@ -244,6 +246,27 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       }
     } finally {
       await server.stop();
+    }
+  });
+
+  test('a refused connection names the URL and classifies as a network failure (#13638)', async () => {
+    // Bind then release a loopback port so nothing is listening on it.
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        probe.close(() => resolve(typeof address === 'object' && address ? address.port : 0));
+      });
+    });
+    assert.notStrictEqual(port, 0);
+    const url = `https://127.0.0.1:${port}/ripr-server-manifest-v2.0.0.json`;
+    const outcome = await fetchManifestBytesOverHttps(url, MANIFEST_MAX_BYTES);
+    assert.strictEqual(outcome.kind, 'transport_failure');
+    if (outcome.kind === 'transport_failure') {
+      assert.ok(outcome.message.startsWith(`Could not fetch ${url}: `), outcome.message);
+      assert.match(outcome.message, /ECONNREFUSED/);
+      assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network');
     }
   });
 
