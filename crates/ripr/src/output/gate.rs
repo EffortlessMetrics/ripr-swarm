@@ -26,6 +26,7 @@ use serde_json::Value;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -508,7 +509,7 @@ fn build_gate_subject(
             // fresh read at subject-build time.
             _ => {
                 let resolved = resolve_root_path(&input.root, path);
-                std::fs::read(&resolved)
+                crate::bounded_input::read(&resolved)
                     .ok()
                     .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
             }
@@ -1537,7 +1538,7 @@ fn read_json_value_and_bytes_with_display(
     display: &Path,
 ) -> Result<(Value, Vec<u8>), String> {
     let display = display_path(display);
-    let bytes = fs::read(path).map_err(|err| {
+    let bytes = crate::bounded_input::read(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {
@@ -1551,7 +1552,7 @@ fn read_json_value_and_bytes_with_display(
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = fs::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {
