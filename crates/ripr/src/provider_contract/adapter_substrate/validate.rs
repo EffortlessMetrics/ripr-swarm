@@ -3,6 +3,10 @@ use std::collections::BTreeSet;
 use super::digest::adapter_substrate_qualification_semantic_digest;
 use super::model::*;
 
+/// Registered syntax-only fallbacks an external helper may degrade to. A new
+/// fallback is added here together with its spec entry and a corpus case.
+const SYNTAX_ONLY_FALLBACKS: &[&str] = &["syntax_only_in_process"];
+
 impl AdapterSubstrateQualificationV1 {
     pub fn validate(&self) -> Result<(), AdapterSubstrateQualificationErrorV1> {
         if self.schema_version != RIPR_ADAPTER_SUBSTRATE_QUALIFICATION_SCHEMA_VERSION {
@@ -185,18 +189,16 @@ fn validate_substrate_class_laws(
         ));
     }
     // The fallback is what the helper degrades to when it is unavailable, so it
-    // must name a syntax-only variant. A fallback such as `full_semantic` would
-    // let a missing helper keep a claim the syntax-only ceiling cannot carry.
+    // must be a registered syntax-only fallback. A name such as `full_semantic`
+    // would let a missing helper keep a claim the syntax-only ceiling cannot
+    // carry, and an open `syntax_only*` prefix would admit an unregistered name.
     if qualification.substrate_class == AdapterSubstrateClassV1::ExternalHelper
         && let Some(fallback) = qualification.required_fallback.as_deref()
-        && !fallback
-            .trim()
-            .to_ascii_lowercase()
-            .starts_with("syntax_only")
+        && !SYNTAX_ONLY_FALLBACKS.contains(&fallback.trim().to_ascii_lowercase().as_str())
     {
         return Err(error(
             AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
-            "external helper required_fallback must name a syntax-only variant (syntax_only*)",
+            "external helper required_fallback must be a registered syntax-only fallback",
         ));
     }
     if qualification.substrate_class == AdapterSubstrateClassV1::PacketProducerConsumer

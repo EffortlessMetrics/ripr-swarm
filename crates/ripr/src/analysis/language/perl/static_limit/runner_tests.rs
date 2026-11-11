@@ -137,6 +137,8 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
         owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let json: serde_json::Value = serde_json::from_str(&crate::output::json::render(&output))

@@ -52,7 +52,7 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
         "agent_brief",
         crate::output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
         "output::agent_brief",
-        "0.1: initial versioned agent brief.",
+        "0.2: the before/after snapshot commands live once under next; per-seam verification keeps only suggested_test_command (#13673). 0.1: initial versioned agent brief.",
     ),
     (
         "agent_seam_packet",
@@ -132,7 +132,7 @@ mod tests {
                 "0.2",
                 "app / app::analysis_outcome_artifact",
             ),
-            ("agent_brief", "0.1", "output::agent_brief"),
+            ("agent_brief", "0.2", "output::agent_brief"),
             (
                 "agent_seam_packet",
                 "0.5",

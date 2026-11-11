@@ -14769,12 +14769,29 @@ mod architecture_rule_tests {
 
     #[test]
     fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
-    {
-        const OUTPUT_CLI: &str =
-            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
-        const SCOPED: &str = "!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: test wrapper";
+    -> Result<(), String> {
+        let policy_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
+        let records =
+            super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
+        let required_paths = [
+            "crates/ripr/src/output/**",
+            "!crates/ripr/src/output/first_pr.rs",
+        ];
+        let records = records
+            .into_iter()
+            .filter(|record| {
+                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+            })
+            .collect::<Vec<_>>();
+        for path in required_paths {
+            assert!(
+                records.iter().any(|record| record[0] == path),
+                "policy/architecture.txt must retain {path}|crate::cli"
+            );
+        }
         let violations = architecture_rule_violations(
-            &[record(OUTPUT_CLI), record(SCOPED)],
+            &records,
             &[
                 (
                     "crates/ripr/src/output/first_pr/options.rs".to_string(),
@@ -14791,6 +14808,7 @@ mod architecture_rule_tests {
             violations[0].contains("first_pr/options.rs"),
             "{violations:?}"
         );
+        Ok(())
     }
 }
 
@@ -18761,6 +18779,10 @@ fn check_lint_policy() -> Result<(), String> {
         &ledger_text,
         &no_panic::today_date_string(),
     ));
+    match policy::workspace_lint_inheritance_violations() {
+        Ok(member_violations) => violations.extend(member_violations),
+        Err(error) => violations.push(error),
+    }
 
     finish_policy_report(
         PolicyReportSpec {
@@ -18774,6 +18796,7 @@ fn check_lint_policy() -> Result<(), String> {
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
+                "Every Cargo workspace member must opt in with `[lints] workspace = true`; remove member-local lint tables that replace or override the shared policy.",
             ],
             rerun_command: "cargo xtask check-lint-policy",
             exception_template: None,

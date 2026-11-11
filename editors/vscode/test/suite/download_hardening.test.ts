@@ -9,7 +9,10 @@ import {
   ARCHIVE_MAX_BYTES,
   ARCHIVE_MAX_MEMBERS,
   assertSafeTarListing,
+  assertSafeZipListing,
   inspectTarArchive,
+  inspectZipArchive,
+  listZipCentralDirectoryEntries,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
   isAllowedHttpsRedirect
@@ -273,6 +276,129 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     assert.throws(() => assertSafeTarListing([], ['hrwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /unsupported type/);
     assert.throws(() => assertSafeTarListing([], ['-rwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /hard link/);
     assert.throws(() => assertSafeTarListing(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => `f${i}`), []), /member limit/);
+  });
+
+  function buildZipCentralDirectory(members: ReadonlyArray<{ name: string; externalAttributes?: number }>): Buffer {
+    const centralChunks: Buffer[] = [];
+    for (const member of members) {
+      const nameBytes = Buffer.from(member.name, 'utf8');
+      const header = Buffer.alloc(46);
+      header.writeUInt32LE(0x02014b50, 0);
+      header.writeUInt16LE(0x0800, 8); // UTF-8 names
+      header.writeUInt16LE(nameBytes.length, 28);
+      header.writeUInt32LE(member.externalAttributes ?? 0, 38);
+      centralChunks.push(header, nameBytes);
+    }
+    const central = Buffer.concat(centralChunks);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(members.length, 8);
+    eocd.writeUInt16LE(members.length, 10);
+    eocd.writeUInt32LE(central.length, 12);
+    return Buffer.concat([central, eocd]);
+  }
+
+  const UNIX_REGULAR_FILE = 0o100644 * 0x10000;
+  const UNIX_DIRECTORY = 0o040755 * 0x10000;
+  const UNIX_SYMLINK = 0o120777 * 0x10000;
+  const DOS_REPARSE_POINT = 0x0400;
+
+  test('assertSafeZipListing rejects traversal, symlinks, reparse points, and member floods', () => {
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+      { name: 'bin/', externalAttributes: UNIX_DIRECTORY },
+      { name: 'bin/ripr.exe', externalAttributes: 0 }
+    ]));
+    assert.throws(() => assertSafeZipListing([
+      { name: '../evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'a/../../evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '/etc/passwd', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '\\etc\\passwd', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: '\\\\host\\c$\\evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'C:evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'a\\..\\evil', externalAttributes: 0 }
+    ]), /unsafe path/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'link', externalAttributes: UNIX_SYMLINK }
+    ]), /unsupported type/);
+    assert.throws(() => assertSafeZipListing([
+      { name: 'mount', externalAttributes: DOS_REPARSE_POINT }
+    ]), /reparse-point/);
+    assert.throws(
+      () => assertSafeZipListing(
+        Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => ({ name: `f${i}`, externalAttributes: 0 }))
+      ),
+      /member limit/
+    );
+  });
+
+  test('assertSafeZipListing accepts permission-only modes Windows tools write', () => {
+    // Python zipfile.writestr stores 0o600 << 16: permission bits with no
+    // file type. Those entries are regular files and must not be refused.
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'ripr.exe', externalAttributes: 0o600 * 0x10000 }
+    ]));
+  });
+
+  test('listZipCentralDirectoryEntries refuses entries spilling past the directory end', () => {
+    const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+    // Inflate the entry's name-length field so the entry no longer fits the
+    // declared central directory, without touching the directory size.
+    archive.writeUInt16LE(0x4000, 28);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(archive),
+      /extends past the directory end/
+    );
+  });
+
+  test('listZipCentralDirectoryEntries reads names and attributes from a fabricated zip', () => {
+    const archive = buildZipCentralDirectory([
+      { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+      { name: 'bin/', externalAttributes: UNIX_DIRECTORY }
+    ]);
+    const entries = listZipCentralDirectoryEntries(archive);
+    assert.deepStrictEqual(
+      entries.map((entry) => [entry.name, entry.externalAttributes]),
+      [['ripr', UNIX_REGULAR_FILE], ['bin/', UNIX_DIRECTORY]]
+    );
+  });
+
+  test('listZipCentralDirectoryEntries refuses truncated or malformed archives', () => {
+    assert.throws(() => listZipCentralDirectoryEntries(Buffer.from('not a zip')), /not a readable zip/);
+    const good = buildZipCentralDirectory([{ name: 'ripr' }]);
+    assert.throws(() => listZipCentralDirectoryEntries(good.subarray(0, good.length - 10)), /not a readable zip|malformed/);
+    const wrongCount = buildZipCentralDirectory([{ name: 'ripr' }]);
+    wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 10);
+    assert.throws(() => listZipCentralDirectoryEntries(wrongCount), /expected 2/);
+  });
+
+  test('inspectZipArchive accepts a safe fabricated zip and refuses a symlink member', async () => {
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-zip-inspect-'));
+    try {
+      const safePath = path.join(root, 'safe.zip');
+      await fs.promises.writeFile(safePath, buildZipCentralDirectory([
+        { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
+        { name: 'bin/', externalAttributes: UNIX_DIRECTORY }
+      ]));
+      await inspectZipArchive(safePath);
+      const unsafePath = path.join(root, 'unsafe.zip');
+      await fs.promises.writeFile(unsafePath, buildZipCentralDirectory([{ name: 'link', externalAttributes: UNIX_SYMLINK }]));
+      await assert.rejects(inspectZipArchive(unsafePath), /unsupported type/);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
   });
 
   test('inspectTarArchive reads real tar listings and rejects symlink and traversal archives', async function () {
