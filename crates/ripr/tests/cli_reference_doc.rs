@@ -91,7 +91,10 @@ fn render() -> Result<String, String> {
         let mut args = vec!["help"];
         args.extend(path.split(' '));
         let text_out = run(&args)?.trim_end().to_string();
-        let body = if FOLD_SKIP.iter().any(|family| path.starts_with(family)) {
+        let body = if FOLD_SKIP
+            .iter()
+            .any(|family| path == *family || path.starts_with(&format!("{family} ")))
+        {
             text_out.clone()
         } else {
             text_out
