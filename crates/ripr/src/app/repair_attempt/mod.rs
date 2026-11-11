@@ -820,7 +820,7 @@ fn recompute_after_verdict_binding_of_delta(
     if holds {
         return Ok((receipt_verdict, true));
     }
-    let projections = match retained_missing_gap_projections(root, manifest) {
+    let projections = match retained_missing_gap_projections(root, manifest, &baseline, after) {
         Ok(projections) if !projections.is_empty() => projections,
         _ => return Ok((verdict, false)),
     };
@@ -871,6 +871,8 @@ const GAP_WORKFLOW_PROJECTIONS: [&str; 6] = [
 fn retained_missing_gap_projections(
     root: &Path,
     manifest: &RepairAttemptManifest,
+    baseline_capture: &AttemptBaseline,
+    finished: &RepairAttemptAfter,
 ) -> Result<Vec<crate::edit_cage::MissingWorkflowProjection>, String> {
     if manifest.gap_binding.is_none() {
         return Ok(Vec::new());
@@ -934,6 +936,18 @@ fn retained_missing_gap_projections(
     let mut missing = Vec::new();
     let mut total = 0u64;
     for (path, bytes) in GAP_WORKFLOW_PROJECTIONS.iter().zip(sources) {
+        // Attempt-local before inputs never created these shared paths. Only
+        // reconstruct a projection witnessed by the baseline or finish; adding
+        // a never-produced file would change the very delta being verified.
+        if !baseline_capture.worktree_has_anything_at(path)
+            && !finished
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|changed| changed == path)
+        {
+            continue;
+        }
         match std::fs::symlink_metadata(root.join(path)) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 total += bytes.len() as u64;

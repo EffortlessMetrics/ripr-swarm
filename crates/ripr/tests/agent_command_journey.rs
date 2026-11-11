@@ -1190,14 +1190,11 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
     let prepared = run_ripr(&journey.launch_dir, &packet_args)?;
     assert_success(&prepared, "prepare actual rooted repair packet")?;
     let packet = if prepared_repair {
-        let attempts = std::fs::read_dir(selected.join("target/ripr/repair-attempts"))
-            .map_err(|error| error.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
+        let attempts = prepared_attempt_manifests(&selected)?;
         if attempts.len() != 1 {
             return Err("prepared repair must publish exactly one attempt".to_string());
         }
-        let manifest = read_json(&attempts[0].path().join("attempt.json"))?;
+        let manifest = &attempts[0].1;
         let packet_path = manifest["artifacts"]
             .as_array()
             .and_then(|artifacts| {

@@ -9688,6 +9688,11 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         receipt["status"],
         String::from_utf8_lossy(&after.stdout)
     );
+    assert!(after_document["agent_status"]["next_command"].is_null());
+    assert_eq!(
+        after_document["agent_status"]["missing_commands"],
+        serde_json::json!([])
+    );
     assert_eq!(
         after_document["verify"]["status"].as_str(),
         Some("advisory"),
@@ -9695,6 +9700,24 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         String::from_utf8_lossy(&after.stdout)
     );
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
+
+    // A finished attempt must not suppress recovery for another selected seam.
+    let shared_receipt = root.join("target/ripr/reports/agent-receipt.json");
+    let saved_receipt = std::fs::read(&shared_receipt)?;
+    let mut other: serde_json::Value = serde_json::from_slice(&saved_receipt)?;
+    other["seam"]["seam_id"] = serde_json::json!("another-seam");
+    std::fs::write(&shared_receipt, serde_json::to_vec(&other)?)?;
+    let other_status = run_ripr(&["agent", "status", "--root", &root_arg, "--json"]);
+    assert!(other_status.status.success());
+    let other_status: serde_json::Value = serde_json::from_slice(&other_status.stdout)?;
+    assert_eq!(other_status["seam"]["seam_id"], "another-seam");
+    assert!(
+        !other_status["missing_commands"]
+            .as_array()
+            .ok_or("missing recovery commands")?
+            .is_empty()
+    );
+    std::fs::write(&shared_receipt, saved_receipt)?;
 
     std::fs::remove_dir_all(root)?;
     Ok(())

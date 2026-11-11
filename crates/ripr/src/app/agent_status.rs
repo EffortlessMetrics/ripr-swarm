@@ -339,15 +339,7 @@ impl AgentStatusReport {
     /// phases now retain their inputs under the attempt (#13452).
     /// Pending, refused, stale, legacy or unavailable attempts never qualify.
     fn has_current_finished_attempt(&self) -> bool {
-        self.repair_attempts.iter().any(|attempt| {
-            !attempt.legacy_gap_binding
-                && attempt.disposition == "finished"
-                && attempt.head_current == Some(true)
-                && matches!(
-                    &attempt.receipt,
-                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
-                )
-        })
+        self.repair_attempts.iter().any(current_finished_attempt)
     }
 
     pub(crate) fn status(&self) -> &'static str {
@@ -361,6 +353,16 @@ impl AgentStatusReport {
             "warning"
         }
     }
+}
+
+fn current_finished_attempt(attempt: &AgentStatusRepairAttempt) -> bool {
+    !attempt.legacy_gap_binding
+        && attempt.disposition == "finished"
+        && attempt.head_current == Some(true)
+        && matches!(
+            &attempt.receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
+        )
 }
 
 pub(crate) fn build_agent_status_report(root: &Path, root_argument: &Path) -> AgentStatusReport {
@@ -392,16 +394,26 @@ pub(crate) fn build_agent_status_report_from(
     let gap_bound_seam = seam
         .as_ref()
         .is_some_and(|seam| crate::app::gap_bound_repair::is_gap_bound_subject(&seam.seam_id));
-    let missing_commands = if gap_bound_seam {
-        Vec::new()
-    } else {
-        missing_commands(root_argument, seam.as_ref(), &artifacts)
-    };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
     let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
+    // Retained inputs already completed this seam's workflow. Do not offer
+    // commands to recreate absent shared projections after its receipt closed
+    // the gap. Other seams and unconfirmed attempts keep their recovery route.
+    let finished_selected_seam = seam.as_ref().is_some_and(|seam| {
+        repair_attempts.as_ref().is_some_and(|attempts| {
+            attempts
+                .iter()
+                .any(|attempt| attempt.seam_id == seam.seam_id && current_finished_attempt(attempt))
+        })
+    });
+    let missing_commands = if gap_bound_seam || finished_selected_seam {
+        Vec::new()
+    } else {
+        missing_commands(root_argument, seam.as_ref(), &artifacts)
+    };
     let (store_flag, store_locator) = match resolve_store(
         root,
         store,
