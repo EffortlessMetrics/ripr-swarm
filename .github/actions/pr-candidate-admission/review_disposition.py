@@ -129,9 +129,10 @@ NEGATED_RESOLUTION = re.compile(
 REFUTATION_AFTER = re.compile(
     r"^[ \t]*[.!;]?[ \t]*"
     r"(?:"
-    r"(?:that|this|it|i)\b[ \t]*(?:is|'s|am|was|are)?[ \t]*"
-    r"(?:not[ \t]+(?:true|correct|so)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
-    r"|(?:incorrect|wrong|not[ \t]+so|false|untrue)\b"
+    r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case)"
+    r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case)|false|untrue|a[ \t]+lie)\b"
     r")",
     re.IGNORECASE,
 )
@@ -566,6 +567,9 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. Incorrect.", False),
         ("REVIEW_READY\nNo changes are needed. Wrong.", False),
         ("REVIEW_READY\nNo code change needed. Not so.", False),
+        ("REVIEW_READY\nNo changes are needed. Not true.", False),
+        ("REVIEW_READY\nNo changes are needed. That isn't true.", False),
+        ("REVIEW_READY\nNo changes are needed. This isn't correct.", False),
         ("REVIEW_READY\nNo changes are needed. All green.", True),
         # #14355: ordinary prose with a cue word is not a refutation.
         ("REVIEW_READY\nNo changes are needed. Nothing is wrong.", True),
