@@ -944,6 +944,9 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
             &[("--out", out)],
             &[
                 ("--mutants-json", Some(&mutants_json)),
+                // A cargo-mutants directory is read through these members.
+                ("--mutants-json", Some(&mutants_json.join("outcomes.json"))),
+                ("--mutants-json", Some(&mutants_json.join("mutants.json"))),
                 ("--repo-exposure-json", Some(&repo_exposure_json)),
             ],
         )?;

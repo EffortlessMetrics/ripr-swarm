@@ -141,6 +141,13 @@ pub(crate) fn parse_policy_readiness_options(
             ("--repo-config", repo_config.as_deref()),
         ],
     )?;
+    // The exemption covers only the JSON rolling update: the Markdown
+    // companion must never replace the previous JSON report.
+    super::super::refuse_output_naming_input(
+        "policy readiness",
+        &[("--out-md", &out_md)],
+        &[("--previous-readiness", previous_readiness.as_deref())],
+    )?;
     Ok(PolicyReadinessOptions {
         root,
         gate_decision,

@@ -155,6 +155,22 @@ const CASES: &[Case] = &[
         out_path: "art/in.json",
         in_flag: "--current",
     },
+    // Omitting `--out` updates `--baseline` in place, so a `--baseline`
+    // that is also `--current` would be replaced too (review of #14341).
+    Case {
+        args: &[
+            "baseline",
+            "update",
+            "--baseline",
+            "art/in.json",
+            "--current",
+            "art/in.json",
+        ],
+        command: "baseline update",
+        out_flag: "--baseline",
+        out_path: "art/in.json",
+        in_flag: "--current",
+    },
     Case {
         args: &[
             "zero",
@@ -273,6 +289,24 @@ const CASES: &[Case] = &[
         out_flag: "--out",
         out_path: "art/in.json",
         in_flag: "--from",
+    },
+    // The rolling update exempts only `--out`; the Markdown companion must
+    // not replace the previous JSON report.
+    Case {
+        args: &[
+            "policy",
+            "readiness",
+            "--previous-readiness",
+            "art/in.json",
+            "--out",
+            "art/next.json",
+            "--out-md",
+            "art/in.json",
+        ],
+        command: "policy readiness",
+        out_flag: "--out-md",
+        out_path: "art/in.json",
+        in_flag: "--previous-readiness",
     },
     // The manifest is read relative to `--root`, so `--root art --manifest
     // in.json` reads art/in.json, the same file as `--out art/in.json`.
@@ -472,39 +506,68 @@ fn baseline_update_in_place_is_not_an_overwrite_refusal() -> Result<(), String> 
 /// previous report is read whole before the new one replaces it).
 #[test]
 fn non_destructive_same_path_flows_are_not_refused() -> Result<(), String> {
-    let mut failures = Vec::new();
-    for args in [
-        &[
-            "baseline",
-            "create",
-            "--dry-run",
-            "--from",
-            "art/in.json",
-            "--out",
-            "art/in.json",
-        ][..],
-        &[
-            "policy",
-            "readiness",
-            "--previous-readiness",
-            "art/in.json",
-            "--out",
-            "art/in.json",
-        ][..],
-    ] {
-        let dir = scratch("non-destructive")?;
-        let output = run(&dir, args)?;
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let _ = fs::remove_dir_all(&dir);
-        if stderr.contains("names the same file as") {
-            failures.push(format!("ripr {}: refused: {stderr}", args.join(" ")));
+    const GATE_DECISION: &str = r#"{"schema_version":"0.1","status":"advisory","decisions":[]}"#;
+    let dir = scratch("non-destructive")?;
+    fs::write(dir.join("art/gate.json"), GATE_DECISION)
+        .map_err(|error| format!("write gate decision: {error}"))?;
+    let result = (|| {
+        let dry_run = run(
+            &dir,
+            &[
+                "baseline",
+                "create",
+                "--dry-run",
+                "--from",
+                "art/gate.json",
+                "--out",
+                "art/gate.json",
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&dry_run.stdout).to_string();
+        if !dry_run.status.success() {
+            return Err(format!(
+                "baseline create --dry-run: exit {:?}; stderr: {}",
+                dry_run.status.code(),
+                String::from_utf8_lossy(&dry_run.stderr)
+            ));
         }
-    }
-    if failures.is_empty() {
+        serde_json::from_str::<serde_json::Value>(&stdout)
+            .map_err(|error| format!("dry-run stdout is not JSON ({error}): {stdout}"))?;
+        let gate = fs::read_to_string(dir.join("art/gate.json"))
+            .map_err(|error| format!("read gate decision: {error}"))?;
+        if gate != GATE_DECISION {
+            return Err(format!("dry run changed --from: {gate:?}"));
+        }
+        // Seed a real readiness report, then roll it forward in place.
+        for args in [
+            &["policy", "readiness", "--out", "art/readiness.json"][..],
+            &[
+                "policy",
+                "readiness",
+                "--previous-readiness",
+                "art/readiness.json",
+                "--out",
+                "art/readiness.json",
+            ][..],
+        ] {
+            let output = run(&dir, args)?;
+            if !output.status.success() {
+                return Err(format!(
+                    "ripr {}: exit {:?}; stderr: {}",
+                    args.join(" "),
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        let report = fs::read_to_string(dir.join("art/readiness.json"))
+            .map_err(|error| format!("read readiness: {error}"))?;
+        serde_json::from_str::<serde_json::Value>(&report)
+            .map_err(|error| format!("rolled readiness report is not JSON ({error}): {report}"))?;
         Ok(())
-    } else {
-        Err(failures.join("\n"))
-    }
+    })();
+    let _ = fs::remove_dir_all(&dir);
+    result
 }
 
 /// Filesystem identity, not lexical `..` collapse, decides (review of #14341):
@@ -576,6 +639,69 @@ fn a_symlinked_parent_followed_by_dotdot_is_not_a_false_match() -> Result<(), St
         return Err(format!(
             "true alias was not refused: exit {:?}; {alias_stderr}",
             alias.status.code()
+        ));
+    }
+    Ok(())
+}
+
+/// A cargo-mutants directory is read through its `outcomes.json`, so an
+/// `--out` naming that member is refused; a missing input has nothing to
+/// replace, so a report that tolerates it still runs (review of #14341).
+#[test]
+fn directory_members_are_inputs_and_missing_inputs_are_not() -> Result<(), String> {
+    let dir = scratch("dir-members")?;
+    fs::create_dir_all(dir.join("art/mutants.out"))
+        .map_err(|error| format!("create mutants dir: {error}"))?;
+    fs::write(dir.join("art/mutants.out/outcomes.json"), SENTINEL)
+        .map_err(|error| format!("write outcomes: {error}"))?;
+    let member = run(
+        &dir,
+        &[
+            "calibrate",
+            "cargo-mutants",
+            "--mutants-json",
+            "art/mutants.out",
+            "--repo-exposure-json",
+            "art/in.json",
+            "--out",
+            "art/mutants.out/outcomes.json",
+        ],
+    )?;
+    let member_stderr = String::from_utf8_lossy(&member.stderr).to_string();
+    let outcomes_after =
+        fs::read_to_string(dir.join("art/mutants.out/outcomes.json")).unwrap_or_default();
+    let missing = run(
+        &dir,
+        &[
+            "baseline",
+            "diff",
+            "--baseline",
+            "ghost/../art/report.json",
+            "--current",
+            "art/in.json",
+            "--out",
+            "art/report.json",
+            "--out-md",
+            "art/report.md",
+        ],
+    )?;
+    let missing_stderr = String::from_utf8_lossy(&missing.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+    let expected = expected_refusal(
+        "calibrate cargo-mutants",
+        "--out",
+        "art/mutants.out/outcomes.json",
+        "--mutants-json",
+    );
+    if member.status.code() != Some(2) || member_stderr != expected || outcomes_after != SENTINEL {
+        return Err(format!(
+            "directory member was not protected: exit {:?}; {member_stderr}",
+            member.status.code()
+        ));
+    }
+    if missing_stderr.contains("names the same file as") {
+        return Err(format!(
+            "a missing input was treated as the output: {missing_stderr}"
         ));
     }
     Ok(())

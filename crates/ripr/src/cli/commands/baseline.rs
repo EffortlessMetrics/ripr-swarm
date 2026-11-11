@@ -436,14 +436,16 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
             .to_string()
     })?;
     // `--out` naming `--baseline` is the documented in-place update (the
-    // default when `--out` is omitted); only `--current` is protected.
-    if let Some(out) = out.as_deref() {
-        super::refuse_output_naming_input(
-            "baseline update",
-            &[("--out", out)],
-            &[("--current", Some(&current))],
-        )?;
-    }
+    // default when `--out` is omitted); only `--current` is protected, and
+    // it is checked against the effective destination either way.
+    super::refuse_output_naming_input(
+        "baseline update",
+        &[match out.as_deref() {
+            Some(out) => ("--out", out),
+            None => ("--baseline", baseline.as_path()),
+        }],
+        &[("--current", Some(&current))],
+    )?;
     Ok(BaselineUpdateOptions {
         baseline,
         current,
