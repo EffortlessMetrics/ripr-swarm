@@ -77,14 +77,14 @@ queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
 [merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+qualification of the actual merge composition. `main` has required the merge
+queue since 2026-11-10; a direct merge is refused. Today the `merge-ready` label
+requests PR qualification, the lead makes the current product/integration
+judgment, and then enqueues the PR; the queue qualifies the queued commit and
+squashes it. Ready alone requests nothing. Enqueueing authorizes the landing, so
+do not enqueue or arm auto-merge before that final judgment. Preserve actual
+required checks and approvals; this guidance does not change triggers, settings
+or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -465,10 +465,10 @@ subjects.
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
 integration, merge, and reconciliation. A committed candidate with
 `REVIEW_INCOMPLETE` may be published so missing remote evidence can run. The
-selected candidate's owning lead inspects current results, then merges only after
-the exact published head has the final `REVIEW_READY` disposition and all enforced
-conditions hold. A later material change refreshes affected review/proof dimensions.
-Do not arm auto-merge or substitute a queue for the final judgment.
+selected candidate's owning lead inspects current results, then enqueues the PR
+only after the exact published head has the final `REVIEW_READY` disposition and
+all enforced conditions hold. A later material change refreshes affected
+review/proof dimensions. The queue run does not replace the final judgment.
 
 Useful remote-owned outcomes:
 

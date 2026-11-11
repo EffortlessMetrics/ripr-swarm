@@ -124,11 +124,10 @@ Preserve the roadmap archive boundary and existing incoming heading anchors.
 These checks validate structure, not the truth of a product or release claim;
 verify load-bearing issue, PR, and receipt references separately.
 
-Follow [merge flow](MERGE_FLOW.md) for current hosted qualification. Until
-verified queue migration, `merge-ready` requests the selected candidate's
-late PR qualification; Ready alone requests nothing. Inspect the actual docs
+Follow [merge flow](MERGE_FLOW.md) for current hosted qualification.
+`merge-ready` requests the selected candidate's late PR qualification; Ready alone requests nothing. Inspect the actual docs
 gate for a docs-only route, required Result, current reviews, and integration
-state before protected expected-head squash. Do not report skipped Rust work
+state before enqueueing in the merge queue. Do not report skipped Rust work
 as executed proof or bypass missing checks.
 
 Use `cargo xtask ci-full`, package/release checks, and platform-specific

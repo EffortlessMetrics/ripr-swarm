@@ -68,8 +68,10 @@ A different head, extra content, a merge conflict, a moved PR ref or missing
 history refuses. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
-`merge-ready` label request below still works until the label request is
-retired in a follow-up, after the repository's merge queue is enabled.
+merge queue has been required on `main` since 2026-11-10. The `merge-ready`
+label request below is still needed: it earns the required Result on the PR,
+without which GitHub will not queue it. Retiring the label run is a follow-up
+(#4838); [merge flow](MERGE_FLOW.md) has the full landing order.
 
 The terminal Result now pins the initially admitted PR/head and native
 run/attempt. After the children finish, it rechecks the open, non-draft,

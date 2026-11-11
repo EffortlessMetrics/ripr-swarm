@@ -66,11 +66,10 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
+below apply to candidate preparation. The label-request sequence is the
+installed PR qualification; the PR then lands through the merge queue (see the
+[live route](MERGE_FLOW.md#live-route-read-back-2026-11-11)). The delivery
+owner completes this order before spending the
 `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
 1. Bind the exact candidate head and integration basis. Complete directed

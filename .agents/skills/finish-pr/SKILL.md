@@ -49,21 +49,23 @@ withdraw readiness and require affected proof and review.
 
 # Procedure
 
-"Protected squash merge" means the normal squash operation respecting existing
+"Protected squash merge" means the merge-queue squash respecting existing
 enforcement. It does not require protection to exist or authorize installing it.
 Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, use an ordinary protected
-squash with the exact current PR head supplied as the expected SHA. Verify the current required
-Result and all other applicable checks; do not arm auto-merge or retry without
-reconciling an uncertain outcome. Check observations and mutation are not
+separate evidence gap. After required proof and review, verify the current required
+Result and all other applicable checks on the exact current PR head, then enqueue
+the PR in the merge queue. Do not enqueue earlier or retry without reconciling an
+uncertain outcome. Check observations and mutation are not
 atomic, so retain native enforcement. Report a rejection without guessing its
 cause; never bypass enforcement or change settings.
 
-For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
-for the expected-head squash after completing that final judgment. It does not
+`scripts/guarded_merge.py` performs a direct expected-head squash, which `main`
+has refused since the merge queue became required on 2026-11-10; enqueue instead
+(see [merge flow](../../../docs/MERGE_FLOW.md)). The rest of this paragraph
+describes the script for a branch that still accepts a direct merge. It does not
 establish substantive review or every other gate. A guard refusal, including
 failed or ambiguous evidence, remains blocked until the evidence is reconciled;
 do not treat it as permission to use another merge path. Before invoking, compare the
@@ -114,9 +116,9 @@ to bypass binding or duplicate a queued/running current-subject request.
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. A Ready toggle requests nothing; never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the label request, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. A Ready toggle requests nothing; never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. Follow [merge flow](../../../docs/MERGE_FLOW.md): the installed legacy label route remains operative until verified migration to native queue qualification of the actual composition. For the legacy route, inspect current required proof and findings, make the final integration judgment, and use protected expected-head squash; do not substitute generic auto-merge. Use the native-queue procedure only after verified activation, including its pre-enqueue judgment and conditional landing authorization. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
+14. Follow [merge flow](../../../docs/MERGE_FLOW.md): `main` requires the merge queue and refuses a direct merge. Inspect current required proof and findings on the exact head, make the final integration judgment, and only then enqueue the PR; enqueueing authorizes the landing once the queue run passes. If the enqueue call is refused for this session, record the PR and qualified head on the PR for the queue owner and use no other merge path. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -164,9 +166,8 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Until verified migration, the `merge-ready` label (#4986) is the installed hosted
-qualification request; being Ready for
-review is not REVIEW_READY or permission to arm auto-merge.
+The `merge-ready` label (#4986) is the installed PR qualification request; being
+Ready for review is not REVIEW_READY or permission to enqueue.
 
 # Release-scope law
 

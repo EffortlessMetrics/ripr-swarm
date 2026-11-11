@@ -99,7 +99,7 @@ protection or ruleset settings. Unknown or inaccessible evidence is not passed.
 The advisory packet starts the final inspection; it cannot finish it. Follow the
 applicable `review-pr` and `finish-pr` procedures for current published-head
 substantive review, required proof, conversation disposition and
-integration judgment before a normal protected expected-head squash merge.
+integration judgment before enqueueing the PR in the merge queue.
 
 If a local detached or side worktree cannot merge a PR because the branch is
 checked out elsewhere, merge from the primary checkout or use an explicit

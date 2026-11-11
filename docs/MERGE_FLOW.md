@@ -1,31 +1,57 @@
 # Merge flow for swarm PRs
 
-## Current route and October 21 target
+## Live route (read back 2026-11-11)
 
-Steven selected native queue-time qualification on October 21, 2026 under
+`main` requires the native merge queue. Ruleset `main` (id 18845973) has had a
+`merge_queue` rule since 2026-11-10T21:32Z, with one required status check,
+`Ripr Rust Small Result`. A direct merge call is refused with HTTP 405
+"Changes must be made through the merge queue" (#13899). The first queue
+landing was #13794 on 2026-11-11.
+
+A PR lands in this order:
+
+1. Draft, focused proof, substantive review and joined repairs.
+2. Apply `merge-ready` to the selected, reviewed head. This earns
+   `Ripr Rust Small Result` on the PR; GitHub will not queue a PR without it.
+   See the [label-request procedure](#installed-label-request-procedure).
+3. Inspect the finished results and current findings on the exact head, resolve
+   every review thread, and record the final `REVIEW_READY` judgment.
+4. Enqueue the PR: "Merge when ready" in the UI, or squash auto-merge through
+   the API. On a green PR this enters the queue at once; the timeline shows
+   `added_to_merge_queue`.
+5. The queue runs `routed-rust.yml` on `merge_group` for the queued commit (run
+   title "Merge queue <sha>", branch `gh-readonly-queue/main/pr-<n>-<sha>`) and
+   squashes the PR when that Result passes.
+6. Read back the landed commit and reconcile the issue.
+
+Enqueueing authorizes the landing. It is the final judgment, not a request for
+tests, so finish steps 1 to 3 first. A session whose permissions refuse the
+enqueue call records the PR number and qualified head on the PR and leaves the
+enqueue to the queue owner; it does not look for another merge path.
+
+Operating facts, each observed on 2026-11-11:
+
+- Queue settings were squash, `ALLGREEN`, up to 3 entries built and merged
+  together, and a 180-minute status check timeout (raised from 60 after code
+  entries were ejected at the timeout, #4838). These are live settings and can
+  change without an edit here.
+- A docs-only entry took about 15 to 25 minutes and a code entry about 50 to 80.
+- A re-run of a failed `merge_group` run cannot pass, because the Result is
+  bound to the original run attempt. Enqueue the PR again instead.
+- An entry that fails or times out is removed by `github-merge-queue[bot]`.
+  Diagnose the run before enqueueing again.
+- Disabling auto-merge did not remove an entry that was already queued.
+
+Two expensive runs per code PR (the label run, then the queue run) is the
+current cost, not the goal. Steven selected queue-time qualification as the only
+expensive run on October 21, 2026 under
 [#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-The target replaces the earlier no-queue mechanism; it does not weaken review,
-proof, ordinary protected squash, or separate release authority.
-
-**Target selected; live queue activation is not established by this document.**
-Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
-`merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
-earned once per queue entry on the exact queued merge commit (see
-[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
-use a group size of 1 and the queued commit must be a single squash commit on the
-group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
-still requests PR qualification on the explicit `merge-ready` label and runs on
-main/master push and manual dispatch. The branch summary names
-`Ripr Rust Small Result` (application 15368); a complete current enforcement
-readback is still required before changing settings, and whether the repository's
-merge queue is enabled for `main` is a live setting this document does not
-establish. A file or issue edit does not install new protection.
-
-Until the replacement is qualified and activated, use the installed label route
-below. Do not treat a proposed enqueue command, Ready state, or this target as
-permission to skip its checks. Current user rulings and controller decisions
-supersede older no-queue target prose; source, rehearsed, active and accepted
-remain separate states.
+That step, replacing the label run with cheap PR admission, is not installed;
+its design and cutover order are in the sections below (#4838, #4840). Admission
+is still per PR: the queued commit must be a single squash commit of one PR on
+the group's `base_sha` (see [CI](CI.md#merge-queue-request-cutover)); batching
+needs per-PR admission (#8082). A file or issue edit does not change
+protection.
 
 ## Who owns the change
 
@@ -73,15 +99,20 @@ required result.
   a current-subject in-flight run; reapplying the label cancels it.
 - Do not dispatch `routed-rust.yml` on a PR branch (#5394).
 - Inspect the real check results and current findings, make the final integration
-  judgment, then use an expected-head protected squash. Do not arm generic
-  auto-merge as a substitute for that legacy final judgment.
+  judgment, then enqueue as in the [live route](#live-route-read-back-2026-11-11).
+  Do not enqueue or arm auto-merge before that judgment: the queue lands the PR
+  as soon as its run passes.
 
 The existing docs-only route requires positive surface classification and the
 actual docs gate. Skipped Rust work is not described as executed Rust proof.
 Main being red does not justify repeating known-failing broad work; identify the
 existing incident/repair owner and preserve unrelated candidate evidence.
 
-## Selected native-queue procedure after verified activation
+## Selected native-queue procedure
+
+The queue is active, so the enqueue, G proof and squash below are live. The
+PR-side half of this target (cheap admission in place of the `merge-ready` run)
+is not installed yet.
 
 ```text
 cheap development / Draft publication
@@ -158,10 +189,9 @@ repin audited fixture authority merely to follow the workspace's cache contents.
 
 ## History-sync route (source and swarm merges)
 
-This is the interim history-sync profile under the currently installed
-`merge-ready` label route (#12437). It is valid only until queue-only
-enforcement (`Require merge queue`, #4838, accepted under #4840) is active, and
-it is not a new pull_request-triggered CI lane: it rides the existing
+This is the interim history-sync profile under the `merge-ready` label route
+(#12437). Its qualification half still applies; its landing half is blocked now
+that the queue is required (see the end of this section). It is not a new pull_request-triggered CI lane: it rides the existing
 merge-ready-requested run and adds no workflow trigger. The selected steady
 state (#4984) runs product CI only on `merge_group`; history-preserving syncs
 and release transactions are a separate exceptional profile there. The
@@ -223,10 +253,10 @@ queued-commit rule, admission does not honor `history-sync` there, and a
 two-parent queued commit is refused. A history-sync PR therefore qualifies
 through the pull_request-mode `merge-ready` request and lands as a true merge
 commit, never a squash or rebase, bound to the qualified head `H`:
-`gh pr merge <n> --merge --match-head-commit <H>`. That works only while
-queue-only enforcement (#4838) is not active. After activation, a history sync
-needs an explicitly authorized protection exception or a separately decided
-route (#4838, #4840); neither is provided here.
+`gh pr merge <n> --merge --match-head-commit <H>`. That worked only while
+the queue was not required. The queue has been required since 2026-11-10, so a
+history sync now needs an explicitly authorized protection exception or a
+separately decided route (#4838, #4840); neither is provided here.
 
 ## Conflicts, incidents and landing
 

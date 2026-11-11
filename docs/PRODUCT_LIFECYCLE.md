@@ -141,15 +141,16 @@ Warm draft work and repeated focused review/repair
   -> explicit merge-ready qualification request
   -> applicable mandatory proof plus justified additional investigation
   -> separate final product/vision/current-repository judgment
-  -> normal expected-head protected squash
+  -> enqueue; the merge queue qualifies the queued commit and squashes
   -> landed-state reconciliation
 ```
 
 The accepted destination under #4984 is native merge-queue qualification of
-the actual merge composition; generic automatic merge is not a substitute for
-the installed legacy final judgment. Until verified migration, the installed
-`merge-ready` label route above remains operative (see [merge flow](MERGE_FLOW.md)).
-One late run is the normal legacy path, not a ban on justified repair/rerun. Available checks,
+the actual merge composition. `main` has required the merge queue since
+2026-11-10, and the `merge-ready` label run above is still what earns the
+required Result on the PR (see [merge flow](MERGE_FLOW.md)). Enqueueing follows
+the final judgment and does not replace it.
+One late label run is the normal path, not a ban on justified repair/rerun. Available checks,
 mandatory obligations and selected additional checks are different sets.
 Evidence reuse needs a reviewed applicability decision; static output cannot
 silently waive a required check.

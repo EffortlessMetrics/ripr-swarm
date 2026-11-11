@@ -69,28 +69,25 @@ relabel a run's older checkout as execution of a newer combined tree
 
 ## Merge mechanics
 
-After current-head substantive review, addressed findings, applicable proof and
-all live required checks are established, use an ordinary protected squash with
-the exact current PR head as the expected SHA. Confirm that the current required
+`main` requires the merge queue; a direct merge call returns HTTP 405. After
+current-head substantive review, addressed findings, applicable proof and all
+live required checks are established, enqueue the PR as described in
+[merge flow](../MERGE_FLOW.md#live-route-read-back-2026-11-11). Confirm first that the current required
 `Ripr Rust Small Result` is successful for the applicable qualification and
 required app, and assess all other required checks and review obligations. Read
 the current requirements rather than assuming a fixed protection configuration.
 A behind-only branch does not itself invalidate unaffected proof; a green
-old-head check does not qualify a new head. Do not arm auto-merge or bypass a
-rule. For example, after independently establishing those conditions:
+old-head check does not qualify a new head. Do not enqueue before those
+conditions hold, and do not bypass a rule: the queue squashes the PR as soon as
+its own run passes.
 
-```bash
-gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/pulls/$pr_number/merge" \
-  -f merge_method=squash -f sha="$expected_head"
-```
+Read the PR head again immediately before enqueueing and compare it with the
+head you reviewed. The review and check observations are not atomic with the
+enqueue. After it, confirm `added_to_merge_queue` on the PR timeline, follow the
+`merge_group` run, and read back the landed commit. A failed queue run cannot be
+re-run to green; diagnose it, then enqueue again.
 
-Set `expected_head` to the verified full current PR head; do not omit it or use
-an unguarded fallback. The API's expected-SHA check protects the head, but the
-review and check observations are not atomic with the mutation. Native
-protection and final judgment remain necessary.
-
-`BLOCKED` is a state to investigate, not proof of recompute lag or permission
-to enqueue. Reconcile current review, checks and applicable rules; preserve any
+`BLOCKED` is a state to investigate, not proof of recompute lag. Reconcile current review, checks and applicable rules; preserve any
 actual refusal. If the head moves, refresh the review and affected proof before
 another guarded operation.
 
