@@ -962,6 +962,11 @@ impl InterruptibleSession {
             .await
             .map_err(|_elapsed| "pending signal did not end the open-input session".to_string())?
             .map_err(|error| error.to_string())??;
+        // The stop request ends this session only: it is consumed, so a
+        // later session in the same process does not inherit it.
+        if self.pending.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("idle exit left the signal pending for a later session".into());
+        }
         let trailing = self
             .replies
             .next_line()

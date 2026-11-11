@@ -131,7 +131,8 @@ official SDK transport:
   stderr. A signal that lands while a non-refresh request is admitted is
   honoured after that reply is flushed. A signal a refresh attempt consumed
   never ends the session, and no later refresh inherits an idle signal as a
-  cancellation. Without this rule one `kill`, one supervisor SIGTERM (the npm
+  cancellation. The exit consumes the signal, so a later session in the same
+  process starts clear. Without this rule one `kill`, one supervisor SIGTERM (the npm
   launcher forwards exactly one, RIPR-SPEC-0212) or one Ctrl-C at a terminal
   left the server running until stdin closed.
   Repeated native death can bypass cooperative cleanup and leave active children;

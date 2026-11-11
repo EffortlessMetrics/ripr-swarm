@@ -95,8 +95,12 @@ fn record_failure(failure: &Failure, reason: &'static str) {
 /// is harmless: the flag alone decides. (A plain pair, so targets without a
 /// signal source carry no unconstructed type.)
 pub(super) type IdleInterrupt = (Arc<AtomicBool>, Arc<Notify>);
-fn idle_interrupt_pending(interrupt: Option<&IdleInterrupt>) -> bool {
-    interrupt.is_some_and(|(pending, _wake)| pending.load(Ordering::SeqCst))
+/// Consumes the pending signal, as an attempt's terminal exchange does: the
+/// stop request ends this session only. A later `mcp::run` in the same
+/// process starts with a clear flag, and the repeated-signal native escape
+/// is re-armed by the next signal rather than left armed by this one.
+fn take_idle_interrupt(interrupt: Option<&IdleInterrupt>) -> bool {
+    interrupt.is_some_and(|(pending, _wake)| pending.swap(false, Ordering::SeqCst))
 }
 /// Resolves when a signal may be pending; never resolves without a source.
 async fn idle_interrupt_wake(interrupt: Option<&IdleInterrupt>) {
@@ -324,7 +328,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             // The idle point: nothing admitted, every earlier reply flushed.
             // A signal still pending here was not consumed by an attempt, so
             // it asks the server itself to stop (#14102).
-            if idle_interrupt_pending(self.idle_interrupt.as_ref()) {
+            if take_idle_interrupt(self.idle_interrupt.as_ref()) {
                 return None;
             }
             let read = tokio::select! {
