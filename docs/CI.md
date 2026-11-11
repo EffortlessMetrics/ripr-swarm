@@ -111,15 +111,13 @@ self-attest (unchanged), and retractions posted as issue comments are not read.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still
-refuse. The phrase is stripped only in an affirmative resolution position: it
-starts its sentence, or a short resolution framing such as `resolved with `
-immediately precedes it. Anything else leaves the phrase in place, so an
-unlisted refutation ahead of it still refuses. The remainder of the line is
-scanned separately, so `No code change needed. The build is red.` and `No
-changes are needed. That is false.` still refuse (#14355). The trailing cue
-set is a closed enumeration, so a phrasing outside it is not detected. The
-check is same-sentence/line only: a refutation on a separate line, such as `It
-is not true.` followed by `No changes are needed.`, is not detected.
+refuse. The phrase is stripped only when it ends a sentence and no recognized
+refutation cue appears before or after it in that sentence; the rest of the
+line is scanned separately, so `No code change needed. The build is red.` and
+`No changes are needed. That is false.` still refuse (#14355). The cue sets are
+closed enumerations, so a phrasing outside them is not detected. The check is
+same-sentence/line only: a refutation on a separate line, such as `It is not
+true.` followed by `No changes are needed.`, is not detected.
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description

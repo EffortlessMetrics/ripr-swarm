@@ -109,17 +109,24 @@ NEGATED_CHANGE = re.compile(
 )
 # Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
 NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
-# #14355: strip only in an affirmative resolution position. The phrase must
-# start its sentence, or a short resolution framing must immediately precede it
-# ("resolved with ", "resolved, ", "fixed: "). Anything else leaves the phrase
-# in place, so an unlisted refutation ahead of it still refuses. The framing
-# verb must not itself be negated ("not resolved, ").
-RESOLUTION_VERB = re.compile(
-    r"\b(?:resolved|fixed|addressed|handled|closed|done)\b[^.;\n]{0,16}$",
+# A recognized cue that refutes a negated change phrase, so it is not resolved
+# work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
+# sentence does not reach across the '.' or ';'. The same cue set is checked
+# after the phrase, but only when the remainder actually refutes it (see
+# REFUTATION_AFTER), so "Nothing is wrong." is not a refutation. The set is a
+# closed enumeration; a phrasing outside it is not detected.
+REFUTATION_CUE = re.compile(
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case"
+    r"|isn't|is[ \t]+not|it's[ \t]+not|it[ \t]+is[ \t]+not"
+    r"|not[ \t]+accurate|not[ \t]+correct|not[ \t]+right"
+    r"|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say|wrong[ \t]+to[ \t]+claim"
+    r"|would[ \t]+be[ \t]+wrong[ \t]+to|disagree|disagrees|disagreed"
+    r"|(?:i|we)[ \t]+(?:don't|do[ \t]+not)[ \t]+believe|(?:i|we)[ \t]+doubt"
+    r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
     re.IGNORECASE,
 )
-NEGATED_RESOLUTION = re.compile(
-    r"\b(?:not|never|isn't|is[ \t]+not|wasn't|was[ \t]+not)\b[^.;\n]{0,20}$",
+REFUTES_NEGATION = re.compile(
+    REFUTATION_CUE.pattern + r"[^.;\n]*$",
     re.IGNORECASE,
 )
 # A refutation after the phrase counts only when the remainder starts with a
@@ -130,9 +137,9 @@ REFUTATION_AFTER = re.compile(
     r"^[ \t]*[.!;]?[ \t]*"
     r"(?:"
     r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
-    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
-    r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case)"
-    r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case)|false|untrue|a[ \t]+lie)\b"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)"
+    r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case|accurate|right)|false|untrue|a[ \t]+lie)\b"
     r")",
     re.IGNORECASE,
 )
@@ -219,30 +226,13 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
-def in_resolution_position(before: str) -> bool:
-    """Whether the phrase sits in an affirmative resolution position.
-
-    #14355: the phrase starts its sentence, or a short resolution framing
-    immediately precedes it. Anything else is not resolved work, so an
-    unlisted refutation ahead of the phrase still refuses.
-    """
-    if not before.strip():
-        return True
-    if re.search(r"[.!;:]\s*$", before):
-        return True
-    match = RESOLUTION_VERB.search(before)
-    if match is None:
-        return False
-    return not NEGATED_RESOLUTION.search(before[: match.start()])
-
-
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
-    #14355: the phrase is stripped only when it ends a sentence, sits in an
-    affirmative resolution position, and the remainder of the line carries no
-    refutation cue. A refuted or followed-by-blocker phrase stays in place, so
-    the blocker scan still refuses it.
+    #14355: the phrase is stripped only when it ends a sentence, no preceding
+    cue refutes it, and the remainder of the line carries no refutation cue.
+    A refuted or followed-by-blocker phrase stays in place, so the blocker scan
+    still refuses it.
     """
 
     def replace(match: re.Match[str]) -> str:
@@ -250,7 +240,7 @@ def strip_negated_change(line: str) -> str:
         after = line[match.end() :]
         if (
             NEGATED_CHANGE_TAIL.match(after)
-            and in_resolution_position(before)
+            and not REFUTES_NEGATION.search(before)
             and not REFUTATION_AFTER.search(after)
         ):
             return " "
