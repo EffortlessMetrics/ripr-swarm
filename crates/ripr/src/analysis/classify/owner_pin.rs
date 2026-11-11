@@ -2923,6 +2923,48 @@ const UNINDEXED_MEMBER_PATH_FILES: usize = 64;
 /// plain `mod name;` would. That file is read under the same rule instead
 /// of failing closed; a missing or unreadable one still fails closed.
 fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
+    let Some((inspected, saw_path)) = walk_unindexed_member(member_dir, false) else {
+        return true;
+    };
+    // Once a `#[path]` is accepted the member is no longer the plain layout
+    // the roots above describe, so the walk repeats strictly: Cargo's
+    // auto-discovered roots are read and no file may declare a default-layout
+    // child this walk would not read.
+    if saw_path && walk_unindexed_member(member_dir, true).is_none() {
+        return true;
+    }
+    !inspected
+}
+
+/// Crate roots Cargo discovers without a manifest entry: `src/bin/*.rs`,
+/// `src/bin/*/main.rs`, and the same shapes under `tests`, `examples` and
+/// `benches`. `None` when a directory cannot be listed.
+fn auto_discovered_roots(member_dir: &Path) -> Option<Vec<PathBuf>> {
+    let mut roots = Vec::new();
+    for directory in ["src/bin", "tests", "examples", "benches"] {
+        let entries = match std::fs::read_dir(member_dir.join(directory)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        for entry in entries {
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                roots.push(path.join("main.rs"));
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                roots.push(path);
+            }
+        }
+    }
+    Some(roots)
+}
+
+/// One walk of an unindexed member's sources. `None` when something may
+/// compile a file outside the member; otherwise `(inspected, saw_path)`:
+/// whether any source was read and whether any own-file `#[path]` was seen.
+/// `strict` adds the auto-discovered roots and refuses default-layout
+/// children in every file, not only in files reached through `#[path]`.
+fn walk_unindexed_member(member_dir: &Path, strict: bool) -> Option<(bool, bool)> {
     let mut pending: Vec<(PathBuf, bool)> = UNINDEXED_MEMBER_ROOTS
         .iter()
         .map(|candidate| (member_dir.join(candidate), false))
@@ -2934,11 +2976,19 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return true,
+        Err(_) => return None,
+    }
+    if strict {
+        pending.extend(
+            auto_discovered_roots(member_dir)?
+                .into_iter()
+                .map(|root| (root, false)),
+        );
     }
     let mut seen = BTreeSet::new();
     let mut followed = 0;
     let mut inspected = false;
+    let mut saw_path = false;
     // `required`: a `#[path]` named the file, so its absence is not a guess
     // that missed but a module whose source ripr cannot read.
     while let Some((path, required)) = pending.pop() {
@@ -2948,33 +2998,34 @@ fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
         if required {
             followed += 1;
             if followed > UNINDEXED_MEMBER_PATH_FILES {
-                return true;
+                return None;
             }
         }
         match std::fs::read(&path) {
             Ok(bytes) => {
-                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
-                    return true;
+                // A root that links outside the member is another file's
+                // compilation context, not the member's own source.
+                if !path
+                    .canonicalize()
+                    .is_ok_and(|target| target.starts_with(member_dir))
+                {
+                    return None;
                 }
-                let Ok(source) = std::str::from_utf8(&bytes) else {
-                    return true;
-                };
+                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+                    return None;
+                }
+                let source = std::str::from_utf8(&bytes).ok()?;
                 inspected = true;
-                let Some(literals) = own_path_literals(source, required) else {
-                    return true;
-                };
-                for literal in literals {
-                    let Some(target) = member_own_file(&path, &literal, member_dir) else {
-                        return true;
-                    };
-                    pending.push((target, true));
+                for literal in own_path_literals(source, required || strict)? {
+                    saw_path = true;
+                    pending.push((member_own_file(&path, &literal, member_dir)?, true));
                 }
             }
             Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return true,
+            Err(_) => return None,
         }
     }
-    !inspected
+    Some((inspected, saw_path))
 }
 
 /// The `#[path]` literals of `source` when they are all it could mount

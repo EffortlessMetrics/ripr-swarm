@@ -57,6 +57,13 @@ of these hold, and any doubt keeps the unavailable result:
 4. At most 64 `#[path]`-named files are followed; crate roots, including every
    explicitly declared target, are not counted.
 
+5. Once one own-file `#[path]` is accepted, the walk repeats strictly: the
+   roots Cargo discovers without a manifest entry (`src/bin`, `tests`,
+   `examples`, `benches`) are read too, and no file may declare a
+   default-layout `mod child;`, whose file the walk would not read.
+6. A crate root that is a symbolic link out of the member's directory is
+   another file's compilation context and keeps the unavailable result.
+
 Ready mode indexes every member and is unchanged.
 
 ## Trigger

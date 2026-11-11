@@ -26,6 +26,16 @@ const OWN_PATH: &str = "#[path = \"../support.rs\"]\nmod support;\n";
 /// written under `tool/`. `app/src/par.rs` holds a private foreign glob that
 /// is confined to its own module only while placement is available.
 fn finding(mode: Mode, files: &[(&str, &str)]) -> Result<Finding, String> {
+    finding_with_links(mode, files, &[])
+}
+
+/// [`finding`] plus symbolic links `(path under tool/, target under the
+/// workspace root)`, which only Unix can create.
+fn finding_with_links(
+    mode: Mode,
+    files: &[(&str, &str)],
+    links: &[(&str, &str)],
+) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -79,6 +89,13 @@ fn finding(mode: Mode, files: &[(&str, &str)]) -> Result<Finding, String> {
     )?;
     for (path, text) in files {
         write(&format!("tool/{path}"), text)?;
+    }
+    for (link, target) in links {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join(target), root.join("tool").join(link))
+            .map_err(|error| format!("link {link}: {error}"))?;
+        #[cfg(not(unix))]
+        return Err(format!("symlink {link} -> {target} needs Unix"));
     }
     let diff = "diff --git a/app/src/lib.rs b/app/src/lib.rs\nindex 0000000..1111111 100644\n--- a/app/src/lib.rs\n+++ b/app/src/lib.rs\n@@ -3,4 +3,4 @@\n \n pub fn weight(x: u32) -> u32 {\n-    x * 3\n+    x * 4\n }\n";
     write("diff.patch", diff)?;
@@ -200,7 +217,7 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
 fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -> Result<(), String>
 {
     let lib = |text: &'static str| [("src/lib.rs", text), ("support.rs", SUPPORT)];
-    let cases: [(&str, Vec<(&str, &str)>); 11] = [
+    let cases: [(&str, Vec<(&str, &str)>); 13] = [
         (
             "path leaves the member",
             lib("#[path = \"../../app/src/par.rs\"]\nmod par;\n").to_vec(),
@@ -261,6 +278,31 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
             ],
         ),
         (
+            "own path beside a default child that mounts a file",
+            vec![
+                (
+                    "src/lib.rs",
+                    "#[path = \"../support.rs\"]\nmod support;\nmod child;\n",
+                ),
+                ("support.rs", SUPPORT),
+                (
+                    "src/child.rs",
+                    "#[path = \"../../app/src/par.rs\"]\nmod par;\n",
+                ),
+            ],
+        ),
+        (
+            "own path beside an auto-discovered binary that mounts a file",
+            vec![
+                ("src/lib.rs", OWN_PATH),
+                ("support.rs", SUPPORT),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"../../../app/src/par.rs\"]\nmod par;\n",
+                ),
+            ],
+        ),
+        (
             "inner path attribute",
             lib("#![path = \"../support.rs\"]\n").to_vec(),
         ),
@@ -292,5 +334,14 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect::<Vec<_>>();
     assert_withheld("path chain past the budget", &finding(Mode::Draft, &chain)?);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_crate_root_linked_to_an_indexed_file_withholds_draft_placement() -> Result<(), String> {
+    let files = [("src/lib.rs", OWN_PATH), ("support.rs", SUPPORT)];
+    let found = finding_with_links(Mode::Draft, &files, &[("src/main.rs", "app/src/par.rs")])?;
+    assert_withheld("root symlinked to an indexed file", &found);
     Ok(())
 }
