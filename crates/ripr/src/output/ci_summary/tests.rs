@@ -572,7 +572,7 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
     let packet = block(&summary, "### Agent review packet");
     assert!(
         packet.starts_with(&format!(
-            "- Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n- Start repair: `{REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
+            "- Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n- Start repair: `{REPAIR}`\n- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}\n- Full packet: `ripr/workflow/agent-review-summary.md` in the `ripr-reports` artifact.\n"
         )),
         "{packet}"
     );
@@ -1709,7 +1709,7 @@ fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
     let summary = fixture.render(&[])?;
     let start = block(&summary, "### Start here");
     assert!(
-        start.contains("`start-here.md` in the `ripr-reports` artifact"),
+        start.contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact"),
         "{start}"
     );
     assert!(

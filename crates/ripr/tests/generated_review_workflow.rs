@@ -281,6 +281,13 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     // The artifact is rooted at `target/` (it uploads `target/ripr` and
     // `target/ci`), so a named report drops that prefix.
     assert!(!summary.contains("- Full report: `target/"), "{summary}");
+    // Every line that points into the artifact uses the same form: a
+    // `target/` path there names a file the downloaded archive lacks.
+    let workspace_paths = summary
+        .lines()
+        .filter(|line| line.contains("artifact") && line.contains("`target/"))
+        .collect::<Vec<_>>();
+    assert!(workspace_paths.is_empty(), "{workspace_paths:#?}");
     assert!(
         !summary.contains("<details><summary>Full report: "),
         "{summary}"
