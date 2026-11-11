@@ -3532,7 +3532,7 @@ mod tests {
                     .filter(|flag| flag.starts_with("--"));
             }
             if let Some(flag) = current
-                && line.contains("expect_value(")
+                && (line.contains("expect_value(") || line.contains("expect_path_value("))
             {
                 parsed.insert(flag.to_string());
             }
