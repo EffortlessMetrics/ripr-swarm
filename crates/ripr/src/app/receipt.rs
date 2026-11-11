@@ -188,7 +188,7 @@ pub(crate) fn check_receipt(
     let path = resolve_check_path(opts)?;
     let displayed = crate::output::path::display_path(&path);
 
-    let content = std::fs::read_to_string(&path).map_err(|err| {
+    let content = crate::bounded_input::read_to_string(&path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
                 "receipt at {displayed} not found or unreadable. Write one first with \
@@ -252,7 +252,7 @@ fn cross_reference_receipt(
         return Ok(ReceiptCrossRefResult::NotAvailable);
     };
 
-    let contents = std::fs::read_to_string(path).map_err(|err| {
+    let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
         let displayed = crate::output::path::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(

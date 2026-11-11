@@ -488,7 +488,7 @@ fn manifest_field(text: &str) -> String {
 }
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {
-    let bytes = fs::read(path)
+    let bytes = crate::bounded_input::read(path)
         .map_err(|err| format!("{command} could not read {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|err| {
         format!(

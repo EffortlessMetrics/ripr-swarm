@@ -35493,8 +35493,23 @@ fn run_ripr_with_deadline(
     stdin: Stdio,
     budget: std::time::Duration,
 ) -> Result<Output, std::io::Error> {
+    run_ripr_with_deadline_in(None, args, stdin, budget)
+}
+
+/// [`run_ripr_with_deadline`] from `cwd`, for commands that write their
+/// default artifacts under the current directory.
+#[cfg(unix)]
+fn run_ripr_with_deadline_in(
+    cwd: Option<&Path>,
+    args: &[&str],
+    stdin: Stdio,
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
     use std::io::Read as _;
     let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     command
         .args(args)
         .stdin(stdin)
@@ -35644,6 +35659,71 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
         "the refusal must name the artifact path:\n{stderr}"
     );
     Ok(())
+}
+
+/// The artifact flags below read their file with an unbounded
+/// `std::fs::read`/`read_to_string`: pointed at an endless device, each grew
+/// until the kernel ended the process (about six seconds on a 16 GB host)
+/// instead of failing. They now share the #4480 bounded reader, so each must
+/// exit 2 and name the input limit.
+#[cfg(unix)]
+#[test]
+fn artifact_flags_from_endless_device_are_refused_at_input_limit() -> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-artifact-flags");
+    std::fs::create_dir_all(&cwd)?;
+    let cases: [&[&str]; 8] = [
+        &["receipt", "check", "--path", "/dev/zero"],
+        &["annotations", "--comments", "/dev/zero"],
+        &["annotations", "--check", "--out", "/dev/zero"],
+        &["plus", "--gap-ledger", "/dev/zero"],
+        &["plus", "--repo-exposure-summary", "/dev/zero"],
+        &["feedback", "export", "--route-quality", "/dev/zero"],
+        &["pr-comments", "existing", "--raw", "/dev/zero"],
+        &["gate", "evaluate", "--pr-guidance", "/dev/zero"],
+    ];
+    let result = (|| {
+        for args in cases {
+            let output =
+                run_ripr_with_deadline_in(Some(&cwd), args, Stdio::null(), ENDLESS_INPUT_BUDGET)?;
+            assert_input_limit_refusal(&output, &args.join(" "));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&cwd);
+    result
+}
+
+/// These two flags fold an unreadable artifact into their established
+/// "missing" state rather than reporting the read error, so the limit never
+/// reaches stderr. What the bounded reader changes for them is that the
+/// command finishes with its ordinary exit code instead of being ended for lack of
+/// memory (no exit code) or outliving the deadline.
+#[cfg(unix)]
+#[test]
+fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Result<(), std::io::Error>
+{
+    let cwd = unique_temp_workspace("endless-artifact-degrade");
+    std::fs::create_dir_all(&cwd)?;
+    let cases: [(&[&str], i32); 2] = [
+        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
+    ];
+    let result = (|| {
+        for (args, expected) in cases {
+            let output =
+                run_ripr_with_deadline_in(Some(&cwd), args, Stdio::null(), ENDLESS_INPUT_BUDGET)?;
+            assert_eq!(
+                output.status.code(),
+                Some(expected),
+                "{} must finish with its ordinary exit code:\n{}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&cwd);
+    result
 }
 
 /// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
