@@ -1405,6 +1405,14 @@ owner = "product-swarm"
 standalone_reason = "Pins the managed server download's pre-extraction contract for the VS Code extension: the tar and Windows zip archive members are listed independently of the extractor and the whole archive is refused before extraction when any member is a symlink, a reparse point or escapes the target (#13640, #13904)."
 
 [[artifact]]
+id = "RIPR-SPEC-0438"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0438-output-never-replaces-own-input.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins the cross-command rule that an artifact report's --out/--out-md never replaces one of that command's own inputs: refusal by filesystem identity before any write, with the documented in-place, rolling and dry-run flows named as the only exceptions (#14312)."
+
+[[artifact]]
 id = "RIPR-SPEC-0429"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0429-structured-stage-evidence-rows.md"
