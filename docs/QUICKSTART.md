@@ -516,8 +516,9 @@ beside the workflow. Its `[languages] enabled` list starts at `["rust"]` and
 adds `python` or `typescript` when `init` detects that project (for example
 `enabled = ["rust", "python"]`). Once the file exists that list is
 authoritative: a preview language it does not name is no longer auto-enabled.
-Add a language you start using later, or remove the `enabled` line to return
-to marker-based detection. The workflow
+Add a language you start using later. Marker-based detection applies only
+when no `ripr.toml` exists: a file without an `enabled` list analyzes Rust
+alone. The workflow
 installs the ripr version that generated it. An unreleased development build
 instead pins the latest release and says so in a note; after
 upgrading ripr, refresh with `ripr init --ci github --force`. Preview the

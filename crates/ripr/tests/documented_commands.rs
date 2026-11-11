@@ -150,15 +150,28 @@ fn long_flag(token: &str) -> Option<(&str, Option<&str>)> {
     is_word(body).then_some((name, value))
 }
 
-/// Cut an invocation at the first shell operator or trailing comment.
-fn command_part(invocation: &str) -> &str {
-    let mut end = invocation.len();
-    for separator in [" | ", " > ", " >> ", " 2>", " && ", " || ", "; ", " # "] {
-        if let Some(index) = invocation.find(separator) {
-            end = end.min(index);
+/// The `ripr` commands in one shell line: split at `&&`, `||` and `;`, then
+/// cut each at a pipe, redirect or trailing comment.
+fn ripr_commands(line: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    for chained in line.split(" && ") {
+        for alternative in chained.split(" || ") {
+            for segment in alternative.split("; ") {
+                let segment = segment.trim();
+                if !segment.starts_with("ripr ") {
+                    continue;
+                }
+                let mut end = segment.len();
+                for separator in [" | ", " > ", " >> ", " 2>", " # "] {
+                    if let Some(index) = segment.find(separator) {
+                        end = end.min(index);
+                    }
+                }
+                commands.push(segment.get(..end).unwrap_or(segment).trim().to_string());
+            }
         }
     }
-    invocation.get(..end).unwrap_or(invocation).trim()
+    commands
 }
 
 struct Invocation {
@@ -194,7 +207,7 @@ fn invocations(markdown: &str) -> Vec<Invocation> {
         }
         match fence {
             Some(true) => {
-                let (start, mut text) = match pending.take() {
+                let (start, text) = match pending.take() {
                     Some((start, text)) => (start, format!("{text} {trimmed}")),
                     None => (line, trimmed.trim_start_matches("$ ").to_string()),
                 };
@@ -202,8 +215,7 @@ fn invocations(markdown: &str) -> Vec<Invocation> {
                     pending = Some((start, joined.trim_end().to_string()));
                     continue;
                 }
-                if text.starts_with("ripr ") {
-                    text.truncate(command_part(&text).len());
+                for text in ripr_commands(&text) {
                     found.push(Invocation {
                         line: start,
                         text,
@@ -235,11 +247,13 @@ fn invocations(markdown: &str) -> Vec<Invocation> {
                     if position + 1 == segments.len() {
                         wrapped = Some((start, text));
                     } else if text.starts_with("ripr ") {
-                        found.push(Invocation {
-                            line: start,
-                            text: command_part(&text).to_string(),
-                            inline: true,
-                        });
+                        for text in ripr_commands(&text) {
+                            found.push(Invocation {
+                                line: start,
+                                text,
+                                inline: true,
+                            });
+                        }
                     }
                 }
             }
@@ -436,18 +450,24 @@ ripr check \\
   --formta json
 ```
 
+```bash
+cd demo && ripr doctor && ripr chekc --json; ripr check --nope | tee out.txt
+```
+
 ```text
 ripr frobnicate --loudly
 ```
 ";
     let mut tally = Tally::default();
     check_markdown(&catalog, "sample.md", markdown, &mut tally);
-    assert_eq!(tally.invocations, 10, "{:?}", tally.problems);
+    assert_eq!(tally.invocations, 13, "{:?}", tally.problems);
     let expected = [
         "sample.md:9: `ripr chekc`: `chekc` is not a ripr command",
         "sample.md:9: `ripr check --no-such-flag`: `ripr help check` documents no `--no-such-flag` flag",
         "sample.md:11: `ripr check --bogus`: `ripr help check` documents no `--bogus` flag",
         "sample.md:15: `ripr check --formta json`: `ripr help check` documents no `--formta` flag",
+        "sample.md:20: `ripr chekc --json`: `chekc` is not a ripr command",
+        "sample.md:20: `ripr check --nope`: `ripr help check` documents no `--nope` flag",
     ];
     for problem in expected {
         assert!(
@@ -465,7 +485,7 @@ ripr frobnicate --loudly
         "{:?}",
         tally.problems
     );
-    assert_eq!(tally.problems.len(), 5, "{:?}", tally.problems);
+    assert_eq!(tally.problems.len(), 7, "{:?}", tally.problems);
     Ok(())
 }
 
