@@ -10,7 +10,7 @@ const PRICING_PY: &str = "from __future__ import annotations\n\nfrom collections
 
 const PRICING_TEST_PY: &str = "from src.pricing import total\n\n\ndef test_total():\n    assert total({\"a\": 2, \"b\": 3}, [\"a\", \"b\"]) == 5\n";
 
-fn line(number: usize, text: &str) -> crate::analysis::diff::ChangedLine {
+pub(super) fn line(number: usize, text: &str) -> crate::analysis::diff::ChangedLine {
     crate::analysis::diff::ChangedLine {
         line: number,
         new_side_line: number,
@@ -18,7 +18,7 @@ fn line(number: usize, text: &str) -> crate::analysis::diff::ChangedLine {
     }
 }
 
-fn analyze(
+pub(super) fn analyze(
     label: &str,
     source: &str,
     added: &[usize],
@@ -80,7 +80,7 @@ fn analyze(
     Ok(result.findings)
 }
 
-fn probed_lines(findings: &[Finding]) -> Vec<usize> {
+pub(super) fn probed_lines(findings: &[Finding]) -> Vec<usize> {
     let mut lines: Vec<usize> = findings
         .iter()
         .map(|finding| finding.probe.location.line)
