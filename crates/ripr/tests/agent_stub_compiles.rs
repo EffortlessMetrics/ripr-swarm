@@ -953,7 +953,9 @@ fn seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it(
     git(&streams, &root, &["commit", "-qm", "base"])?;
     let stub_json = |selector: &[&str], cap: Option<&str>| -> Result<serde_json::Value, String> {
         let mut stub = ripr_command();
-        stub.args(["agent", "stub", "--root"])
+        isolate_from_outer_repo(&mut stub)
+            .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            .args(["agent", "stub", "--root"])
             .arg(&root)
             .args(selector)
             .arg("--json");
@@ -977,12 +979,11 @@ fn seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it(
         .to_string();
     let repair = |cap: Option<&str>| -> Result<Output, String> {
         let mut start = ripr_command();
-        start.args(["agent", "repair", "--root"]).arg(&root).args([
-            "--seam-id",
-            &seam_id,
-            "--phase",
-            "before",
-        ]);
+        isolate_from_outer_repo(&mut start)
+            .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            .args(["agent", "repair", "--root"])
+            .arg(&root)
+            .args(["--seam-id", &seam_id, "--phase", "before"]);
         if let Some(cap) = cap {
             start.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap);
         }
@@ -992,9 +993,10 @@ fn seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it(
     // Past the cap: `src/a.rs` holds the one retained seam. The before phase
     // refuses this seam, so the stub must not point at it.
     let refused = repair(Some("1"))?;
+    let refusal = String::from_utf8_lossy(&refused.stderr).to_string();
     assert!(
-        !refused.status.success(),
-        "precondition: the capped before phase cannot find {seam_id}"
+        !refused.status.success() && refusal.contains("truncated seam inventory"),
+        "precondition: the capped before phase cannot find {seam_id}: {refusal}"
     );
     let capped = stub_json(&["--seam-id", &seam_id], Some("1"))?;
     assert!(
