@@ -12,6 +12,7 @@ Start here:
   Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:4
   Static exposure: unknown (severity: note, confidence 0.66)
+  Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)
   Gap ID (for scripts): gap:rust:src/lib.rs:split_after:predicate_boundary:predicate:end==start
   Changed behavior: input.rfind(delim).map_or(1, |idx| idx)
   Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)

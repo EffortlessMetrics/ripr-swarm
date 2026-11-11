@@ -12,6 +12,7 @@ Start here:
   Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:2
   Static exposure: unknown (severity: note, confidence 0.51)
+  Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)
   Gap ID (for scripts): gap:rust:src/lib.rs:report:call_deletion:call_deletion:println!lit616d6f756e74206973207b7d_amount*9
   Changed behavior: println!("amount is {}", amount * 9);
   Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)

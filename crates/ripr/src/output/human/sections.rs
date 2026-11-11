@@ -266,20 +266,12 @@ pub(crate) fn render_finding_digest_with_config(
             .find(|missing| !restates_no_static_path_evidence(finding, missing))
             .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
     let digest_missing = digest_missing_entry(finding);
-    // The Why hint and the `Analyzer limit` line can carry the same plain
-    // sentence; print the fact once, under the limit label.
-    let limit_restates_hint = |hint: &str| {
-        digest_missing.as_ref().is_some_and(|(label, value)| {
-            label == "Analyzer limit" && restates_digest_fact(hint, value)
-        })
-    };
     if let Some(hint) = unresolved_fixture_hint(finding)
         .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
         .or_else(|| {
             classification_hint(&finding.class, &finding.ripr, refused_macro)
                 .filter(|_| !limit_names_the_reason)
         })
-        .filter(|hint| !limit_restates_hint(hint))
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }

@@ -46,13 +46,6 @@ unchanged; this is still renderer-owned wording. The wording is pinned by
 `output/human.rs` tests `propagation_unknown_wording_is_honest` and
 `plain_language_default_and_glossed_human_full`.
 
-## Amendment (#14308)
-
-When the honest hint and the producer's fixed `missing` entry render the same
-sentence, the default digest prints it once, under `Analyzer limit`, and omits
-the `Why unknown` line. `--format human-full` keeps its own rendering. The
-test `propagation_unknown_wording_is_honest` pins exactly one copy.
-
 ## Required Evidence
 
 - The blast radius measured before the change: 32 fixtures drift, all

@@ -5194,14 +5194,11 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        // The Why hint and the Analyzer limit line carry the same plain
-        // sentence here, so the digest states it once, under the limit label.
-        let honest = "ripr could not follow the changed value to something a test can check (a return value or side effect)";
-        if digest.matches(honest).count() != 1 || digest.contains("Why unknown:") {
-            return Err(format!(
-                "the honest limit must render exactly once, without a Why restatement:
-{digest}"
-            ));
+        if !digest.contains(
+            "Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)",
+        ) {
+            return Err(format!("honest why-hint missing:
+{digest}"));
         }
         if digest.contains("the change propagates but") {
             return Err(format!(

@@ -277,9 +277,8 @@ The digest states each fact once (#14308). A stage detail whose prose equals
 the digest's `Missing check` / `Analyzer limit` value (after collapsing
 whitespace, one terminal period and ASCII case) is left out of the two-line
 window, the next detail takes its place, and the `N more detail line(s)` count
-covers only the details not shown. Likewise the `Why <class>` hint is omitted
-when the `Analyzer limit` line carries the same sentence. Classification,
-`--format human-full` and the machine formats are unchanged.
+covers only the details not shown. Classification, `--format human-full`
+and the machine formats are unchanged.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
