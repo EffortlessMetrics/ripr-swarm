@@ -2905,6 +2905,28 @@ mod tests {
         .map(|entry| entry.seam.id().as_str().to_string())
         .ok_or("fixture must classify a seam")?;
         assert!(inventory_entry_facts(&control, &config, "src/lib.rs", &seam_id).is_some());
+        // #14369: the seam-id stub and the ambiguity validator classify the
+        // file too, so they get the same guard; unarmed, both see the seam.
+        let by_id = TestStubSelector::SeamId(seam_id.clone());
+        let healthy =
+            resolve_test_stub(&control, &config, &by_id).map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let ambiguity = |root: &Path| {
+            narrowed_ambiguity(
+                root,
+                &config,
+                "src/lib.rs",
+                "x >= 100",
+                "several seams".to_string(),
+                vec![seam_id.clone()],
+                &mut None,
+            )
+        };
+        let decision = ambiguity(&control);
+        assert!(
+            !matches!(decision, StubRouteDecision::Withheld { .. }),
+            "unarmed, the candidate is validated: {decision:?}"
+        );
         let _ = std::fs::remove_dir_all(&control);
 
         for point in [1u8, 2u8] {
@@ -2920,6 +2942,28 @@ mod tests {
                 }
                 other => return Err(format!("point {point}: expected refusal: {other:?}")),
             }
+            let by_id_refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &by_id)
+            };
+            let decision = {
+                let _armed = WarmPanicGuard::arm(point);
+                ambiguity(&root)
+            };
+            match by_id_refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                }
+                other => {
+                    return Err(format!(
+                        "point {point}: expected seam-id refusal: {other:?}"
+                    ));
+                }
+            }
+            assert!(
+                matches!(decision, StubRouteDecision::Withheld { .. }),
+                "point {point}: stand-in seams must not validate a route: {decision:?}"
+            );
             let facts = {
                 let _armed = WarmPanicGuard::arm(point);
                 let stand_in = analysis::inventory_diff_scoped_classified_seams_at_with_config(
