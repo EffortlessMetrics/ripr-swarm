@@ -302,7 +302,11 @@ Top-level decision values are:
 
 - `pass` - a non-advisory mode evaluated successfully and found no visible
   advisory, acknowledged, blocking, suppressed, or unknown-confidence decision.
-- `advisory` - evidence is visible but not blocking.
+- `advisory` - evidence is visible but not blocking, or the mode is
+  `visible-only`. Visible-only never blocks on findings, so every completed
+  visible-only evaluation that is not `blocked` or `config_error` reads
+  `advisory`, including one that recorded nothing; there the token describes
+  the mode, not a finding (#7445).
 - `acknowledged` - at least one policy-eligible candidate was acknowledged by a
   configured label and no candidate blocked.
 - `blocked` - at least one policy-eligible candidate blocks under the explicit
@@ -330,6 +334,14 @@ Top-level decision derivation order:
 
 The evaluator may return a non-zero exit code only for `blocked` or
 `config_error`.
+
+The Markdown report discloses the one case where `advisory` says nothing about
+findings (#7445): when the mode is `visible-only`, the status is `advisory`,
+no advisory, suppressed or unknown-confidence candidate and no warning was
+recorded, and no exception-policy violation exists, it adds one paragraph
+under the counts saying the status reflects the mode and naming the enforcing
+modes. The JSON report and the status vocabulary are unchanged; machine
+consumers read `mode`, the `summary` counts and `warnings`.
 
 ## JSON Shape
 
