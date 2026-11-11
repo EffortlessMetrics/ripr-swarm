@@ -50,7 +50,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     let mut not_current = 0usize;
     let mut folded = 0usize;
     let same_line = same_line_folds(output, &suppressed_ids, &withheld_ids);
-    for finding in &output.findings {
+    for (index, finding) in output.findings.iter().enumerate() {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
             continue;
@@ -75,7 +75,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         };
         // After the severity filter, like SARIF's fold: a class configured
         // off is neither annotated nor counted as folded.
-        let (also_covers, other_gaps) = match same_line.get(finding.id.as_str()) {
+        let (also_covers, other_gaps) = match same_line.get(&index) {
             Some(SameLine::Folded) => {
                 folded += 1;
                 continue;
@@ -670,10 +670,12 @@ fn same_line_folds<'a>(
     output: &'a CheckOutput,
     suppressed_ids: &std::collections::BTreeSet<&str>,
     withheld_ids: &std::collections::BTreeSet<&str>,
-) -> std::collections::BTreeMap<&'a str, SameLine<'a>> {
-    type Key<'k> = (&'k str, &'k std::path::Path, usize);
-    let mut groups = std::collections::BTreeMap::<Key<'a>, Vec<&'a Finding>>::new();
-    for finding in &output.findings {
+) -> std::collections::BTreeMap<usize, SameLine<'a>> {
+    // Grouped by the rendered `file=` text, so two spellings of one file
+    // (absolute and repository-relative) share a line, as in SARIF.
+    type Key<'k> = (&'k str, String, usize);
+    let mut groups = std::collections::BTreeMap::<Key<'a>, Vec<(usize, &'a Finding)>>::new();
+    for (index, finding) in output.findings.iter().enumerate() {
         let line = finding.probe.location.line;
         if line == 0
             || suppressed_ids.contains(finding.id.as_str())
@@ -686,11 +688,11 @@ fn same_line_folds<'a>(
         groups
             .entry((
                 finding.class.as_str(),
-                finding.probe.location.file.as_path(),
+                repository_display_path(&output.root, &finding.probe.location.file),
                 line,
             ))
             .or_default()
-            .push(finding);
+            .push((index, finding));
     }
     let mut roles = std::collections::BTreeMap::new();
     for mut group in groups.into_values() {
@@ -701,29 +703,27 @@ fn same_line_folds<'a>(
         // fingerprint; rule and file are shared within a group, so the same
         // `|`-joined text picks the same finding (a bare tuple order differs
         // when one id is a prefix of another).
-        group.sort_by_cached_key(|finding| format!("{}|{}", finding.id, finding.probe.id.0));
+        group.sort_by_cached_key(|(_, finding)| format!("{}|{}", finding.id, finding.probe.id.0));
         let mut members = group.into_iter();
-        let Some(keeper) = members.next() else {
+        let Some((keeper_index, keeper)) = members.next() else {
             continue;
         };
         let keeper_gap = keeper.canonical_gap.as_ref().map(|gap| gap.id.as_str());
         let mut count = 0usize;
         let mut other_gaps = Vec::new();
-        for member in members {
-            if member.id != keeper.id {
-                roles.insert(member.id.as_str(), SameLine::Folded);
-                count += 1;
-                if let Some(gap) = &member.canonical_gap
-                    && Some(gap.id.as_str()) != keeper_gap
-                    && !other_gaps.contains(&gap.id.as_str())
-                {
-                    other_gaps.push(gap.id.as_str());
-                }
+        // Roles are keyed by each finding's place in `output.findings`, not
+        // its id, so a repeated id can neither block nor cross a fold.
+        for (index, member) in members {
+            roles.insert(index, SameLine::Folded);
+            count += 1;
+            if let Some(gap) = &member.canonical_gap
+                && Some(gap.id.as_str()) != keeper_gap
+                && !other_gaps.contains(&gap.id.as_str())
+            {
+                other_gaps.push(gap.id.as_str());
             }
         }
-        if count > 0 {
-            roles.insert(keeper.id.as_str(), SameLine::Keeps { count, other_gaps });
-        }
+        roles.insert(keeper_index, SameLine::Keeps { count, other_gaps });
     }
     roles
 }
@@ -2551,6 +2551,50 @@ mod tests {
             ),
             "{rendered}"
         );
+    }
+
+    /// #14302 review: the fold groups by the rendered `file=` path, so two
+    /// spellings of one file share a line, and roles follow each finding's
+    /// place, so a repeated id neither blocks a fold nor crosses lines.
+    #[test]
+    fn fold_groups_by_rendered_path_and_finding_place() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let mut dotted = with_probe(&base, "probe:b:return_value", 13, unknown.clone());
+        dotted.probe.location = SourceLocation::new("./src/lib.rs", 13, 1);
+        output.findings = vec![
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            dotted,
+        ];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 1, "{rendered}");
+        assert!(
+            located[0].contains("Also covers 1 more probe"),
+            "{rendered}"
+        );
+
+        // One id on two lines: each line keeps its own annotation.
+        let mut first = with_probe(&base, "probe:same", 13, unknown.clone());
+        let mut second = with_probe(&base, "probe:same", 14, unknown.clone());
+        first.id = "finding:dup".to_string();
+        second.id = "finding:dup".to_string();
+        // One id twice on line 15: they still fold into one annotation.
+        let mut third = with_probe(&base, "probe:x", 15, unknown.clone());
+        let mut fourth = with_probe(&base, "probe:y", 15, unknown);
+        third.id = "finding:twin".to_string();
+        fourth.id = "finding:twin".to_string();
+        output.findings = vec![first, second, third, fourth];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 3, "{rendered}");
+        let covers = |line: usize| {
+            located.iter().any(|text| {
+                text.contains(&format!(",line={line},")) && text.contains("Also covers")
+            })
+        };
+        assert!(!covers(13) && !covers(14) && covers(15), "{rendered}");
     }
 
     /// #14302 review: a finding with its own repair card never folds, so two
