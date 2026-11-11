@@ -6,10 +6,11 @@
 //! point operators at that config instead of advising a source rewrite.
 
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
-use std::path::{Component, Path};
+use std::path::Path;
 
 /// Directory-name markers that commonly identify fixture, golden, or data trees
 /// rather than hand-written production source (#5380).
+#[cfg(any(test, feature = "lang-python"))]
 const FIXTURE_DIRECTORY_MARKERS: &[&str] = &[
     "__snapshots__",
     "cassettes",
@@ -31,9 +32,10 @@ const FIXTURE_DIRECTORY_MARKERS: &[&str] = &[
 
 /// Whether `path` lies under a directory component that usually denotes
 /// fixture or checked-in data rather than authored production code.
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn is_probable_fixture_or_data_path(path: &Path) -> bool {
     path.components().any(|component| {
-        let Component::Normal(name) = component else {
+        let std::path::Component::Normal(name) = component else {
             return false;
         };
         let name = name.to_string_lossy();

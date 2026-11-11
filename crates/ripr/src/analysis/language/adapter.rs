@@ -38,6 +38,7 @@ impl PreviewFactCacheStats {
     /// The counters a run that never touched the cache carries. `did_work`
     /// stays false so the `-v` disclosure line stays silent instead of
     /// borrowing numbers the run did not produce.
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     pub(crate) fn zero_work() -> Self {
         Self::default()
     }
@@ -135,8 +136,19 @@ pub(crate) struct LanguageDiffResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RepoLimitingStage {
     /// The discovery walk stopped at its entry cap.
+    #[cfg_attr(
+        not(any(test, feature = "lang-typescript")),
+        expect(dead_code, reason = "constructed only by the TypeScript repo walk")
+    )]
     Discovery,
     /// Discovered files exceeded the working-set limit at selection.
+    #[cfg_attr(
+        not(any(test, feature = "lang-python", feature = "lang-typescript")),
+        expect(
+            dead_code,
+            reason = "constructed only by the Python and TypeScript repo runs"
+        )
+    )]
     Selection,
 }
 
@@ -240,6 +252,13 @@ pub(crate) trait LanguageAdapter {
     /// The adapter is responsible for filtering `changed_files` to the
     /// subset it accepts, building any language-specific index, applying
     /// oracle policy, generating probes, and classifying them.
+    #[cfg_attr(
+        not(any(test, feature = "lang-perl", feature = "lang-typescript")),
+        expect(
+            dead_code,
+            reason = "the pipeline dispatches diffs through this trait only for Perl and TypeScript"
+        )
+    )]
     fn analyze_diff(
         &self,
         options: &AnalysisOptions,
@@ -252,6 +271,13 @@ pub(crate) trait LanguageAdapter {
     /// The adapter discovers files it accepts under the workspace root,
     /// classifies production vs. test/example files, builds its index,
     /// generates probes, and classifies them.
+    #[cfg_attr(
+        not(any(test, feature = "lang-perl", feature = "lang-python")),
+        expect(
+            dead_code,
+            reason = "the pipeline dispatches repo scans through this trait only for Perl and Python"
+        )
+    )]
     fn analyze_repo(
         &self,
         options: &AnalysisOptions,

@@ -29,10 +29,14 @@ pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
 pub(crate) use diff::same_connectives;
+#[cfg(feature = "lang-typescript")]
 pub(crate) use expectations::{expected_sinks, required_oracles};
+#[cfg(feature = "lang-typescript")]
+pub(crate) use ids::normalize_expression;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use ids::{collision_ordinals, collision_rank_key};
 pub(crate) use ids::{
-    collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
-    normalize_expression, normalize_rust_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
 #[cfg(test)]

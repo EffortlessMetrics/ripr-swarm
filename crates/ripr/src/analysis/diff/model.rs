@@ -116,6 +116,7 @@ impl ChangedFile {
     /// removed line interrupts (`-a -b +x -c +y`) keeps the same-coordinate
     /// match, the first removed line recorded at each added line's own
     /// coordinate.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
     pub(crate) fn aligned_counterparts(&self) -> BTreeMap<usize, &ChangedLine> {
         let mut pairs = BTreeMap::new();
         let added_at: BTreeMap<usize, &ChangedLine> = self
@@ -441,13 +442,16 @@ impl ReplacementRun<'_> {
 }
 
 /// Blocks with more line pairs than this pair nothing by content.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_CELLS: usize = 65_536;
 
 /// Lines with more code tokens than this, such as a minified bundle line,
 /// never pair by content, which bounds the work per pair of lines.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_TOKENS: usize = 256;
 
 /// Similarity, in thousandths, at or above which two lines may pair.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const ALIKE_THRESHOLD: u32 = 500;
 
 /// Whether two lines are similar enough to read as one line edited: the
@@ -455,10 +459,12 @@ const ALIKE_THRESHOLD: u32 = 500;
 /// tokens (identifiers, keywords and numbers). String literals and line
 /// comments are left out, so a changed message or a reworded comment does
 /// not hide that the code around it is the same.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn lines_look_alike(old: &str, new: &str) -> bool {
     line_similarity(old, new) >= ALIKE_THRESHOLD
 }
 
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_similarity(old: &str, new: &str) -> u32 {
     key_similarity(
         &(old.trim(), code_tokens(old)),
@@ -467,6 +473,7 @@ fn line_similarity(old: &str, new: &str) -> u32 {
 }
 
 /// Similarity of two lines from their precomputed [`line_key`]s.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>>)) -> u32 {
     if old.0 == new.0 {
         return 1000;
@@ -478,6 +485,7 @@ fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>
 }
 
 /// Dice coefficient, in thousandths, of two sorted token lists.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
     let total = old.len() + new.len();
     if old.is_empty() || new.is_empty() {
@@ -500,6 +508,7 @@ fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
 
 /// The sorted word tokens of one line, outside string literals and before
 /// any `//` comment, or `None` past [`MAX_ALIGNED_TOKENS`].
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn code_tokens(line: &str) -> Option<Vec<&str>> {
     let mut tokens = Vec::new();
     let mut chars = line.char_indices().peekable();
@@ -543,6 +552,7 @@ fn code_tokens(line: &str) -> Option<Vec<&str>> {
 }
 
 /// A line's trimmed text and sorted code tokens, computed once per line.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
     run_work!();
     (line.text.trim(), code_tokens(&line.text))
@@ -553,6 +563,7 @@ fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
 /// among the block's lines; a tie pairs nothing, since choosing would be a
 /// guess. Pairs that would cross (a later removed line paired with an
 /// earlier added line) are dropped, because a replacement keeps order.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(usize, usize)> {
     let (rows, cols) = (removed.len(), added.len());
     if rows == 0 || cols == 0 || rows.saturating_mul(cols) > MAX_ALIGNED_CELLS {
