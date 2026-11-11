@@ -84,8 +84,7 @@ pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
     let pages = if options.raw.as_os_str() == "-" {
         // The workflow pipes `gh api` straight in; keep the raw pages beside
         // the normalized file so the uploaded artifact still shows them.
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+        let bytes = crate::bounded_input::read_reader(std::io::stdin())
             .map_err(|err| format!("{EXISTING} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
         store_raw_copy(&options.root, &bytes)?;
         serde_json::from_slice(&bytes)
@@ -352,8 +351,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     let pages = match options.raw.as_deref() {
         None => Value::Array(Vec::new()),
         Some(raw) if raw.as_os_str() == "-" => {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+            let bytes = crate::bounded_input::read_reader(std::io::stdin())
                 .map_err(|err| format!("{SUMMARY} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
             serde_json::from_slice(&bytes)
                 .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}; pass the JSON the earlier step wrote on standard input"))?

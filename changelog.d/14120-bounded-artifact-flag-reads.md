@@ -1,7 +1,8 @@
 <!-- section: Fixed -->
 - Twelve artifact flags (`receipt check --path`/`--ledger`, `annotations --comments`
   and `--check --out`, `plus --gap-ledger`/`--repo-exposure-summary`,
-  `feedback export --route-quality`, `pr-comments existing --raw`,
+  `feedback export --route-quality`, `pr-comments existing --raw` (file or
+  standard input) and `pr-comments summary --raw -`,
   `gate evaluate` inputs, `pr-summary --baseline`,
   `impacted-evidence --pr-evidence`, `first-pr --check-output`/`--gap-ledger`)
   now read through the shared 256 MiB input limit. Pointed at an endless device

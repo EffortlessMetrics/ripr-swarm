@@ -35693,6 +35693,32 @@ fn artifact_flags_from_endless_device_are_refused_at_input_limit() -> Result<(),
     result
 }
 
+/// `pr-comments existing --raw -` reads the pages from standard input, as the
+/// generated workflow pipes them. An endless producer must hit the same cap
+/// as the file-backed `--raw PATH`.
+#[cfg(unix)]
+#[test]
+fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
+-> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-raw-stdin");
+    std::fs::create_dir_all(&cwd)?;
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &["pr-comments", "existing", "--raw", "-"],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    let output = output?;
+    assert_input_limit_refusal(&output, "pr-comments existing --raw - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not read standard input"),
+        "the refusal must name standard input:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// These two flags fold an unreadable artifact into their established
 /// "missing" state rather than reporting the read error, so the limit never
 /// reaches stderr. What the bounded reader changes for them is that the
