@@ -7158,6 +7158,86 @@ mod source_currentness_tests {
         );
     }
 
+    /// #13983: parameter lines of a fn declared in a macro invocation body are
+    /// declarations, never `field_construction`; the fn body keeps its probe,
+    /// the same list outside a macro behaves as before, and a real record
+    /// initializer in a macro body still probes as `field_construction`.
+    #[test]
+    fn macro_body_fn_parameters_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let families = |source: &str, lines: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: lines.iter().map(|(n, t)| line(*n, t)).collect(),
+                removed_lines: Vec::new(),
+            };
+            let index = macro_source_index(&path, source);
+            probes_for_file(Path::new("workspace"), &changed, &index)
+                .iter()
+                .map(|probe| (probe.location.line, probe.family.clone()))
+                .collect::<Vec<_>>()
+        };
+        let params = [
+            (3, "    pub fn mul3("),
+            (4, "        a: u32,"),
+            (5, "        b: u32,"),
+            (6, "        c: u32,"),
+            (7, "    ) -> u32 {"),
+            (8, "        a * b * c"),
+        ];
+        let in_macro = "macro_rules! feature { ($($i:item)*) => { $($i)* } }\nfeature! {\n    pub fn mul3(\n        a: u32,\n        b: u32,\n        c: u32,\n    ) -> u32 {\n        a * b * c\n    }\n}\n";
+        let found = families(in_macro, &params);
+        assert!(
+            !found
+                .iter()
+                .any(|(l, f)| (4..=6).contains(l) && *f == ProbeFamily::FieldConstruction),
+            "macro fn parameter probed as field_construction: {found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, _)| *l == 8),
+            "fn body in the macro keeps a probe: {found:?}"
+        );
+
+        // Control: the same list outside a macro never reads as a field.
+        let plain =
+            "pub fn mul3(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n    a * b * c\n}\n";
+        let found = families(
+            plain,
+            &[(2, "    a: u32,"), (3, "    b: u32,"), (4, "    c: u32,")],
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|(_, f)| *f == ProbeFamily::FieldConstruction),
+            "plain fn parameter probed as field_construction: {found:?}"
+        );
+
+        // Negative control: a record initializer in a macro body still probes.
+        let record = "wrap! {\n    Task {\n        buffered: None,\n    }\n}\n";
+        let found = families(record, &[(3, "        buffered: None,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body construction lost its probe: {found:?}"
+        );
+
+        // A call (not a fn header) in a macro body is not a parameter list.
+        let call = "wrap! {\n    make(\n        a: 1,\n    )\n}\n";
+        let found = families(call, &[(3, "        a: 1,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body call argument lost its probe: {found:?}"
+        );
+    }
+
     /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
     /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
     /// `static_unknown` probe per region and diff side (a replaced line pairs its

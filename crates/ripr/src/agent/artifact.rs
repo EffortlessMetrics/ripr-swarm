@@ -1548,6 +1548,29 @@ pub(crate) fn validate_pair_lineage(
     ))
 }
 
+/// Verify-layer movement refusal (#14021). The class travels with the error
+/// so the CLI exit mapping and the repair-after narration read the variant
+/// instead of a message prefix; a reworded rendering can no longer flip the
+/// class. The rendered message stays byte-identical to the prose it
+/// replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AgentVerifyMovementError {
+    /// A fully current same-revision pair cannot contain movement (#2922
+    /// PR A): nothing has changed since the before phase.
+    NoMovement { head: String },
+}
+
+impl std::fmt::Display for AgentVerifyMovementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentVerifyMovementError::NoMovement { head } => write!(
+                f,
+                "no repository movement between before and after artifacts: the repository is still at {head}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
+            ),
+        }
+    }
+}
+
 /// Verify-layer movement contract (#2922 PR A). A pair of fully current
 /// artifacts bound to the same revision cannot contain movement: the input
 /// identity is equal and the observed clean state is identical, so any
@@ -1558,21 +1581,21 @@ pub(crate) fn validate_pair_lineage(
 pub(crate) fn validate_verify_movement(
     before: &ValidatedArtifact,
     after: &ValidatedArtifact,
-) -> Result<(), String> {
+) -> Result<(), AgentVerifyMovementError> {
     if before.repository_head == after.repository_head
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
-        // #11026: the leading clause is matched by the CLI as a named refusal
-        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
-        // language: the repository has not changed since the before phase.
+        // #14021: the CLI reads the typed `AgentVerifyMovementError` variant,
+        // not this message, so only the tail is plain language: the
+        // repository has not changed since the before phase.
         let short = before
             .repository_head
             .get(..7)
             .unwrap_or(&before.repository_head);
-        return Err(format!(
-            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
-        ));
+        return Err(AgentVerifyMovementError::NoMovement {
+            head: short.to_string(),
+        });
     }
     Ok(())
 }
@@ -4238,16 +4261,21 @@ mod tests {
         // The comparability authority deliberately keeps the same-revision
         // pair valid; movement is a verify-layer requirement (#2922 PR A).
         assert_eq!(validate_comparable_pair(&before, &after), Ok(()));
-        assert!(matches!(
-            validate_verify_movement(&before, &after),
-            Err(error) if error.contains("no repository movement")
-                && error.contains("the repository is still at aaaaaaa")
-                && error.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
+        let refusal = validate_verify_movement(&before, &after);
+        assert!(
+            matches!(&refusal, Err(AgentVerifyMovementError::NoMovement { .. })),
+            "expected the typed no-movement refusal, got {refusal:?}"
+        );
+        if let Err(error) = refusal {
+            let text = error.to_string();
+            assert!(text.contains("no repository movement")
+                && text.contains("the repository is still at aaaaaaa")
+                && text.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
                 // The old internal wording and the full 40-character
                 // revision must not come back.
-                && !error.contains("both are current")
-                && !error.contains(&"a".repeat(40))
-        ));
+                && !text.contains("both are current")
+                && !text.contains(&"a".repeat(40)));
+        }
 
         // A disclosed non-current observation stays admissible at this layer.
         let mut dirty_after = after.clone();

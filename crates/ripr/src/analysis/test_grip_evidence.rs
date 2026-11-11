@@ -805,13 +805,15 @@ fn credited_related_tests<'a>(
     // (#12056, #12264).
     let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
         owner_reach.as_ref().is_some_and(|(_, reach)| {
-            let text = super::classifier::assertion_text_with_local_initializers(
-                context.index,
-                test,
-                &oracle.text,
-                owner,
-            );
-            reach.assertion_pins_other_function(owner, test, oracle, &text)
+            context.other_function_pin_decision(owner, test, oracle, || {
+                let text = super::classifier::assertion_text_with_local_initializers(
+                    context.index,
+                    test,
+                    &oracle.text,
+                    owner,
+                );
+                reach.assertion_pins_other_function(owner, test, oracle, &text)
+            })
         })
     };
     related
@@ -821,14 +823,22 @@ fn credited_related_tests<'a>(
             if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
+            {
+                // One decision per oracle: the text it reads is rebuilt from
+                // the whole test body, so ask once and drop by position
+                // rather than once to detect and again to retain.
+                let pins: Vec<bool> = test
                     .assertions
                     .iter()
-                    .any(|oracle| pins_other_function(owner, test, oracle))
-            {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !pins_other_function(owner, test, oracle));
+                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .collect();
+                if pins.contains(&true) {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !pins[position - 1]
+                    });
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -1209,6 +1219,9 @@ thread_local! {
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times credited-view owner reach was built on this thread (#12478).
     static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times an other-function pin decision was computed rather than read
+    /// from the context's memo on this thread (#14011).
+    static PIN_DECISIONS_COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type

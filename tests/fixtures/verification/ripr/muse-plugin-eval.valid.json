@@ -1,0 +1,74 @@
+{
+  "schema_version": "muse-plugin-eval-v1",
+  "identity": {
+    "scenario_id": "contract-fixture-setup",
+    "fixture_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+    "ripr_commit": "2222222222222222222222222222222222222222",
+    "ripr_version": "0.0.0-test-fixture",
+    "plugin_version": "0.0.0-test-fixture",
+    "muse_version": "test-fixture-only"
+  },
+  "environment": {
+    "os": "synthetic-not-executed",
+    "git_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "working_tree": "clean",
+    "ripr_binary": "mcp_capable"
+  },
+  "model": {
+    "provider": "synthetic-fixture-provider",
+    "model": "synthetic-test-model",
+    "configuration": "synthetic-test-configuration",
+    "trial_id": "contract-test-trial-1"
+  },
+  "task": {
+    "initial_request": "Synthetic contract fixture only; do not execute.",
+    "expected_oracle": "Contract fixture: setup is observed; repair and execution are not measured."
+  },
+  "mcp": {
+    "tools_discovered": [
+      "ripr_workspace_status"
+    ],
+    "setup_outcome": "ready"
+  },
+  "verdicts": {
+    "static_verdict": "not_measured",
+    "executed_verdict": "not_measured",
+    "combined_claim": "not_completed"
+  },
+  "observations": {
+    "run_id": "contract-test-run-1",
+    "trial_id": "contract-test-trial-1",
+    "recorded_unix_ms": 0,
+    "subject": {
+      "plugin_version": "0.0.0-test-fixture",
+      "plugin_package_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "ripr_version": "0.0.0-test-fixture",
+      "ripr_commit": "2222222222222222222222222222222222222222",
+      "muse_version": "test-fixture-only",
+      "platform": "synthetic-not-executed",
+      "model": "synthetic-test-model",
+      "model_config_sha256": "49065b2d5f4680b8d9f734944867a72b5a48b09e11bbf47b8f2a9c516c777047"
+    },
+    "scenario": {
+      "id": "contract-fixture-setup",
+      "task_id": "test-task",
+      "task_sha256": "b4ec58252847242a8829e31f59a1d6024859b280081150e7d6e4a699fcc2fb0c",
+      "fixture_id": "synthetic-fixture",
+      "fixture_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "evidence": [
+      {
+        "id": "setup-log",
+        "kind": "tool_transcript",
+        "uri": "test-fixture://not-a-measured-run/setup",
+        "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ],
+    "setup": {
+      "status": "passed",
+      "plugin_loaded": true,
+      "mcp_available": true,
+      "evidence": "setup-log"
+    }
+  }
+}

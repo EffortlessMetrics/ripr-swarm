@@ -35,6 +35,7 @@
 //! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
 //! developer meets first.
 
+mod cargo_mutants_diff;
 mod cosmic_ray;
 pub(crate) mod pilot;
 mod stryker;
@@ -130,12 +131,18 @@ const HARNESS_LANGUAGE: &str = "rust";
 /// or missed) a synthetic-diff language needs before `recall_of_missed`
 /// reports it as established rather than `insufficient_sample`.
 const MIN_SCORED_FOR_ESTABLISHED: usize = 30;
+/// Recall key and receipt section label of Rust mutants scored through
+/// `ripr check --diff` (`--rust-diff-mode`). It never feeds a span-join number.
+const RUST_DIFF_MODE: &str = "rust_diff_mode";
+const RUST_DIFF_MODE_SECTION: &str = "rust_diff_mode_verdict";
+const RUST_DIFF_MODE_BOUNDARY: &str = "Advisory and never mixed with the Rust span-join figures, which score the same cargo-mutants mutants against repo-exposure seams. Here each mutant's own recorded cargo-mutants diff is applied to a scratch copy of the checkout and run through `ripr check --diff` (the product path), and the classification on the mutated lines is read back. Only pairs with a caught or missed outcome and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. A line with findings of different classes (a predicate and a return value, say) is excluded as ambiguous. Missed mutants that are excluded (ambiguous, no finding, a recorded diff that no longer matches, beyond the sampling cap) still count in recall_of_missed missed_total as not flagged, so the rust_diff_mode recall is a lower bound that depends on the cap. A mutated line is not a seam; the figures bind to the recorded revisions and cargo-mutants versions and are not suite adequacy.";
 const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.";
+  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.
+  Rust diff mode: add --rust-diff-mode to also score every cargo-mutants mutant through `ripr check --diff` with its recorded diff (capped by --max-mutants), reported apart from the span join.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -228,9 +235,9 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             )?);
             continue;
         }
-        repos.push(spot_check_repo(
-            &binary, &scratch, name, checkout, &options,
-        )?);
+        let run = spot_check_repo(&binary, &scratch, name, checkout, &options)?;
+        repos.push(run.span_join);
+        repos.extend(run.diff_mode);
     }
     let report = build_report(&repos, options.examples, &analyzer);
     let json_text = serde_json::to_string_pretty(&report)
@@ -254,6 +261,8 @@ struct Options {
     /// The cosmic-ray version that produced the dumps; a dump does not say.
     cosmic_ray_version: Option<String>,
     max_mutants: usize,
+    /// Also score cargo-mutants repos through `ripr check --diff`.
+    rust_diff_mode: bool,
     run_mutants: bool,
     jobs: usize,
     mutant_timeout_secs: u64,
@@ -270,6 +279,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         cosmic_ray_dumps: BTreeMap::new(),
         cosmic_ray_version: None,
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
+        rust_diff_mode: false,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
         mutant_timeout_secs: DEFAULT_MUTANT_TIMEOUT_SECS,
@@ -334,6 +344,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     parse_positive(required_arg(args, index, flag)?, flag)? as usize;
             }
             "--run-mutants" => options.run_mutants = true,
+            "--rust-diff-mode" => options.rust_diff_mode = true,
             "--jobs" => {
                 index += 1;
                 options.jobs = parse_positive(required_arg(args, index, flag)?, flag)? as usize;
@@ -401,6 +412,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         return Err(
             "--stryker-report (TypeScript) and --cosmic-ray-dump (Python) in one run would mix two languages in the one synthetic_diff_verdict section; run them separately"
                 .to_string(),
+        );
+    }
+    if options.rust_diff_mode
+        && options.repos.iter().all(|(name, _)| {
+            options.stryker_reports.contains_key(name)
+                || options.cosmic_ray_dumps.contains_key(name)
+        })
+    {
+        return Err(
+            "--rust-diff-mode scores cargo-mutants repos, and every --repo here is scored from a Stryker report or cosmic-ray dump".to_string(),
         );
     }
     for name in options.mutants_args.keys() {
@@ -474,13 +495,20 @@ struct RepoRun {
     synthetic: Option<Value>,
 }
 
+/// One cargo-mutants repo: its span-join run and, with `--rust-diff-mode`,
+/// the same mutants scored through `ripr check --diff`.
+struct RustRuns {
+    span_join: RepoRun,
+    diff_mode: Option<RepoRun>,
+}
+
 fn spot_check_repo(
     binary: &Path,
     scratch: &Path,
     name: &str,
     checkout: &Path,
     options: &Options,
-) -> Result<RepoRun, String> {
+) -> Result<RustRuns, String> {
     let revision = run_text(
         "git",
         &[
@@ -556,8 +584,44 @@ fn spot_check_repo(
     )?;
     let calibration: Value = serde_json::from_str(&calibration)
         .map_err(|err| format!("parse calibration JSON for `{name}`: {err}"))?;
+    let mutant_set =
+        mutant_set_sha256(&mutant_records).map_err(|err| format!("`{name}`: {err}"))?;
+    let cargo_mutants_version = outcomes
+        .get("cargo_mutants_version")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let diff_mode = if options.rust_diff_mode {
+        let read_source = |path: &str| {
+            let relative = synthetic_diff::checkout_relative(path)?;
+            fs::read_to_string(checkout.join(relative)).ok()
+        };
+        let sources =
+            cargo_mutants_diff::rust_mutation_sources(&mutant_records, &outcomes, &read_source);
+        let mut run = synthetic_diff::spot_check_synthetic_repo(&synthetic_diff::SyntheticRepo {
+            binary,
+            scratch,
+            name,
+            checkout,
+            profile: synthetic_diff::RUST,
+            sources: &sources,
+            tool: json!({"name": "cargo-mutants", "version": cargo_mutants_version}),
+            max_mutants: options.max_mutants,
+        })?;
+        // The same population as the span join, keyed apart from it.
+        run.language = RUST_DIFF_MODE.to_string();
+        run.diffs_checked = diffs_checked;
+        run.mutant_set_sha256 = mutant_set.clone();
+        run.cargo_mutants_version = cargo_mutants_version.clone();
+        if let Some(extra) = run.synthetic.as_mut().and_then(Value::as_object_mut) {
+            extra.insert("analyzed_language".into(), json!(HARNESS_LANGUAGE));
+            extra.insert("diff_source".into(), json!("cargo_mutants_recorded_diff"));
+        }
+        Some(run)
+    } else {
+        None
+    };
 
-    Ok(RepoRun {
+    let span_join = RepoRun {
         name: name.to_string(),
         language: HARNESS_LANGUAGE.to_string(),
         revision,
@@ -573,12 +637,8 @@ fn spot_check_repo(
         },
         mutant_timeout_secs: (!options.mutants_out.contains_key(name))
             .then_some(options.mutant_timeout_secs),
-        mutant_set_sha256: mutant_set_sha256(&mutant_records)
-            .map_err(|err| format!("`{name}`: {err}"))?,
-        cargo_mutants_version: outcomes
-            .get("cargo_mutants_version")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        mutant_set_sha256: mutant_set,
+        cargo_mutants_version,
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
         records: classify_records(
             &calibration,
@@ -603,6 +663,10 @@ fn spot_check_repo(
                 },
             )
         }),
+    };
+    Ok(RustRuns {
+        span_join,
+        diff_mode,
     })
 }
 
@@ -1194,13 +1258,20 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
     // Synthetic-diff repos (TypeScript) are scored by a different join, so
     // their numbers stay out of every Rust span-join aggregate below and are
     // reported under `synthetic_diff_verdict` instead.
+    // Rust diff-mode runs re-score span-join mutants, so they are kept out of
+    // `repos` (whose populations downstream consumers sum) and reported under
+    // their own section and recall key.
     let repos: Vec<&RepoRun> = all_repos
         .iter()
         .filter(|repo| repo.synthetic.is_none())
         .collect();
     let synthetic_repos: Vec<&RepoRun> = all_repos
         .iter()
-        .filter(|repo| repo.synthetic.is_some())
+        .filter(|repo| repo.synthetic.is_some() && repo.language != RUST_DIFF_MODE)
+        .collect();
+    let diff_mode_repos: Vec<&RepoRun> = all_repos
+        .iter()
+        .filter(|repo| repo.language == RUST_DIFF_MODE)
         .collect();
     let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
         BTreeMap::new();
@@ -1296,7 +1367,11 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
         "status": "advisory",
         "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
-        "repos": all_repos.iter().map(repo_entry).collect::<Vec<_>>(),
+        "repos": all_repos
+            .iter()
+            .filter(|repo| repo.language != RUST_DIFF_MODE)
+            .map(repo_entry)
+            .collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
         "recall_of_missed": recall,
@@ -1316,6 +1391,17 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
     });
     if !synthetic_repos.is_empty() {
         report["synthetic_diff_verdict"] = synthetic_section(&synthetic_repos, examples);
+    }
+    if !diff_mode_repos.is_empty() {
+        let mut section = synthetic_section(&diff_mode_repos, examples);
+        section["claim_boundary"] = json!(RUST_DIFF_MODE_BOUNDARY);
+        section["repos"] = json!(
+            diff_mode_repos
+                .iter()
+                .map(|repo| repo_entry(repo))
+                .collect::<Vec<_>>()
+        );
+        report[RUST_DIFF_MODE_SECTION] = section;
     }
     report
 }
@@ -1827,6 +1913,33 @@ fn recorded_language_outcomes(
     aggregate: &Value,
     path: &Path,
 ) -> Result<BTreeMap<String, Value>, String> {
+    // Rust diff-mode repos sit in their own section with their own tables.
+    let mut diff_mode: BTreeMap<String, Value> = BTreeMap::new();
+    for repo in report
+        .pointer(&format!("/{RUST_DIFF_MODE_SECTION}/repos"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(own) = repo.get("outcomes_by_disposition_and_grip_class") {
+            merge_outcomes(
+                diff_mode
+                    .entry(RUST_DIFF_MODE.to_string())
+                    .or_insert_with(|| json!({})),
+                own,
+            );
+        }
+    }
+    let mut tables = recorded_repo_outcomes(report, aggregate, path)?;
+    tables.extend(diff_mode);
+    Ok(tables)
+}
+
+fn recorded_repo_outcomes(
+    report: &mut Value,
+    aggregate: &Value,
+    path: &Path,
+) -> Result<BTreeMap<String, Value>, String> {
     let repos = report
         .get_mut("repos")
         .and_then(Value::as_array_mut)
@@ -2078,13 +2191,22 @@ fn spot_check_markdown(report: &Value) -> String {
     {
         out.push_str(&format!("- **absent** {}\n", example_line(row)));
     }
-    out.push_str(&synthetic_markdown(report));
+    out.push_str(&synthetic_markdown(
+        report,
+        "synthetic_diff_verdict",
+        "Synthetic-diff verdicts",
+    ));
+    out.push_str(&synthetic_markdown(
+        report,
+        RUST_DIFF_MODE_SECTION,
+        "Rust diff-mode verdicts via ripr check --diff",
+    ));
     out.push_str(&pilot::markdown(report));
     out
 }
 
-fn synthetic_markdown(report: &Value) -> String {
-    let Some(section) = report.get("synthetic_diff_verdict") else {
+fn synthetic_markdown(report: &Value, key: &str, title: &str) -> String {
+    let Some(section) = report.get(key) else {
         return String::new();
     };
     let languages: BTreeSet<&str> = section
@@ -2095,7 +2217,7 @@ fn synthetic_markdown(report: &Value) -> String {
         .filter_map(|repo| repo.get("language").and_then(Value::as_str))
         .collect();
     let mut out = format!(
-        "\n## Synthetic-diff verdicts (real mutants, {})\n\n",
+        "\n## {title} (real mutants, {})\n\n",
         languages.into_iter().collect::<Vec<_>>().join(", ")
     );
     if let Some(boundary) = section.get("claim_boundary").and_then(Value::as_str) {
@@ -3292,6 +3414,155 @@ mod tests {
         assert_eq!(at["agreement_method"], "synthetic_diff_verdict");
         assert_eq!(at["missed_total"], MIN_SCORED_FOR_ESTABLISHED + 2);
         assert!(at.get("ungripped_share_of_missed").is_some());
+    }
+
+    fn span_join_record(grip_class: &str, outcome: &str) -> Record {
+        Record {
+            disposition: CANONICAL_PRECISE.to_string(),
+            join_method: "seam_id".to_string(),
+            grip_class: grip_class.to_string(),
+            outcome: outcome.to_string(),
+            seam_id: "seam-1".to_string(),
+            seam_kind: "predicate_boundary".to_string(),
+            file: "src/a.rs".to_string(),
+            line: 3,
+            expression: Some("a > 1".to_string()),
+            mutant: "src/a.rs:3:7: replace > with < in f".to_string(),
+            operator_token: "present",
+            verdict_token: String::new(),
+        }
+    }
+
+    fn diff_mode_run(scored: usize) -> RepoRun {
+        let mut records = vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            synthetic_record("recorded_diff_mismatch", "", "missed"),
+            synthetic_record("unscoreable_outcome", "", "timeout"),
+        ];
+        for _ in 0..scored {
+            records.push(synthetic_record(
+                CANONICAL_PRECISE,
+                "reachable_unrevealed",
+                "missed",
+            ));
+        }
+        let mut run = repo_run(records);
+        run.language = RUST_DIFF_MODE.to_string();
+        run.synthetic = Some(json!({
+            "agreement_method": synthetic_diff::AGREEMENT_METHOD,
+            "analyzed_language": "rust",
+            "diff_source": "cargo_mutants_recorded_diff",
+        }));
+        run
+    }
+
+    #[test]
+    fn rust_diff_mode_is_additive_to_the_span_join_receipt() -> Result<(), String> {
+        let span = || {
+            repo_run(vec![
+                span_join_record("ungripped", "missed"),
+                span_join_record("strongly_gripped", "caught"),
+            ])
+        };
+        let without = build_report(&[span()], 5, "ripr test");
+        let with = build_report(
+            &[span(), diff_mode_run(MIN_SCORED_FOR_ESTABLISHED)],
+            5,
+            "ripr test",
+        );
+        // Every existing row is unchanged; only the new section and recall key differ.
+        let mut stripped = with.clone();
+        let section = stripped
+            .as_object_mut()
+            .and_then(|report| report.remove(RUST_DIFF_MODE_SECTION))
+            .ok_or("missing rust_diff_mode_verdict")?;
+        let diff_mode_recall = stripped["recall_of_missed"]["by_language"]
+            .as_object_mut()
+            .and_then(|languages| languages.remove(RUST_DIFF_MODE))
+            .ok_or("missing by_language.rust_diff_mode")?;
+        assert_eq!(stripped, without);
+        assert!(without.get(RUST_DIFF_MODE_SECTION).is_none());
+        assert_eq!(with["repos"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            with["recall_of_missed"]["by_language"]["rust"]["missed_total"],
+            1
+        );
+        // The diff-mode figure carries the synthetic-language shape and gate.
+        assert_eq!(diff_mode_recall["status"], "established");
+        assert_eq!(
+            diff_mode_recall["agreement_method"],
+            "synthetic_diff_verdict"
+        );
+        assert_eq!(
+            diff_mode_recall["scored_claim_mutants"],
+            MIN_SCORED_FOR_ESTABLISHED + 1
+        );
+        assert_eq!(
+            diff_mode_recall["missed_total"],
+            MIN_SCORED_FOR_ESTABLISHED + 1
+        );
+        assert_eq!(
+            diff_mode_recall["ungripped_missed"],
+            MIN_SCORED_FOR_ESTABLISHED
+        );
+        assert_eq!(section["records_total"], MIN_SCORED_FOR_ESTABLISHED + 3);
+        assert_eq!(section["excluded"]["recorded_diff_mismatch"], 1);
+        assert_eq!(section["repos"][0]["language"], RUST_DIFF_MODE);
+        assert_eq!(
+            section["repos"][0]["diff_source"],
+            "cargo_mutants_recorded_diff"
+        );
+        assert!(
+            section["claim_boundary"]
+                .as_str()
+                .is_some_and(|text| text.contains("ripr check --diff"))
+        );
+        let small = build_report(&[span(), diff_mode_run(2)], 5, "ripr test");
+        assert_eq!(
+            small["recall_of_missed"]["by_language"][RUST_DIFF_MODE]["status"],
+            "insufficient_sample"
+        );
+        assert!(spot_check_markdown(&with).contains("Rust diff-mode verdicts"));
+
+        // Re-deriving keeps the split: the Rust figure from `repos`, the
+        // diff-mode figure from its own section.
+        let dir =
+            std::env::temp_dir().join(format!("ripr-rederive-diff-mode-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("report.json");
+        fs::write(&path, with.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(out["recall_of_missed"], with["recall_of_missed"]);
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn rust_diff_mode_flag_needs_a_cargo_mutants_repo() -> Result<(), String> {
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert!(!parse_options(&args(&["--repo", "a=/tmp/a"]))?.rust_diff_mode);
+        let options = parse_options(&args(&[
+            "--repo",
+            "a=/tmp/a",
+            "--rust-diff-mode",
+            "--max-mutants",
+            "7",
+        ]))?;
+        assert!(options.rust_diff_mode);
+        assert_eq!(options.max_mutants, 7);
+        let only_ts = parse_options(&args(&[
+            "--repo",
+            "a=/tmp/a",
+            "--stryker-report",
+            "a=/tmp/m.json",
+            "--rust-diff-mode",
+        ]));
+        assert!(only_ts.is_err_and(|err| err.contains("--rust-diff-mode")));
+        assert!(USAGE.contains("--rust-diff-mode"));
+        Ok(())
     }
 
     fn fixture(dir: &str, file: &str) -> Result<Value, String> {
