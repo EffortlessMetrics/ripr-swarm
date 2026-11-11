@@ -1034,6 +1034,33 @@ fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
     assert!(text.contains(" gaps=2 "), "{text}");
     assert!(!text.contains("folded_gaps="), "{text}");
 
+    // Two long expressions that print the same clipped text still differ.
+    let long = "x".repeat(120);
+    let mut long_a = error_path.clone();
+    long_a.probe.expression = format!("{long}a");
+    let mut long_b = return_value.clone();
+    long_b.probe.expression = format!("{long}b");
+    let text = rendered(&output(vec![long_a, long_b]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        2,
+        "the fold compares unclipped text: {text}"
+    );
+
+    // A second missing value the row does not print still keeps both rows.
+    let mut second_missing = return_value.clone();
+    let mut extra = second_missing.activation.missing_discriminators[0].clone();
+    extra.value = "pct == 51".to_string();
+    second_missing.activation.missing_discriminators.push(extra);
+    let text = rendered(&output(vec![error_path.clone(), second_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // A different strongest related test keeps both rows.
+    let mut other_test = return_value.clone();
+    other_test.related_tests[0].name = "discount_other".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_test]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
     // Same row text on another line is a different edit.
     let mut other_line = return_value.clone();
     other_line.probe.location = SourceLocation::new("src/lib.rs", 13, 1);

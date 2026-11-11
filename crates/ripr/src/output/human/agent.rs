@@ -1001,8 +1001,9 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
 /// Gap findings with one row each, in triage order (#14338). Two findings
 /// fold only when everything their records would print agrees except the
 /// id: class, location, expression, `missing=`, the strongest related test
-/// (its full `tN=` line) and the `stages=` row. Then one test closes both, so
-/// a second row would only make an agent plan a second test. The first
+/// (its full `tN=` line) and the `stages=` row, compared unclipped. Then
+/// one test closes both, so a second row would only make an agent plan a
+/// second test. The first
 /// finding in triage order keeps the row, so the top gap and `next=` are
 /// unchanged; any difference keeps the rows separate (fail closed).
 fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
@@ -1018,23 +1019,42 @@ fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Fin
     rows
 }
 
-/// What a gap's records print, without its id (see `fold_identical_gap_rows`).
+/// What a gap's records say, without its id (see `fold_identical_gap_rows`).
+/// Built from the unclipped values, and from every missing discriminator
+/// rather than the one printed, so two findings that differ past the field
+/// budget or in a later missing value never fold.
 fn gap_row_key(root: &Path, finding: &Finding) -> String {
-    let row = gap_line(root, finding, None, true);
-    let row = row
-        .rsplit_once("|id=")
-        .map_or(row.as_str(), |(head, _)| head);
-    let mut scratch = Vec::new();
-    let test = strongest_test(finding)
-        .map(|test| {
-            intern_test(&mut scratch, root, test);
-            scratch.pop().map(|known| known.line).unwrap_or_default()
-        })
-        .unwrap_or_default();
+    let missing: Vec<&str> = finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .chain(finding.missing.iter().map(String::as_str))
+        .collect();
+    let test = strongest_test(finding).map(|test| {
+        format!(
+            "{}:{} {} {} {:?} {:?}",
+            repository_display_path(root, &test.file),
+            test.line,
+            test.name,
+            test.oracle_kind.as_str(),
+            test.oracle,
+            test.miss.map(|miss| miss.as_str())
+        )
+    });
     let stages = crate::output::stage_rows::stage_rows_agent_line(
         &crate::output::stage_rows::evidence_stage_rows(finding),
     );
-    format!("{row}\n{test}\n{stages}")
+    format!(
+        "{}\n{}:{}\n{}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        finding.probe.expression,
+        missing,
+        test,
+        stages
+    )
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {

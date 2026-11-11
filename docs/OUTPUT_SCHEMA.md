@@ -1128,7 +1128,9 @@ verify=complete|outcome=O|findings=N|exposed=N
   print identical records: the same class, `FILE:LINE`, changed expression,
   `missing=` value, strongest related test (its whole `tK=` line) and
   `stages=` row, differing only in `id=` (for example an `error_path` and a
-  `return_value` probe on one `return Err(..)` line). One test closes all of
+  `return_value` probe on one `return Err(..)` line). The comparison uses the
+  unclipped values and every missing discriminator, not only the printed
+  one. One test closes all of
   them, so they print as one row, kept by the first finding in triage order,
   and `gaps=` counts rows: `gaps=G` is the number of tests to write and
   `G + F` the number of gap findings. Any printed difference keeps the rows
