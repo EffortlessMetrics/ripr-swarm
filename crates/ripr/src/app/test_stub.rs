@@ -1916,19 +1916,7 @@ pub(crate) fn focused_test_run_command(
     if !plain_name || file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
         return None;
     }
-    let in_tests_dir = file
-        .components()
-        .any(|component| component.as_os_str() == "tests");
-    let placement = if in_tests_dir {
-        TestStubPlacement::ExistingIntegrationFile { file }
-    } else {
-        TestStubPlacement::ExistingInlineModule {
-            file,
-            module_name: "tests".to_string(),
-            offset: 0,
-        }
-    };
-    let stub = RustTestStub {
+    let stub_at = |placement| RustTestStub {
         placement,
         test_name: test_name.to_string(),
         text: String::new(),
@@ -1936,14 +1924,34 @@ pub(crate) fn focused_test_run_command(
         fill_ins: Vec::new(),
         derived_inputs: Vec::new(),
     };
-    let manifest = package_manifest_for(root, &stub)?;
-    let target = if in_tests_dir {
-        match integration_target_lookup(root, &manifest, &stub) {
-            TargetLookup::Name(name) => Some(name),
-            TargetLookup::NotRegistered | TargetLookup::Unresolved => return None,
+    let integration = stub_at(TestStubPlacement::ExistingIntegrationFile { file: file.clone() });
+    let manifest = package_manifest_for(root, &integration)?;
+    // The package's own target layout decides the route, not a `tests` path
+    // component anywhere: `src/tests/pricing.rs` is an inline module file.
+    let under_package_tests = file
+        .strip_prefix(manifest.parent().unwrap_or(Path::new("")))
+        .is_ok_and(|relative| relative.starts_with("tests"));
+    let (stub, target) = match integration_target_lookup(root, &manifest, &integration) {
+        // A manifest `[[test]] name` is printed into a copyable command, so
+        // only a plain cargo target name is offered; anything else fails
+        // closed instead of being run by the developer's shell.
+        TargetLookup::Name(name)
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+        {
+            (integration, Some(name))
         }
-    } else {
-        None
+        TargetLookup::NotRegistered if !under_package_tests => (
+            stub_at(TestStubPlacement::ExistingInlineModule {
+                file,
+                module_name: "tests".to_string(),
+                offset: 0,
+            }),
+            None,
+        ),
+        _ => return None,
     };
     let manifest = root.join(&manifest);
     let manifest = manifest
@@ -2531,6 +2539,24 @@ mod tests {
         std::fs::create_dir_all(orphan.join("tests")).map_err(|error| error.to_string())?;
         assert_eq!(
             focused_test_run_command(&orphan, "tests/pricing.rs", "t"),
+            None
+        );
+        // A `tests` directory under `src/` is an inline module file of the
+        // library, not an integration target (#14320 review).
+        assert_eq!(
+            focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} equal_threshold"
+            ))
+        );
+        // A manifest target name with shell syntax is never printed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n\n[[test]]\nname = \"p;touch x\"\npath = \"tests/pricing.rs\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
             None
         );
         // `autotests = false` without an entry leaves the target unnamed.
