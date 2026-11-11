@@ -595,3 +595,343 @@ fn future_zero_and_non_attempt_artifacts_are_not_selected() -> Result<(), String
     fs::remove_dir_all(root).map_err(|err| err.to_string())?;
     Ok(())
 }
+
+fn flatten_attempt(root: &Path, shard: u32, attempt: u32) -> Result<PathBuf, String> {
+    let source = put_attempt(root, shard, attempt)?;
+    let staging = root.join("flat-staging");
+    fs::rename(source, &staging).map_err(|err| err.to_string())?;
+    fs::remove_dir(root.join("in")).map_err(|err| err.to_string())?;
+    let flat = root.join("in/nextest/ci");
+    fs::create_dir_all(root.join("in/nextest")).map_err(|err| err.to_string())?;
+    fs::rename(staging, &flat).map_err(|err| err.to_string())?;
+    Ok(flat)
+}
+
+#[test]
+fn singleton_download_retains_present_shard_but_refuses_missing_cover() -> Result<(), String> {
+    let root = crate::tests::temp_dir("singleton-shard-incomplete");
+    flatten_attempt(&root, 1, 2)?;
+    let outcome = verify(&attempt_options(&root, 2), Ok(attempt_blobs()));
+    assert!(
+        outcome
+            .summary
+            .contains("shard 1: listed 1, junit tests 1 (attempt 2)"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|why| why.contains("shard 2: artifact is missing")),
+        "{:?}",
+        outcome.problems
+    );
+    assert!(
+        !outcome.problems.iter().any(|why| why.contains("shard 1:")),
+        "{:?}",
+        outcome.problems
+    );
+    assert!(!outcome.problems.is_empty());
+    fs::remove_dir_all(root).map_err(|err| err.to_string())
+}
+
+#[test]
+fn singleton_download_accepts_complete_one_shard_run() -> Result<(), String> {
+    let root = crate::tests::temp_dir("singleton-shard-complete");
+    let flat = flatten_attempt(&root, 1, 1)?;
+    let context =
+        fs::read_to_string(flat.join("run-context.txt")).map_err(|err| err.to_string())?;
+    fs::write(flat.join("run-context.txt"), context.replace("1/2", "1/1"))
+        .map_err(|err| err.to_string())?;
+    fs::write(flat.join("list-all.txt"), "b1 case\n").map_err(|err| err.to_string())?;
+    let mut options = attempt_options(&root, 1);
+    options.shards = 1;
+    let outcome = verify(&options, Ok(attempt_blobs()));
+    assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+    assert!(outcome.context.contains("shards=1/1 verified\n"));
+    assert_eq!(parse_junit(&outcome.junit)?.identities, ["b1 case"]);
+    fs::remove_dir_all(root).map_err(|err| err.to_string())
+}
+
+fn complete_singleton(
+    root: &Path,
+    attempt: u32,
+    all_features: bool,
+) -> Result<(PathBuf, Options), String> {
+    let flat = flatten_attempt(root, 1, attempt)?;
+    let context =
+        fs::read_to_string(flat.join("run-context.txt")).map_err(|err| err.to_string())?;
+    let mut context = context.replace("1/2", "1/1");
+    if all_features {
+        context = context.replace(
+            "--workspace --profile",
+            "--workspace --all-features --profile",
+        );
+    }
+    fs::write(flat.join("run-context.txt"), context).map_err(|err| err.to_string())?;
+    fs::write(flat.join("list-all.txt"), "b1 case\n").map_err(|err| err.to_string())?;
+    let mut options = attempt_options(root, attempt);
+    options.shards = 1;
+    options.all_features = all_features;
+    Ok((flat, options))
+}
+
+#[test]
+fn singleton_direct_and_nested_layouts_preserve_attempt_and_command_modes() -> Result<(), String> {
+    for nested in [false, true] {
+        for all_features in [false, true] {
+            let root = crate::tests::temp_dir("singleton-layout-mode");
+            let (flat, mut options) = complete_singleton(&root, 2, all_features)?;
+            if !nested {
+                for entry in fs::read_dir(&flat).map_err(|err| err.to_string())? {
+                    let entry = entry.map_err(|err| err.to_string())?;
+                    fs::rename(entry.path(), options.dir.join(entry.file_name()))
+                        .map_err(|err| err.to_string())?;
+                }
+                fs::remove_dir_all(root.join("in/nextest")).map_err(|err| err.to_string())?;
+            }
+            options.attempt = "3".to_string();
+            let outcome = verify(&options, Ok(attempt_blobs()));
+            assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+            assert!(
+                outcome
+                    .context
+                    .lines()
+                    .any(|line| line == "verified_attempts=2")
+            );
+            assert!(outcome.summary.contains("junit tests 1 (attempt 2)"));
+            options.all_features = !all_features;
+            let wrong = verify(&options, Ok(attempt_blobs()));
+            assert!(
+                wrong
+                    .problems
+                    .iter()
+                    .any(|why| why.contains("run-context command")),
+                "{:?}",
+                wrong.problems
+            );
+            fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn singleton_other_partition_does_not_supply_first_shard_or_full_list() -> Result<(), String> {
+    let root = crate::tests::temp_dir("singleton-second-shard");
+    flatten_attempt(&root, 2, 1)?;
+    let outcome = verify(&attempt_options(&root, 1), Ok(attempt_blobs()));
+    assert!(
+        outcome
+            .summary
+            .contains("shard 2: listed 1, junit tests 1 (attempt 1)")
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|why| why.contains("shard 1: artifact is missing"))
+    );
+    assert!(
+        outcome
+            .problems
+            .iter()
+            .any(|why| why.contains("full workspace list: list-all.txt is missing"))
+    );
+    fs::remove_dir_all(root).map_err(|err| err.to_string())
+}
+
+#[test]
+fn singleton_archive_members_are_not_outer_artifact_directories() -> Result<(), String> {
+    let root = crate::tests::temp_dir("singleton-internal-artifact-name");
+    let (flat, options) = complete_singleton(&root, 1, false)?;
+    fs::write(
+        options.dir.join("diagnostic-nextest-shard-note.txt"),
+        "retained diagnostic\n",
+    )
+    .map_err(|err| err.to_string())?;
+    // Only immediate directories represent the download action's named layout.
+    // Deeper directories retain archive-internal names even when those match.
+    fs::rename(&flat, flat.with_file_name("internal-nextest-shard-1-1"))
+        .map_err(|err| err.to_string())?;
+    let outcome = verify(&options, Ok(attempt_blobs()));
+    assert!(outcome.problems.is_empty(), "{:?}", outcome.problems);
+    assert_eq!(parse_junit(&outcome.junit)?.identities, ["b1 case"]);
+    fs::remove_dir_all(root).map_err(|err| err.to_string())
+}
+
+#[test]
+fn singleton_discovery_refuses_noncanonical_or_ambiguous_identity() -> Result<(), String> {
+    for (from, to) in [
+        ("run_attempt=1", "run_attempt=0"),
+        ("run_attempt=1", "run_attempt=2"),
+        ("run_attempt=1", "run_attempt=01"),
+        ("run_attempt=1", "run_attempt=+1"),
+        ("run_attempt=1", "run_attempt=4294967296"),
+        ("run_attempt=1", "run_attempt=1 "),
+        ("run_attempt=1", " run_attempt=1"),
+        ("run_attempt=1", "run_attempt=1\nrun_attempt=1"),
+        ("run_attempt=1", "missing_attempt=1"),
+        ("shard=1/1", "shard=01/1"),
+        ("shard=1/1", "shard=1/01"),
+        ("shard=1/1", "shard=0/1"),
+        ("shard=1/1", "shard=2/1"),
+        ("shard=1/1", "shard=1/2"),
+        ("shard=1/1", "shard=1"),
+        ("shard=1/1", "shard=1/1\nshard=1/1"),
+        ("shard=1/1", "missing_shard=1/1"),
+    ] {
+        let root = crate::tests::temp_dir("singleton-invalid-identity");
+        let (flat, options) = complete_singleton(&root, 1, false)?;
+        let path = flat.join("run-context.txt");
+        let before = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        assert!(before.contains(from));
+        assert!(verify(&options, Ok(attempt_blobs())).problems.is_empty());
+        fs::write(path, before.replace(from, to)).map_err(|err| err.to_string())?;
+        assert!(singleton_shard(&options).is_err(), "accepted {to}");
+        assert!(
+            !verify(&options, Ok(attempt_blobs())).problems.is_empty(),
+            "accepted {to}"
+        );
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn singleton_layout_cannot_hide_mixed_named_or_duplicate_members() -> Result<(), String> {
+    for member in [
+        "run-context.txt",
+        "junit.xml",
+        "list-1.txt",
+        "shard-1.status",
+    ] {
+        let root = crate::tests::temp_dir("singleton-duplicate-member");
+        let (flat, options) = complete_singleton(&root, 1, false)?;
+        let extra = options.dir.join("another-member");
+        fs::create_dir(&extra).map_err(|err| err.to_string())?;
+        fs::copy(flat.join(member), extra.join(member)).map_err(|err| err.to_string())?;
+        let outcome = verify(&options, Ok(attempt_blobs()));
+        assert!(!outcome.problems.is_empty(), "accepted duplicate {member}");
+        assert!(
+            outcome
+                .problems
+                .iter()
+                .any(|why| why.contains("ambiguous") || why.contains("run contexts"))
+        );
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    for prefix in ["integration", "wrong-prefix"] {
+        let root = crate::tests::temp_dir("singleton-mixed-layout");
+        let (_, mut options) = complete_singleton(&root, 1, false)?;
+        let named = options.dir.join(format!("{prefix}-nextest-shard-1-2"));
+        fs::create_dir(&named).map_err(|err| err.to_string())?;
+        fs::write(named.join("shard-1.status"), "100\n").map_err(|err| err.to_string())?;
+        options.attempt = "2".to_string();
+        assert!(singleton_shard(&options).is_err());
+        let outcome = verify(&options, Ok(attempt_blobs()));
+        assert!(
+            outcome
+                .problems
+                .iter()
+                .any(|why| why.contains("mixed singleton")),
+            "{:?}",
+            outcome.problems
+        );
+        fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+    }
+    let root = crate::tests::temp_dir("singleton-wrong-prefix");
+    let dir = put_attempt(&root, 1, 1)?;
+    fs::rename(dir, root.join("in/wrong-prefix-nextest-shard-1-1"))
+        .map_err(|err| err.to_string())?;
+    let options = attempt_options(&root, 1);
+    assert!(singleton_shard(&options)?.is_none());
+    assert!(
+        verify(&options, Ok(attempt_blobs()))
+            .problems
+            .iter()
+            .any(|why| why.contains("shard 1: artifact is missing"))
+    );
+    fs::remove_dir_all(root).map_err(|err| err.to_string())
+}
+
+#[test]
+fn singleton_receipts_still_reach_every_existing_validation_boundary() -> Result<(), String> {
+    for all_features in [false, true] {
+        for (name, from, to, expected) in [
+            (
+                "run-context.txt",
+                "repository=o/r",
+                "repository=wrong/r",
+                "run-context repository",
+            ),
+            (
+                "run-context.txt",
+                "checkout_sha=",
+                "wrong_sha=",
+                "run-context has no checkout_sha",
+            ),
+            (
+                "run-context.txt",
+                "run_id=7",
+                "run_id=8",
+                "run-context run_id",
+            ),
+            (
+                "run-context.txt",
+                "profile=ci",
+                "profile=default",
+                "run-context profile",
+            ),
+            (
+                "run-context.txt",
+                "nextest_exit=0",
+                "nextest_exit=100",
+                "run-context nextest_exit",
+            ),
+            (
+                "run-context.txt",
+                "run_id=7",
+                "run_id=7\nrun_id=7",
+                "duplicate key",
+            ),
+            (
+                "run-context.txt",
+                "1111111111111111111111111111111111111111",
+                "ffffffffffffffffffffffffffffffffffffffff",
+                "input blob",
+            ),
+            ("shard-1.status", "0", "100", "nextest status"),
+            ("junit.xml", "tests='1'", "tests='2'", "declares"),
+            ("list-1.txt", "b1 case", "b1 different", "partition list"),
+            (
+                "list-all.txt",
+                "b1 case",
+                "b2 missing",
+                "missing from shards",
+            ),
+        ] {
+            let root = crate::tests::temp_dir("singleton-invalid-payload");
+            let (flat, options) = complete_singleton(&root, 1, all_features)?;
+            assert!(verify(&options, Ok(attempt_blobs())).problems.is_empty());
+            let path = flat.join(name);
+            let before = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+            assert!(before.contains(from), "missing stimulus {name}: {from}");
+            fs::write(path, before.replace(from, to)).map_err(|err| err.to_string())?;
+            assert_eq!(
+                singleton_shard(&options)?,
+                Some((1, 1)),
+                "did not reach payload check"
+            );
+            let outcome = verify(&options, Ok(attempt_blobs()));
+            assert!(
+                outcome.problems.iter().any(|why| why.contains(expected)),
+                "{name} {to}: {:?}",
+                outcome.problems
+            );
+            fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
