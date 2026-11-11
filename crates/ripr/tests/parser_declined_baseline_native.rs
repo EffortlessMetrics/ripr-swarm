@@ -345,7 +345,7 @@ fn static_limited_seams_never_read_as_gate_pass() -> Result<(), String> {
         gate["analysis_scope"]["static_limited_omitted_seams"], withheld,
         "{gate}"
     );
-    let expected = format!("static_limited_omitted_seams: {withheld} changed seam(s)");
+    let expected = format!("static_limited_omitted_seams: {withheld} seam(s)");
     assert!(
         gate["warnings"][0]
             .as_str()

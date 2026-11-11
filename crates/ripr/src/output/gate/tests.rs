@@ -6397,7 +6397,7 @@ fn parser_declined_scope_warning_follows_the_disclosed_list() -> Result<(), Stri
     assert!(
         three["warnings"][0]
             .as_str()
-            .is_some_and(|w| w.contains("static_limited_omitted_seams: 3 changed seam(s)")),
+            .is_some_and(|w| w.contains("static_limited_omitted_seams: 3 seam(s)")),
         "{three}"
     );
     for malformed in [json!("3"), json!(-1), json!(1.5), json!([3])] {
