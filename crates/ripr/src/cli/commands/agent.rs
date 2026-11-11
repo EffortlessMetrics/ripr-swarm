@@ -5007,8 +5007,8 @@ fn repair_receipt_summary_lines(
     if let Some(run) = reported_run {
         lines.push(format!(
             "test run: reported by the caller, not run by ripr: {}. {}",
-            crate::app::agent_status::reported_test_run_counts(run),
-            crate::app::agent_status::reported_test_run_next_step(run)
+            crate::app::agent_status::test_run::reported_test_run_counts(run),
+            crate::app::agent_status::test_run::reported_test_run_next_step(run)
         ));
     } else if text("/verification/status")
         == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN)

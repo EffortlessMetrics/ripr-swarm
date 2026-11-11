@@ -6,6 +6,7 @@
 //! that exact attempt. Store location is owned by [`store`]: before, status,
 //! and after resolve one store identity instead of joining a hardcoded path.
 
+pub(crate) mod retained_run;
 mod store;
 
 use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
@@ -2264,30 +2265,6 @@ pub(crate) fn find_terminal_artifact_by_role<'a>(
         .terminal_artifacts
         .iter()
         .find(|artifact| artifact.role == role)
-}
-
-/// The caller-reported focused run a finished attempt retained (#14079), read
-/// from the record the finish committed in the manifest. It is reported only
-/// when the terminal `focused_test_result` binding names exactly those bytes,
-/// so an interrupted finish (no terminal binding yet) and a binding that names
-/// other bytes both read as no reported run.
-pub(crate) fn retained_focused_run(
-    manifest: &RepairAttemptManifest,
-) -> Option<crate::output::agent_receipt::ReportedTestRun> {
-    if manifest.state != RepairAttemptState::ReadyToFinish {
-        return None;
-    }
-    let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
-    let artifact = find_terminal_artifact_by_role(manifest, TERMINAL_FOCUSED_RUN_ROLE)?;
-    if artifact.sha256 != sha256_bytes(pending.record.as_bytes())
-        || artifact.bytes != pending.record.len() as u64
-    {
-        return None;
-    }
-    crate::app::focused_run::read_retained_focused_run(
-        &pending.record,
-        manifest.repair_attempt_id.as_str(),
-    )
 }
 
 /// How status and other exact-attempt readers load the retained terminal receipt.
