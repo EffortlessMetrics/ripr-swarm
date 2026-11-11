@@ -481,7 +481,12 @@ fn filter_pins_from_listing(stdout: &[u8], with_scope: bool) -> RepositoryFilter
             }
             break;
         };
-        if entry.is_empty() && !with_scope {
+        if entry.is_empty() {
+            // The trailing field of an unscoped listing; in a scoped one, a
+            // scope with no key after it.
+            if with_scope {
+                return RepositoryFilterPins::Refused;
+            }
             break;
         }
         let (key, value) = match entry.iter().position(|byte| *byte == b'\n') {
