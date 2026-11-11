@@ -579,6 +579,21 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
         "{packet}"
     );
 
+    // A file at the receipt path that yields no movement is not "no receipt
+    // yet": the packet names the file instead of sending the reader to start
+    // a repair over evidence that exists.
+    fixture.write("target/ripr/reports/agent-receipt.json", "not json")?;
+    let summary = fixture.render(&[])?;
+    let packet = block(&summary, "### Agent review packet");
+    assert!(
+        packet.starts_with(
+            "- Receipt: `target/ripr/reports/agent-receipt.json` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it; `ripr agent status --root .` names the receipt command on a local checkout.\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
+        ),
+        "{packet}"
+    );
+    assert!(!packet.contains(NO_RECEIPT_BEFORE_REPAIR), "{packet}");
+    assert!(!packet.contains("Start repair"), "{packet}");
+
     fixture.json(
         WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT,
         &json!({"static_movement": {"state": "improved"}}),

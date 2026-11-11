@@ -42,7 +42,8 @@ mod tests;
 
 use crate::agent::loop_commands::{
     PILOT_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
-    WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
+    WORKFLOW_AGENT_RECEIPT_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT,
+    WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
 };
 use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
 use crate::output::first_pr::{
@@ -951,7 +952,20 @@ impl Summary {
             .doc(WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT)
             .map(|doc| doc.optional(&["static_movement.state"]))
             .unwrap_or_default();
-        if movement == "missing_artifact" {
+        if movement == "missing_artifact"
+            && self.root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT).exists()
+        {
+            // Something is at the receipt path but the review summary read no
+            // static movement from it (unreadable, not JSON, or no seam).
+            // "No receipt yet" would send the reader to start a repair over
+            // evidence that exists; name the file and the full packet.
+            self.line(&format!(
+                "- Receipt: `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it; `ripr agent status --root .` names the receipt command on a local checkout."
+            ));
+            self.line(&format!(
+                "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
+            ));
+        } else if movement == "missing_artifact" {
             self.line(&format!("- Receipt: {NO_RECEIPT_BEFORE_REPAIR}"));
             let repair = self
                 .doc(START_HERE_JSON)

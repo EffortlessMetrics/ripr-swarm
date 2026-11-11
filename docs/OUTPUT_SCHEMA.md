@@ -16707,12 +16707,22 @@ Field notes:
   keeps `status` at `incomplete`. `static_movement` is still copied, and
   `reviewer_summary.headline`, `reviewer_summary.what_changed` and the
   Markdown `Receipt:` line say that the recorded movement is not review
-  evidence. The wording is fixed per case and never echoes receipt text.
+  evidence, and `reviewer_summary.remaining` says to reissue the receipt
+  instead of repeating the receipt's own guidance. The wording is fixed per
+  case and never echoes receipt text.
 - `analysis_outcome` is copied from the producer's typed check envelope. Its
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
 - `surfaces[]` reports each joined surface as `computed`, `present`, `missing`,
   `optional_missing`, `invalid`, or `invalid_json`.
+  `missing` and `optional_missing` mean nothing exists at the path. A path
+  that holds something whose text cannot be read (not UTF-8, a directory, a
+  read failure) is `invalid`, and unparseable text is `invalid_json`.
+- When a receipt file is present but no movement can be read from it,
+  `static_movement.state` stays `missing_artifact` while
+  `static_movement.summary`, `static_movement.next_action` and
+  `reviewer_summary.what_changed` say the receipt is unreadable or invalid
+  rather than missing.
 - `ci_artifacts[]` is local file presence for artifacts that generated CI can
   upload later; it does not query GitHub Actions.
 - `reviewer_summary` is intentionally compact enough for PR comments and LLM
