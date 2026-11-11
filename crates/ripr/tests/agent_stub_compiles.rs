@@ -917,6 +917,113 @@ fn printed_seam_id_route_yields_its_stub_past_the_seam_cap() -> Result<(), Strin
     scratch.cleanup()
 }
 
+/// #14369 review: `ripr agent repair --phase before` still reads the capped
+/// workspace inventory, so a seam-id stub for a seam past the cap must not
+/// name a repair start that phase would refuse. Inside the cap the same seam
+/// keeps its pointer, and the pointed-to start runs.
+#[test]
+fn seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it()
+-> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let streams = scratch.directory.clone();
+    let root = streams.join("repo");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    for (file, text) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"stub_repair_cap\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        (".gitignore", "/target/\n"),
+        ("src/lib.rs", "pub mod a;\npub mod zz;\n"),
+        ("src/a.rs", "pub fn small(n: u32) -> bool {\n    n < 3\n}\n"),
+        (
+            "src/zz.rs",
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n",
+        ),
+        (
+            "tests/zz_tests.rs",
+            "use stub_repair_cap::zz::clamp_to;\n\n#[test]\nfn clamps_small_values() {\n    assert_eq!(clamp_to(5), 5);\n}\n",
+        ),
+    ] {
+        std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
+    }
+    git(&streams, &root, &["init", "-q"])?;
+    git(&streams, &root, &["add", "."])?;
+    git(&streams, &root, &["commit", "-qm", "base"])?;
+    let stub_json = |selector: &[&str], cap: Option<&str>| -> Result<serde_json::Value, String> {
+        let mut stub = ripr_command();
+        stub.args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(selector)
+            .arg("--json");
+        if let Some(cap) = cap {
+            stub.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap);
+        }
+        let output = run_bounded(stub, &streams, "stub", Duration::from_mins(2))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        if !output.status.success() {
+            return Err(format!(
+                "stub {selector:?}: {stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))
+    };
+    let at = stub_json(&["--at", "src/zz.rs:2"], None)?;
+    let seam_id = at["seam_id"]
+        .as_str()
+        .ok_or_else(|| format!("the boundary seam stubs: {at}"))?
+        .to_string();
+    let repair = |cap: Option<&str>| -> Result<Output, String> {
+        let mut start = ripr_command();
+        start.args(["agent", "repair", "--root"]).arg(&root).args([
+            "--seam-id",
+            &seam_id,
+            "--phase",
+            "before",
+        ]);
+        if let Some(cap) = cap {
+            start.env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap);
+        }
+        run_bounded(start, &streams, "repair", Duration::from_mins(2))
+    };
+
+    // Past the cap: `src/a.rs` holds the one retained seam. The before phase
+    // refuses this seam, so the stub must not point at it.
+    let refused = repair(Some("1"))?;
+    assert!(
+        !refused.status.success(),
+        "precondition: the capped before phase cannot find {seam_id}"
+    );
+    let capped = stub_json(&["--seam-id", &seam_id], Some("1"))?;
+    assert!(
+        capped["text"].as_str().is_some_and(|text| !text.is_empty()),
+        "the stub itself stands past the cap: {capped}"
+    );
+    assert!(
+        capped["next_repair"].is_null(),
+        "no repair start the capped before phase would refuse: {capped}"
+    );
+
+    // Inside the cap the pointer is printed and its start runs.
+    let uncapped = stub_json(&["--seam-id", &seam_id], None)?;
+    let start = uncapped["next_repair"]["start_command"]
+        .as_str()
+        .ok_or_else(|| format!("an in-cap repair-ready stub names its start: {uncapped}"))?;
+    assert!(
+        start.ends_with(&format!("--seam-id {seam_id} --phase before")),
+        "{start}"
+    );
+    let started = repair(None)?;
+    assert!(
+        started.status.success(),
+        "the pointed-to start runs: {}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    scratch.cleanup()
+}
+
 /// #10683: a weak-oracle boundary finding must not advertise a stub command
 /// that `agent stub` now refuses. `check` prints the refusal reason instead,
 /// and running the stub at the finding's own location agrees with it.

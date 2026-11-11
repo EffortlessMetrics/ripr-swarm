@@ -180,13 +180,13 @@ pub(crate) fn resolve_test_stub(
         // repo-wide evidence walk.
         TestStubSelector::SeamId(id) => {
             let not_found = || TestStubError::NotFound(format!("seam_id {id} was not found"));
-            let file = analysis::locate_seam_file_at_with_config(root, config, id)
+            let location = analysis::locate_seam_file_at_with_config(root, config, id)
                 .map_err(TestStubError::Operational)?
                 .ok_or_else(not_found)?;
             let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
                 root,
                 config,
-                &[file],
+                std::slice::from_ref(&location.file),
                 &[],
             )
             .map_err(TestStubError::Operational)?;
@@ -199,7 +199,15 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(not_found)?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, config, entry, source))
+            let mut resolution = resolution_for(root, config, entry, source);
+            // `ripr agent repair --phase before` still reads the capped
+            // workspace inventory, so a repair start for a seam past the cap
+            // would be refused: the route cannot be established, so it is
+            // omitted (RIPR-SPEC-0287) while the stub itself stands.
+            if !location.within_inventory_limit {
+                resolution.next_repair = None;
+            }
+            Ok(resolution)
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
