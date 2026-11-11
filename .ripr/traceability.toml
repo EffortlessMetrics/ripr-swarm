@@ -1919,6 +1919,9 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::legacy_repo_exposure_has_actionable_rooted_recovery",
   "crates/ripr/src/agent/artifact.rs::tests::older_producer_stamp_with_incomplete_shape_names_substitution_not_missing_field",
   "crates/ripr/src/agent/artifact.rs::tests::matching_producer_stamp_keeps_canonical_shape_errors",
+  "crates/ripr/src/agent/artifact.rs::tests::serde_type_names_are_replaced_only_in_serde_phrasing",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_refusal_names_the_enveloped_producer",
+  "crates/ripr/tests/raw_error_next_step.rs::agent_verify_non_object_snapshot_names_the_expected_artifact",
   "crates/ripr/src/agent/artifact.rs::tests::legacy_recovery_binds_relative_root_and_does_not_invent_label_flags",
   "crates/ripr/src/agent/artifact.rs::tests::legacy_recovery_labels_shells_and_quotes_literal_root_characters",
   "crates/ripr/tests/cli_smoke.rs::agent_verify_rejects_plausible_uncommitted_json",
@@ -20395,6 +20398,7 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::changed_inputs_names_only_the_inputs_that_moved",
+  "crates/ripr/tests/raw_error_next_step.rs::cache_export_out_problems_name_the_flag_and_fix",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
 ]
