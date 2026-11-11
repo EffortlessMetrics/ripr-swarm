@@ -2494,7 +2494,15 @@ Recommended acknowledgement workflow:
 2. Move to `RIPR_GATE_MODE=acknowledgeable` when the team wants policy-eligible
    gaps to require either a focused test or an explicit PR label.
 3. When the gate reports a policy-eligible gap, review the job summary,
-   `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
+   `target/ripr/reports/gate-decision.md`, and the PR guidance packet. A
+   blocking decision is stated twice where the author looks first: the failing
+   `Run RIPR` step's error annotation, and a `### RIPR gate: blocked` block at
+   the top of the job summary. Both give the mode, the number of blocking
+   gaps and the first blocking reason. A `config_error` decision and an
+   unknown `RIPR_GATE_MODE` value are stated the same way
+   (`### RIPR gate: configuration error`, `### RIPR gate: unknown
+   RIPR_GATE_MODE`), with the gate's own message. A decision that does not
+   fail adds no block.
 4. If the finding is acceptable for this PR, add `ripr-waive`.
 5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
    events, so adding the label reruns it. The next gate decision should say
