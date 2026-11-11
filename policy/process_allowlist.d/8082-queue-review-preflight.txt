@@ -1,0 +1,3 @@
+tools/repo-policy/tests/queue_review_preflight.rs|Command::new|1|ci/qualification-proof|#8082: thirty-second local workflow-shell replay with fake read-only API responses; no hosted request or protected mutation.
+tools/repo-policy/tests/queue_review_preflight.rs|use std::process::Command|1|ci/qualification-proof|#8082: command import for the same bounded workflow replay.
+tools/repo-policy/tests/queue_review_preflight.rs|subprocess.run|2|ci/qualification-proof|#8082: five-second private Git setup and ten-second extracted shell execution inside the thirty-second test deadline.
