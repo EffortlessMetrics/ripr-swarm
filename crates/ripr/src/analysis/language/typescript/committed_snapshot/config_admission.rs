@@ -33,7 +33,16 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
             oxc_ast::ast::AssignmentTarget::ComputedMemberExpression(member) => {
                 member_key(&member.expression).is_some_and(|key| export_member(&member.object, key))
             }
-            _ => false,
+            _ => target.get_expression().is_some_and(|expression| {
+                match expression.get_inner_expression() {
+                    Expression::StaticMemberExpression(member) => {
+                        export_member(&member.object, member.property.name.as_str())
+                    }
+                    Expression::ComputedMemberExpression(member) => member_key(&member.expression)
+                        .is_some_and(|key| export_member(&member.object, key)),
+                    _ => false,
+                }
+            }),
         }
     }
 

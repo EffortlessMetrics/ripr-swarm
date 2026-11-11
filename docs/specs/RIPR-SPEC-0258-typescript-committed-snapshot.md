@@ -462,8 +462,8 @@ existing rules and limits.
   `vitest_config_wrapper_alias_keeps_credit_but_dynamic_test_member_refuses`
   pin #9940 export admission, member writes, unread merges, and plain/nested
   controls;
-  `destructured_config_writes_refuse_but_unrelated_patterns_keep_credit`
-  pins nested rebinding/member writes and unrelated destructuring controls;
+  `destructured_config_writes_refuse_but_unrelated_patterns_keep_credit` and
+  `wrapped_commonjs_exports_track_destructured_config_writes` pin nested rebinding/member writes and unrelated destructuring controls;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
   `snapshot_whose_counter_cannot_be_named_stays_medium`,
