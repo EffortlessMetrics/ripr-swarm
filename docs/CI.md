@@ -107,14 +107,37 @@ failure is a warning, and the late recheck above remains the authority.
 
 Source review disposition (#8157): a `merge-ready` request also needs a current-head
 source review attestation, read by `review_disposition.py` from the immutable trusted
-admission bundle (the PR base for pull requests, the group base for queue entries; the
-script is covered by the bundle hash check). The admission job refuses at request
+admission bundle at the reviewed literal control-source commit; event B/G remain
+data only, and the script is covered by the bundle hash check. The admission job refuses at request
 time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+
+When GitHub throttles review writes ("was submitted too quickly"; the limit is per
+account), the same attestation can be carried by the pull request description
+instead (#4984). Put exactly one line at column zero, outside code fences and HTML
+comments:
+
+```text
+Source review: REVIEW_READY <full 40-character head SHA>
+```
+
+`SOURCE_REVIEW_READY` is accepted in place of `REVIEW_READY`. The SHA must be the
+full lowercase current head, so the line goes stale on the next push and has to be
+rewritten for the new head. The line is read only for a same-repository pull
+request whose author association is OWNER, MEMBER or COLLABORATOR, the same accounts
+that could already self-attest with a COMMENT review. It is another carrier for the
+same statement, not another authority: a `CHANGES_REQUESTED` review or a trusted
+reviewer's current negative review still refuses, and removing the line withdraws
+the attestation before the Result job's recheck. A description that also carries a
+`disposition:` line attests nothing, and a trusted reviewer's negative current-head
+review keeps refusing after that reviewer's own neutral thread replies, until they
+post a ready review themselves. Record what the review inspected
+in the description or a later comment; the line itself carries no prose. Prefer
+the native review when it can be posted, since its commit binding is set by GitHub.
 
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
