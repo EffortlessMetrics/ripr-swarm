@@ -279,21 +279,19 @@ pub mod inner {
     Ok(())
 }
 
-/// Each decoy lets the assertion pass through something other than the
-/// changed element's integer field, so none observes it (#8059 review).
+/// The decoy lets the assertion pass through something other than the
+/// changed element's integer field, so it does not observe it (#8059 review).
 #[test]
 fn a_decoy_the_shared_checks_catch_keeps_the_gap() -> Result<(), String> {
-    for (items, body, label) in [(
-        "    trait Decoy {\n        fn iter(&self) -> std::iter::Once<Row>;\n    }\n    impl Decoy for [Row; 2] {\n        fn iter(&self) -> std::iter::Once<Row> {\n            std::iter::once(Row { total: 33 })\n        }\n    }\n",
-        ANY,
-        "a trait supplies the array's iter",
-    )] {
-        assert_eq!(
-            field_class_with("0", items, body)?,
-            ExposureClass::WeaklyExposed,
-            "{label}"
-        );
-    }
+    assert_eq!(
+        field_class_with(
+            "0",
+            "    trait Decoy {\n        fn iter(&self) -> std::iter::Once<Row>;\n    }\n    impl Decoy for [Row; 2] {\n        fn iter(&self) -> std::iter::Once<Row> {\n            std::iter::once(Row { total: 33 })\n        }\n    }\n",
+            ANY,
+        )?,
+        ExposureClass::WeaklyExposed,
+        "a trait supplies the array's iter"
+    );
     Ok(())
 }
 
