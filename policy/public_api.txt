@@ -104,6 +104,12 @@ pub fn ripr::domain::guarded_edit::verify_source_text
 # re-exported at the cli boundary; covered_by: cargo test -p ripr --lib cli,
 # cargo test -p ripr --bin ripr, cargo xtask check-public-api.
 pub use ripr::cli::extract_global_verbose
+# `--name=value` argv normalizer (#14292): owner cli; reason: the binary
+# startup route normalizes argv before MCP routing and must apply the same
+# rewrite as `ripr::cli::run`, so the owner is re-exported at the cli
+# boundary; covered_by: cargo test -p ripr --lib cli,
+# cargo test -p ripr --bin ripr, cargo xtask check-public-api.
+pub use ripr::cli::split_long_flag_values
 pub fn ripr::domain::language_availability::resolve_language_availability
 pub fn ripr::domain::language_availability::resolve_language_availability_all
 pub fn ripr::domain::language_availability::unavailable_recovery

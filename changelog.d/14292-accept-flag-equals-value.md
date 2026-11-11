@@ -6,4 +6,4 @@
   Before, every command refused the `=` spelling as an unknown argument
   (#14292). `ripr help --json` now reports `agent repair --phase`, documented as a
   choice list, as a value-taking flag. `--verbose`, `--help` and
-  `--version` stay switches (`--verbose=check` is refused).
+  `--version` stay switches (`--verbose=check` is refused) (#14292).

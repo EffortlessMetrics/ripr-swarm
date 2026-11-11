@@ -107,9 +107,16 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
     // token as its value. Its arity is looked up only when this token is
     // `--name=value`-shaped, so ordinary argv never pays for the help scan.
     let mut pending_flag: Option<String> = None;
+    // Tokens before the command word are top-level flags (`--version`,
+    // `--help`), which the version-precedence scan reads as a dash-led run;
+    // splitting `--format=json` there would end that run early.
+    let mut seen_command = false;
     for (index, arg) in args.into_iter().enumerate() {
         let previous = pending_flag.take();
-        if index == 0 || literal {
+        if !seen_command && index > 0 && !arg.starts_with('-') {
+            seen_command = true;
+        }
+        if index == 0 || literal || !seen_command {
             out.push(arg);
             continue;
         }
@@ -347,10 +354,21 @@ mod tests {
     fn split_long_flag_values_keeps_global_switch_assignments_whole() {
         for global in ["--verbose=check", "--help=check", "--version=1"] {
             assert_eq!(
-                split_long_flag_values(args(&["ripr", global, "--format=json"])),
-                args(&["ripr", global, "--format", "json"])
+                split_long_flag_values(args(&["ripr", "check", global, "--format=json"])),
+                args(&["ripr", "check", global, "--format", "json"])
             );
         }
+    }
+
+    #[test]
+    fn split_long_flag_values_leaves_flags_before_the_command_alone() {
+        // `ripr --format=json --version` stays a version request (#14292
+        // review): the dash-led run before the command is not rewritten.
+        let leading = args(&["ripr", "--format=json", "--version"]);
+        assert_eq!(split_long_flag_values(leading.clone()), leading);
+        assert!(top_level_version_requested(&split_long_flag_values(
+            leading
+        )));
     }
 
     #[test]
