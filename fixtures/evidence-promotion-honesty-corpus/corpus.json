@@ -19401,6 +19401,30 @@
           "relation_reason": "direct_owner_call"
         }
       ]
+    },
+    {
+      "id": "rust_multi_line_dropped_conjunct_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_multi_line_dropped_conjunct",
+      "vector": "boundary_input_cannot_credit_predicate_that_dropped_multi_line_conjunct",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
     }
   ]
 }

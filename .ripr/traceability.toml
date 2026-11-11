@@ -315,6 +315,7 @@ fixtures = [
   "fixtures/type_header_bound_not_field",
   "fixtures/rust_slice_table_boundary",
   "fixtures/rust_slice_table_zero_elements",
+  "fixtures/rust_multi_line_dropped_conjunct",
   "fixtures/rust_slice_table_try_exit",
   "fixtures/rust_slice_table_call_exit",
   "fixtures/radix_literal_boundary_off",

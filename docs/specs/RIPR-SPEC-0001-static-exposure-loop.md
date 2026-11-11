@@ -687,6 +687,7 @@ Fixture coverage:
 - `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_multi_line_dropped_conjunct`
 - `fixtures/rust_slice_table_try_exit`
 - `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
