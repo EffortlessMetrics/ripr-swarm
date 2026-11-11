@@ -451,13 +451,17 @@ and erased at compile time. Declaration files still count as changed files.
 line, is still probed. An unrecognised line keeps the non-specific predicate
 fallback and is never classified `exposed`. The fallback is an analysis
 choice, not a claim that a condition changed: when the unrecognised line is a
-plain single-name `const`/`let`/`var` declaration whose whole statement sits on
-the line and whose initializer carries no comparison, boolean or nullish
-operator, conditional, negation, `in`/`instanceof`/`typeof`, arrow function,
-`await` or `yield` (`const desc = Object.getOwnPropertyDescriptor(raw, key);`),
-the finding presents family `return_value` and delta `value` instead (#14381).
-Every analysis decision still reads the fallback shape, so classification,
-credit, oracle admission and gates do not move, and the finding keeps its
+plain single-name `const`/`let`/`var` declaration (with at most a simple type
+annotation) whose statement ends on the line with `;`, with balanced brackets,
+and whose initializer, read outside quoted text, carries no `<` or `>`
+(comparisons, generics and casts alike), `=`, `!`, `?` other than optional
+chaining, `&&`, `||`, `;`, `in`, `instanceof`, `typeof`, `function`, `await`
+or `yield` (`const desc = Object.getOwnPropertyDescriptor(raw, key);`). A line
+without the closing `;` may continue into a condition on the next line and
+keeps the fallback presentation. When the line qualifies, the finding presents
+family `return_value` and delta `value` instead (#14381). Every analysis
+decision still reads the fallback shape, so classification, credit, oracle
+admission and gates do not move, and the finding keeps its
 `probe_fact: ambiguous_fallback` evidence.
 
 A changed line whose in-place removed counterpart differs only in erased

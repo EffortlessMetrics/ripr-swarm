@@ -299,7 +299,7 @@ pub(crate) fn presented_typescript_shape(
 /// value expression (#14381): `const desc = Object.getOwnPropertyDescriptor(raw,
 /// key);`, `let total: number = base - bonus;`. The recognizer is closed: the
 /// target is one identifier with at most a simple type annotation, the whole
-/// statement sits on the line, and any initializer that could carry a
+/// statement ends on the line with `;`, and any initializer that could carry a
 /// comparison, boolean or nullish operator, conditional, negation, membership
 /// or type test, arrow function, `await` or `yield` keeps the conservative
 /// predicate default. Quoted text is ignored when looking for those markers.
@@ -342,16 +342,18 @@ pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
     if !is_identifier {
         return false;
     }
-    let initializer = initializer.trim();
-    let initializer = initializer
-        .strip_suffix(';')
-        .unwrap_or(initializer)
-        .trim_end();
-    // A missing statement end (`= {`, `= foo(`, `= a,`) continues on later
-    // lines; a further `;` joins a second statement.
+    // The statement must end on this line with `;`. Without it the
+    // initializer may continue (`const message = isError` followed by
+    // `? "x" : "y";`, or a leading `&&`/`||`/`??` continuation), so the
+    // changed condition could sit on a later line. A trailing comment or a
+    // further `;` joins more text and is refused too.
+    let Some(initializer) = initializer.trim().strip_suffix(';') else {
+        return false;
+    };
+    let initializer = initializer.trim_end();
     if initializer.is_empty()
         || initializer.ends_with(',')
-        || closing_delimiter_balance(initializer) != Some(0)
+        || bracket_depth_outside_quotes(initializer) != Some(0)
     {
         return false;
     }
@@ -379,7 +381,7 @@ pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
 
 /// Net bracket depth of `text` outside quoted strings, or `None` when a closer
 /// appears before its opener or a string never closes.
-fn closing_delimiter_balance(text: &str) -> Option<usize> {
+fn bracket_depth_outside_quotes(text: &str) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;

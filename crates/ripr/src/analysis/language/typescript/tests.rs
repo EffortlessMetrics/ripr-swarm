@@ -7507,7 +7507,9 @@ fn plain_value_declaration_recognizer_is_closed() {
         "  const cache: Map<string, number> = new Map();",
         "  const first = items[0]?.name;",
         "  const text = \"a > b\";",
-        "  const $el = query('#root')",
+        "  const $el = query('#root');",
+        "  const quoted = 'it\\'s > x';",
+        "  const shown = `${count} items`;",
     ] {
         assert!(
             is_typescript_plain_value_declaration(line),
@@ -7536,6 +7538,10 @@ fn plain_value_declaration_recognizer_is_closed() {
         "  if (x) {",
         "  const handler = function () {};",
         "  const g = a = b;",
+        "  const message = isError",
+        "  const $el = query('#root')",
+        "  const x = compute(a); // a > b",
+        "  const re = /'/;",
     ] {
         assert!(
             !is_typescript_plain_value_declaration(line),
