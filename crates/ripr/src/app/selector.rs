@@ -315,6 +315,11 @@ pub(in crate::app) fn location_miss_hint(
     // files never mixes their lines under one name.
     let mut same_file =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    // #14416: paths that match only when ASCII case is ignored. Resolution
+    // stays case-sensitive; the hint names the correctly cased file instead.
+    let mut case_folded =
+        std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
+    let wanted_folded = wanted.to_ascii_lowercase();
     let mut other_files = std::collections::BTreeSet::<String>::new();
     let root_prefix = normalize_locator_path(&crate::analysis::stable_path_text(root));
     for finding in findings {
@@ -323,6 +328,10 @@ pub(in crate::app) fn location_miss_hint(
         let matches = stored == wanted
             || stored.ends_with(&format!("/{wanted}"))
             || wanted.ends_with(&format!("/{stored}"));
+        let folded = stored.to_ascii_lowercase();
+        let matches_folded = folded == wanted_folded
+            || folded.ends_with(&format!("/{wanted_folded}"))
+            || wanted_folded.ends_with(&format!("/{folded}"));
         // Shown root-relative: a fresh run stores absolute paths, and the
         // suffix match accepts the relative form the user types.
         let stored = match stored.strip_prefix(&format!("{root_prefix}/")) {
@@ -337,9 +346,21 @@ pub(in crate::app) fn location_miss_hint(
                 .or_default()
                 .insert(finding.probe.location.line);
         } else {
+            if matches_folded {
+                case_folded
+                    .entry(stored.clone())
+                    .or_default()
+                    .insert(finding.probe.location.line);
+            }
             other_files.insert(stored);
         }
     }
+    let case_note = if same_file.is_empty() && !case_folded.is_empty() {
+        same_file = case_folded;
+        " Paths match case-sensitively."
+    } else {
+        ""
+    };
     // An exact path match leads; otherwise the first matching file.
     if let Some((file, lines)) = same_file
         .get_key_value(&wanted)
@@ -381,7 +402,7 @@ pub(in crate::app) fn location_miss_hint(
             n => format!(" {n} other files matching that path also have findings."),
         };
         return Some(format!(
-            " Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
+            "{case_note} Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
         ));
     }
     let files = other_files
@@ -775,6 +796,46 @@ mod tests {
                 std::path::Path::new(""),
                 "src/lib.rs:9999",
                 false
+            )
+        );
+        // #14416: a selector differing only in letter case is told so and
+        // pointed at the correctly cased file; resolution stays exact.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "SRC/Lib.rs:9999",
+                false
+            )
+            .as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in src/lib.rs are on lines 3, 9; select one as src/lib.rs:9."
+            )
+        );
+        assert!(matches!(
+            select_finding(&findings, "SRC/Lib.rs:9"),
+            FindingSelection::NoMatch
+        ));
+        assert!(matches!(
+            select_finding(&findings, "src/lib.rs:9"),
+            FindingSelection::Unique(_)
+        ));
+        // An exact-case file wins over a case-folded one, with no case note.
+        let mut upper = finding("probe:u", 5, None);
+        upper.probe.location = SourceLocation::new("SRC/Lib.rs", 5, 1);
+        let mixed = vec![finding("probe:a", 3, None), upper];
+        assert_eq!(
+            location_miss_hint(&mixed, std::path::Path::new(""), "SRC/Lib.rs:9999", false)
+                .as_deref(),
+            Some(" Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5.")
+        );
+        // Several case-folded files: one is listed and the rest counted;
+        // the column note applies, and the incomplete flag adds nothing in
+        // the file-match branch, as for exact-case matches.
+        assert_eq!(
+            location_miss_hint(&mixed, std::path::Path::new(""), "src/LIB.rs:9:1", true).as_deref(),
+            Some(
+                " Paths match case-sensitively. Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5. 1 other file matching that path also has findings. Selectors are file:line; drop the column."
             )
         );
         // Line 3 holds two findings, so `src/lib.rs:3` would refuse as
