@@ -624,7 +624,9 @@ fn cargo_test(root: &Path, target_dir: &Path, test: &str) -> Result<bool, String
     match trial::classify_suite(output.exit, &text) {
         trial::Suite::Pass => Ok(true),
         trial::Suite::TestFailed => Ok(false),
-        trial::Suite::NotEstablished(reason) => Err(format!("cargo test --test {test}: {reason}")),
+        trial::Suite::NotEstablished(reason) | trial::Suite::InstrumentError(reason) => {
+            Err(format!("cargo test --test {test}: {reason}"))
+        }
     }
 }
 
@@ -934,6 +936,30 @@ pub(crate) fn compare(
     (regressions, notes)
 }
 
+/// A cargo key flag; an instrument failure reads as `not established`, never
+/// as the `-` of an unmeasured `--skip-cargo` run.
+fn cargo_flag(checks: &Value, name: &str) -> &'static str {
+    if checks[name].is_null() && checks["cargo_not_established"].is_string() {
+        "not established"
+    } else {
+        flag(&checks[name])
+    }
+}
+
+/// Every scenario whose cargo key checks could not run.
+fn instrument_failures(report: &Value) -> Vec<String> {
+    report["scenarios"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|scenario| {
+            let reason = scenario["loop"]["cargo_not_established"].as_str()?;
+            let id = scenario["id"].as_str().unwrap_or_default();
+            Some(format!("{id}: cargo key check not established: {reason}"))
+        })
+        .collect()
+}
+
 fn flag(value: &Value) -> &'static str {
     match value.as_bool() {
         Some(true) => "yes",
@@ -1001,9 +1027,15 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
             flag(&checks["silent_on_control"]),
             flag(&checks["weak_test_still_flagged"]),
             flag(&checks["reference_test_closes_loop"]),
-            flag(&checks["reference_key_valid"]),
-            flag(&checks["weak_key_valid"]),
+            cargo_flag(checks, "reference_key_valid"),
+            cargo_flag(checks, "weak_key_valid"),
         ));
+        if let Some(reason) = checks["cargo_not_established"].as_str() {
+            out.push_str(&format!(
+                "\nINSTRUMENT FAILURE {}: cargo key check not established: {reason}\n\n",
+                scenario["id"].as_str().unwrap_or_default()
+            ));
+        }
     }
     if let Some((regressions, notes)) = comparison {
         out.push_str("\n## Against the baseline\n\n");
@@ -1108,6 +1140,16 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
         &markdown_path,
         &render_markdown(&report, comparison.as_ref()),
     )?;
+    // An eval that could not measure fails in every mode, and never
+    // becomes a baseline that silently stops guarding the cargo keys.
+    let failures = instrument_failures(&report);
+    if !failures.is_empty() {
+        return Err(format!(
+            "agent-eval: {} instrument failure(s); nothing was written to the baseline:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ));
+    }
     if options.write_baseline {
         write_file(Path::new(BASELINE_PATH), &format!("{pretty}\n"))?;
         println!("agent-eval: wrote baseline {BASELINE_PATH}");
@@ -1278,6 +1320,17 @@ verify=refused|outcome=complete_with_findings\n";
         assert_eq!(
             compare_full(&broken, &keyed),
             vec!["s: cargo key check not established: no toolchain".to_string()]
+        );
+        assert_eq!(
+            instrument_failures(&broken),
+            vec!["s: cargo key check not established: no toolchain".to_string()]
+        );
+        assert!(instrument_failures(&skipped).is_empty());
+        let checks = &broken["scenarios"][0]["loop"];
+        assert_eq!(cargo_flag(checks, "reference_key_valid"), "not established");
+        assert_eq!(
+            cargo_flag(&json!({"reference_key_valid": null}), "reference_key_valid"),
+            "-"
         );
         let mut no_route = report(1000, true, true);
         no_route["scenarios"][0]["routes"] = json!([]);

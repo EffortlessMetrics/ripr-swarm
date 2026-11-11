@@ -66,8 +66,13 @@ pub(crate) enum Suite {
     Pass,
     /// The tests compiled, ran, and at least one failed.
     TestFailed,
-    /// Anything else (compile error, signal, timeout): no evidence either way.
+    /// Ran but gave no test result (for example a compile error): no
+    /// evidence either way. A head that does not compile because of the
+    /// agent's own tests is a legitimate zero.
     NotEstablished(String),
+    /// The run itself could not be measured (cargo missing, timeout, a
+    /// signal, an output budget): the trial score is incomplete.
+    InstrumentError(String),
 }
 
 /// Classify a finished `cargo test` run. Only a run that compiled and
@@ -78,7 +83,10 @@ pub(crate) fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
     match exit {
         Some(0) if !compile_error => Suite::Pass,
         Some(101) if !compile_error && output.contains("test result: FAILED") => Suite::TestFailed,
-        other => Suite::NotEstablished(format!("cargo test exit {other:?} without a test result")),
+        None => Suite::InstrumentError("cargo test ended without an exit code".to_string()),
+        Some(code) => {
+            Suite::NotEstablished(format!("cargo test exit {code} without a test result"))
+        }
     }
 }
 
@@ -95,14 +103,23 @@ fn run_suite(root: &Path, target_dir: &Path) -> Suite {
             output.exit,
             &format!("{}\n{}", output.stdout, output.stderr),
         ),
-        Err(error) => Suite::NotEstablished(error),
+        Err(error) => Suite::InstrumentError(error),
     }
 }
 
 fn not_established(suite: &Suite) -> Option<&str> {
     match suite {
-        Suite::NotEstablished(reason) => Some(reason.as_str()),
-        _ => None,
+        Suite::NotEstablished(reason) | Suite::InstrumentError(reason) => Some(reason.as_str()),
+        Suite::Pass | Suite::TestFailed => None,
+    }
+}
+
+/// Run the suite; an instrument failure aborts scoring this repository, so
+/// it shows up as an incomplete score rather than a low one.
+fn measured_suite(root: &Path, target_dir: &Path) -> Result<Suite, String> {
+    match run_suite(root, target_dir) {
+        Suite::InstrumentError(reason) => Err(format!("instrument failure: {reason}")),
+        suite => Ok(suite),
     }
 }
 
@@ -114,9 +131,12 @@ fn score_one(scenario: &Scenario, root: &Path, target_dir: &Path) -> Result<Valu
         .map_err(|err| format!("failed to read {}: {err}", lib_path.display()))?;
     let scored = score_against_head(scenario, root, target_dir, &current == scenario.head_lib);
     let restored = write_file(&lib_path, &current);
-    let row = scored?;
-    restored?;
-    Ok(row)
+    match (scored, restored) {
+        (Ok(row), Ok(())) => Ok(row),
+        (Ok(_), Err(restore)) => Err(restore),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(restore)) => Err(format!("{error}; also {restore}")),
+    }
 }
 
 fn score_against_head(
@@ -128,14 +148,14 @@ fn score_against_head(
     let lib_path = root.join("src/lib.rs");
     // Score the tests against the real head, never an agent's edit.
     write_file(&lib_path, scenario.head_lib)?;
-    let head = run_suite(root, target_dir);
+    let head = measured_suite(root, target_dir)?;
     let head_pass = head == Suite::Pass;
     let mut gaps = Vec::new();
     for gap in scenario.gaps {
         let reverted = revert_line(scenario, gap.line)
             .ok_or_else(|| format!("{}: cannot revert line {}", scenario.id, gap.line))?;
         write_file(&lib_path, &reverted)?;
-        let suite = run_suite(root, target_dir);
+        let suite = measured_suite(root, target_dir)?;
         let fails = suite == Suite::TestFailed;
         gaps.push(json!({
             "owner": gap.owner,
@@ -231,7 +251,10 @@ mod tests {
             classify_suite(Some(101), compile),
             Suite::NotEstablished(_)
         ));
-        assert!(matches!(classify_suite(None, ""), Suite::NotEstablished(_)));
+        assert!(matches!(
+            classify_suite(None, ""),
+            Suite::InstrumentError(_)
+        ));
         assert!(matches!(
             classify_suite(Some(101), ""),
             Suite::NotEstablished(_)
