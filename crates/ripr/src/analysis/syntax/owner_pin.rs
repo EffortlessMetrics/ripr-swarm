@@ -6885,18 +6885,20 @@ fn file_keeps_crate_path(file: &SyntaxNode, root: &str, item: Option<&str>) -> b
     {
         return false;
     }
-    !file.descendants().filter_map(ast::Use::cast).any(|use_item| {
-        let Some(tree) = use_item.use_tree() else {
-            return true;
-        };
-        let own_root = tree
-            .path()
-            .and_then(|path| path.first_segment())
-            .and_then(|segment| segment.name_ref());
-        // `use super::*;` inside an inline `mod` only re-exports names this
-        // file declares, which the scan above already covers.
-        let parent_glob =
-            use_item.syntax().ancestors().skip(1).any(|node| {
+    !file
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|use_item| {
+            let Some(tree) = use_item.use_tree() else {
+                return true;
+            };
+            let own_root = tree
+                .path()
+                .and_then(|path| path.first_segment())
+                .and_then(|segment| segment.name_ref());
+            // `use super::*;` inside an inline `mod` only re-exports names this
+            // file declares, which the scan above already covers.
+            let parent_glob = use_item.syntax().ancestors().skip(1).any(|node| {
                 ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
             }) && tree
                 .syntax()
@@ -6905,16 +6907,16 @@ fn file_keeps_crate_path(file: &SyntaxNode, root: &str, item: Option<&str>) -> b
                 .split_whitespace()
                 .collect::<String>()
                 == "super::*";
-        tree.syntax().descendants().any(|node| {
-            ast::UseTree::cast(node.clone())
-                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
-                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
-                    rebindable(unraw(name.text()))
-                        && !(unraw(name.text()) == root
-                            && own_root.as_ref().is_some_and(|own| own == &name))
-                })
+            tree.syntax().descendants().any(|node| {
+                ast::UseTree::cast(node.clone())
+                    .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                    || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                        rebindable(unraw(name.text()))
+                            && !(unraw(name.text()) == root
+                                && own_root.as_ref().is_some_and(|own| own == &name))
+                    })
+            })
         })
-    })
 }
 
 /// Free functions that poll the future they are handed to completion on the

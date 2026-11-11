@@ -145,12 +145,8 @@ fn a_crate_qualified_block_on_runs_the_async_block() -> Result<(), String> {
 fn a_block_that_may_not_run_to_its_assertions_credits_nothing() -> Result<(), String> {
     // Nothing polls the first two blocks; the rest hand the block to a
     // `block_on` whose identity or completion source cannot show.
-    let never_polled = format!(
-        "        let _pending = async {{\n            {PINS}\n        }};"
-    );
-    let dropped = format!(
-        "        drop(async {{\n            {PINS}\n        }});"
-    );
+    let never_polled = format!("        let _pending = async {{\n            {PINS}\n        }};");
+    let dropped = format!("        drop(async {{\n            {PINS}\n        }});");
     let early_exit = "        let _: Option<()> = futures::executor::block_on(async {\n            None::<u32>?;\n            assert_eq!(over(10), true);\n            assert_eq!(over(9), false);\n            Some(())\n        });".to_string();
     let mut credited = Vec::new();
     for (case, preamble, body) in [
@@ -187,11 +183,7 @@ fn a_block_that_may_not_run_to_its_assertions_credits_nothing() -> Result<(), St
             "",
             blocked_on("futures::executor::block_on_stream({})"),
         ),
-        (
-            "second argument",
-            "",
-            blocked_on("smol::block_on({}, 1)"),
-        ),
+        ("second argument", "", blocked_on("smol::block_on({}, 1)")),
         ("block owns a `?`", "", early_exit),
     ] {
         for (class, _) in readings(&source(preamble, &body))? {
