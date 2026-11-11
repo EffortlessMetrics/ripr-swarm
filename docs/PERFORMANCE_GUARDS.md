@@ -37,8 +37,9 @@ ahead of command dispatch the test failed on `--version` at 64.0 MiB and
 
 A second test starts the same commands in a directory whose `ripr.toml`,
 `Cargo.toml` and source do not parse and requires the same output as from an
-empty directory, so a workspace read added ahead of dispatch fails on every
-platform with no timing involved.
+empty directory, so a workspace read added ahead of dispatch that acts on what
+it read fails on every platform with no timing involved. A read whose result
+and errors are both discarded leaves the output unchanged and passes this test.
 
 Limits:
 

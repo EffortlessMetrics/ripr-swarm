@@ -29,6 +29,10 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
+/// An inherited harness token would put `token=<value>` ahead of the receipt
+/// body. An empty value is not a valid token, so the child keeps the plain
+/// receipt shape whatever the parent environment carries.
+const NO_RECEIPT_TOKEN: (&str, &str) = ("RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN", "");
 const MIB: u64 = 1024 * 1024;
 
 /// Runs per command. Peak memory is judged on the worst run, CPU time on the
@@ -153,8 +157,12 @@ fn startup_commands_stay_inside_their_cpu_and_memory_budgets() -> TestResult {
         let mut best_wall = Duration::MAX;
         for _ in 0..SAMPLES {
             let started = Instant::now();
-            let output =
-                run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &root, args, &[(TRACE_ENV, "1")])?;
+            let output = run_command_with_env(
+                env!("CARGO_BIN_EXE_ripr"),
+                &root,
+                args,
+                &[(TRACE_ENV, "1"), NO_RECEIPT_TOKEN],
+            )?;
             best_wall = best_wall.min(started.elapsed());
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(output.status.success(), "ripr {label}: {stderr}");
@@ -284,8 +292,10 @@ fn startup_judge_fails_each_exceeded_budget_and_an_absent_measurement() -> TestR
 }
 
 /// Starting must not depend on the directory it starts in. An unparsable
-/// `ripr.toml` and manifest make any workspace read ahead of dispatch visible
-/// as a failure or as changed output, on every platform and with no timing.
+/// `ripr.toml` and manifest make a workspace read ahead of dispatch visible as
+/// a failure or as changed output, on every platform and with no timing. A
+/// read whose result and errors are both discarded changes neither and is not
+/// seen here; only the Linux cost ceilings above can notice that one.
 #[test]
 fn startup_commands_do_not_read_the_working_directory() -> TestResult {
     let scratch = unique_external_workspace("startup-budget-cwd")?;
@@ -298,6 +308,15 @@ fn startup_commands_do_not_read_the_working_directory() -> TestResult {
     fs::write(hostile.join("Cargo.toml"), "[package\nname = \n")?;
     fs::write(hostile.join("src/lib.rs"), "pub fn (((\n")?;
 
+    // A parent that already traces makes every child print a receipt carrying
+    // its own pid; that line is the instrument, not the command's output.
+    let without_receipts = |stderr: &[u8]| -> String {
+        String::from_utf8_lossy(stderr)
+            .lines()
+            .filter(|line| !line.starts_with(RECEIPT_PREFIX))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     for (args, _) in BUDGETS {
         let label = args.join(" ");
         let run = |cwd| run_command_with_env(env!("CARGO_BIN_EXE_ripr"), cwd, args, &[]);
@@ -317,8 +336,8 @@ fn startup_commands_do_not_read_the_working_directory() -> TestResult {
             "ripr {label}: stdout depends on the working directory"
         );
         assert_eq!(
-            String::from_utf8_lossy(&exposed.stderr),
-            String::from_utf8_lossy(&clean.stderr),
+            without_receipts(&exposed.stderr),
+            without_receipts(&clean.stderr),
             "ripr {label}: stderr depends on the working directory"
         );
     }
