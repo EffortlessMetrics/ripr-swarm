@@ -4040,10 +4040,13 @@ fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Resul
 /// #11584: a completed run carries neither refusal key, so a consumer can
 /// branch on `status` alone.
 #[test]
-fn check_json_completed_run_carries_neither_status_nor_error() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+fn check_json_completed_run_carries_neither_status_nor_error() -> sample_output::TestResult {
+    // The owned sample workspace, not the whole checkout: the same diff over
+    // this repository's root indexed every crate for one shape assertion and
+    // was the slowest test in the suite (286 s hosted).
+    let fixture = sample_output::Fixture::new()?;
+    let output = fixture.run(&["--json"])?;
+    assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("completed stdout should parse as JSON: {err}\n{stdout}"))?;
