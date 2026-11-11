@@ -252,7 +252,7 @@ mod tests {
                 "missing_discriminator: amount == threshold".to_string(),
                 "typescript_boundary_parameters: parameter=amount;index=0;operand=threshold;operand_index=1".to_string(),
             ],
-            missing: Vec::new(),
+            missing: vec!["Missing check value: amount == threshold".to_string()],
             flow_sinks: Vec::new(),
             activation: ActivationEvidence {
                 observed_values: Vec::new(),

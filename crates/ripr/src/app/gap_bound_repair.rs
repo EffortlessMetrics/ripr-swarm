@@ -484,6 +484,7 @@ mod tests {
     fn python_finding() -> Finding {
         let mut finding = complete_finding();
         finding.language = Some(crate::domain::LanguageId::Python);
+        finding.missing = vec!["Missing check value: units >= 20".to_string()];
         finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
             id: PY_GAP.to_string(),
             language: "python".to_string(),
