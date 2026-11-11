@@ -43,6 +43,19 @@ Operating facts, each observed on 2026-11-11:
   Diagnose the run before enqueueing again.
 - Disabling auto-merge did not remove an entry that was already queued.
 
+### Withdrawing a queued PR
+
+A material finding after enqueue means the entry must leave the queue before its
+run passes, or the PR lands. A disabled auto-merge readback is not containment.
+Remove the entry itself: "Remove from queue" on the PR, or convert the PR to
+Draft, which GitHub drops from the queue. Then read back
+`removed_from_merge_queue` on the timeline and an open, unmerged PR. If the
+session cannot remove the entry or cannot confirm it, that is an
+integration-control blocker: say so on the PR at once and do not report the
+merge as contained. The Result's late eligibility recheck may also refuse an
+entry with an unresolved thread, but it is not atomic with the landing and does
+not replace removal.
+
 Two expensive runs per code PR (the label run, then the queue run) is the
 current cost, not the goal. Steven selected queue-time qualification as the only
 expensive run on October 21, 2026 under

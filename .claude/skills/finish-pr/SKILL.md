@@ -120,10 +120,12 @@ land normally; do not flatten every stack into a giant PR. Preserve unique work
 and findings across squash, retarget, and incorporation, and close only the
 acceptance actually satisfied by the landed result.
 
-A new material finding withdraws readiness even on an unchanged head. If auto-merge
-is armed, disarm it through the available authorized GitHub operation and verify the
-readback before resolving the blocking thread. An unavailable or failed disarm is
-an integration-control blocker; do not claim the merge is contained. After repair,
+A new material finding withdraws readiness even on an unchanged head. If the PR is
+queued or auto-merge is armed, contain it before resolving the blocking thread.
+Disabling auto-merge does not remove an existing queue entry: remove the entry
+itself (see [merge flow](../../../docs/MERGE_FLOW.md#withdrawing-a-queued-pr)) and
+read back `removed_from_merge_queue` and an open, unmerged PR. An unavailable or
+failed removal is an integration-control blocker; do not claim the merge is contained. After repair,
 affected proof and cumulative rereview must restore `REVIEW_READY` before the final merge judgment.
 Old green, an unrelated later comment, or a completed agent run cannot restore it.
 

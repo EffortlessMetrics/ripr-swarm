@@ -101,14 +101,13 @@ applicable `review-pr` and `finish-pr` procedures for current published-head
 substantive review, required proof, conversation disposition and
 integration judgment before enqueueing the PR in the merge queue.
 
-If a local detached or side worktree cannot merge a PR because the branch is
-checked out elsewhere, merge from the primary checkout or use an explicit
-GitHub-hosted merge path after re-reading the remote PR state. Do not move local
-branch refs to work around that limitation.
+Landing is a GitHub-hosted operation: `main` accepts only the merge queue, so a
+local merge from any worktree cannot land a PR. Re-read the remote PR state
+before enqueueing, and do not move local branch refs.
 
-Do not arm routine auto-merge or a merge queue. GitHub enforces the normal merge
-requirements; report a concrete rejection without guessing its cause, bypassing
-it, or changing settings.
+Do not enqueue or arm auto-merge before that final judgment. GitHub enforces the
+normal merge requirements; report a concrete rejection without guessing its cause,
+bypassing it, or changing settings.
 
 ## Current-state capture
 
