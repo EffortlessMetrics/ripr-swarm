@@ -56,6 +56,10 @@ fn check_diff_shows_the_weak_findings_and_the_strengthened_tests_closing_them() 
         after.contains(&"- src/lib.rs:22 error_path: exposed"),
         "{report}"
     );
+    assert!(
+        after.contains(&"- src/lib.rs:22 predicate: exposed"),
+        "{report}"
+    );
 
     // The copy the report names is kept, with the strengthened tests in it.
     let root = report
