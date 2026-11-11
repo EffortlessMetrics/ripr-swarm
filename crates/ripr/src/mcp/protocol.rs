@@ -3170,8 +3170,8 @@ mod tests {
     }
 
     /// Every argument of every published tool, with its description (or
-    /// `None`), in listing order.
-    fn published_arguments(tools: &Value) -> Result<Vec<(String, Option<String>)>, String> {
+    /// `None`) and its tool's description, in listing order.
+    fn published_arguments(tools: &Value) -> Result<Vec<(String, Option<String>, String)>, String> {
         let mut arguments = Vec::new();
         for tool in tools["tools"].as_array().ok_or("tools/list lost tools")? {
             let name = tool["name"].as_str().ok_or("unnamed tool")?;
@@ -3186,6 +3186,7 @@ mod tests {
                         .get("description")
                         .and_then(Value::as_str)
                         .map(str::to_string),
+                    tool["description"].as_str().unwrap_or_default().to_string(),
                 ));
             }
         }
@@ -3194,12 +3195,12 @@ mod tests {
 
     /// #9360: an argument description is read before the first call, so it
     /// must exist, and a failure code it names must be one the wire can
-    /// carry. `ripr_refresh.base` named `base_unresolvable`, a shared-check
+    /// carry and its own tool's description names. `ripr_refresh.base` named `base_unresolvable`, a shared-check
     /// identity this server always reports as `analysis_failed`.
     fn check_argument_descriptions(tools: &Value) -> Result<usize, String> {
         let vocabulary = failure_vocabulary();
         let mut total = 0usize;
-        for (argument, description) in published_arguments(tools)? {
+        for (argument, description, tool_description) in published_arguments(tools)? {
             let description = description
                 .filter(|text| !text.is_empty())
                 .ok_or_else(|| format!("{argument} has no description"))?;
@@ -3213,6 +3214,15 @@ mod tests {
                     if !vocabulary.contains(&code.as_str()) {
                         return Err(format!(
                             "{argument} names failure code {code:?}, which this server never returns"
+                        ));
+                    }
+                    // The vocabulary is server-wide and includes reserved
+                    // codes, so also require the argument's own tool to
+                    // name the code: a code another tool returns is as
+                    // misleading here as one nobody returns.
+                    if !tool_description.contains(code.as_str()) {
+                        return Err(format!(
+                            "{argument} names failure code {code:?}, which its tool description does not"
                         ));
                     }
                 }
@@ -3253,6 +3263,18 @@ mod tests {
                 if error.contains("ripr_refresh.base names failure code \"base_unresolvable\"") => {
             }
             other => return Err(format!("unreachable code was not refused: {other:?}")),
+        }
+
+        // A real code that only another tool returns is refused too.
+        let mut foreign = tools_list_result();
+        foreign["tools"][1]["inputSchema"]["properties"]["base"]["description"] =
+            json!("Use it when refresh fails with attempt_not_found.");
+        match check_argument_descriptions(&foreign) {
+            Err(error)
+                if error
+                    == "ripr_refresh.base names failure code \"attempt_not_found\", which its tool description does not" =>
+                {}
+            other => return Err(format!("foreign code was not refused: {other:?}")),
         }
         Ok(())
     }
