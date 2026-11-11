@@ -10,4 +10,4 @@ permissions:
   checks: read
 jobs:
   queue:
-    uses: EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@4f12c62ad03ca46de0e949351b8c2332440e6287
+    uses: EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@89ce68d945a27662e90a304766c285c3e894a69e
