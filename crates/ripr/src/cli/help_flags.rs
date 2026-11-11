@@ -64,6 +64,17 @@ fn is_metavar(token: &str) -> bool {
     if token.starts_with('<') && token.ends_with('>') {
         return true;
     }
+    // A closed lowercase choice list (`before|after|verify`) is a value too.
+    if token.contains('|')
+        && token.split('|').all(|choice| {
+            !choice.is_empty()
+                && choice
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+    {
+        return true;
+    }
     let mut saw_upper = false;
     for ch in token.chars() {
         match ch {
@@ -278,6 +289,22 @@ mod tests {
         let flags = flags_for("thing", body);
         assert!(flag(&flags, "--depth")?.takes_value, "{flags:?}");
         assert!(!flag(&flags, "--json")?.takes_value, "{flags:?}");
+        Ok(())
+    }
+
+    /// `--phase before|after|verify` documents a value, not a switch, so
+    /// `--phase=after` is split like `--phase after` (#14292 review).
+    #[test]
+    fn a_lowercase_choice_list_takes_a_value() -> Result<(), String> {
+        let body = "Do a thing.\n\nUsage: ripr thing [--phase before|after] [--json]\n\nOptions:\n  --phase before|after   Which phase.\n  --json                 Print JSON.\n";
+        let flags = flags_for("thing", body);
+        assert!(flag(&flags, "--phase")?.takes_value, "{flags:?}");
+        assert!(!flag(&flags, "--json")?.takes_value, "{flags:?}");
+        let production = flags_for(
+            "agent repair",
+            crate::cli::help::help_text_for("agent repair").ok_or("agent repair help")?,
+        );
+        assert!(flag(&production, "--phase")?.takes_value, "{production:?}");
         Ok(())
     }
 
