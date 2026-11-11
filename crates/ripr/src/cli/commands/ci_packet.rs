@@ -268,7 +268,7 @@ impl CiSettings {
         }
     }
 
-    fn pull_request(&self) -> bool {
+    pub(super) fn pull_request(&self) -> bool {
         self.event_name == "pull_request"
     }
 
