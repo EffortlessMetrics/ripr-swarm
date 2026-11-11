@@ -28447,16 +28447,21 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     } else {
         "--base 'HEAD~1'"
     };
-    // The drill-in must be present for the range oracle to observe anything:
-    // a report without `ripr explain` would otherwise pass it unread (#14083 T7).
-    if !stdout.contains("ripr explain") {
+    // Every drill-in line is read on its own (#14083 T7): a report without a
+    // `ripr explain` line would otherwise pass unread, and one base spelled
+    // anywhere in the report would vouch for a drill-in that lost its range.
+    let drill_ins: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("ripr explain") || line.contains("ripr context"))
+        .collect();
+    if !drill_ins.iter().any(|line| line.contains("ripr explain")) {
         return Err(format!(
             "the report must offer a `ripr explain` drill-in for the range oracle to read; got:\n{stdout}"
         ));
     }
-    if !stdout.contains(quoted_base) {
+    if let Some(unbound) = drill_ins.iter().find(|line| !line.contains(quoted_base)) {
         return Err(format!(
-            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+            "drill-in commands must stay on the analyzed last-commit range; `{unbound}` does not; got:\n{stdout}"
         ));
     }
     if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
