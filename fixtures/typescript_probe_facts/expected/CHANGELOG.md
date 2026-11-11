@@ -913,3 +913,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_probe_facts (43)
+
+Reason:
+RIPR-SPEC-0027: an unrecognised plain value declaration presents family return_value, delta value (#14381)
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -271,6 +271,167 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     TypeScriptProbeShape::ambiguous_fallback()
 }
 
+/// The shape a finding presents (#14381). Analysis keeps the conservative
+/// ambiguous fallback, `(Predicate, Control)` with `specific: false`, for a
+/// changed line it does not recognise, because its gates, oracle admission and
+/// credit are calibrated on it. Only what the finding says about itself (probe
+/// family and delta) reads as a value, and only for a plain single-name
+/// `const`/`let`/`var` declaration whose right side carries no condition, so a
+/// declaration such as `const desc = Object.getOwnPropertyDescriptor(raw, key);`
+/// is no longer described as "a condition or comparison changed". A
+/// recognised (specific) shape is returned unchanged.
+pub(crate) fn presented_typescript_shape(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+) -> (ProbeFamily, DeltaKind) {
+    if !probe_shape.specific
+        && matches!(probe_shape.family, ProbeFamily::Predicate)
+        && matches!(probe_shape.delta, DeltaKind::Control)
+        && is_typescript_plain_value_declaration(line_text)
+    {
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        (probe_shape.family.clone(), probe_shape.delta.clone())
+    }
+}
+
+/// A single-name `const`/`let`/`var` declaration whose initializer is a plain
+/// value expression (#14381): `const desc = Object.getOwnPropertyDescriptor(raw,
+/// key);`, `let total: number = base - bonus;`. The recognizer is closed: the
+/// target is one identifier with at most a simple type annotation, the whole
+/// statement sits on the line, and any initializer that could carry a
+/// comparison, boolean or nullish operator, conditional, negation, membership
+/// or type test, arrow function, `await` or `yield` keeps the conservative
+/// predicate default. Quoted text is ignored when looking for those markers.
+pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
+    let trimmed = line_text.trim();
+    let Some(rest) = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| trimmed.strip_prefix(keyword))
+    else {
+        return false;
+    };
+    let Some((target, initializer)) = rest.split_once('=') else {
+        return false;
+    };
+    let target = match target.split_once(':') {
+        Some((name, annotation)) => {
+            let annotation = annotation.trim();
+            let clean = !annotation.is_empty()
+                && annotation.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(
+                            ch,
+                            '_' | '$' | '.' | '[' | ']' | '<' | '>' | ',' | '|' | ' '
+                        )
+                });
+            if !clean {
+                return false;
+            }
+            name.trim()
+        }
+        None => target.trim(),
+    };
+    let is_identifier = target
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+        && target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
+    if !is_identifier {
+        return false;
+    }
+    let initializer = initializer.trim();
+    let initializer = initializer
+        .strip_suffix(';')
+        .unwrap_or(initializer)
+        .trim_end();
+    // A missing statement end (`= {`, `= foo(`, `= a,`) continues on later
+    // lines; a further `;` joins a second statement.
+    if initializer.is_empty()
+        || initializer.ends_with(',')
+        || closing_delimiter_balance(initializer) != Some(0)
+    {
+        return false;
+    }
+    let code = without_quoted_text(initializer).replace("?.", ".");
+    let padded = format!(" {code} ");
+    ![
+        "<",
+        ">",
+        "=",
+        "!",
+        "?",
+        "&&",
+        "||",
+        ";",
+        " in ",
+        " instanceof ",
+        "typeof ",
+        "await ",
+        "yield",
+        "function",
+    ]
+    .iter()
+    .any(|marker| padded.contains(marker))
+}
+
+/// Net bracket depth of `text` outside quoted strings, or `None` when a closer
+/// appears before its opener or a string never closes.
+fn closing_delimiter_balance(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    quote.is_none().then_some(depth)
+}
+
+/// `text` with the contents of `"…"`, `'…'` and `` `…` `` literals blanked, so
+/// an operator inside a string is not read as code.
+fn without_quoted_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+                out.push(ch);
+                continue;
+            }
+            out.push(' ');
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Returns `true` for an added TypeScript/JavaScript line that carries no
 /// behavior of its own: blank, comment-only, or punctuation-only (`}`, `});`,
 /// `)`, `],`). Mirrors the Rust `should_ignore_changed_line` filter; such a

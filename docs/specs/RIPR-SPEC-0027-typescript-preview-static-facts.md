@@ -449,7 +449,16 @@ any line of a `.d.ts`/`.d.mts`/`.d.cts` declaration file: these are type-only
 and erased at compile time. Declaration files still count as changed files.
 `declare` used as a runtime identifier, or at the start of a template-literal
 line, is still probed. An unrecognised line keeps the non-specific predicate
-fallback and is never classified `exposed`.
+fallback and is never classified `exposed`. The fallback is an analysis
+choice, not a claim that a condition changed: when the unrecognised line is a
+plain single-name `const`/`let`/`var` declaration whose whole statement sits on
+the line and whose initializer carries no comparison, boolean or nullish
+operator, conditional, negation, `in`/`instanceof`/`typeof`, arrow function,
+`await` or `yield` (`const desc = Object.getOwnPropertyDescriptor(raw, key);`),
+the finding presents family `return_value` and delta `value` instead (#14381).
+Every analysis decision still reads the fallback shape, so classification,
+credit, oracle admission and gates do not move, and the finding keeps its
+`probe_fact: ambiguous_fallback` evidence.
 
 A changed line whose in-place removed counterpart differs only in erased
 TypeScript type syntax also produces no probe (#4282). Both sides must parse

@@ -540,3 +540,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (45)
+
+Reason:
+RIPR-SPEC-0027: an unrecognised plain value declaration presents family return_value, delta value (#14381)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
