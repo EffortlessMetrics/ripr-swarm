@@ -11,8 +11,16 @@ description = "Static check for Rust changes: does your test suite notice if the
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
-# Keep the integration tests and sample workspace in the source distribution.
-# This is intentional release evidence; see docs/RELEASE.md before changing it.
+# The source distribution carries what a build of `ripr` reads, the sample
+# workspace, and the one integration target qualified to run from an extracted
+# package (`cli_help_hierarchy` and its two shared helpers). Test-only sources
+# are left out because the crate otherwise exceeds the crates.io 10 MiB upload
+# limit (#14071): out-of-line unit-test modules (`tests.rs`, `tests/`,
+# `*_tests.rs`, all declared under `#[cfg(test)]`) and the rest of `tests/`.
+# Include patterns are gitignore-style and the last match wins, so the
+# production modules whose names end in `_tests.rs` are listed again after the
+# exclusion. A new production module with such a name must be added there, or
+# the packaged crate will not compile. See docs/RELEASE.md before changing it.
 # The example paths are enumerated rather than globbed as `examples/**` so that
 # `examples/*/target/` test residue cannot enter the package. `ripr` runs
 # against the sample workspace during tests and writes a fact cache there; that
@@ -20,14 +28,27 @@ categories = ["development-tools", "development-tools::testing"]
 # uncommitted-files check.
 include = [
   "src/**",
+  "!src/**/tests.rs",
+  "!src/**/tests/**",
+  "!src/**/*_tests.rs",
+  "src/analysis/classify/related_tests.rs",
+  "src/analysis/facts/macro_generated_tests.rs",
+  "src/analysis/facts/parameterized_tests.rs",
+  "src/analysis/language/python/doctest_tests.rs",
+  "src/analysis/language/python/owners_tests.rs",
+  "src/analysis/language/python/related_tests.rs",
+  "src/analysis/language/typescript/related_tests.rs",
+  "src/analysis/test_grip_evidence/related_tests.rs",
   "vendor/**",
-  "tests/**",
+  "tests/cli_help_hierarchy.rs",
+  "tests/common/help_contract.rs",
+  "tests/common/help_workspace.rs",
   "examples/*/example.diff",
   "examples/*/src/**",
   "examples/*/tests/**",
   "examples/*.diff",
   "examples/*.rs",
-  "README.md",
+  "/README.md",
   "LICENSE-*",
   "Cargo.toml",
   "build.rs"

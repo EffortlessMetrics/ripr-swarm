@@ -137,9 +137,15 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         read_crate_version(Path::new("crates/ripr/Cargo.toml"), Path::new("Cargo.toml"));
     let clean_tree = git_worktree_is_clean();
     let installed_binary = installed_ripr_binary();
+    // Evaluated in report order; the size check reads what the rehearsal wrote.
+    let package_list = package_list_check(version, crate_version.as_deref(), clean_tree.clone());
+    let publish_dry_run =
+        publish_dry_run_check(version, crate_version.as_deref(), clean_tree.clone());
+    let package_upload_size = package_upload_size_check(version, publish_dry_run.status == "pass");
     let checks = vec![
-        package_list_check(version, crate_version.as_deref(), clean_tree.clone()),
-        publish_dry_run_check(version, crate_version.as_deref(), clean_tree.clone()),
+        package_list,
+        publish_dry_run,
+        package_upload_size,
         package_install_check(version, crate_version.as_deref()),
         packaged_cli_journey_check(&installed_binary, crate_version.as_deref()),
         installed_command_surface_check(&installed_binary),
@@ -193,6 +199,142 @@ fn publish_dry_run_check(
         crate_version,
         clean_tree,
         || run_command("cargo", &["xtask", "publish-dry-run"]),
+    )
+}
+
+/// crates.io's default maximum `.crate` upload size. The registry rejects a
+/// larger upload unless its team has granted the crate a higher limit, and
+/// neither `cargo package` nor `cargo publish --dry-run` applies the limit, so
+/// the rehearsal passes on a crate the real publish would refuse (#14071).
+pub(crate) const CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES: u64 = 10 * 1024 * 1024;
+
+/// One line per packaged crate whose size exceeds `limit`.
+pub(crate) fn upload_size_problems(sizes: &[(String, u64)], limit: u64) -> Vec<String> {
+    sizes
+        .iter()
+        .filter(|(_, bytes)| *bytes > limit)
+        .map(|(name, bytes)| {
+            format!(
+                "{name} is {bytes} bytes, {} bytes over the {limit}-byte crates.io default upload limit",
+                bytes - limit
+            )
+        })
+        .collect()
+}
+
+/// A packaged crate within this many bytes of the limit is reported as `warn`:
+/// it still uploads, but the next growth in source will not.
+pub(crate) const UPLOAD_HEADROOM_WARN_BYTES: u64 = CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES / 10;
+
+/// Measure the crates the publish rehearsal just packaged against the
+/// crates.io default upload limit. Only a rehearsal that passed in this run
+/// is measured: an archive left in `target/package` by an earlier run is not
+/// this candidate. A crate over the limit fails; one within
+/// `UPLOAD_HEADROOM_WARN_BYTES` of it warns; an unreadable archive after a
+/// passing rehearsal fails, because the measurement itself did not happen.
+fn package_upload_size_check(version: &str, rehearsed: bool) -> ReleaseReadinessCheck {
+    package_upload_size_check_in(Path::new("target/package"), version, rehearsed)
+}
+
+fn package_upload_size_check_in(
+    package_dir: &Path,
+    version: &str,
+    rehearsed: bool,
+) -> ReleaseReadinessCheck {
+    let id = "package-upload-size";
+    let command = "cargo xtask publish-dry-run";
+    if !rehearsed {
+        return readiness_check(
+            id,
+            "not_run",
+            false,
+            command,
+            "publish dry-run did not pass in this run, so no freshly packaged crate was measured",
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let mut artifacts = Vec::new();
+    let mut sizes = Vec::new();
+    for package in ["ripr-contract", "ripr"] {
+        let name = format!("{package}-{version}.crate");
+        let archive = package_dir.join(&name);
+        artifacts.push(crate::normalize_path(&archive));
+        match fs::metadata(&archive) {
+            Ok(metadata) if metadata.is_file() => sizes.push((name, metadata.len())),
+            Ok(_) => {
+                return readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    command,
+                    "a packaged crate is not a regular file, so its upload size was not measured",
+                    artifacts,
+                    vec![format!("not a regular file: {name}")],
+                );
+            }
+            Err(err) => {
+                return readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    command,
+                    "a packaged crate could not be read, so its upload size was not measured",
+                    artifacts,
+                    vec![format!("cannot read {name}: {err}")],
+                );
+            }
+        }
+    }
+    let mut details = sizes
+        .iter()
+        .map(|(name, bytes)| format!("{name}: {bytes} bytes"))
+        .collect::<Vec<_>>();
+    let problems = upload_size_problems(&sizes, CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES);
+    if problems.is_empty() {
+        let near = sizes
+            .iter()
+            .filter(|(_, bytes)| {
+                CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes < UPLOAD_HEADROOM_WARN_BYTES
+            })
+            .map(|(name, bytes)| {
+                format!(
+                    "{name} has {} bytes of headroom under the {CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES}-byte crates.io default upload limit",
+                    CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES - *bytes
+                )
+            })
+            .collect::<Vec<_>>();
+        if near.is_empty() {
+            return readiness_check(
+                id,
+                "pass",
+                true,
+                command,
+                "every packaged crate fits the crates.io default upload limit",
+                artifacts,
+                details,
+            );
+        }
+        details.extend(near);
+        return readiness_check(
+            id,
+            "warn",
+            false,
+            command,
+            "every packaged crate fits the crates.io default upload limit, but one is within 10% of it (#14071)",
+            artifacts,
+            details,
+        );
+    }
+    details.extend(problems);
+    readiness_check(
+        id,
+        "fail",
+        true,
+        command,
+        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest (#14071)",
+        artifacts,
+        details,
     )
 }
 
@@ -5790,6 +5932,103 @@ mod tests {
             Err(message) => Err(format!("unexpected error: {message}")),
             Ok(_) => Err("expected missing version error".to_string()),
         }
+    }
+
+    fn upload_size_fixture(
+        case: &str,
+        ripr_bytes: Option<u64>,
+    ) -> Result<std::path::PathBuf, String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-upload-size-{case}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        fs::write(dir.join("ripr-contract-9.9.9.crate"), b"contract")
+            .map_err(|err| err.to_string())?;
+        if let Some(bytes) = ripr_bytes {
+            // A sparse file: the check reads the length, not the content.
+            let file =
+                fs::File::create(dir.join("ripr-9.9.9.crate")).map_err(|err| err.to_string())?;
+            file.set_len(bytes).map_err(|err| err.to_string())?;
+        }
+        Ok(dir)
+    }
+
+    #[test]
+    fn package_upload_size_passes_with_headroom_warns_near_and_fails_over() -> Result<(), String> {
+        let limit = super::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
+        let headroom = super::UPLOAD_HEADROOM_WARN_BYTES;
+        assert_eq!((limit, headroom), (10_485_760, 1_048_576));
+
+        // Exactly the warning headroom left: still a plain pass.
+        let roomy = upload_size_fixture("roomy", Some(limit - headroom))?;
+        let check = super::package_upload_size_check_in(&roomy, "9.9.9", true);
+        assert_eq!(
+            (check.id, check.status.as_str(), check.required),
+            ("package-upload-size", "pass", true)
+        );
+        assert_eq!(
+            check.details,
+            vec![
+                "ripr-contract-9.9.9.crate: 8 bytes".to_string(),
+                "ripr-9.9.9.crate: 9437184 bytes".to_string(),
+            ]
+        );
+
+        // One byte less headroom warns, and so does a crate exactly at the limit.
+        let near = upload_size_fixture("near", Some(limit - headroom + 1))?;
+        let check = super::package_upload_size_check_in(&near, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+        assert!(check.details.contains(
+            &"ripr-9.9.9.crate has 1048575 bytes of headroom under the 10485760-byte crates.io default upload limit"
+                .to_string()
+        ));
+        assert_eq!(super::release_readiness_status(&[check]), "warn");
+        let at_limit = upload_size_fixture("at-limit", Some(limit))?;
+        let check = super::package_upload_size_check_in(&at_limit, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("warn", false));
+
+        // One byte over the limit is a required failure.
+        let over = upload_size_fixture("over-limit", Some(limit + 1))?;
+        let check = super::package_upload_size_check_in(&over, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(check.summary.contains("#14071"));
+        assert!(check.details.contains(
+            &"ripr-9.9.9.crate is 10485761 bytes, 1 bytes over the 10485760-byte crates.io default upload limit"
+                .to_string()
+        ));
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
+        for dir in [roomy, near, at_limit, over] {
+            let _ = fs::remove_dir_all(dir);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn package_upload_size_ignores_a_stale_archive_and_fails_on_a_missing_one() -> Result<(), String>
+    {
+        let limit = super::CRATES_IO_DEFAULT_MAX_UPLOAD_BYTES;
+        // An over-limit archive from an earlier run is not this candidate.
+        let stale = upload_size_fixture("stale", Some(limit + 1))?;
+        let check = super::package_upload_size_check_in(&stale, "9.9.9", false);
+        assert_eq!((check.status.as_str(), check.required), ("not_run", false));
+        assert!(check.artifacts.is_empty());
+
+        // A passing rehearsal that left no ripr archive measured nothing.
+        let missing = upload_size_fixture("missing", None)?;
+        let check = super::package_upload_size_check_in(&missing, "9.9.9", true);
+        assert_eq!((check.status.as_str(), check.required), ("fail", true));
+        assert!(
+            check
+                .details
+                .iter()
+                .any(|detail| detail.starts_with("cannot read ripr-9.9.9.crate:"))
+        );
+        assert_eq!(super::release_readiness_status(&[check]), "fail");
+
+        let _ = fs::remove_dir_all(stale);
+        let _ = fs::remove_dir_all(missing);
+        Ok(())
     }
 
     #[test]

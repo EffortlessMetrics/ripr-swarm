@@ -238,13 +238,43 @@ movement cannot promote the release claim by itself.
 
 ### Crate tarball contents
 
-`crates/ripr/Cargo.toml` intentionally includes `tests/**` and the tracked
-example paths (`examples/*/example.diff`, `examples/*/src/**`,
-`examples/*/tests/**`) in the published source distribution. The package list
-therefore carries the checked integration corpus and sample workspace used by
-release and dogfood evidence. This does not change the installed binary or
-library API, but removing either surface is a release-contract change that must
-be reviewed against `cargo package -p ripr --list` and this document.
+The published source distribution carries what a build of `ripr` reads, the
+sample workspace (`examples/*/example.diff`, `examples/*/src/**`,
+`examples/*/tests/**`), and one integration target: `tests/cli_help_hierarchy.rs`
+with `tests/common/help_contract.rs` and `tests/common/help_workspace.rs`.
+
+Test-only sources are not packaged. crates.io rejects a `.crate` above its
+default 10 MiB (10,485,760 byte) upload limit unless its team has raised the
+limit for that crate, and with every test source included the `ripr` crate
+packaged from main on 2026-11-11 was 14,306,810 bytes (#14071). The `include`
+list in `crates/ripr/Cargo.toml` therefore leaves out:
+
+- out-of-line unit-test modules under `src/`: `tests.rs`, anything under a
+  `tests/` directory, and `*_tests.rs`. Each is declared under `#[cfg(test)]`,
+  so a build or install never reads it. Eight production modules have names
+  ending in `_tests.rs`; the manifest lists them again after the exclusion. A
+  new production module with such a name must be added there, or the packaged
+  crate does not compile (the publish rehearsal and the `package-install`
+  check build the packaged crate and catch that);
+- every other file under `tests/`.
+
+With that list the packaged crate was 10,002,936 bytes. That is about 4.6%
+under the limit, so the durable fix is still a raised crates.io limit or a
+smaller `ripr` crate; #14071 tracks it.
+
+Neither `cargo package` nor `cargo publish --dry-run` applies the registry
+limit. The `package-upload-size` check of `cargo xtask release-readiness`
+measures the two archives the publish rehearsal just wrote to `target/package`:
+a crate over the limit is a required failure, and a crate within 10% of it is a
+`warn` that names the remaining bytes. The check is `not_run` when the
+rehearsal did not pass in the same run, so an archive left by an earlier run is
+never measured.
+
+Unit tests and the other integration targets still run from the repository
+checkout; they are not runnable from the published crate. This does not change
+the installed binary or library API. Changing the list is a release-contract
+change that must be reviewed against `cargo package -p ripr --list`, the
+measured `.crate` size and this document.
 
 The published `cli_help_hierarchy` target must compile and run from the
 extracted package without repository-root documentation. It keeps the rendered
