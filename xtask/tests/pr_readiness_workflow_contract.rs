@@ -86,8 +86,9 @@ fn event_declarations(source: &str) -> Result<Vec<&str>, String> {
 /// Direct job keys have exactly two leading spaces and direct job fields have
 /// four. More deeply indented block-scalar text therefore cannot impersonate a
 /// sibling job or its `name` field.
-fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
+fn direct_job_field<'a>(source: &'a str, job: &str, field: &str) -> Option<&'a str> {
     let target = format!("  {job}:");
+    let prefix = format!("    {field}: ");
     let mut in_jobs = false;
     let mut in_target = false;
 
@@ -116,12 +117,17 @@ fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
             continue;
         }
 
-        if in_target && let Some(name) = line.strip_prefix("    name: ") {
-            return Some(name.trim());
+        if in_target && let Some(value) = line.strip_prefix(&prefix) {
+            return Some(value.trim());
         }
     }
 
     None
+}
+
+/// Read a direct static job name from the `jobs` mapping.
+fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
+    direct_job_field(source, job, "name")
 }
 
 /// Read the direct static name emitted by the required result job.
@@ -326,6 +332,57 @@ fn parsed_types(source: &str) -> Result<Vec<String>, String> {
         .ok_or_else(|| "workflow declares auditable on.pull_request.types".to_owned())
 }
 
+fn publication_events(config: &str) -> Result<Vec<String>, String> {
+    let config: toml::Value = toml::from_str(config).map_err(|error| error.to_string())?;
+    config
+        .get("gate")
+        .and_then(|gate| gate.get("post_review_on"))
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "explicit gate.post_review_on required".to_owned())?
+        .iter()
+        .map(|event| {
+            event
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "publication event is a string".to_owned())
+        })
+        .collect()
+}
+
+fn retained_publication_contract(config: &str) -> Result<(), String> {
+    let mut events = publication_events(config)?;
+    events.sort();
+    if events != ["opened", "reopened", "synchronize"] {
+        return Err(format!("retained UB publication events changed: {events:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn retained_review_configuration_preserves_publication_policy() -> Result<(), String> {
+    retained_publication_contract(&repo_file(".ub-review.toml")?)
+}
+
+#[test]
+fn retained_publication_policy_rejects_missing_changed_and_malformed_events() -> Result<(), String> {
+    let config = repo_file(".ub-review.toml")?;
+    retained_publication_contract(&config)?;
+    for event in ["opened", "synchronize", "reopened"] {
+        let changed = config.replacen(&format!("\"{event}\""), "\"unexpected\"", 1);
+        assert_ne!(changed, config, "publication mutation must engage");
+        assert!(retained_publication_contract(&changed).is_err());
+    }
+    for config in [
+        "[gate]\nrequired_check = 'ub-review/gate'\n",
+        "[gate]\npost_review_on = 'opened'\n",
+        "[gate]\npost_review_on = ['opened', 'reopened', 7]\n",
+        "[gate]\npost_review_on = ['opened', 'reopened', 'synchronize', 'opened']\n",
+    ] {
+        assert!(retained_publication_contract(config).is_err());
+    }
+    Ok(())
+}
+
 #[test]
 fn advisory_review_actions_are_retired_without_removing_review_configuration() -> Result<(), String>
 {
@@ -350,6 +407,31 @@ fn advisory_review_actions_are_retired_without_removing_review_configuration() -
     );
     assert!(!repo_file(".factory/skills/review-guidelines/SKILL.md")?.is_empty());
     Ok(())
+}
+
+#[test]
+fn event_parser_ignores_decoys_outside_pull_request() -> Result<(), String> {
+    let source = "# types: [ready_for_review]\non:\n  workflow_dispatch:\n    inputs:\n      types: [ready_for_review]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n";
+    assert_eq!(parsed_types(source)?, ["opened", "synchronize", "reopened"]);
+    assert!(
+        repo_policy::routed_rust_pull_request_types(
+            "jobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n"
+        )
+        .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn unauditable_event_layouts_fail_closed() {
+    for source in [
+        "on:\n  pull_request:\n",
+        "on:\n  pull_request:\n    types:\n      - opened\n",
+        "on:\n  pull_request:\n    types: [opened\n",
+        "on:\n  pull_request:\n    types: ['opened\"]\n",
+    ] {
+        assert!(repo_policy::routed_rust_pull_request_types(source).is_none());
+    }
 }
 
 #[test]

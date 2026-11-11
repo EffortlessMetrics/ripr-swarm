@@ -66,13 +66,16 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. Ordinary development does not request
-label CI. After verified queue activation, use
+below apply to candidate preparation. Ordinary development does not request CI.
+The selected, reviewed candidate uses the installed qualification route. After
+verified queue activation, use
 [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization. Until then retain the
-reviewed candidate and evidence. The installed predecessor's label request is
-only an explicitly selected activation-owner bootstrap, never an ordinary
-fallback. The delivery owner completes this preparation order:
+for conditional landing and actual-G qualification. During the current bootstrap,
+GitHub can still require the installed H check before enqueue; the delivery owner
+may request that check through `merge-ready` after completing this preparation.
+Auxiliary event retirement does not replace that producer with cheap H admission.
+Retire its label request only after the replacement is qualified and enforced.
+The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
    substantive review through `review-pr` inline in the owning session's main
@@ -119,8 +122,9 @@ fallback. The delivery owner completes this preparation order:
    missing claim-essential native proof. After Ready, inspect the existing
    native request and runs for the exact head and subject before acting. Ready
    alone requests nothing; `REVIEW_READY` and required proof still govern merge
-   under `finish-pr`. Only the activation owner may use the separately selected
-   legacy bootstrap described below.
+   under `finish-pr`. If the installed required H check is still needed before
+   enqueue, use its retained label request as described below; do not duplicate
+   an existing current-subject request.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
 the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
@@ -132,11 +136,11 @@ re-apply `merge-ready` merely to refresh it.
 A new head or material finding returns the candidate to Draft for one joined
 repair/proof/review wave. Preserve unaffected evidence.
 
-### Historical label bootstrap reconciliation
+### Retained label-request reconciliation
 
-These predecessor details apply only to an explicitly selected activation-owner
-bootstrap while that route is still installed. They are not an ordinary request
-path and cannot restore a retired subscriber. Before that bootstrap label request,
+These details apply while the installed qualification producer still needs its
+label request. A selected, reviewed candidate may use that route; it is not
+development feedback and cannot restore a retired auxiliary subscriber. Before a label request,
 read the current head, label and admitted run state, including the run subject:
 
 - Preserve a queued or running current-subject run and its link; reapplying the

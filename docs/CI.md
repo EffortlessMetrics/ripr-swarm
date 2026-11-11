@@ -131,7 +131,7 @@ mention subscribers are retired; their review configuration and guidance remain
 available to the session. A skipped job would still allocate a workflow, so a
 job guard is not an exception to this rule.
 
-The source retirement under #4842 removes 33 automatic event edges from 20
+The source retirement under #4842 removes 42 automatic event roots from 29
 workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
 builds are gone. Callable qualification leaves remain available to the existing
 #8082 owner; explicit manual proof and separately purposed security, corpus and
@@ -948,7 +948,8 @@ workflow_dispatch on another branch or tag:
   diagnostic jobs may run; the required Result explicitly fails
 ```
 
-`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+`windows-ci` remains selection vocabulary; the Windows advisory workflow runs
+on its retained schedule or explicit dispatch, not on a PR label.
 `cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
 group is qualified by `github.event_name` (and unique per run for a nonrequest
 label), so a repeated `merge-ready` request replaces the prior admission attempt
@@ -973,6 +974,12 @@ Unavailable, failed or skipped provider output remains missing evidence. The
 owner still performs substantive exact-head review and resolves current findings
 before conditional admission. The separately purposed scheduled Droid security
 scan retains its existing safeguards.
+
+The retained `.ub-review.toml` still names `opened`, `synchronize` and `reopened`
+as its publication policy for explicit tool consumers. That configuration does
+not subscribe a repository workflow to those events. The readiness contracts
+keep the configuration check and its missing/changed/malformed controls; the
+retired workflow's event, concurrency and action-input tests retire with it.
 
 UB's receipt reporter stays in `xtask`, with its explicit example tests. Local
 example test and run invocations can use `--no-default-features` to build the JSON
