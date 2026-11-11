@@ -3141,3 +3141,12 @@ sibling reuse restores individual preparation; missing selectors and compiler
 failures still refuse. Targetless and feature-changing selectors keep their own
 builds. These controls establish eliminated redundant Cargo invocations, not a
 measured whole-repo CPU, memory, storage or wall-time reduction.
+
+The reuse boundary and its test mapping are specified in
+[RIPR-SPEC-0280](specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md#invocation-local-preparation-reuse).
+The retained native fixtures use one package; they do not establish freshness
+after cross-package builds or headroom within the five-minute listing budget.
+Package-set isolation remains in place after the Windows rebuild findings in
+#12245. Cargo still checks freshness during every native listing, so matching a
+preparation identity alone is not evidence that the listing performs no
+compilation.

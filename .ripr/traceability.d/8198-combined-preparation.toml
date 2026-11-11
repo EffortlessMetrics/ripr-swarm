@@ -1,0 +1,14 @@
+# Invocation-local preparation reuse; native listings still decide acceptance.
+[[extend]]
+id = "RIPR-SPEC-0280"
+tests = [
+  "xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_replaces_only_member_builds",
+  "xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_reuses_lib_and_keeps_uncovered_builds",
+  "xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_requires_unchanged_launch_context",
+]
+code = [
+  "xtask/src/policy/file_policy.rs",
+]
+outputs = [
+  "docs/CI.md",
+]
