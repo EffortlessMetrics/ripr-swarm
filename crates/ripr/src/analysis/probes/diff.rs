@@ -752,19 +752,17 @@ pub(crate) fn probes_for_file_with_relations(
                 continue;
             }
             // #14325: a removed bare literal (`1200`, `"v1",`, `true`) carries
-            // no behavior beyond its value. When an added-side probe of a
-            // modeled family already pairs this exact text as its `before`,
-            // that probe judges the replaced value, so a second, base-side
+            // no behavior beyond its value. When the added line that the
+            // block pairing names as THIS removed line's replacement already
+            // has a modeled-family probe whose `before` is this text, that
+            // probe judges the replaced value, so a second, base-side
             // static-unknown catch-all would only keep verification refused
-            // for code no test can reach any more.
-            // The paired `before` may be cut to the literal's parser span,
-            // so a trailing `,`/`;` on the removed line still matches.
+            // for code no test can reach any more. Pairing is by line
+            // identity, not text: an equal literal deleted elsewhere in the
+            // file keeps its own probe.
             if family == ProbeFamily::StaticUnknown
                 && let Some(literal) = bare_literal_body(text)
-                && probes.iter().any(|seeded| {
-                    seeded.probe.family != ProbeFamily::StaticUnknown
-                        && matches!(seeded.probe.before.as_deref(), Some(before) if before == text || before == literal)
-                })
+                && replaced_literal_is_paired(removed, text, literal, changed, &probes)
             {
                 continue;
             }
@@ -794,6 +792,34 @@ pub(crate) fn probes_for_file_with_relations(
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+/// Whether an added line that `replaced_line_counterpart` pairs with
+/// `removed` carries a non-static-unknown probe whose `before` is the
+/// removed text, or its literal body when the parser cut `before` to the
+/// literal's span (a trailing `,`/`;`). The `nearby_removed_line` fallback
+/// is not a pairing, so an unpaired deletion fails closed.
+fn replaced_literal_is_paired(
+    removed: &ChangedLine,
+    text: &str,
+    literal: &str,
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> bool {
+    changed.added_lines.iter().any(|added| {
+        changed
+            .replaced_line_counterpart(added.new_side_line)
+            .is_some_and(|counterpart| counterpart.line == removed.line)
+            && probes.iter().any(|seeded| {
+                seeded.probe.family != ProbeFamily::StaticUnknown
+                    && seeded.probe.location.line == added.new_side_line
+                    && seeded
+                        .probe
+                        .before
+                        .as_deref()
+                        .is_some_and(|before| before == text || before == literal)
+            })
+    })
 }
 
 /// True when a trimmed changed line is one literal and nothing else: a
@@ -3250,16 +3276,34 @@ mod tests {
         shapes: &[(ProbeShapeKind, &str)],
         file_source: &str,
     ) -> Vec<Probe> {
+        shapes_probes_with_deletions(added, removed, &[], shapes, file_source)
+    }
+
+    /// `shapes_probes` plus pure deletions in a separate later hunk, each
+    /// `(old line, text)` with no added counterpart.
+    fn shapes_probes_with_deletions(
+        added: &str,
+        removed: &str,
+        deletions: &[(usize, &str)],
+        shapes: &[(ProbeShapeKind, &str)],
+        file_source: &str,
+    ) -> Vec<Probe> {
         let path = PathBuf::from("src/lib.rs");
         let line = |text: &str| ChangedLine {
             line: 3,
             new_side_line: 3,
             text: text.to_string(),
         };
+        let mut removed_lines = vec![line(removed)];
+        removed_lines.extend(deletions.iter().map(|(old_line, text)| ChangedLine {
+            line: *old_line,
+            new_side_line: *old_line,
+            text: (*text).to_string(),
+        }));
         let changed = ChangedFile {
             path: path.clone(),
             added_lines: vec![line(added)],
-            removed_lines: vec![line(removed)],
+            removed_lines,
         };
         let probe_shapes = shapes
             .iter()
@@ -6144,28 +6188,13 @@ mod tests {
         }
     }
 
-    /// #6675: an operand-swap rewrite keeps one probe on the added line,
-    /// whose `before` is the removed text; the removed side adds no second
-    /// static-unknown catch-all. A rewrite that changes characters
-    /// (`|` -> `&`) still keeps the removed side's static-unknown probe.
     /// #14325: a changed tail literal (`1200` -> `1500`) is judged by the
     /// added return-value probe, which pairs the removed text as `before`;
     /// the removed literal adds no base-side static-unknown twin. A removed
-    /// literal with no paired added probe, and a removed non-literal line,
-    /// keep their removed-side probe.
+    /// literal with no positional replacement keeps its removed-side probe,
+    /// even when an equal literal is replaced elsewhere in the file.
     #[test]
     fn a_replaced_bare_literal_adds_no_base_side_static_unknown_twin() {
-        let index = |source: &str| {
-            let mut index = RustIndex::default();
-            index.insert_file_only(
-                PathBuf::from("src/lib.rs"),
-                crate::analysis::facts::FileFacts {
-                    source: source.into(),
-                    ..Default::default()
-                },
-            );
-            index
-        };
         let head = "pub fn default_timeout_ms() -> u64 {\n    1500\n}\n";
         // The parser reports the added tail literal as a return shape, as it
         // does for `fn f() -> u64 { 1500 }` in a real index.
@@ -6209,22 +6238,28 @@ mod tests {
             "a replaced literal with a trailing comma must not get a removed-side twin: {comma:?}"
         );
 
-        // Control: removed with nothing added keeps the base-side probe.
-        let deleted = ChangedFile {
-            path: PathBuf::from("src/lib.rs"),
-            added_lines: Vec::new(),
-            removed_lines: vec![ChangedLine {
-                line: 2,
-                new_side_line: 2,
-                text: "    1200".to_string(),
-            }],
-        };
-        let deleted_probes = probes_for_file(Path::new("workspace"), &deleted, &index(head));
+        // Control: the same literal also deleted outright in a later hunk
+        // has no replacement, so it keeps its removed-side probe even though
+        // the first hunk's probe carries the equal text as `before`.
+        let mixed = shapes_probes_with_deletions(
+            "    1500",
+            "    1200",
+            &[(9, "    1200")],
+            &[(ProbeShapeKind::ReturnValue, "1500")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "1200")
+            .collect();
+        assert_eq!(
+            base_side.len(),
+            1,
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
         assert!(
-            deleted_probes
-                .iter()
-                .any(|probe| probe.expression == "1200"),
-            "an unpaired removed literal keeps its removed-side probe: {deleted_probes:?}"
+            base_side.iter().all(|probe| probe.location.line == 9),
+            "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
         );
     }
 
@@ -6246,6 +6281,10 @@ mod tests {
             "Some(1)",
             "",
             "\"unterminated",
+            "\"a\" \"b\"",
+            "r\"raw\"",
+            "b'x'",
+            "-",
         ] {
             assert!(
                 !is_bare_literal_line(not_bare),
@@ -6254,6 +6293,10 @@ mod tests {
         }
     }
 
+    /// #6675: an operand-swap rewrite keeps one probe on the added line,
+    /// whose `before` is the removed text; the removed side adds no second
+    /// static-unknown catch-all. A rewrite that changes characters
+    /// (`|` -> `&`) still keeps the removed side's static-unknown probe.
     #[test]
     fn reordered_replacement_does_not_repeat_the_removed_static_unknown() {
         let swap = |removed: &str, added: &str| ChangedFile {
