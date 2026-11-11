@@ -82,7 +82,16 @@ fn ripr(args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
     if !output.status.success() {
-        return Err(format!("ripr {args:?} failed: {:?}", output.status));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: String = stderr
+            .chars()
+            .rev()
+            .take(500)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        return Err(format!("ripr {args:?} failed: {:?}\n{tail}", output.status));
     }
     String::from_utf8(output.stdout).map_err(|error| format!("non-utf8 output: {error}"))
 }
@@ -335,7 +344,7 @@ fn markdown_in(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String>
         .map_err(|error| format!("cannot list {}: {error}", directory.display()))?;
     for entry in entries {
         let path = entry.map_err(|error| error.to_string())?.path();
-        if path.extension().is_some_and(|extension| extension == "md") {
+        if path.is_file() && path.extension().is_some_and(|extension| extension == "md") {
             files.push(path);
         }
     }
