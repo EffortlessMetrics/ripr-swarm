@@ -226,12 +226,19 @@ struct Observed {
 }
 
 fn observe(fixture: &Fixture) -> Result<Observed, String> {
+    observe_listing(fixture, json!({}))
+}
+
+/// Like [`observe`] with explicit `ripr_list_gaps` arguments: an already-gripped
+/// `exposed` item is left out of the default list (#14327), so those fixtures
+/// name `class: "exposed"`.
+fn observe_listing(fixture: &Fixture, list_arguments: Value) -> Result<Observed, String> {
     let mut mcp = Mcp::spawn(&fixture.0)?;
     let refresh = mcp.tool("ripr_refresh", json!({}))?;
     if refresh["attempt"]["state"] != "completed" {
         return Err(format!("refresh did not complete: {refresh}"));
     }
-    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", list_arguments)?;
     let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
     if items.len() != 1 {
         return Err(format!("fixture must yield exactly one item: {gaps}"));
@@ -425,7 +432,7 @@ fn already_gripped_seam_is_refused_with_one_cause_on_every_surface() -> Result<(
             "#[test]\nfn boundary() {\n    let r = discounted_total(100, 100);\n    assert_eq!(r, 90);\n}\n",
         ),
     )?;
-    let seen = observe(&fixture)?;
+    let seen = observe_listing(&fixture, json!({ "class": "exposed" }))?;
     assert!(
         !seen.check_class.is_empty(),
         "the item must be a listed check class"
@@ -711,7 +718,14 @@ fn item_no_seam_resolves_carries_the_cli_cause_on_prepare_and_card() -> Result<(
         ),
     ] {
         let fixture = Fixture::python(name, test)?;
-        let seen = observe(&fixture)?;
+        // The strong test pins the boundary, so that item is `exposed` and the
+        // default list leaves it out (#14327); the weak one is listed.
+        let list_arguments = if name == "py-strong" {
+            json!({ "class": "exposed" })
+        } else {
+            json!({})
+        };
+        let seen = observe_listing(&fixture, list_arguments)?;
         let cause = "covers Rust files only";
         assert!(
             seen.repair_text.contains(cause),
