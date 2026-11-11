@@ -17459,10 +17459,19 @@ fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String
     finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
 
+    // "preview" is said once, with product casing (#14353).
     assert!(
         diagnostic
             .message
-            .contains("python preview evidence (syntax-first, advisory)")
+            .starts_with("Python preview (advisory): "),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
     );
     assert!(
         diagnostic
@@ -17992,18 +18001,28 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
             for needle in [
                 "Language: typescript",
                 "Status: preview",
-                "Repair instructions for an AI agent: not ready",
-                "State: unknown",
-                "Category: missing_context",
-                "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
-                "Repair route: add strict TypeScript repair-packet actionability proof",
-                "Missing fields: verify_command, receipt_command, must_not_change",
-                "Evidence needed: complete repair packet with verify and receipt commands",
-                "Authority: preview advisory only",
+                "Action: advisory only",
+                "Repair instructions for an AI agent: not ready \u{2014} verify command and receipt command are not inferred for TypeScript preview",
             ] {
                 assert!(
                     markup.value.contains(needle),
                     "missing {needle:?} in:\n{}",
+                    markup.value
+                );
+            }
+            // A not-ready packet's contract fields stay in diagnostic data,
+            // not in the hover a person reads.
+            for absent in [
+                "State: unknown",
+                "Category: missing_context",
+                "Repair route:",
+                "Missing fields:",
+                "Evidence needed:",
+                "Authority: preview advisory only",
+            ] {
+                assert!(
+                    !markup.value.contains(absent),
+                    "unexpected {absent:?} in:\n{}",
                     markup.value
                 );
             }
