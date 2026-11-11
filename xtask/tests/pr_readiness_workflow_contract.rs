@@ -373,31 +373,41 @@ fn models_ub_guard_admission(
 const UB_CONCURRENCY_SELECTOR: &str = "ub-review-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name == 'full-ci' && 'full-ci' || github.run_id }}";
 
 fn yaml_path<'a>(
-    mapping: &'a serde_yaml_ng::Mapping,
+    mapping: &'a yaml_rust2::yaml::Hash,
     path: &[&str],
-) -> Result<&'a serde_yaml_ng::Value, String> {
+) -> Result<&'a yaml_rust2::Yaml, String> {
     let Some((last, parents)) = path.split_last() else {
         return Err("YAML field path must not be empty".to_owned());
     };
     let mut current = mapping;
     for key in parents {
         current = current
-            .get(&serde_yaml_ng::Value::String((*key).to_owned()))
-            .and_then(serde_yaml_ng::Value::as_mapping)
+            .get(&yaml_rust2::Yaml::String((*key).to_owned()))
+            .and_then(yaml_rust2::Yaml::as_hash)
             .ok_or_else(|| format!("missing YAML mapping at {path:?}"))?;
     }
     current
-        .get(&serde_yaml_ng::Value::String((*last).to_owned()))
+        .get(&yaml_rust2::Yaml::String((*last).to_owned()))
         .ok_or_else(|| format!("missing YAML field {path:?}"))
+}
+
+fn yaml_document(source: &str) -> Result<yaml_rust2::Yaml, String> {
+    let mut documents = yaml_rust2::YamlLoader::load_from_str(source)
+        .map_err(|error| format!("parse UB YAML: {error}"))?;
+    if documents.len() != 1 {
+        return Err("UB workflow must contain exactly one YAML document".to_owned());
+    }
+    Ok(documents.remove(0))
 }
 
 /// Read typed concurrency fields from the workflow, rather than accepting a
 /// matching line from another YAML scope or a continued scalar value.
 fn ub_concurrency_fields(source: &str) -> Result<(String, bool), String> {
-    let root: serde_yaml_ng::Mapping =
-        serde_yaml_ng::from_str(source).map_err(|error| format!("parse UB YAML: {error}"))?;
+    let root = yaml_document(source)?
+        .into_hash()
+        .ok_or_else(|| "UB workflow must be a YAML mapping".to_owned())?;
     let concurrency = yaml_path(&root, &["concurrency"])?
-        .as_mapping()
+        .as_hash()
         .ok_or_else(|| "UB concurrency must be a mapping".to_owned())?;
     let group = yaml_path(concurrency, &["group"])?
         .as_str()
@@ -415,19 +425,19 @@ fn ub_concurrency_fields(source: &str) -> Result<(String, bool), String> {
 }
 
 fn ub_action_run_pass(source: &str) -> Result<String, String> {
-    let root: serde_yaml_ng::Mapping =
-        serde_yaml_ng::from_str(source).map_err(|error| format!("parse UB YAML: {error}"))?;
+    let root = yaml_document(source)?
+        .into_hash()
+        .ok_or_else(|| "UB workflow must be a YAML mapping".to_owned())?;
     let steps = yaml_path(&root, &["jobs", "ub-review", "steps"])?
-        .as_sequence()
+        .as_vec()
         .ok_or_else(|| "UB action steps must be a sequence".to_owned())?;
     let step = steps
         .iter()
         .find(|step| {
-            step.get(&serde_yaml_ng::Value::String("uses".to_owned()))
-                .and_then(serde_yaml_ng::Value::as_str)
+            step["uses"].as_str()
                 == Some("EffortlessMetrics/ub-review@8d45f2cace407b1b0117cffe30e32bf6267d5182")
         })
-        .and_then(serde_yaml_ng::Value::as_mapping)
+        .and_then(yaml_rust2::Yaml::as_hash)
         .ok_or_else(|| "UB pinned action step must be present".to_owned())?;
     let run_pass = yaml_path(step, &["with", "run-pass"])?
         .as_str()
