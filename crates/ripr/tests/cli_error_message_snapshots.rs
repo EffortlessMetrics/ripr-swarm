@@ -162,6 +162,35 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
             ));
         }
     }
+    // pr-evidence outside a git repository: the refusal names the directory,
+    // so it is assembled here rather than listed in `CASES`. It must not show
+    // git's argv or tell the reader to check a ref spelling.
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["pr-evidence", "--base", "main", "--head", "HEAD"])
+        .current_dir(&dir)
+        // The scratch directory can sit inside a checkout (the workspace
+        // points TMPDIR at `target`), so stop git's upward discovery at its
+        // parent to make this a real non-repository run.
+        .env(
+            "GIT_CEILING_DIRECTORIES",
+            dir.parent().unwrap_or(dir.as_path()),
+        )
+        .output()
+        .map_err(|error| format!("run ripr pr-evidence: {error}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let refusal: Vec<&str> = stderr
+        .lines()
+        .filter(|line| !line.starts_with("ripr progress:"))
+        .collect();
+    let wanted_start = "ripr: pr-evidence needs a git repository, and ";
+    let wanted_end = " is not inside one; run it from inside the repository, or pass `--root <path>` naming a directory inside it";
+    let shaped = matches!(refusal.as_slice(), [line] if line.starts_with(wanted_start) && line.ends_with(wanted_end));
+    if output.status.code() != Some(2) || !shaped || !output.stdout.is_empty() {
+        failures.push(format!(
+            "ripr pr-evidence outside a repository: exit {:?} (wanted 2)\n  got: {refusal:?}",
+            output.status.code()
+        ));
+    }
     let _ = std::fs::remove_dir_all(&dir);
     if failures.is_empty() {
         Ok(())
