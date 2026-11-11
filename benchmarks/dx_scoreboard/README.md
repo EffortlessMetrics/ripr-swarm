@@ -676,10 +676,15 @@ The control grandchild also has a five-second lifetime ceiling. This qualifies
 only the instrument's owned same-group teardown path, not escaped descendants,
 Windows containment, or analyzer cancellation.
 
-The retained [three-run rehearsal](testdata/12906-resident-session-rehearsal.json)
-uses an exact-head Linux CI wheel payload without another analyzer build. All
+The retained [three-run summary](testdata/12906-resident-session-rehearsal.json)
+uses an exact-source Linux CI wheel payload without another analyzer build. All
 54 operation/reference comparisons completed, including semantic changes in
-both production and test-only edits. It retains raw memory samples, source
-and binary digests, and the prior failed-rehearsal repairs in the PR record.
+both production and test-only edits. The summary retains per-operation memory
+observations, fixture states, operation witnesses, source/binary digests and
+negative-control results. The [complete sampled-memory receipt](https://github.com/EffortlessMetrics/ripr-swarm/blob/a1d031580d760b242e44ae3325ab170c6579cb90/benchmarks/dx_scoreboard/testdata/12906-resident-session-rehearsal.json)
+is preserved unchanged at that commit, retained by the dedicated
+`evidence/12906-resident-rehearsal-a1d03158` branch. Its SHA-256 is recorded in
+the summary. This separates verbose raw evidence from the reviewable source
+change; the instrument still writes every raw sample and full operation receipt.
 These small-fixture observations qualify the instrument path only. They do
 not add a scoreboard baseline or establish a memory/latency product budget.
