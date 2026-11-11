@@ -1036,19 +1036,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             && inactive_term.is_none()
             && !no_behavior.multi_line_def_header_line)
             .then(|| {
-                guard_activation::python_guarded_arm_gap(
+                guard_activation::python_old_side_guarded_arm_gap(
                     &view.owner,
                     view.source,
                     view.line,
                     &related_candidates,
                     &focus,
+                    &view.parameters,
                 )
-                .filter(|gap| {
-                    super::deleted_lines::guard_names_only_parameters(
-                        &gap.discriminator,
-                        &view.parameters,
-                    )
-                })
             })
             .flatten()
     });

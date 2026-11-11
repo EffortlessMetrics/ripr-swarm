@@ -409,7 +409,7 @@ fn literal_display(text: &str) -> Option<Vec<String>> {
 
 /// Splits `text` at every top-level occurrence of `separator`, outside quotes
 /// and brackets.
-fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
+pub(super) fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     let mut parts = Vec::new();
     let mut last = 0;
     let mut position = 0;
