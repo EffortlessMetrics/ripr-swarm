@@ -94,12 +94,22 @@ fn emit_attached_terminal_stdin_note(
 /// naming exactly what was typed. Whether a name is a switch comes from the
 /// command help the `ripr help --json` flag inventory is built from, so the
 /// rule follows the documented options rather than a second list.
+///
+/// A token right after a bare documented value-taking flag is that flag's
+/// value and is never split: `--base --output=x` keeps `--output=x` as the
+/// base, so the base owner refuses the option-shaped revision by name
+/// instead of a stray `x` surfacing as an unknown argument.
 #[doc(hidden)]
 pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut literal = false;
     for (index, arg) in args.into_iter().enumerate() {
-        if index == 0 || literal {
+        let value_position = out.last().is_some_and(|previous: &String| {
+            previous.starts_with("--")
+                && !previous.contains('=')
+                && documented_arity(previous) == Some(true)
+        });
+        if index == 0 || literal || (value_position && long_flag_shape(&arg).is_some()) {
             out.push(arg);
             continue;
         }
@@ -120,20 +130,28 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
 }
 
 fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
+    let (name, value) = long_flag_shape(arg)?;
+    (documented_arity(name) != Some(false)).then_some((name, value))
+}
+
+/// `--name=value` with a name of ASCII alphanumerics and hyphens, split at
+/// the first `=`.
+fn long_flag_shape(arg: &str) -> Option<(&str, &str)> {
     let (name, value) = arg.split_once('=')?;
     let bare = name.strip_prefix("--")?;
     let mut chars = bare.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
     let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '-');
-    (first_ok && rest_ok && !is_documented_switch(name)).then_some((name, value))
+    (first_ok && rest_ok).then_some((name, value))
 }
 
-/// Whether every command help that documents `name` documents it as a
-/// switch (no value). A name no help documents, or one that takes a value
-/// anywhere, is not a switch. Only consulted for `--name=value` tokens, so
-/// ordinary argv never pays for the help scan.
-fn is_documented_switch(name: &str) -> bool {
-    let mut documented = false;
+/// How the command helps document `name`: `Some(true)` when any help
+/// documents it as taking a value, `Some(false)` when every help that
+/// documents it documents a switch, `None` when no help documents it. Only
+/// consulted around `--name=value` tokens, so ordinary argv never pays for
+/// the help scan.
+fn documented_arity(name: &str) -> Option<bool> {
+    let mut documented = None;
     for entry in super::command_catalog::catalog() {
         let Some(body) = super::help::help_text_for(entry.path) else {
             continue;
@@ -141,9 +159,9 @@ fn is_documented_switch(name: &str) -> bool {
         for flag in super::help_flags::flags_for(entry.path, body) {
             if flag.name == name {
                 if flag.takes_value {
-                    return false;
+                    return Some(true);
                 }
-                documented = true;
+                documented = Some(false);
             }
         }
     }
@@ -258,6 +276,31 @@ mod tests {
                 "a=b",
                 "--root",
                 "no",
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_keeps_a_value_position_token_whole() {
+        // `--base` takes a value, so `--output=x` is the base, refused by its
+        // owner as option-shaped; a switch before it does not hold a value.
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--base",
+                "--output=x",
+                "--quiet",
+                "--format=json",
+            ])),
+            args(&[
+                "ripr",
+                "check",
+                "--base",
+                "--output=x",
+                "--quiet",
+                "--format",
+                "json"
             ])
         );
     }
