@@ -580,6 +580,15 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
                     "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
                 })
             })
+            // #14099: one change-and-delete watcher for analyzed sources
+            // rides the same root-anchored registration.
+            .chain(std::iter::once(serde_json::json!({
+                "globPattern": {
+                    "baseUri": root_uri.as_str(),
+                    "pattern": "**/*.{rs,py,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                },
+                "kind": 6,
+            })))
             .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
