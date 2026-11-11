@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Rust: a changed value on its own line inside a tail `if`/`else` branch (for example `total / 10` to `total / 5`) now gets a `return_value` finding instead of `static_unknown`. A branch value written on the condition's line stays judged by that line's condition finding. An exact `assert_eq!` pin through the branch is not yet credited, so it reads `weakly_exposed`, the same as an early `return` inside a branch (#14385, follow-up #14387).

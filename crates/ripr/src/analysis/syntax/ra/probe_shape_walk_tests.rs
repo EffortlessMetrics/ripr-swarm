@@ -151,6 +151,14 @@ pub(super) fn reference_probe_shapes(
                 );
             }
         }
+        // #14385: tail `if`/`else` branch values; one shared helper, not a walk.
+        super::probe_shapes::push_tail_if_branch_return_values(
+            &mut shapes,
+            line_index,
+            text,
+            source,
+            &tail_expr,
+        );
     }
 
     for call_expr in function

@@ -1389,7 +1389,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// warm entries deserialize with an empty guard vector.
 /// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+/// `1.59`: each branch value of an owner's tail `if`/`else` is probed as
+/// `return_value` (#14385); `1.58` facts lack those probe shapes.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.59";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5392,7 +5394,8 @@ mod tests {
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        // 1.58 -> 1.59: tail if/else branch values probed as return_value (#14385).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.59");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

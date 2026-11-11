@@ -4347,6 +4347,62 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         Ok(())
     }
 
+    /// #14385: a tail `if`/`else` returns each branch block's tail value, so
+    /// each one on its own line is a `return_value` shape; a value on its
+    /// `if`'s condition line, a statement `if`, a tail `if` without `else`, and
+    /// a nested `match` value get none.
+    #[test]
+    fn tail_if_branch_values_are_return_value_shapes() -> Result<(), Box<dyn Error>> {
+        let text = r#"
+pub fn discount(total: u32) -> u32 {
+    if total >= 100 {
+        total / 10
+    } else if total >= 50 {
+        total / 20
+    } else {
+        0
+    }
+}
+
+pub fn inline(total: u32) -> u32 {
+    if total >= 100 { total / 10 } else { 0 }
+}
+
+pub fn nested(total: u32, vip: bool) -> u32 {
+    if vip {
+        if total > 10 { 3 } else { 2 }
+    } else {
+        match total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn statement(total: u32) -> u32 {
+    if total > 1 {
+        log(total / 2)
+    }
+    7
+}
+
+pub fn no_else(total: u32) {
+    if total > 1 {
+        log(total / 3)
+    }
+}
+"#;
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
+        let return_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        let expected = [(4, "total / 10"), (6, "total / 20"), (8, "0"), (28, "7")];
+        if return_shapes != expected {
+            return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        Ok(())
+    }
+
     #[test]
     fn ra_adapter_handles_parser_errors() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_parser_error")?;

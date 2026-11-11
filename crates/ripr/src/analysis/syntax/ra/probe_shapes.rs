@@ -73,6 +73,69 @@ impl ProbeShapeNodes {
     }
 }
 
+/// #14385: when the owner's tail is an `if`/`else`, each branch block's tail
+/// value is what the owner returns, so it is probed like the tail itself.
+/// `else if` chains and branch tails that are nested `if`s recurse; branch
+/// tails that are `match`/loops follow `is_tail_return_value_text` and get no
+/// shape. A value on its `if`'s condition line gets none: an inline branch
+/// already flows to the return through that line's predicate (#7626), and a
+/// second shape there would add a row the predicate already judges.
+pub(super) fn push_tail_if_branch_return_values(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    text: &str,
+    source: &Arc<str>,
+    tail: &ast::Expr,
+) {
+    let ast::Expr::IfExpr(if_expr) = tail else {
+        return;
+    };
+    let condition_line = if_expr
+        .condition()
+        .map(|condition| line_index.line(condition.syntax().text_range().start()));
+    let mut branch_tails = Vec::new();
+    if let Some(value) = if_expr.then_branch().and_then(|block| block.tail_expr()) {
+        branch_tails.push(value);
+    }
+    match if_expr.else_branch() {
+        Some(ast::ElseBranch::Block(block)) => {
+            if let Some(value) = block.tail_expr() {
+                branch_tails.push(value);
+            }
+        }
+        Some(ast::ElseBranch::IfExpr(nested)) => branch_tails.push(ast::Expr::IfExpr(nested)),
+        None => return,
+    }
+    for value in branch_tails {
+        let range = value.syntax().text_range();
+        let value_text = slice_text(text, range.start(), range.end());
+        let own_line = condition_line != Some(line_index.line(range.start()));
+        if own_line && is_tail_return_value_text(&value_text) {
+            push_probe_shape(
+                shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ReturnValue,
+                range.start(),
+                range.end(),
+            );
+            if has_error_path_text(&value_text) {
+                push_probe_shape(
+                    shapes,
+                    line_index,
+                    text,
+                    source,
+                    ProbeShapeKind::ErrorPath,
+                    range.start(),
+                    range.end(),
+                );
+            }
+        }
+        push_tail_if_branch_return_values(shapes, line_index, text, source, &value);
+    }
+}
+
 pub(super) fn extract_parser_probe_shapes(
     function: &ast::Fn,
     text: &str,
@@ -215,6 +278,7 @@ pub(super) fn extract_parser_probe_shapes(
                 );
             }
         }
+        push_tail_if_branch_return_values(&mut shapes, line_index, text, source, &tail_expr);
     }
 
     for call_expr in nodes.call_exprs {

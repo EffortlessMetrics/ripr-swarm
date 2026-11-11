@@ -562,3 +562,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_assert_msg (43)
+
+Reason:
+RIPR-SPEC-0154: each own-line branch value of the tail if/else is now a return_value probe (#14385); the else-branch row moves from static_unknown to propagation_unknown and the then-branch row reads weakly_exposed under the same weak assert! oracle
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
