@@ -1729,6 +1729,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1784,6 +1786,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: base.map(|base| crate::analysis::AnalyzedRevisions {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -2031,6 +2035,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let loaded = RiprConfig {
@@ -2078,6 +2084,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
 
@@ -2110,6 +2118,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
@@ -2165,6 +2175,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             ignored_working_tree_source_paths: Vec::new(),
@@ -2205,6 +2217,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
@@ -2246,6 +2260,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: vec![
@@ -2296,6 +2312,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
             ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
@@ -2356,6 +2374,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2424,6 +2444,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2475,6 +2497,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2575,6 +2599,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2901,6 +2927,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2978,6 +3006,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -3139,6 +3169,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -3188,6 +3220,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -3622,6 +3656,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
             let rendered = render(&output);
@@ -3671,6 +3707,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -3720,6 +3758,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4393,6 +4433,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4442,6 +4484,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4516,6 +4560,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4572,6 +4618,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4606,6 +4654,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4774,6 +4824,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -4969,6 +5021,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5957,6 +6011,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -6065,6 +6121,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6115,6 +6173,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6236,6 +6296,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6310,6 +6372,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6368,6 +6432,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6444,6 +6510,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -6559,6 +6627,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6611,6 +6681,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6662,6 +6734,8 @@ mod tests {
                 line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6757,6 +6831,8 @@ mod tests {
                 line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -6872,6 +6948,8 @@ mod tests {
                 line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9026,6 +9104,39 @@ mod tests {
         assert!(!rendered.contains("(observation_unverified)"), "{rendered}");
     }
 
+    /// #14038: the literal evidence lines are skipped once flow, related-test
+    /// or source-value rows exist, which used to drop the one line saying why
+    /// an assertion was not credited from the full report and `explain`.
+    #[test]
+    fn evidence_path_keeps_the_assertion_not_credited_reason_beside_flow_rows() {
+        let note = format!(
+            "{}`assert_eq!` in checks_weight at tests/w.rs:3: the assertion is inside an `if` branch",
+            crate::domain::ASSERTION_NOT_CREDITED_PREFIX
+        );
+        let mut finding = sample_finding();
+        assert!(!finding.flow_sinks.is_empty(), "fixture has a flow sink");
+        let path = |finding: &Finding| {
+            super::evidence_lines::evidence_path_lines(
+                finding,
+                super::evidence_lines::JsonPointerWording::CheckFlag,
+            )
+        };
+        assert!(!path(&finding).iter().any(|line| line == &note));
+        finding.evidence = vec!["unrelated literal evidence".to_string(), note.clone()];
+        let lines = path(&finding);
+        assert_eq!(
+            lines.iter().filter(|line| *line == &note).count(),
+            1,
+            "{lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line == "unrelated literal evidence"),
+            "only the not-credited reason is kept beside the other rows: {lines:?}"
+        );
+    }
+
     pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
@@ -9054,6 +9165,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -9226,6 +9339,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9280,6 +9395,7 @@ mod tests {
                 ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
                 owner_opt_outs: Vec::new(),
+                file_fact_cache: None,
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -9360,6 +9476,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9412,6 +9530,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9458,6 +9578,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9502,6 +9624,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9599,6 +9723,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9678,6 +9804,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let rendered = render(&output);
@@ -9754,6 +9882,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9811,6 +9941,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9853,6 +9985,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9897,6 +10031,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9944,6 +10080,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9996,6 +10134,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -10151,6 +10291,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
@@ -10218,6 +10360,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10277,6 +10421,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10340,6 +10486,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10435,6 +10583,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10483,6 +10633,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10525,6 +10677,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10564,6 +10718,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10600,6 +10756,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10641,6 +10799,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10681,6 +10841,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10733,6 +10895,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10802,6 +10966,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             })
         };

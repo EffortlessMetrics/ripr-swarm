@@ -14,7 +14,7 @@
 
 use super::related_tests::{
     body_calls_method_on_owner_bound_receiver, contains_call_name,
-    import_source_module_matches_owner, owner_module_paths,
+    import_source_module_matches_owner, module_name_identifies_owner_for, owner_module_paths,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{
@@ -237,7 +237,10 @@ fn import_provenanced_class_locals(
         if import.source_module.is_empty()
             && !import.alias.is_empty()
             && (owner_modules.contains(&import.imported)
-                || owner.reexport_modules.contains(&import.imported))
+                // A project-relative package name (#13737) identifies the
+                // owner only for a test under its project root.
+                || (owner.reexport_modules.contains(&import.imported)
+                    && module_name_identifies_owner_for(owner, &import.imported, &test.file)))
         {
             let qualified = format!("{}.{class}", import.alias);
             if !locals.contains(&qualified) {

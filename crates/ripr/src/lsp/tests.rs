@@ -91,6 +91,7 @@ mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
 mod diagnostics_generation_tests;
+mod document_store_overflow_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
@@ -8076,6 +8077,75 @@ fn gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation
     {
         return Err("packet action must name preview_or_static_limitation".to_string());
     }
+    let text = packet
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str());
+    if !text.is_some_and(|text| text.contains("language boundary")) {
+        return Err(format!(
+            "cross-language packet reason must name the language boundary: {text:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn gap_code_actions_same_language_static_limit_does_not_claim_a_language_boundary()
+-> Result<(), String> {
+    // #13797: the same disabled-action shape for a same-language static
+    // limit keeps the machine reason but must not say the finding crosses a
+    // language boundary.
+    let root = unique_lsp_test_root("gap-disabled-same-language")?;
+    let uri = file_uri_for_path(&root.path().join("src/jsc/Blob.rs"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .ok_or_else(|| "missing diagnostic data".to_string())?;
+    data["language"] = serde_json::json!("rust");
+    data["gap_state"] = serde_json::json!("static_limitation");
+    data["repairability"] = serde_json::json!("no_action");
+    data["static_limit_kind"] = serde_json::json!("opaque_helper_boundary");
+    data["projection_exclusion_reasons"] = serde_json::json!(["opaque_helper_boundary"]);
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
+
+    let actions = code_action_response(
+        &params,
+        Some(&snapshot),
+        &client_features_with_disabled_support(&[])?,
+    );
+    let literals = code_action_literals(&actions)?;
+    let packet = literals
+        .iter()
+        .find(|action| action.title == "Inspect gap: copy repair packet")
+        .ok_or_else(|| "packet action missing".to_string())?;
+    assert_disabled_action_invariants(packet)?;
+    if packet
+        .data
+        .as_ref()
+        .and_then(|data| data["disabled_reason"].as_str())
+        != Some("preview_or_static_limitation")
+    {
+        return Err("packet action must name preview_or_static_limitation".to_string());
+    }
+    let text = packet
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .ok_or_else(|| "packet action must be disabled".to_string())?;
+    if text.contains("language boundary") {
+        return Err(format!(
+            "same-language static limit must not claim a language boundary: {text}"
+        ));
+    }
     Ok(())
 }
 
@@ -8134,6 +8204,15 @@ fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitatio
         != Some("preview_or_static_limitation")
     {
         return Err("brief action must name preview_or_static_limitation".to_string());
+    }
+    let text = brief
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str());
+    if !text.is_some_and(|text| text.contains("language boundary")) {
+        return Err(format!(
+            "cross-language brief reason must name the language boundary: {text:?}"
+        ));
     }
     Ok(())
 }
@@ -27252,6 +27331,25 @@ async fn framed_clean_push_session(
     ),
     String,
 > {
+    let (client_read, client_write, server_task, _notifications) =
+        framed_push_session_with_notifications(root, "seams_deferred").await?;
+    Ok((client_read, client_write, server_task))
+}
+
+/// The framed push session behind `framed_clean_push_session`, also returning
+/// the notifications read while the first refresh settled.
+async fn framed_push_session_with_notifications(
+    root: &Path,
+    settled_run_status: &str,
+) -> Result<
+    (
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+        Vec<serde_json::Value>,
+    ),
+    String,
+> {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (mut client_read, mut client_write) = tokio::io::split(client_io);
     let (server_read, server_write) = tokio::io::split(server_io);
@@ -27303,24 +27401,46 @@ async fn framed_clean_push_session(
         }),
     )
     .await?;
-    read_lsp_notifications_until_refresh_settled(
+    let notifications = read_lsp_notifications_until_refresh_settled(
         &mut client_read,
         &mut client_write,
         "ripr analysis refresh completed in",
-        "seams_deferred",
+        settled_run_status,
     )
     .await?;
-    Ok((client_read, client_write, server_task))
+    Ok((client_read, client_write, server_task, notifications))
 }
 
-fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
+fn scope_marker_count(params: &serde_json::Value, kind: &str) -> Option<usize> {
     Some(
         params["diagnostics"]
             .as_array()?
             .iter()
-            .filter(|item| item["data"]["kind"] == "empty_scope")
+            .filter(|item| item["data"]["kind"] == kind)
             .count(),
     )
+}
+
+fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
+    scope_marker_count(params, "empty_scope")
+}
+
+fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {
+    scope_marker_count(params, "incomplete_analysis")
+}
+
+/// A fixture whose only change is a file-mode flip on `src/lib.rs`: a
+/// well-formed diff with nothing ripr analyzes, so the committed snapshot is
+/// `unsupported_input` with no row and serves the incomplete-analysis scope
+/// marker (#13562) rather than the empty-scope one.
+#[cfg(unix)]
+fn incomplete_mode_only_push_root(name: &str) -> Result<TempLspRoot, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = boundary_gap_git_fixture_root(name)?;
+    let lib = temp.path().join("src/lib.rs");
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755))
+        .map_err(|err| format!("chmod failed: {err}"))?;
+    Ok(temp)
 }
 
 #[test]
@@ -27501,6 +27621,200 @@ fn framed_push_client_shutdown_retracts_the_served_marker() -> Result<(), String
         if last["diagnostics"] != serde_json::json!([]) {
             return Err(format!("shutdown must clear the marker: {last}"));
         }
+        drop(temp);
+        Ok(())
+    })
+}
+
+/// Open `lib.rs` of an incomplete-outcome fixture through the framed push
+/// session and require its first publication to carry exactly one
+/// incomplete-analysis scope marker and no empty-scope marker (#13562).
+#[cfg(unix)]
+async fn framed_incomplete_push_session(
+    root: &Path,
+) -> Result<
+    (
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let (client_read, client_write, server_task, notifications) =
+        framed_push_session_with_notifications(root, "limited_incomplete_input").await?;
+    let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+        .as_str()
+        .to_string();
+    let first = published_params_for_uri(&notifications, &lib_uri)
+        .last()
+        .copied()
+        .ok_or_else(|| format!("lib.rs was not served after the snapshot: {notifications:?}"))?;
+    if incomplete_analysis_marker_count(first) != Some(1)
+        || empty_scope_marker_count(first) != Some(0)
+        || first["diagnostics"].as_array().map(Vec::len) != Some(1)
+    {
+        return Err(format!(
+            "the open document must carry exactly one incomplete marker: {first}"
+        ));
+    }
+    Ok((client_read, client_write, server_task))
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_late_open_and_close_follow_the_incomplete_snapshot_marker()
+-> Result<(), String> {
+    // #13562: the incomplete-analysis marker reuses the #13441 lifecycle: a
+    // document opened after the incomplete snapshot committed gets exactly one
+    // incomplete marker (not the empty-scope one, not stacked), and closing it
+    // retracts the marker.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-late-open-close")?;
+        let root = temp.path().to_path_buf();
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_incomplete_push_session(&root).await?;
+        let late_path = root.join("Cargo.toml");
+        let late_text = std::fs::read_to_string(&late_path)
+            .map_err(|err| format!("read Cargo.toml failed: {err}"))?;
+        let late_uri = file_uri_for_path(&late_path)?.as_str().to_string();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": late_uri, "languageId": "toml", "version": 1, "text": late_text
+                }}
+            }),
+        )
+        .await?;
+        let opened = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let opened = opened
+            .first()
+            .ok_or("a document opened after an incomplete snapshot must be served the marker")?;
+        if incomplete_analysis_marker_count(opened) != Some(1)
+            || empty_scope_marker_count(opened) != Some(0)
+            || opened["diagnostics"].as_array().map(Vec::len) != Some(1)
+        {
+            return Err(format!(
+                "late open must carry exactly one incomplete marker: {opened}"
+            ));
+        }
+        if opened["diagnostics"][0]["severity"] != serde_json::json!(3) {
+            return Err(format!("the marker must be Information: {opened}"));
+        }
+        let repeat = drain_publishes_within(
+            &mut client_read,
+            &mut client_write,
+            &late_uri,
+            Duration::from_secs(2),
+        )
+        .await?;
+        if let Some(extra) = repeat.first() {
+            return Err(format!("late open must not publish a second time: {extra}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didClose",
+                "params": {"textDocument": {"uri": late_uri}}
+            }),
+        )
+        .await?;
+        let closed = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let closed = closed.first().ok_or("closing must retract the marker")?;
+        if closed["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("close must clear the marker: {closed}"));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_shutdown_retracts_the_served_incomplete_marker() -> Result<(), String> {
+    // #13562: the incomplete marker is served, not tracked, so shutdown must
+    // still retract it from the open document.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-shutdown")?;
+        let root = temp.path().to_path_buf();
+        let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+            .as_str()
+            .to_string();
+        let (mut client_read, mut client_write, _server_task) =
+            framed_incomplete_push_session(&root).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let (_response, notifications) = read_lsp_response_with_notifications_and_progress(
+            &mut client_read,
+            &mut client_write,
+            2,
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &lib_uri);
+        let last = published.last().ok_or("shutdown must retract the marker")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("shutdown must clear the marker: {last}"));
+        }
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_root_change_retracts_the_served_incomplete_marker() -> Result<(), String> {
+    // #13562: a root change drops the snapshot that justified the marker, so
+    // the push client must see the open document's marker retracted.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-root-change")?;
+        let other = boundary_gap_git_fixture_root("push-incomplete-root-change-other")?;
+        let root = temp.path().to_path_buf();
+        let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+            .as_str()
+            .to_string();
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_incomplete_push_session(&root).await?;
+        let root_uri = file_uri_for_path(&root)?;
+        let other_uri = file_uri_for_path(other.path())?;
+        let folder = |uri: &str| serde_json::json!({"uri": uri, "name": "fixture"});
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {"event": {
+                    "added": [folder(other_uri.as_str())], "removed": [folder(root_uri.as_str())]
+                }}
+            }),
+        )
+        .await?;
+        let request = read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": [folder(other_uri.as_str())]
+            }),
+        )
+        .await?;
+        let published = drain_until_publish(&mut client_read, &mut client_write, &lib_uri).await?;
+        let last = published
+            .last()
+            .ok_or("a root change must retract the marker")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("root change must clear the marker: {last}"));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(other);
         drop(temp);
         Ok(())
     })
@@ -33470,16 +33784,11 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
     {
         return Err("the result id must differ between marker and rows payloads".to_string());
     }
-    // Negatives: only an empty-scope outcome serves the marker. A complete
-    // answer with no findings, a failed analysis and a missing outcome stay
-    // silent.
+    // Negatives: only an empty-scope outcome serves this marker (an incomplete
+    // outcome serves its own, #13562). A complete answer with no findings and
+    // a missing outcome stay silent.
     use crate::analysis_outcome::AnalysisOutcomeKind;
-    for kind in [
-        Some(AnalysisOutcomeKind::CompleteNoFindings),
-        Some(AnalysisOutcomeKind::AnalysisFailed),
-        Some(AnalysisOutcomeKind::PartialWithLimitations),
-        None,
-    ] {
+    for kind in [Some(AnalysisOutcomeKind::CompleteNoFindings), None] {
         let mut altered = clean.snapshot.clone();
         match (kind, altered.analysis_outcome.as_mut()) {
             (Some(kind), Some(outcome)) => outcome.kind = kind,
@@ -33565,6 +33874,503 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
     .is_empty()
     {
         return Err("a document outside the root must not be marked".to_string());
+    }
+    Ok(())
+}
+
+fn outcome_scoping_kinds(
+    output: &crate::app::CheckOutput,
+) -> Vec<crate::analysis_outcome::AnalysisLimitationKind> {
+    output
+        .analysis_outcome
+        .iter()
+        .flat_map(|outcome| outcome.limitations.iter())
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+        .map(|limitation| limitation.kind)
+        .collect()
+}
+
+/// #13562 oracle: the editor marker's limitation wording is the sentence the
+/// typed outcome owns, and it matches the limitation lines the human
+/// `ripr check` render prints for the same outcome (plain labels and the
+/// producer-owned recovery text), with the same scoping decision: an advisory
+/// disclosure is printed by `check` but never named by the marker, and only the
+/// first three scoping limitations are named with the rest counted.
+#[test]
+fn incomplete_marker_limitations_match_the_human_check_output() -> Result<(), String> {
+    use crate::analysis_outcome::{AnalysisLimitationKind as L, AnalysisOutcomeKind as K};
+    let scoping = [
+        (
+            L::DiffScopeOversized,
+            "Raise the diff line budget, then re-run.",
+        ),
+        (
+            L::ProducerTimeout,
+            "Raise the producer timeout, then re-run.",
+        ),
+        (L::ProducerFailure, "Inspect the failure and re-run."),
+        (
+            L::LanguageScopeUnsupported,
+            "Narrow the diff to supported files.",
+        ),
+    ];
+    let mut limitations = vec![incomplete_limitation_fixture(
+        L::EolOnlyChurn,
+        "Nothing to repair.",
+    )?];
+    for (index, (kind, recovery)) in scoping.iter().enumerate() {
+        let mut limitation = incomplete_limitation_fixture(*kind, recovery)?;
+        if index == 0 {
+            limitation = limitation.with_path("src/lib.rs")?.with_affected_items(7)?;
+        }
+        limitations.push(limitation);
+    }
+    let outcome = incomplete_outcome_fixture(K::PartialWithLimitations, limitations)?;
+    let sentence = outcome
+        .incomplete_scope_sentence()
+        .ok_or("an incomplete outcome must produce a scope sentence")?;
+
+    let mut output = crate::app::CheckOutput {
+        value_origins: Default::default(),
+        harness_projections: Vec::new(),
+        schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+        tool: "ripr".to_string(),
+        mode: Mode::Draft,
+        root: std::path::PathBuf::from("."),
+        base: Some("origin/main".to_string()),
+        summary: Default::default(),
+        findings: Vec::new(),
+        preview_language_advisories: Vec::new(),
+        language_runs: Vec::new(),
+        no_scope_provided: false,
+        unanalyzed_working_tree: false,
+        untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
+        unlinked_python_tests: None,
+        suppression: None,
+        analysis_outcome: None,
+        partial_scope: None,
+        analyzed_revisions: None,
+        owner_opt_outs: Vec::new(),
+        file_fact_cache: None,
+    };
+    output.analysis_outcome = Some(outcome);
+    let canonical = outcome_scoping_kinds(&output);
+    let human = crate::output::human::render(&output);
+    let human_lines = human
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("Limitation: "))
+        .collect::<Vec<_>>();
+    if human_lines.len() != 5 {
+        return Err(format!(
+            "ripr check must print all five limitation lines: {human}"
+        ));
+    }
+    // The advisory line is printed by check but never named by the marker; the
+    // first three scoping lines are named verbatim; the fourth is only counted.
+    let advisory = human_lines
+        .iter()
+        .find(|line| line.contains(L::EolOnlyChurn.plain_label()))
+        .ok_or("check must print the advisory disclosure")?;
+    if sentence.contains(advisory) || sentence.contains(L::EolOnlyChurn.plain_label()) {
+        return Err(format!("the marker must not name the advisory: {sentence}"));
+    }
+    // The outcome canonicalises limitation order; the marker names the first
+    // three scoping limitations in that order.
+    for kind in canonical.iter().take(3) {
+        let line = human_lines
+            .iter()
+            .find(|line| line.contains(kind.plain_label()))
+            .ok_or_else(|| format!("check must print {kind:?}"))?;
+        if !sentence.contains(*line) {
+            return Err(format!(
+                "marker must carry the check limitation line {line:?}: {sentence}"
+            ));
+        }
+    }
+    let fourth = canonical[3].plain_label();
+    if sentence.contains(fourth) || !sentence.contains("1 more limitation(s)") {
+        return Err(format!(
+            "the fourth scoping limitation is counted: {sentence}"
+        ));
+    }
+    Ok(())
+}
+
+/// #13562: the workspace result id folds the complete scope-marker diagnostic,
+/// not just its message. Two zero-row incomplete outcomes whose first three
+/// named limitations and total count match, but whose fourth (unnamed, so not
+/// in the message) limitation kind differs, still differ in the marker's
+/// `data.limitations` and so must not share a workspace result id.
+#[test]
+fn workspace_result_id_folds_the_complete_incomplete_marker() -> Result<(), String> {
+    use crate::analysis_outcome::{AnalysisLimitationKind as L, AnalysisOutcomeKind as K};
+    let root = untested_rust_edit_fixture("incomplete-marker-workspace-id")?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let clean = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if clean.snapshot.diagnostic_count() != 0 {
+        return Err("fixture needs a zero-row snapshot".to_string());
+    }
+    let with_fourth = |fourth: L| -> Result<AnalysisSnapshot, String> {
+        let mut snapshot = clean.snapshot.clone();
+        snapshot.analysis_outcome = Some(incomplete_outcome_fixture(
+            K::PartialWithLimitations,
+            vec![
+                incomplete_limitation_fixture(L::MalformedDiff, "a.")?,
+                incomplete_limitation_fixture(L::DiffScopeOversized, "b.")?,
+                incomplete_limitation_fixture(L::LanguageScopeUnsupported, "c.")?,
+                incomplete_limitation_fixture(fourth, "d.")?,
+            ],
+        )?);
+        Ok(snapshot)
+    };
+    let first = with_fourth(L::ProducerTimeout)?;
+    let second = with_fourth(L::ProducerFailure)?;
+    let message = |snapshot: &AnalysisSnapshot| {
+        super::diagnostics::empty_scope_marker_payload(snapshot).map(|marker| marker.message)
+    };
+    if message(&first).is_none() || message(&first) != message(&second) {
+        return Err("fixture needs identical marker messages".to_string());
+    }
+    if super::diagnostics::workspace_diagnostic_result_id(&first)
+        == super::diagnostics::workspace_diagnostic_result_id(&second)
+    {
+        return Err("a differing marker `data` must change the workspace result id".to_string());
+    }
+    Ok(())
+}
+
+fn scope_marker_kind_of(d: &Diagnostic) -> Option<String> {
+    let is_governed = d.code
+        == Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        ));
+    d.data
+        .as_ref()
+        .filter(|_| is_governed)
+        .and_then(|data| data["kind"].as_str())
+        .map(str::to_string)
+}
+
+fn incomplete_outcome_fixture(
+    kind: crate::analysis_outcome::AnalysisOutcomeKind,
+    limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+    crate::analysis_outcome::AnalysisOutcome::new(
+        kind,
+        crate::analysis_outcome::AnalysisIdentity::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+        limitations,
+    )
+}
+
+fn incomplete_limitation_fixture(
+    kind: crate::analysis_outcome::AnalysisLimitationKind,
+    recovery: &str,
+) -> Result<crate::analysis_outcome::AnalysisLimitation, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
+    Ok(AnalysisLimitation::new(
+        kind,
+        AnalysisStage::AnalysisPipeline,
+        AnalysisRecovery::new(AnalysisRecoveryKind::IncreaseConfiguredLimit, recovery)?,
+    ))
+}
+
+/// #13562: an incomplete outcome with no stored row serves one passive
+/// Information marker per document, for each incomplete kind and limitation,
+/// worded by the typed outcome's own limitation text. Complete outcomes, rows,
+/// the empty-scope marker and stored path-bound markers are never double-marked.
+#[test]
+fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does()
+-> Result<(), String> {
+    use crate::analysis_outcome::{AnalysisLimitationKind as L, AnalysisOutcomeKind as K};
+    let root = untested_rust_edit_fixture("incomplete-outcome-marker")?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let served = |snapshot: &AnalysisSnapshot| {
+        super::diagnostics::delivered_diagnostics_for_uri(
+            snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        )
+    };
+    let edited = analyze()?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let clean = analyze()?;
+    if clean.snapshot.diagnostic_count() != 0 || edited.snapshot.diagnostic_count() == 0 {
+        return Err("fixture needs one clean and one row-bearing snapshot".to_string());
+    }
+
+    let cases = [
+        (
+            K::PartialWithLimitations,
+            L::DiffScopeOversized,
+            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 79, then re-run.",
+        ),
+        (
+            K::UnsupportedInput,
+            L::MalformedDiff,
+            "Run the analysis on a diff that includes the source changes.",
+        ),
+        (
+            K::UnsupportedInput,
+            L::CombinedHunkUnsupported,
+            "Use a two-way diff against one base.",
+        ),
+        (
+            K::AnalysisFailed,
+            L::ProducerFailure,
+            "Inspect the failure and re-run.",
+        ),
+    ];
+    let mut messages = Vec::new();
+    let mut ids = Vec::new();
+    for (outcome_kind, limitation_kind, recovery) in cases {
+        let outcome = incomplete_outcome_fixture(
+            outcome_kind,
+            vec![incomplete_limitation_fixture(limitation_kind, recovery)?],
+        )?;
+        let mut snapshot = clean.snapshot.clone();
+        snapshot.analysis_outcome = Some(outcome.clone());
+        let items = served(&snapshot);
+        let [marker] = items.as_slice() else {
+            return Err(format!(
+                "{limitation_kind:?}: exactly one marker: {items:?}"
+            ));
+        };
+        let data = marker.data.as_ref().ok_or("marker carries typed data")?;
+        if scope_marker_kind_of(marker).as_deref() != Some("incomplete_analysis")
+            || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+            || marker.source.as_deref() != Some("ripr")
+            || marker.range != Range::default()
+            || !marker.message.contains(recovery.trim_end_matches('.'))
+            || !marker.message.contains(limitation_kind.plain_label())
+            || !marker.message.contains("does not mean")
+            || !marker.message.contains("not runtime evidence")
+            || data["outcome_kind"] != outcome_kind.as_str()
+            || data["limitations"] != serde_json::json!([limitation_kind.as_str()])
+            || data["not_analyzed_reason"] != "analysis_incomplete"
+        {
+            return Err(format!("{limitation_kind:?}: governed shape: {marker:?}"));
+        }
+        if [
+            "finding_id",
+            "repair",
+            "witness",
+            "preview_actionability",
+            "recovery",
+        ]
+        .iter()
+        .any(|key| data.get(*key).is_some())
+        {
+            return Err(format!("marker must be passive typed data: {data:#}"));
+        }
+        let lowered = marker.message.to_lowercase();
+        let forbidden = "passing covered safe proven adequate killed survived"; // ripr-allow: static-language: negative guard lists the forbidden terms
+        for word in forbidden.split(' ') {
+            if lowered.contains(word) {
+                return Err(format!(
+                    "marker wording must not contain {word:?}: {lowered}"
+                ));
+            }
+        }
+        if super::diagnostics::empty_scope_marker_payload(&snapshot).as_ref() != Some(marker) {
+            return Err("lifecycle payload must equal the served marker".to_string());
+        }
+        ids.push(format!(
+            "{}|{}",
+            super::diagnostics::document_diagnostic_result_id(&snapshot, &uri),
+            super::diagnostics::workspace_diagnostic_result_id(&snapshot)
+        ));
+        messages.push(marker.message.clone());
+    }
+    let distinct = |values: &[String]| {
+        let mut sorted = values.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        sorted.len() == values.len()
+    };
+    if !distinct(&messages) || !distinct(&ids) {
+        return Err("a changed marker payload must change text and both result ids".to_string());
+    }
+    let mut unchanged = clean.snapshot.clone();
+    unchanged.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::DiffScopeOversized, "r.")?],
+    )?);
+    let with_marker = super::diagnostics::document_diagnostic_result_id(&unchanged, &uri);
+    let clean_id = super::diagnostics::document_diagnostic_result_id(&clean.snapshot, &uri);
+    if with_marker == clean_id {
+        return Err("the marker must change the pull result id".to_string());
+    }
+
+    // More than three scoping limitations: bounded, the rest counted.
+    let many = incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![
+            incomplete_limitation_fixture(L::DiffScopeOversized, "a.")?,
+            incomplete_limitation_fixture(L::ProducerTimeout, "b.")?,
+            incomplete_limitation_fixture(L::ProducerFailure, "c.")?,
+            incomplete_limitation_fixture(L::LanguageScopeUnsupported, "d.")?,
+        ],
+    )?;
+    let mut many_snapshot = clean.snapshot.clone();
+    many_snapshot.analysis_outcome = Some(many);
+    let items = served(&many_snapshot);
+    let [bounded] = items.as_slice() else {
+        return Err(format!("one bounded marker expected: {items:?}"));
+    };
+    if bounded.message.matches("Limitation:").count() != 3
+        || !bounded.message.contains("1 more limitation(s)")
+    {
+        return Err(format!(
+            "marker must name three and count the rest: {bounded:?}"
+        ));
+    }
+
+    // Discriminating negatives.
+    let mut complete = clean.snapshot.clone();
+    complete
+        .analysis_outcome
+        .as_mut()
+        .ok_or("clean snapshot carries an outcome")?
+        .kind = K::CompleteNoFindings;
+    if !served(&complete).is_empty() {
+        return Err("complete_no_findings must serve nothing".to_string());
+    }
+    let mut rows = edited.snapshot.clone();
+    rows.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::DiffScopeOversized, "r.")?],
+    )?);
+    if served(&rows)
+        .iter()
+        .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
+        || super::diagnostics::empty_scope_marker_payload(&rows).is_some()
+    {
+        return Err("a snapshot with rows must not carry the incomplete marker".to_string());
+    }
+    // The empty-scope outcome keeps its own marker, not the incomplete one.
+    let mut empty = clean.snapshot.clone();
+    empty
+        .analysis_outcome
+        .as_mut()
+        .ok_or("clean snapshot carries an outcome")?
+        .kind = K::NoScope;
+    let items = served(&empty);
+    let [only] = items.as_slice() else {
+        return Err(format!("one empty-scope marker expected: {items:?}"));
+    };
+    if scope_marker_kind_of(only).as_deref() != Some("empty_scope") {
+        return Err(format!("empty scope keeps its own marker: {only:?}"));
+    }
+    // A stored path-bound marker is not double-marked.
+    let mut stored = clean.snapshot.clone();
+    stored
+        .diagnostics_by_uri
+        .entry(uri.clone())
+        .or_default()
+        .push(super::diagnostics::file_parse_failed_diagnostic(
+            "src/lib.rs",
+            "producer_failure",
+            "fix the syntax error",
+        ));
+    stored.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::ProducerFailure, "r.")?],
+    )?);
+    if super::diagnostics::snapshot_serves_empty_scope_marker(&stored)
+        || served(&stored)
+            .iter()
+            .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
+    {
+        return Err("a stored marker must not be double-marked".to_string());
+    }
+    // A document outside the root gets nothing.
+    let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))
+        .map_err(|err| format!("uri failed: {err}"))?;
+    if !super::diagnostics::delivered_diagnostics_for_uri(
+        &many_snapshot,
+        &outside,
+        &std::collections::BTreeMap::new(),
+    )
+    .is_empty()
+    {
+        return Err("a document outside the root must not be marked".to_string());
+    }
+    Ok(())
+}
+
+/// #13562 through the real workspace entry point: a file-mode-only change is a
+/// well-formed diff with nothing ripr analyzes, so the run is `unsupported_input`
+/// with a `malformed_diff` limitation and no row. The real snapshot serves the
+/// incomplete marker, not the empty-scope one, and a real text edit serves none.
+#[cfg(unix)]
+#[test]
+fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer()
+-> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = untested_rust_edit_fixture("incomplete-mode-only")?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let lib = root.path().join("src/lib.rs");
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755))
+        .map_err(|err| format!("chmod failed: {err}"))?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let result = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let outcome = result
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .ok_or("real snapshot carries a typed outcome")?;
+    if outcome.kind != crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
+        || !result.batches.is_empty()
+    {
+        return Err(format!(
+            "mode-only change must be unsupported_input with no rows: {outcome:?}"
+        ));
+    }
+    let uri = file_uri_for_path(&lib).map_err(|err| format!("uri failed: {err}"))?;
+    let items = super::diagnostics::delivered_diagnostics_for_uri(
+        &result.snapshot,
+        &uri,
+        &std::collections::BTreeMap::new(),
+    );
+    let [marker] = items.as_slice() else {
+        return Err(format!("exactly one incomplete marker expected: {items:?}"));
+    };
+    if scope_marker_kind_of(marker).as_deref() != Some("incomplete_analysis")
+        || !marker.message.contains("binary or file-mode changes")
+    {
+        return Err(format!("marker must name the producer's text: {marker:?}"));
+    }
+    // A text edit on top produces real rows and no marker.
+    std::fs::write(&lib, "pub fn lonely(x: i32) -> i32 {\n    x * 3\n}\n")
+        .map_err(|err| format!("edit failed: {err}"))?;
+    let edited = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if edited.snapshot.diagnostic_count() == 0
+        || super::diagnostics::empty_scope_marker_payload(&edited.snapshot).is_some()
+    {
+        return Err("a text edit must serve rows and no scope marker".to_string());
     }
     Ok(())
 }

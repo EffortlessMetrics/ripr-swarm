@@ -796,6 +796,14 @@ pub(crate) fn render_with_config(
         out.push_str(",\n  \"language_completeness\": ");
         out.push_str(&view.to_json_value().to_string());
     }
+    // Additive verbose-only file-fact cache telemetry (#4975). Default JSON
+    // stays byte-identical; `-v`/`--verbose` names reuse/recompute/failures.
+    if crate::is_verbose() {
+        crate::output::check_file_fact_cache::append_verbose_json_fields(
+            &mut out,
+            output.file_fact_cache.as_ref(),
+        );
+    }
     out.push_str("}\n");
     out
 }
@@ -2043,6 +2051,7 @@ mod harness_projection_tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
             analyzed_revisions: None,
         }
     }

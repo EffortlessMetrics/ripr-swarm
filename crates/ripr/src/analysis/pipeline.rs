@@ -1013,6 +1013,19 @@ fn is_truncated_diff_stream(truncated_file_sections: usize) -> bool {
     truncated_file_sections > 0
 }
 
+/// #13659: a tracked file that became (or stopped being) a symlink is not
+/// source and is never analyzed; say so instead of leaving only the
+/// deletion-only line for the regular-file half of a type change.
+fn symlink_disclosure_message(symlink_file_count: usize) -> Option<String> {
+    (symlink_file_count > 0).then(|| {
+        format!(
+            "ripr: skipped {symlink_file_count} symlink change(s); a symlink is not source, so \
+             the link itself is never analyzed and an empty result does not mean its behavior \
+             is covered. A regular-file half of a type change is analyzed normally."
+        )
+    })
+}
+
 fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
     (submodule_file_count > 0).then(|| {
         format!(
@@ -1467,6 +1480,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
+    let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
     let pure_rename_file_count = parsed_diff.pure_rename_file_count;
     let pure_rename_paths = parsed_diff.pure_rename_paths;
@@ -2085,6 +2099,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    if let Some(message) = symlink_disclosure_message(symlink_file_count) {
+        eprintln!("{message}");
+    }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
         eprintln!("{message}");
@@ -5599,6 +5616,20 @@ mod tests {
         if deletion_disclosure_message(0).is_some() {
             return Err("zero deleted files must not produce a disclosure".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_disclosure_names_type_changes_and_non_claim() -> Result<(), String> {
+        let message = symlink_disclosure_message(1)
+            .ok_or_else(|| "a symlink change must produce a disclosure".to_string())?;
+        assert!(
+            message.starts_with("ripr: skipped 1 symlink change(s);"),
+            "{message}"
+        );
+        assert!(message.contains("does not mean"), "{message}");
+        assert!(message.contains("analyzed normally"), "{message}");
+        assert_eq!(symlink_disclosure_message(0), None);
         Ok(())
     }
 
