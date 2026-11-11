@@ -1,4 +1,4 @@
-//! Narrow workflow-ledger applicability; uncertainty always retains wheel qualification.
+//! Narrow workflow-ledger and repo-policy test applicability; uncertainty always retains wheel qualification.
 use crate::{WorkflowBudget, parse_workflow_budgets};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -41,17 +41,78 @@ pub fn qualifies(root: &Path, event: &str, base: &str, head: &str) -> Result<boo
             "--",
         ],
     )?;
-    // A successful empty diff still supplies no unrelated-record change proof.
-    if paths != format!("{LEDGER}\0") {
+    // Keep both rename sides (no rename detection), deletions, and literal path bytes.
+    // Empty/partial records never supply a skip proof.
+    let Some(paths) = paths.strip_suffix('\0') else {
+        return Ok(true);
+    };
+    let paths = paths.split('\0').collect::<Vec<_>>();
+    if paths.iter().any(|path| path.is_empty()) {
         return Ok(true);
     }
-    let before = git(root, &["show", &format!("{ancestor}:{LEDGER}")])?;
-    let after = git(root, &["show", &format!("{head}:{LEDGER}")])?;
-    Ok(!unchanged_wheel_record(&before, &after)?)
+    if paths == [LEDGER] {
+        let before = git(root, &["show", &format!("{ancestor}:{LEDGER}")])?;
+        let after = git(root, &["show", &format!("{head}:{LEDGER}")])?;
+        return Ok(!unchanged_wheel_record(&before, &after)?);
+    }
+    // These are integration-test inputs, not repo-policy's executable sources,
+    // the product, distribution validators, or package/consumer inputs. Require
+    // an actual test change; companion metadata alone is not this optimization.
+    if !paths.iter().any(|path| test_path(path)) {
+        return Ok(true);
+    }
+    for path in paths {
+        if test_path(path) || path.starts_with("docs/handoffs/") || path.starts_with("changelog.d/")
+        {
+            continue;
+        }
+        if path == "policy/process_allowlist.txt" || path.starts_with("policy/process_allowlist.d/")
+        {
+            // Even here, only repo-policy integration-test rows may change.
+            // Missing files are represented by ls-tree, not a swallowed Git error.
+            let before = optional_blob(root, ancestor, path)?;
+            let after = optional_blob(root, head, path)?;
+            if non_test_process_rows(&before) == non_test_process_rows(&after) {
+                continue;
+            }
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn test_path(path: &str) -> bool {
+    path.starts_with("tools/repo-policy/tests/")
+}
+
+fn optional_blob(root: &Path, commit: &str, path: &str) -> Result<String, String> {
+    let entry = git(root, &["ls-tree", "-z", commit, "--", path])?;
+    if entry.is_empty() {
+        Ok(String::new())
+    } else {
+        git(root, &["show", &format!("{commit}:{path}")])
+    }
+}
+
+// Preserve every non-test policy row, including malformed rows. Comments and
+// blank lines carry no process allowance.
+// This is a change classifier, not a replacement for mandatory process policy.
+fn non_test_process_rows(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n')
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .filter(|line| {
+            let fields = line.trim_end_matches('\n').split('|').collect::<Vec<_>>();
+            !(fields.len() == 5
+                && test_path(fields[0])
+                && fields[2].parse::<usize>().is_ok()
+                && fields.iter().all(|field| !field.trim().is_empty()))
+        })
+        .collect()
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
+        .arg("--literal-pathspecs")
         .args(args)
         .current_dir(root)
         .stdin(Stdio::null())
