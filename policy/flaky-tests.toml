@@ -294,3 +294,16 @@ first_seen = "2026-10-22"
 evidence = ["#9804 report: two failing full-suite runs while validating #9803 (no run id recorded)"]
 symptom = "Error: \"expected the first refresh to fail\" with only queued and started refresh notices observed; passes standalone and fails identically on a clean base."
 root_cause = "Not established: the test is #[serial] but its over-the-wire refresh-failure window is wall-clock sensitive under CPU contention with about 128 non-serial tests."
+
+[[flake]]
+id = "lsp-disk-equality-shared-cache-reset"
+test = "lsp::backend::disk_bytes_equal_text_tests::same_length_buffer_checks_read_unchanged_disk_once"
+lane = "Rust-only feature lane (cargo test --no-default-features --features lang-rust: tests are threads of one process)"
+class = "shared-state"
+status = "fixed"
+issue = 13839
+first_seen = "2026-11-08"
+evidence = ["run 42509427189 (PR #13789, job 128819051627)", "#13912 records the same failure on #13885 (2d14215cbb) and #13856 (7c8378b831)"]
+symptom = "Error: \"expected 1 disk reads, got 2\" on PRs that do not touch LSP code; the test passes alone and under nextest."
+root_cause = "reset_disk_equality_read_cache_for_tests() cleared the process-wide DISK_EQUALITY_DIGEST_CACHE as well as the thread-local read counter. Under cargo test the module's tests run in parallel threads, so a peer test's reset evicted this test's cached digest between its first and second lookup and the next lookup read the disk again. Fixed by #13912: the reset now clears only the calling thread's counter, and every test digests its own per-thread temp path. nextest runs one process per test, so the required lane never showed it."
+guard = "peer_reset_keeps_a_cached_disk_digest"
