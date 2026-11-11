@@ -158,6 +158,16 @@ cache hit or prove the <=20-minute active qualification target.
 
 ### Exact-head native intake consumer (#4838)
 
+Installed predecessor qualification and this immutable generation are separate.
+The native queue has landed code using the existing caller, and #14064 moved
+its UB advisory request to explicit `full-ci`. This candidate retires that
+subscriber rather than restoring it during reconciliation. The accepted normal
+installed qualification route is GitHub-hosted; repairing inventory credentials
+is not a prerequisite. Those results do not qualify this candidate's proposed
+control/build runners or its frozen orchestration. A later landed workflow or
+admission repair reaches a pinned reusable workflow only through an explicit,
+reviewed anchor update; moving `main` does not update the pin.
+
 The staged `queue_intake.py` evaluator in the trusted admission bundle consumes
 the existing `hermes.queue-intake.v2` protocol from
 [Hermes PR #55](https://github.com/EffortlessMetrics/hermes-deploy/pull/55).

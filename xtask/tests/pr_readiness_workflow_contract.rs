@@ -385,10 +385,13 @@ fn automatic_droid_review_is_retired() -> Result<(), String> {
 }
 
 #[test]
-fn live_queue_caller_has_no_pr_ready_label_or_main_entry_point() -> Result<(), String> {
+fn live_queue_entrypoint_and_reusable_reject_development_events() -> Result<(), String> {
     let source = repo_file(".github/workflows/routed-rust.yml")?;
+    let entrypoint = repo_file(".github/workflows/merge-queue.yml")?;
     let reusable = repo_file(".github/workflows/rust-gates.yml")?;
     let findings = repo_policy::queue_workflow::violations(&source, Some(&reusable));
+    assert!(findings.is_empty(), "{findings:?}");
+    let findings = repo_policy::queue_workflow::entrypoint_violations(&entrypoint);
     assert!(findings.is_empty(), "{findings:?}");
     for event in [
         "pull_request",
@@ -401,8 +404,14 @@ fn live_queue_caller_has_no_pr_ready_label_or_main_entry_point() -> Result<(), S
         assert!(
             repo_policy::queue_workflow::violations(&changed, Some(&reusable))
                 .iter()
-                .any(|v| v.contains("only native merge_group")),
+                .any(|v| v.contains("only input-free workflow_call")),
             "{event}"
+        );
+        let changed = entrypoint.replacen("on:\n", &format!("on:\n  {event}:\n"), 1);
+        assert_ne!(changed, entrypoint);
+        assert!(
+            !repo_policy::queue_workflow::entrypoint_violations(&changed).is_empty(),
+            "{event}: the immutable-call wrapper must also refuse development events"
         );
     }
     Ok(())

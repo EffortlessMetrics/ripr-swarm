@@ -28437,7 +28437,17 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
             "bare check on a clean base branch must analyze the last commit; got:\n{stdout}"
         ));
     }
-    if stdout.contains("ripr explain") && !stdout.contains("--base 'HEAD~1'") {
+    // The renderer quotes `--base` for the host shell: single quotes on Unix,
+    // double quotes on the Windows console (`agent::loop_commands::shell_arg`,
+    // #8152). The invariant under test is that the drill-in stays on the
+    // analyzed last-commit range, so accept the host spelling (#14044 red
+    // chain: nightly 42761400655 failed this oracle with the Windows form).
+    let quoted_base = if cfg!(windows) {
+        "--base \"HEAD~1\""
+    } else {
+        "--base 'HEAD~1'"
+    };
+    if stdout.contains("ripr explain") && !stdout.contains(quoted_base) {
         return Err(format!(
             "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
         ));

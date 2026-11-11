@@ -691,7 +691,8 @@ fn text_calls_owner(text: &str, owner_name: &str) -> bool {
 /// whose initializer (to the next `;`) calls `owner_name` binds the name; the
 /// name is dropped when the body binds it through a covered non-owner form:
 /// another `let` of the same name, a destructuring pattern that mentions it,
-/// a `for` loop variable, or a plain `<ident> = ...` reassignment. The scan is
+/// a `for` loop variable, a plain `<ident> = ...` reassignment, a field write
+/// (`<ident>.0 = ...`) or a `&mut <ident>` borrow. The scan is
 /// position-blind, so each covered rebinding fails closed (RIPR-SPEC-0001): an
 /// assertion after `let amount = tax(100); let amount = 0;` is not credited as
 /// observing `tax`. Uppercase single-name patterns (`let Some(x) = ...`) and
@@ -735,6 +736,34 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 events.push((word.to_string(), false));
             }
         }
+    }
+    /// The part of `text` that belongs to one statement or match arm: it stops
+    /// at `;` or `,` outside brackets, or at an unmatched closing bracket, so
+    /// a block-tail `amount = 0 }` does not swallow the code after it.
+    fn statement_prefix(text: &str) -> &str {
+        let mut depth = 0usize;
+        for (index, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    if depth == 0 {
+                        return &text[..index];
+                    }
+                    depth -= 1;
+                }
+                b';' | b',' if depth == 0 => return &text[..index],
+                _ => {}
+            }
+        }
+        text
+    }
+    /// Whether an initializer's value is the owner's result. A block whose
+    /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
+    /// `;`) cannot be read as the owner's value, so it fails closed.
+    fn value_from_owner(initializer: &str, owner_name: &str) -> bool {
+        let opens = initializer.matches(['(', '[', '{']).count();
+        let closes = initializer.matches([')', ']', '}']).count();
+        opens == closes && !initializer.contains(';') && text_calls_owner(initializer, owner_name)
     }
     // Quoted text and comments are not code: mask them before every scan.
     let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
@@ -781,10 +810,11 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                     .next()
                     .is_some_and(|character| character.is_ascii_uppercase())
                 && !head[name.len()..].trim_start().starts_with(['(', '{', '@'])
+                && !head[name.len()..].trim_start().starts_with("::")
         });
         match simple {
             Some(name) => {
-                events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
+                events.push((name.to_string(), value_from_owner(initializer, owner_name)))
             }
             None => record_pattern_bindings(pattern, &mut events),
         }
@@ -816,6 +846,46 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 continue;
             }
             let tail = body[from..].trim_start();
+            // `&mut name` lets the callee overwrite it, and `name.0 = ..` /
+            // `name.field = ..` rewrites part of it: neither is still the
+            // owner's result.
+            let head = body[..at].trim_end();
+            if head.ends_with("&mut") {
+                events.push((name.clone(), false));
+                continue;
+            }
+            if at > 0 && bytes[at - 1] == b'.' {
+                // `other.name`: a field label, not the local.
+                continue;
+            }
+            if tail.starts_with('.') {
+                // `name.0 = ..`, `name.a.b -= ..`: walk the field path, then
+                // look for a plain or compound assignment operator.
+                let mut after_field = tail;
+                let mut segments = 0usize;
+                while let Some(field) = after_field.strip_prefix('.') {
+                    let field_end = field
+                        .find(|character: char| {
+                            !character.is_ascii_alphanumeric() && character != '_'
+                        })
+                        .unwrap_or(field.len());
+                    if field_end == 0 {
+                        break;
+                    }
+                    after_field = field[field_end..].trim_start();
+                    segments += 1;
+                }
+                const COMPOUND: [&str; 10] =
+                    ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="];
+                let plain = after_field.starts_with('=')
+                    && !after_field.starts_with("==")
+                    && !after_field.starts_with("=>");
+                let compound = COMPOUND.iter().any(|op| after_field.starts_with(op));
+                if segments > 0 && (plain || compound) {
+                    events.push((name.clone(), false));
+                }
+                continue;
+            }
             // `=` or a compound assignment (`+=`, `<<=`, ...); comparisons
             // (`==`, `<=`, `>=`, `!=`) and `=>` are not rebindings.
             let operator = ["<<", ">>"]
@@ -829,15 +899,11 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             if !assign.starts_with('=') || assign.starts_with("==") || assign.starts_with("=>") {
                 continue;
             }
-            if at > 0 && bytes[at - 1] == b'.' {
-                continue;
-            }
-            let head = body[..at].trim_end();
             if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
                 continue;
             }
-            let initializer = assign[1..].split(';').next().unwrap_or("");
-            events.push((name.clone(), text_calls_owner(initializer, owner_name)));
+            let initializer = statement_prefix(&assign[1..]);
+            events.push((name.clone(), value_from_owner(initializer, owner_name)));
         }
     }
     let mut bound: Vec<String> = Vec::new();
@@ -1794,6 +1860,46 @@ mod tests {
                 "type annotation containing semicolon",
                 "let amount = tax(100); let amount: [u8; 3] = [0; 3]; assert_eq!(amount, 0);",
             ),
+            (
+                "lowercase path pattern",
+                "let amount = tax(100); let wrap::W(amount) = w; assert_eq!(amount, 0);",
+            ),
+            (
+                "block-tail reassignment",
+                "let mut amount = tax(100); if flag { amount = 0 } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "match-arm reassignment",
+                "let mut amount = tax(100); match x { A => amount = 0, B => {} } record(tax(2)); assert_eq!(amount, 0);",
+            ),
+            (
+                "tuple field write",
+                "let mut amount = tax(100); amount.0 = 5; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "mutable borrow",
+                "let mut amount = tax(100); reset(&mut amount); assert_eq!(amount, 0);",
+            ),
+            (
+                "compound field write",
+                "let mut amount = tax(100); amount.0 += 1; assert_eq!(amount.0, 5);",
+            ),
+            (
+                "nested field write",
+                "let mut amount = tax(100); amount.a.b = 1; assert_eq!(amount.a.b, 1);",
+            ),
+            (
+                "block with a leading discarded owner call",
+                "let mut amount = tax(1); amount = { tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "let block with a leading discarded owner call",
+                "let amount = { tax(1); 0 }; assert_eq!(amount, 0);",
+            ),
+            (
+                "block initializer discarding the owner call",
+                "let mut amount = tax(1); amount = { let x = 0; tax(2); 0 }; assert_eq!(amount, 0);",
+            ),
         ] {
             assert!(bound(body).is_empty(), "{label}: {body}");
         }
@@ -1817,6 +1923,22 @@ mod tests {
             (
                 "field write",
                 "let amount = tax(100); other.amount = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "nested field of another receiver",
+                "let amount = tax(100); other.amount.value = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "field comparison and method call on the local",
+                "let amount = tax(100); assert!(amount.value <= 3 && amount.value == 1 && amount.len() > 0);",
+            ),
+            (
+                "compound write on another receiver",
+                "let amount = tax(100); other.amount += 1; assert_eq!(amount, 90);",
+            ),
+            (
+                "block tail is the owner call",
+                "let amount = { tax(100) }; assert_eq!(amount, 90);",
             ),
             (
                 "quoted loop",

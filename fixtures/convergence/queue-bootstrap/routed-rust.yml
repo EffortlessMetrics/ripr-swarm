@@ -72,7 +72,8 @@ jobs:
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
           # #8858: the inventory call is a single shared-API read that fails transiently
-          # under load. Retry it a bounded number of times before recording a failure.
+          # under load. Retry transient failures, but a rejected credential (401)
+          # cannot recover with the same request and must fall back without delay.
           # Only a digit-only HTTP status is kept from stderr, never the raw text.
           runner_query_attempts=0 runner_query_http=none
           query_runners() {
@@ -85,6 +86,7 @@ jobs:
               rc=$?
               status="$(grep -Eo 'HTTP [0-9]{3}' /tmp/runners.err 2>/dev/null | tail -n 1 | cut -d' ' -f2 || true)"
               runner_query_http="${status:-none}"
+              [ "$runner_query_http" != 401 ] || return "$rc"
               [ "$attempt" -lt 3 ] || return "$rc"
               sleep "$delay"
               attempt=$((attempt + 1)) delay=$((delay * 2))

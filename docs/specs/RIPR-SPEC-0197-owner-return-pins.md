@@ -3012,6 +3012,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
   `predicate` probe and therefore stay `unknown` on purpose; the
   return-value twins are in the test above.
+  (#13558) The same file pins that the claims forms do not credit the
+  `field_construction` clone and err-variant gates (`assert_ok_eq!` /
+  `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
+  struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
+  on the same subjects.
 - Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
