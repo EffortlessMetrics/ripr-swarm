@@ -2136,11 +2136,12 @@ mod tests {
         TargetedRerunInputFingerprint, TargetedRerunMissingDiscriminator, TargetedRerunMovement,
         TargetedRerunPathDependencyGraph, TargetedRerunPathDependencyNeighbors,
         TargetedRerunRelatedTest, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
-        add_cache_stats, cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
-        graph_provenance_unavailable_fields, input_fingerprint_changes, normalize_changed_test,
-        parity_mismatch_fields, parse_options, render_human, rerun_changed_test, rerun_gap,
-        resolve_gap_records, resolve_output_path, route_from_gap_records, same_root,
-        scopes_from_gap_records, seam_from, seam_matches_resolved_scope, write_text_file,
+        add_cache_stats, apply_before, cache_from, compare_selector_scoped_seams,
+        entry_matches_selected_gap, graph_provenance_unavailable_fields, input_fingerprint_changes,
+        normalize_changed_test, parity_mismatch_fields, parse_options, render_human,
+        rerun_changed_test, rerun_gap, resolve_gap_records, resolve_output_path,
+        route_from_gap_records, same_root, scopes_from_gap_records, seam_from,
+        seam_matches_resolved_scope, write_text_file,
     };
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::classify_seam;
@@ -4342,6 +4343,352 @@ mod tests {
         };
         assert!(message.starts_with("create "));
         assert!(message.contains("failed"));
+        Ok(())
+    }
+
+    /// A current-state report with one `weakly_gripped` seam and a current
+    /// input fingerprint, ready for `apply_before`.
+    fn current_state_report() -> TargetedRerunReport {
+        TargetedRerunReport {
+            schema_version: "ripr-targeted-rerun-v1",
+            state: "current_state_only",
+            selector: TargetedRerunSelector {
+                kind: "changed_test",
+                changed_test: Some("tests/pricing.rs".to_string()),
+                canonical_gap_id: None,
+                gap_ledger: None,
+                matched_record_count: None,
+                recomputed_scope_count: None,
+                selected_test_count: 1,
+                direct_call_names: Vec::new(),
+            },
+            cache: TargetedRerunCache {
+                schema_version: "0.2",
+                reuse_state: "reused_file_facts",
+                file_fact_status: "warm".to_string(),
+                hits: 1,
+                misses: 0,
+                corrupt_ignored: 0,
+                stores: 0,
+                store_errors: 0,
+                store_failures: Vec::new(),
+                store_failures_dropped: 0,
+                recomputation_reasons: Vec::new(),
+                invalidation_status: "not_available".to_string(),
+                input_fingerprint: Some(sample_input_fingerprint()),
+            },
+            seams: vec![baseline_fields()],
+            movement: None,
+            parity: None,
+            route: None,
+            limitation: None,
+            scope_limitations: Vec::new(),
+            authority_boundary: "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
+            parity_scope: None,
+        }
+    }
+
+    /// Write a targeted-rerun before artifact naming one seam at `static_class`.
+    fn write_before_artifact(
+        root: &Path,
+        seam_id: &str,
+        static_class: &str,
+        fingerprint: Option<&TargetedRerunInputFingerprint>,
+    ) -> Result<PathBuf, String> {
+        let mut artifact = serde_json::json!({
+            "schema_version": "ripr-targeted-rerun-v1",
+            "seams": [{
+                "seam_id": seam_id,
+                "file": "src/lib.rs",
+                "line": 8,
+                "static_class": static_class,
+            }],
+        });
+        if let Some(fingerprint) = fingerprint {
+            let fingerprint = serde_json::to_value(fingerprint)
+                .map_err(|err| format!("serialize fingerprint failed: {err}"))?;
+            artifact["cache"] = serde_json::json!({ "input_fingerprint": fingerprint });
+        }
+        let path = root.join("before.json");
+        write_file(&path, &artifact.to_string())?;
+        Ok(path)
+    }
+
+    #[test]
+    fn unreadable_before_artifact_limits_the_report_without_movement() -> Result<(), String> {
+        let root = unique_temp_root("before-unavailable")?;
+        let missing = root.join("absent-before.json");
+        let mut report = current_state_report();
+
+        apply_before(&mut report, &missing);
+
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        let Some(limitation) = report.limitation.as_ref() else {
+            return Err("an unreadable before artifact must name a limitation".to_string());
+        };
+        assert_eq!(limitation.kind, "before_artifact_unavailable");
+        let prefix = format!(
+            "read explicit before artifact {} failed: ",
+            missing.display()
+        );
+        assert!(
+            limitation.message.starts_with(&prefix),
+            "unexpected message: {}",
+            limitation.message
+        );
+        assert!(
+            report
+                .authority_boundary
+                .contains("explicit before-state movement was unavailable")
+        );
+        // The input-change disclosure never ran: the cache block is untouched.
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn incompatible_before_artifact_is_a_named_limitation_not_unchanged() -> Result<(), String> {
+        // A before artifact that parses but lacks the selected seam.
+        let root = unique_temp_root("before-other-seam")?;
+        let before = write_before_artifact(&root, "seam:other", "weakly_gripped", None)?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        let Some(limitation) = report.limitation.as_ref() else {
+            return Err("a before artifact without the seam must name a limitation".to_string());
+        };
+        assert_eq!(limitation.kind, "before_artifact_incompatible");
+        assert_eq!(
+            limitation.message,
+            "before artifact does not contain selected seam_id(s): seam:example"
+        );
+        assert!(
+            report
+                .authority_boundary
+                .contains("explicit before-state movement was unavailable")
+        );
+        // The artifact carried no fingerprint, so the cache block is untouched.
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+
+        // The input-change disclosure runs before the seam check, so an
+        // artifact that lacks the selected seam still names a changed input.
+        let mut changed = sample_input_fingerprint();
+        changed.lockfile_hash = "older-lockfile".to_string();
+        let root = unique_temp_root("before-other-seam-changed-input")?;
+        let before = write_before_artifact(&root, "seam:other", "weakly_gripped", Some(&changed))?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        assert_eq!(
+            report.limitation.as_ref().map(|limitation| limitation.kind),
+            Some("before_artifact_incompatible")
+        );
+        assert_eq!(report.cache.invalidation_status, "workspace_input_changed");
+        assert_eq!(
+            report.cache.recomputation_reasons,
+            vec!["input_changed:lockfile_hash".to_string()]
+        );
+
+        // A before artifact that is not JSON at all.
+        let root = unique_temp_root("before-not-json")?;
+        let before = root.join("before.json");
+        write_file(&before, "not json")?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        let Some(limitation) = report.limitation.as_ref() else {
+            return Err("an unparsable before artifact must name a limitation".to_string());
+        };
+        assert_eq!(limitation.kind, "before_artifact_incompatible");
+        assert!(
+            limitation
+                .message
+                .starts_with("failed to parse explicit before JSON: "),
+            "unexpected message: {}",
+            limitation.message
+        );
+        // Unparsable text has no fingerprint to compare.
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+
+        // A compatible artifact cannot attest movement for an empty selection.
+        let root = unique_temp_root("before-no-current")?;
+        let before = write_before_artifact(&root, "seam:example", "weakly_gripped", None)?;
+        let mut report = current_state_report();
+        report.seams.clear();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        let Some(limitation) = report.limitation.as_ref() else {
+            return Err("an empty current selection must name a limitation".to_string());
+        };
+        assert_eq!(limitation.kind, "before_artifact_incompatible");
+        assert_eq!(
+            limitation.message,
+            "targeted rerun selected no current seams"
+        );
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn before_artifact_movement_follows_the_before_static_class() -> Result<(), String> {
+        // The current seam is `weakly_gripped`; only the before class varies.
+        for (before_class, expected_state) in [
+            ("weakly_gripped", "unchanged"),
+            ("ungripped", "improved"),
+            ("strongly_gripped", "regressed"),
+        ] {
+            let root = unique_temp_root("before-movement")?;
+            let before = write_before_artifact(&root, "seam:example", before_class, None)?;
+            let mut report = current_state_report();
+            apply_before(&mut report, &before);
+
+            assert_eq!(report.state, expected_state, "before {before_class}");
+            assert!(report.limitation.is_none(), "before {before_class}");
+            let Some(movement) = report.movement.as_ref() else {
+                return Err(format!("before {before_class}: movement must be recorded"));
+            };
+            assert_eq!(movement.state, expected_state, "before {before_class}");
+            assert_eq!(movement.before_seam_count, 1);
+            assert_eq!(movement.matched_seam_count, 1);
+            assert!(
+                movement.before.ends_with("/before.json"),
+                "unexpected before path: {}",
+                movement.before
+            );
+            assert!(
+                report
+                    .authority_boundary
+                    .starts_with("static before/after evidence only;"),
+                "before {before_class}: {}",
+                report.authority_boundary
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unordered_before_class_change_is_movement_indeterminate() -> Result<(), String> {
+        // Two unknown-stage classes share one rank, so the change has no
+        // direction: the report is limited, never improved or regressed.
+        let root = unique_temp_root("before-unordered")?;
+        let before = write_before_artifact(&root, "seam:example", "activation_unknown", None)?;
+        let mut report = current_state_report();
+        let Some(seam) = report.seams.first_mut() else {
+            return Err("fixture report must carry one seam".to_string());
+        };
+        seam.static_class = "propagation_unknown".to_string();
+
+        apply_before(&mut report, &before);
+
+        assert_eq!(report.state, "limited");
+        let Some(movement) = report.movement.as_ref() else {
+            return Err("an indeterminate movement still records the comparison".to_string());
+        };
+        assert_eq!(movement.state, "limited");
+        assert_eq!(movement.before_seam_count, 1);
+        assert_eq!(movement.matched_seam_count, 1);
+        let Some(limitation) = report.limitation.as_ref() else {
+            return Err("an unordered class change must name a limitation".to_string());
+        };
+        assert_eq!(limitation.kind, "movement_indeterminate");
+        assert!(
+            limitation.message.contains("seam_id `seam:example`")
+                && limitation
+                    .message
+                    .ends_with("without an ordered static movement"),
+            "unexpected message: {}",
+            limitation.message
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn already_limited_report_ignores_the_before_artifact() -> Result<(), String> {
+        let root = unique_temp_root("before-already-limited")?;
+        // Both a readable regressing artifact and a missing one are ignored.
+        let readable = write_before_artifact(&root, "seam:example", "strongly_gripped", None)?;
+        for before in [readable, root.join("absent-before.json")] {
+            let mut report = current_state_report();
+            report.state = "limited";
+            report.limitation = Some(super::TargetedRerunLimitation {
+                kind: "no_selected_tests",
+                message: "original limitation".to_string(),
+            });
+            let boundary = report.authority_boundary;
+
+            apply_before(&mut report, &before);
+
+            assert_eq!(report.state, "limited");
+            assert!(report.movement.is_none());
+            assert_eq!(
+                report
+                    .limitation
+                    .as_ref()
+                    .map(|limitation| (limitation.kind, limitation.message.as_str())),
+                Some(("no_selected_tests", "original limitation"))
+            );
+            assert_eq!(report.authority_boundary, boundary);
+            assert_eq!(report.cache.invalidation_status, "not_available");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn before_input_fingerprint_names_only_real_input_changes() -> Result<(), String> {
+        // Positive: one differing input is named and flips the status.
+        let mut changed = sample_input_fingerprint();
+        changed.lockfile_hash = "older-lockfile".to_string();
+        let root = unique_temp_root("before-input-changed")?;
+        let before =
+            write_before_artifact(&root, "seam:example", "weakly_gripped", Some(&changed))?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "unchanged");
+        assert_eq!(report.cache.invalidation_status, "workspace_input_changed");
+        assert_eq!(
+            report.cache.recomputation_reasons,
+            vec!["input_changed:lockfile_hash".to_string()]
+        );
+
+        // Negative: an identical fingerprint discloses nothing.
+        let root = unique_temp_root("before-input-same")?;
+        let same = sample_input_fingerprint();
+        let before = write_before_artifact(&root, "seam:example", "weakly_gripped", Some(&same))?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "unchanged");
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+
+        // Negative: with no current fingerprint there is nothing to compare,
+        // so a differing before fingerprint is not reported as a change.
+        let root = unique_temp_root("before-input-no-current")?;
+        let before =
+            write_before_artifact(&root, "seam:example", "weakly_gripped", Some(&changed))?;
+        let mut report = current_state_report();
+        report.cache.input_fingerprint = None;
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "unchanged");
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+
+        // Negative: a before artifact without a fingerprint discloses nothing.
+        let root = unique_temp_root("before-input-absent")?;
+        let before = write_before_artifact(&root, "seam:example", "weakly_gripped", None)?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "unchanged");
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
         Ok(())
     }
 }

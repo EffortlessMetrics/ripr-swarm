@@ -10200,6 +10200,8 @@ mod top_limitation_selection_tests {
             stop_reason: PartialDiffStopReason::FileBudget,
             next_file_changed_lines: Some(3),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }

@@ -385,7 +385,7 @@ fn ripr_plus_receipt_from_options(options: &RiprPlusOptions, head: &str) -> Resu
 /// scan). The resulting basis is `gap_decision_ledger`, which is a valid
 /// RIPR+ basis.
 fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String> {
-    let text = fs::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_to_string(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}; check the file is readable or pass another with `--gap-ledger`", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: RiprConfig::default().suppressions().display_path(),
@@ -408,7 +408,7 @@ fn render_gap_ledger_repo_badge_json(gap_ledger: &Path) -> Result<String, String
 }
 
 fn read_repo_exposure_summary_artifact(path: &Path) -> Result<String, String> {
-    let json = fs::read_to_string(path).map_err(|err| {
+    let json = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "failed to read {}: {err}; check the file exists and is readable",
             normalize_path(path)

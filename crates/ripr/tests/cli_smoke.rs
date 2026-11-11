@@ -4101,6 +4101,75 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #13641: a diff over `RIPR_MAX_DIFF_CHANGED_RUST_LINES` whose files each
+/// fit the limit degrades into the disclosed `limited_partial_scope` result
+/// (exit 0, gate-ineligible) instead of the `diff_scope_oversized` refusal.
+#[test]
+fn check_json_over_the_changed_rust_line_limit_degrades_into_partial_scope() -> Result<(), String> {
+    let dir = unique_temp_workspace("check-rust-line-limit-degrades");
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"degrade\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(dir.join("src/lib.rs"), "mod a;\nmod b;\nmod c;\n")
+        .map_err(|err| format!("write lib: {err}"))?;
+    let mut diff = String::new();
+    for module in ["a", "b", "c"] {
+        std::fs::write(
+            dir.join(format!("src/{module}.rs")),
+            format!("pub fn {module}(x: i32) -> bool {{ x >= 3 }}\n"),
+        )
+        .map_err(|err| format!("write {module}: {err}"))?;
+        diff.push_str(&format!(
+            "diff --git a/src/{module}.rs b/src/{module}.rs\n--- a/src/{module}.rs\n+++ b/src/{module}.rs\n@@ -1,1 +1,1 @@\n\
+             -pub fn {module}(x: i32) -> bool {{ x > 3 }}\n+pub fn {module}(x: i32) -> bool {{ x >= 3 }}\n"
+        ));
+    }
+    let diff_path = dir.join("change.diff");
+    std::fs::write(&diff_path, diff).map_err(|err| format!("write diff: {err}"))?;
+    let root = dir.display().to_string();
+    let diff = diff_path.display().to_string();
+    // 3 files x 2 changed lines = 6 > 5; the clamped 5-line budget selects
+    // the first two files (4 lines) and leaves `src/c.rs` uninspected.
+    let output = run_ripr_with_env(
+        &[
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ],
+        &[("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("check stdout should parse as JSON: {err}\n{stdout}"))?;
+    let scope = &value["analysis_scope"];
+    assert_eq!(scope["run_status"], "limited_partial_scope", "{stdout}");
+    assert_eq!(scope["gate_eligibility"], "ineligible");
+    assert_eq!(scope["downstream_consumable"], false);
+    assert_eq!(scope["line_budget"], 5);
+    assert_eq!(
+        scope["selected_files"],
+        serde_json::json!(["src/a.rs", "src/b.rs"])
+    );
+    assert_eq!(scope["uninspected_files_lower_bound"], 1);
+    assert_eq!(scope["uninspected_changed_lines_lower_bound"], 2);
+    assert_eq!(scope["stop_reason"], "line_budget");
+    assert!(
+        !stdout.contains("diff_scope_oversized: "),
+        "the changed-line guard must not refuse: {stdout}"
+    );
+    let findings = value["findings"].as_array().ok_or("findings array")?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.to_string().contains("src/c.rs")),
+        "an unselected file must never carry a finding"
+    );
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove fixture root: {err}"))?;
+    Ok(())
+}
+
 /// One-file Python diff with six added lines (same shape as the #11832 LSP
 /// control). The language-neutral parser budget counts every added/removed
 /// payload, so a lowered `RIPR_MAX_DIFF_CHANGED_LINES=5` must refuse before
@@ -4250,12 +4319,22 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         run_ripr_with_env(&args, &cap)
     };
 
-    // The cap still fires with its own text, and now names the way out.
-    let refused = run(&[]);
-    assert_failure(&refused);
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
-    assert!(stderr.contains("--path <glob>"), "{stderr}");
+    // #13641: unscoped, the over-limit `src/big.rs` is left out of a
+    // disclosed partial scope instead of refusing the whole diff.
+    let partial = run(&[]);
+    assert_success(&partial);
+    let partial_stdout = String::from_utf8_lossy(&partial.stdout);
+    let partial_value: serde_json::Value = serde_json::from_str(&partial_stdout)
+        .map_err(|err| format!("partial stdout should parse: {err}\n{partial_stdout}"))?;
+    let scope = &partial_value["analysis_scope"];
+    assert_eq!(
+        scope["run_status"], "limited_partial_scope",
+        "{partial_stdout}"
+    );
+    assert_eq!(scope["stop_reason"], "file_exceeds_analysis_limit");
+    assert_eq!(scope["selected_files"], serde_json::json!(["src/lib.rs"]));
+    assert_eq!(scope["over_limit_files"], serde_json::json!(["src/big.rs"]));
+    assert_eq!(scope["gate_eligibility"], "ineligible");
 
     for flags in [
         vec!["--exclude", "src/big.rs"],
@@ -4340,10 +4419,16 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         "{message}"
     );
 
-    // A scope that keeps the oversized file still trips the guard.
+    // A scope that keeps only the oversized file leaves nothing that fits,
+    // so the cap still fires with its own text and names the way out.
     let still_big = run(&["--path", "src/big.rs"]);
     assert_failure(&still_big);
-    assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
+    let still_big_err = String::from_utf8_lossy(&still_big.stderr);
+    assert!(
+        still_big_err.contains("diff_scope_oversized"),
+        "{still_big_err}"
+    );
+    assert!(still_big_err.contains("--path <glob>"), "{still_big_err}");
 
     // Reusable whole-diff outputs cannot carry a scoped result.
     let artifact = dir.join("scoped-artifact.json").display().to_string();
@@ -28447,9 +28532,21 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     } else {
         "--base 'HEAD~1'"
     };
-    if stdout.contains("ripr explain") && !stdout.contains(quoted_base) {
+    // Every drill-in line is read on its own (#14083 T7): a report without a
+    // `ripr explain` line would otherwise pass unread, and one base spelled
+    // anywhere in the report would vouch for a drill-in that lost its range.
+    let drill_ins: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("ripr explain") || line.contains("ripr context"))
+        .collect();
+    if !drill_ins.iter().any(|line| line.contains("ripr explain")) {
         return Err(format!(
-            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+            "the report must offer a `ripr explain` drill-in for the range oracle to read; got:\n{stdout}"
+        ));
+    }
+    if let Some(unbound) = drill_ins.iter().find(|line| !line.contains(quoted_base)) {
+        return Err(format!(
+            "drill-in commands must stay on the analyzed last-commit range; `{unbound}` does not; got:\n{stdout}"
         ));
     }
     if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
@@ -29974,18 +30071,7 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "v3"])?;
     let absent_selector = format!("{finding_id}f00d");
-    for (command, retry) in [
-        (
-            "explain",
-            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {absent_selector}"),
-        ),
-        (
-            "context",
-            format!(
-                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {absent_selector}"
-            ),
-        ),
-    ] {
+    for command in ["explain", "context"] {
         let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
@@ -30003,9 +30089,14 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
                 "{command} miss must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
             ));
         }
-        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
+        // The retry route is recognised by its `--worktree` flag rather than
+        // by a full command string: the renderer quotes the base and root for
+        // the host shell, so a POSIX-quoted needle can never match on Windows
+        // and that half of the oracle read nothing there (#14083 T7). A
+        // clean-tree miss names no working-tree route at all.
+        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains("--worktree") {
             return Err(format!(
-                "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
+                "{command} miss on a clean tree must not claim uncommitted edits or offer a --worktree retry:\n{stderr}"
             ));
         }
     }
@@ -35493,8 +35584,23 @@ fn run_ripr_with_deadline(
     stdin: Stdio,
     budget: std::time::Duration,
 ) -> Result<Output, std::io::Error> {
+    run_ripr_with_deadline_in(None, args, stdin, budget)
+}
+
+/// [`run_ripr_with_deadline`] from `cwd`, for commands that write their
+/// default artifacts under the current directory.
+#[cfg(unix)]
+fn run_ripr_with_deadline_in(
+    cwd: Option<&Path>,
+    args: &[&str],
+    stdin: Stdio,
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
     use std::io::Read as _;
     let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     command
         .args(args)
         .stdin(stdin)
@@ -35644,6 +35750,97 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
         "the refusal must name the artifact path:\n{stderr}"
     );
     Ok(())
+}
+
+/// The artifact flags below read their file with an unbounded
+/// `std::fs::read`/`read_to_string`: pointed at an endless device, each grew
+/// until the kernel ended the process (about six seconds on a 16 GB host)
+/// instead of failing. They now share the #4480 bounded reader, so each must
+/// exit 2 and name the input limit.
+#[cfg(unix)]
+#[test]
+fn artifact_flags_from_endless_device_are_refused_at_input_limit() -> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-artifact-flags");
+    std::fs::create_dir_all(&cwd)?;
+    let cases: [&[&str]; 8] = [
+        &["receipt", "check", "--path", "/dev/zero"],
+        &["annotations", "--comments", "/dev/zero"],
+        &["annotations", "--check", "--out", "/dev/zero"],
+        &["plus", "--gap-ledger", "/dev/zero"],
+        &["plus", "--repo-exposure-summary", "/dev/zero"],
+        &["feedback", "export", "--route-quality", "/dev/zero"],
+        &["pr-comments", "existing", "--raw", "/dev/zero"],
+        &["gate", "evaluate", "--pr-guidance", "/dev/zero"],
+    ];
+    let result = (|| {
+        for args in cases {
+            let output =
+                run_ripr_with_deadline_in(Some(&cwd), args, Stdio::null(), ENDLESS_INPUT_BUDGET)?;
+            assert_input_limit_refusal(&output, &args.join(" "));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&cwd);
+    result
+}
+
+/// `pr-comments existing --raw -` reads the pages from standard input, as the
+/// generated workflow pipes them. An endless producer must hit the same cap
+/// as the file-backed `--raw PATH`.
+#[cfg(unix)]
+#[test]
+fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
+-> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-raw-stdin");
+    std::fs::create_dir_all(&cwd)?;
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &["pr-comments", "existing", "--raw", "-"],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    let output = output?;
+    assert_input_limit_refusal(&output, "pr-comments existing --raw - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not read standard input"),
+        "the refusal must name standard input:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// These two flags fold an unreadable artifact into their established
+/// "missing" state rather than reporting the read error, so the limit never
+/// reaches stderr. What the bounded reader changes for them is that the
+/// command finishes with its ordinary exit code instead of being ended for lack of
+/// memory (no exit code) or outliving the deadline.
+#[cfg(unix)]
+#[test]
+fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Result<(), std::io::Error>
+{
+    let cwd = unique_temp_workspace("endless-artifact-degrade");
+    std::fs::create_dir_all(&cwd)?;
+    let cases: [(&[&str], i32); 2] = [
+        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
+    ];
+    let result = (|| {
+        for (args, expected) in cases {
+            let output =
+                run_ripr_with_deadline_in(Some(&cwd), args, Stdio::null(), ENDLESS_INPUT_BUDGET)?;
+            assert_eq!(
+                output.status.code(),
+                Some(expected),
+                "{} must finish with its ordinary exit code:\n{}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&cwd);
+    result
 }
 
 /// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
