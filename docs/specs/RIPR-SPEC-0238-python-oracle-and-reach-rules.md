@@ -2034,7 +2034,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `account.deposit(50)` / `assert account.balance == 150`: the same
     verdict as `account = Account(100)` inlined in the test body (today
     `static_unknown`, `unresolved_pytest_fixture`; L8,
-    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    `py-fixtures-deposit`). An argument may also be a list, tuple, set or
+    dict display built only from literals (`Cart([3, 4])`,
+    `Account(balance=[100])`): a display names no variable and calls
+    nothing, so the fixture still builds the value the inlined construction
+    would. A display that names a variable, calls something, stars an
+    element or is a comprehension is a non-literal argument. A `yield`, an
+    extra statement, a fixture
     parameter, decorator arguments, a second decorator, an `async def`, a
     non-literal or starred argument, another class, a class from another
     module, a renamed import, a second binding of the class or the
