@@ -13,3 +13,9 @@ policy = "run --locked -p repo-policy --"
 TEMP = { value = "target", relative = true, force = true }
 TMP = { value = "target", relative = true, force = true }
 TMPDIR = { value = "target", relative = true, force = true }
+
+# Lossless ELF debug compression retains file/line backtraces while reducing
+# linked dev/test artifact growth (#14202). No LLVM tools or linker override
+# are needed; line-tables-only and the existing linker selection stay intact.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--compress-debug-sections=zlib"]
