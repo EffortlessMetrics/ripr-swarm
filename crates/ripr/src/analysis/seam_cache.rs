@@ -1389,7 +1389,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// warm entries deserialize with an empty guard vector.
 /// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+/// `1.59`: entries are framed as `<digest>\n<compact body>` and verified over
+/// the stored body bytes (#9216); `1.58` entries embed the digest in the body
+/// and need a re-serialization of every entry to verify, so they are not read.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.59";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3509,10 +3512,13 @@ impl RepoFileFactCache {
             }
         };
         match codec::decode_file_facts(&bytes) {
-            Ok(envelope) => {
+            Ok(DecodedFileFacts {
+                envelope,
+                digest_matches,
+            }) => {
                 if envelope.matches_key(key) {
-                    if let Err(reason) = envelope.validate_integrity() {
-                        return corrupt_entry(&path, reason);
+                    if !digest_matches {
+                        return corrupt_entry(&path, FILE_FACT_DIGEST_MISMATCH);
                     }
                     CacheLoad::Hit(envelope.file_facts)
                 } else {
@@ -3586,7 +3592,10 @@ impl RepoFileFactCache {
                 }
             };
             match codec::decode_file_facts(&bytes) {
-                Ok(envelope) => {
+                Ok(DecodedFileFacts {
+                    envelope,
+                    digest_matches,
+                }) => {
                     if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
                         problems.push(format!(
                             "{}: schema {} (expected {})",
@@ -3596,9 +3605,9 @@ impl RepoFileFactCache {
                         ));
                     } else if envelope.analyzer_version != identity {
                         problems.push(format!("{}: analyzer identity mismatch", path.display()));
-                    } else if let Err(reason) = envelope.validate_integrity() {
+                    } else if !digest_matches {
                         problems.push(format!(
-                            "{}: integrity check failed: {reason}",
+                            "{}: integrity check failed: {FILE_FACT_DIGEST_MISMATCH}",
                             path.display()
                         ));
                     }
@@ -4091,6 +4100,7 @@ impl<'a> FileFactCacheEnvelopeRef<'a> {
         }
     }
 
+    #[cfg(test)]
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
@@ -4121,10 +4131,21 @@ fn read_file_fact_header(path: &Path) -> Option<FileFactCacheHeader> {
         .take(FILE_FACT_HEADER_PREFIX_BYTES)
         .read_to_end(&mut prefix)
         .ok()?;
-    if let Some(header) = header_from_prefix(&prefix) {
+    if let Some(header) = header_from_prefix(split_framed_header(&prefix)) {
         return Some(header);
     }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    serde_json::from_slice(split_framed_header(&std::fs::read(path).ok()?)).ok()
+}
+
+/// The body after a framed entry's digest line, without verifying it: the
+/// inventory reads identity only, and every admission verifies the digest.
+fn split_framed_header(bytes: &[u8]) -> &[u8] {
+    if bytes.starts_with(b"sha256:")
+        && let Some(sep) = bytes.iter().position(|byte| *byte == b'\n')
+    {
+        return &bytes[sep + 1..];
+    }
+    bytes
 }
 
 /// Parses keys from the start of the envelope object until the three header
@@ -4186,11 +4207,12 @@ impl KnownFilePaths {
         self.candidates.get(file).is_some_and(|entries| {
             entries.iter().any(|entry| {
                 std::fs::read(entry).ok().is_some_and(|bytes| {
-                    codec::decode_file_facts(&bytes).is_ok_and(|envelope| {
+                    codec::decode_file_facts(&bytes).is_ok_and(|decoded| {
+                        let envelope = &decoded.envelope;
                         envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                             && envelope.analyzer_version == identity
                             && envelope.file_path == file
-                            && envelope.validate_integrity().is_ok()
+                            && decoded.digest_matches
                     })
                 })
             })
@@ -4660,17 +4682,52 @@ impl CacheEnvelope {
 impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
+    /// A framed entry is verified over its stored bytes instead; only an
+    /// entry without the digest header pays this re-serialization.
     fn expected_digest(&self) -> Result<String, String> {
         semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
-    fn validate_integrity(&self) -> Result<(), String> {
-        let expected = self.expected_digest()?;
-        if self.payload_digest.as_deref() == Some(expected.as_str()) {
-            Ok(())
-        } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
-        }
-    }
+}
+
+/// A decoded Rust file-fact entry and whether its framed digest matched.
+struct DecodedFileFacts {
+    envelope: FileFactCacheEnvelope,
+    digest_matches: bool,
+}
+
+/// Why a decoded entry whose identity matched is not served.
+const FILE_FACT_DIGEST_MISMATCH: &str = "missing or mismatching semantic payload digest";
+
+/// Framed on-disk entry: `<digest>\n<compact body>`, where the digest is the
+/// semantic digest of exactly the body bytes that follow (byte-identical to
+/// [`semantic_body_digest`] of the envelope, because the body is its compact
+/// serialization). Compact JSON holds no raw newline, so the first `\n`
+/// always ends the header.
+fn framed_file_fact_entry(body: &[u8]) -> Vec<u8> {
+    let digest = semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body);
+    let mut bytes = Vec::with_capacity(digest.len() + 1 + body.len());
+    bytes.extend_from_slice(digest.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+/// Splits a framed entry into (digest matches, body); `None` for bytes
+/// without a digest header.
+fn split_framed_file_fact_entry(bytes: &[u8]) -> Option<(bool, &[u8])> {
+    let (header, body) = bytes
+        .strip_prefix(b"sha256:".as_slice())
+        .and_then(|_| bytes.iter().position(|byte| *byte == b'\n'))
+        .map(|sep| (&bytes[..sep], &bytes[sep + 1..]))?;
+    #[cfg(test)]
+    INTEGRITY_WORK.with(|work| {
+        let (hashes, bodies, envelopes) = work.get();
+        work.set((hashes.saturating_add(1), bodies, envelopes));
+    });
+    Some((
+        header == semantic_digest_for_bytes(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, body).as_bytes(),
+        body,
+    ))
 }
 
 impl ShardedCacheManifest {
@@ -4777,17 +4834,48 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        Ok(super::framed_file_fact_entry(&body))
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
+        super::note_integrity_envelope();
+        let body = serde_json::to_vec(envelope)
+            .map_err(|err| format!("encode file facts failed: {err}"))?;
+        let bytes = super::framed_file_fact_entry(&body);
+        super::record_integrity_vec_len(bytes.len());
+        Ok(bytes)
     }
 
-    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
-        serde_json::from_slice(bytes).map_err(|err| format!("decode file facts failed: {err}"))
+    /// Decodes an entry and reports whether its framed digest matches the
+    /// stored body bytes. The digest is checked over the bytes already read,
+    /// never by re-serializing the decoded envelope (#9216). Callers judge the
+    /// decoded identity first and the digest second, so an entry of another
+    /// generation stays a miss whatever its digest.
+    pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<super::DecodedFileFacts, String> {
+        let decode = |body: &[u8]| -> Result<FileFactCacheEnvelope, String> {
+            serde_json::from_slice(body).map_err(|err| format!("decode file facts failed: {err}"))
+        };
+        if let Some((digest_matches, body)) = super::split_framed_file_fact_entry(bytes) {
+            return Ok(super::DecodedFileFacts {
+                envelope: decode(body)?,
+                digest_matches,
+            });
+        }
+        // An entry without the digest header (hand-written, or the embedded
+        // digest form) keeps the re-serializing check, which only such an
+        // entry ever pays.
+        let envelope = decode(bytes)?;
+        let digest_matches = envelope
+            .expected_digest()
+            .is_ok_and(|expected| envelope.payload_digest.as_deref() == Some(expected.as_str()));
+        Ok(super::DecodedFileFacts {
+            envelope,
+            digest_matches,
+        })
     }
 
     pub(super) fn encode_corpus_fingerprint(
@@ -5392,7 +5480,8 @@ mod tests {
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        // 1.58 -> 1.59: digest-framed entries verified over stored bytes (#9216).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.59");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5835,10 +5924,25 @@ mod tests {
             cache.store_file_facts(&key, &facts)?;
             let entry = cache.entry_path(&key);
             let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
-            let stored_value: serde_json::Value =
-                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            // The stored entry frames its digest ahead of the body (#9216);
+            // folded back in, it equals the legacy embedded-digest entry.
+            let (digest_line, stored_body) = stored
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|sep| (&stored[..sep], &stored[sep + 1..]))
+                .ok_or("stored entry must carry a digest line")?;
+            assert_eq!(digest_line, envelope.expected_digest()?.as_bytes());
+            let mut stored_value: serde_json::Value =
+                serde_json::from_slice(stored_body).map_err(|err| err.to_string())?;
             let legacy_value: serde_json::Value =
                 serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            stored_value
+                .as_object_mut()
+                .ok_or("envelope must be object")?
+                .insert(
+                    "payload_digest".to_owned(),
+                    serde_json::json!(envelope.expected_digest()?),
+                );
             assert_eq!(
                 stored_value, legacy_value,
                 "all fields and digest stay equal"
@@ -5921,6 +6025,34 @@ mod tests {
         Ok(())
     }
 
+    /// Rewrites a stored entry's JSON body. `reframe` stamps a fresh digest
+    /// over the new body (a writer that produced this shape); otherwise the
+    /// original digest line stays in front of the edited body (tampering).
+    fn rewrite_file_fact_body(
+        path: &Path,
+        reframe: bool,
+        edit: impl FnOnce(&mut serde_json::Value),
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+        let sep = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .filter(|_| bytes.starts_with(b"sha256:"))
+            .ok_or("stored entry must be framed behind a digest line")?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes[sep + 1..]).map_err(|err| err.to_string())?;
+        edit(&mut envelope);
+        let body = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        let out = if reframe {
+            framed_file_fact_entry(&body)
+        } else {
+            let mut out = bytes[..=sep].to_vec();
+            out.extend_from_slice(&body);
+            out
+        };
+        std::fs::write(path, out).map_err(|err| err.to_string())
+    }
+
     #[test]
     fn file_fact_entry_with_unknown_probe_shape_kind_loads_corrupt_ignored() -> Result<(), String> {
         use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -5942,13 +6074,10 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["probe_shapes"][0]["kind"] =
-            serde_json::Value::String("future_shape".to_string());
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["probe_shapes"][0]["kind"] =
+                serde_json::Value::String("future_shape".to_string());
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -5984,14 +6113,11 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
-            "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
-        );
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["functions"][0]["body"] = serde_json::Value::String(
+                "fn f(x: u32) -> u32 { if x > 0 { x } else { 0 } }".to_string(),
+            );
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::CorruptIgnored { reason } if reason.contains("decode file facts") => {}
             other => {
@@ -6033,16 +6159,13 @@ mod tests {
             return Err("seeded file facts must warm hit".to_owned());
         }
         let entry = cache.entry_path(&key);
-        let bytes = std::fs::read(&entry).map_err(|err| err.to_string())?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
-        envelope["file_facts"]["calls"] = serde_json::json!([{
-            "line": 999,
-            "name": "phantom",
-            "text": "phantom()",
-        }]);
-        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
-        std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&entry, true, |envelope| {
+            envelope["file_facts"]["calls"] = serde_json::json!([{
+                "line": 999,
+                "name": "phantom",
+                "text": "phantom()",
+            }]);
+        })?;
         match cache.load_file_facts(&key) {
             CacheLoad::Hit(loaded) if loaded.file_calls() == expected => {}
             other => {
@@ -6417,15 +6540,9 @@ mod tests {
         let key = RepoFileFactCacheKey::new(file, b"pub fn a() {}\n");
         cache.store_file_facts(&key, &FileFacts::default())?;
         let path = cache.entry_path(&key);
-        let mut entry: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
-                .map_err(|err| err.to_string())?;
-        entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
-        std::fs::write(
-            &path,
-            serde_json::to_vec_pretty(&entry).map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| err.to_string())?;
+        rewrite_file_fact_body(&path, false, |entry| {
+            entry["file_facts"]["used_lexical_fallback"] = serde_json::Value::Bool(true);
+        })?;
         let known = cache.known_file_paths();
         // The snapshot keeps the tampered entry as a candidate: it judged
         // only the header. An inventory that decoded and validated every body
@@ -6450,9 +6567,19 @@ mod tests {
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let key = RepoFileFactCacheKey::new(Path::new("src/x.rs"), b"x");
         cache.store_file_facts(&key, &FileFacts::default())?;
-        let bytes = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        let framed = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        // The entry is framed behind its digest line; the header sits at the
+        // start of the body that follows.
+        let bytes = split_framed_header(&framed).to_vec();
+        assert!(
+            bytes.len() < framed.len(),
+            "a stored entry carries a digest header"
+        );
         let full: FileFactCacheHeader =
             serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        let from_disk =
+            read_file_fact_header(&cache.entry_path(&key)).ok_or("framed header must read")?;
+        assert_eq!(from_disk.file_path, full.file_path);
         // Any cut after the header fields still yields the same header.
         let cut = bytes.len().min(400);
         let prefixed = header_from_prefix(bytes.get(..cut).ok_or("short entry")?)
@@ -7055,7 +7182,8 @@ mod tests {
         let original = std::fs::read(&entry).map_err(|err| err.to_string())?;
         for digest in [None, Some(serde_json::json!("sha256:invalid"))] {
             let mut value: serde_json::Value =
-                serde_json::from_slice(&original).map_err(|err| err.to_string())?;
+                serde_json::from_slice(split_framed_header(&original))
+                    .map_err(|err| err.to_string())?;
             let object = value.as_object_mut().ok_or("envelope must be object")?;
             object.remove("payload_digest");
             if let Some(digest) = digest {
@@ -7101,7 +7229,8 @@ mod tests {
             return Err("valid entry must remain inventory".to_owned());
         }
         let mut signed: FileFactCacheEnvelope =
-            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?;
+            codec::decode_file_facts(&std::fs::read(&entry).map_err(|err| err.to_string())?)?
+                .envelope;
         signed.file_facts.source = "changed semantic source".into();
         std::fs::write(&entry, codec::encode_file_facts(&signed)?)
             .map_err(|err| err.to_string())?;
