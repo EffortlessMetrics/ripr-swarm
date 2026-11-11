@@ -190,7 +190,7 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
 fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -> Result<(), String>
 {
     let lib = |text: &'static str| [("src/lib.rs", text), ("support.rs", SUPPORT)];
-    let cases: [(&str, Vec<(&str, &str)>); 9] = [
+    let cases: [(&str, Vec<(&str, &str)>); 11] = [
         (
             "path leaves the member",
             lib("#[path = \"../../app/src/par.rs\"]\nmod par;\n").to_vec(),
@@ -228,6 +228,26 @@ fn a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement() -
                 ("src/lib.rs", OWN_PATH),
                 ("support.rs", "mod child;\n"),
                 ("child.rs", "include!(\"../app/src/par.rs\");\n"),
+            ],
+        ),
+        (
+            "own file's cfg_attr introduces a path",
+            vec![
+                ("src/lib.rs", OWN_PATH),
+                (
+                    "support.rs",
+                    "#[cfg_attr(test, path = \"../app/src/par.rs\")]\nmod par;\n",
+                ),
+            ],
+        ),
+        (
+            "own file's raw-identifier path",
+            vec![
+                ("src/lib.rs", OWN_PATH),
+                (
+                    "support.rs",
+                    "#[r#path = \"../app/src/par.rs\"]\nmod par;\n",
+                ),
             ],
         ),
         (

@@ -2993,7 +2993,13 @@ fn own_path_literals(source: &str, followed: bool) -> Option<Vec<String>> {
                 .is_some_and(|rest| rest.trim_start().starts_with('!'))
         });
     let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
-    if includes || compact.contains("#![path") {
+    // `#![path]`, a raw-identifier `r#path`, and a `cfg_attr` that may
+    // introduce a `path` are spellings the `#[path` count below cannot see.
+    if includes
+        || compact.contains("#![path")
+        || compact.contains("r#path")
+        || (compact.contains("cfg_attr") && compact.contains("path"))
+    {
         return None;
     }
     let attributes = compact.matches("#[path").count();
