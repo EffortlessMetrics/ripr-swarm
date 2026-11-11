@@ -294,8 +294,10 @@ pub(crate) fn probes_for_file_with_relations(
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
         // after macro membership: inside a `macro_rules!` transcriber they
         // are emitted tokens, so an edit there is a macro-definition edit.
+        // `//` inside a string literal is string data, not a comment (#14094).
         if text.is_empty()
-            || text.starts_with("//")
+            || (text.starts_with("//")
+                && !added_string_continuations.contains(&added.new_side_line))
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
         {
@@ -325,7 +327,8 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text)
+        if (should_ignore_changed_line(text)
+            && !added_string_continuations.contains(&added.new_side_line))
             || added_attribute_lines.contains(&added.new_side_line)
             || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
         {

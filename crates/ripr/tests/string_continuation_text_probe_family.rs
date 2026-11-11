@@ -186,27 +186,37 @@ fn deleted_code_looking_string_text_seeds_no_probe() -> Result<(), String> {
 /// text looks like.
 #[test]
 fn an_edited_code_looking_string_line_stays_static_unknown() -> Result<(), String> {
-    let source = lib(&["  if x > 4 { return Err(e) }"], 2);
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+    // A replacement that starts with `//` or `#` is string data inside a
+    // literal, not a comment or attribute, so the edit keeps its probe.
+    for new_text in [
+        "  if x > 4 { return Err(e) }",
+        "  // if x > 4 { return Err(e) }",
+        "  # if x > 4 { return Err(e) }",
+    ] {
+        let source = lib(&[new_text], 2);
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs
 index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -2,3 +2,3 @@
    first line of help
--  if x > 3 { return Err(e) }
-+  if x > 4 { return Err(e) }
+-  if x > 3 {{ return Err(e) }}
++{new_text}
    last line\";
-";
-    let findings = TempRepo::create(&source, diff)?.findings()?;
-    let families = findings
-        .iter()
-        .map(|finding| finding.probe.family.as_str())
-        .collect::<Vec<_>>();
-    if families != ["static_unknown"] {
-        return Err(format!(
-            "an edited string line is one static_unknown, got [{}]",
-            describe(&findings)
-        ));
+"
+        );
+        let findings = TempRepo::create(&source, &diff)?.findings()?;
+        let families = findings
+            .iter()
+            .map(|finding| finding.probe.family.as_str())
+            .collect::<Vec<_>>();
+        if families != ["static_unknown"] {
+            return Err(format!(
+                "an edited string line `{new_text}` is one static_unknown, got [{}]",
+                describe(&findings)
+            ));
+        }
     }
     Ok(())
 }

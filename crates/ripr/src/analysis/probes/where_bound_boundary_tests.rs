@@ -101,18 +101,17 @@ fn where_bound_shared_body_and_uppercase_fields_keep_runtime_shapes() -> Result<
 
 #[test]
 fn bound_spelling_in_macro_or_string_has_no_declaration_authority() -> Result<(), String> {
-    for (source, line) in [
-        ("tokens! {\n    T: Clone,\n}\n", 2),
-        ("fn f() { let text = r#\"\n    T: Clone,\n\"#; }\n", 2),
-    ] {
-        let result = added(source, line)?;
-        assert!(
-            result
-                .iter()
-                .any(|p| p.family == ProbeFamily::FieldConstruction),
-            "invented declaration authority: {result:?}"
-        );
-    }
+    let result = added("tokens! {\n    T: Clone,\n}\n", 2)?;
+    assert!(
+        result
+            .iter()
+            .any(|p| p.family == ProbeFamily::FieldConstruction),
+        "invented declaration authority: {result:?}"
+    );
+    // String-literal content is data: an added continuation line seeds no
+    // probe at all (#9174, #14094).
+    let result = added("fn f() { let text = r#\"\n    T: Clone,\n\"#; }\n", 2)?;
+    assert!(result.is_empty(), "string data seeded a probe: {result:?}");
     // Block-comment content is prose: it seeds no probe at all (#8385).
     let result = added("fn f() { /*\n    T: Clone,\n*/ }\n", 2)?;
     assert!(
