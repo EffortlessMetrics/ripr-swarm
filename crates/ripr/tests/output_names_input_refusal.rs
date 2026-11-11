@@ -650,26 +650,38 @@ fn a_symlinked_parent_followed_by_dotdot_is_not_a_false_match() -> Result<(), St
 #[test]
 fn directory_members_are_inputs_and_missing_inputs_are_not() -> Result<(), String> {
     let dir = scratch("dir-members")?;
-    fs::create_dir_all(dir.join("art/mutants.out"))
-        .map_err(|error| format!("create mutants dir: {error}"))?;
-    fs::write(dir.join("art/mutants.out/outcomes.json"), SENTINEL)
-        .map_err(|error| format!("write outcomes: {error}"))?;
-    let member = run(
-        &dir,
-        &[
-            "calibrate",
-            "cargo-mutants",
-            "--mutants-json",
-            "art/mutants.out",
-            "--repo-exposure-json",
-            "art/in.json",
-            "--out",
-            "art/mutants.out/outcomes.json",
-        ],
-    )?;
-    let member_stderr = String::from_utf8_lossy(&member.stderr).to_string();
-    let outcomes_after =
-        fs::read_to_string(dir.join("art/mutants.out/outcomes.json")).unwrap_or_default();
+    // Each member the directory reader consumes is protected, one per
+    // directory so the other member cannot mask a missing guard.
+    let mut member_failures = Vec::new();
+    for member in ["outcomes.json", "mutants.json"] {
+        let mutants_dir = format!("art/{}.out", member.trim_end_matches(".json"));
+        let out = format!("{mutants_dir}/{member}");
+        fs::create_dir_all(dir.join(&mutants_dir))
+            .map_err(|error| format!("create {mutants_dir}: {error}"))?;
+        fs::write(dir.join(&out), SENTINEL).map_err(|error| format!("write {out}: {error}"))?;
+        let output = run(
+            &dir,
+            &[
+                "calibrate",
+                "cargo-mutants",
+                "--mutants-json",
+                &mutants_dir,
+                "--repo-exposure-json",
+                "art/in.json",
+                "--out",
+                &out,
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let after = fs::read_to_string(dir.join(&out)).unwrap_or_default();
+        let expected = expected_refusal("calibrate cargo-mutants", "--out", &out, "--mutants-json");
+        if output.status.code() != Some(2) || stderr != expected || after != SENTINEL {
+            member_failures.push(format!(
+                "{out} was not protected: exit {:?}; {stderr}",
+                output.status.code()
+            ));
+        }
+    }
     let missing = run(
         &dir,
         &[
@@ -687,17 +699,8 @@ fn directory_members_are_inputs_and_missing_inputs_are_not() -> Result<(), Strin
     )?;
     let missing_stderr = String::from_utf8_lossy(&missing.stderr).to_string();
     let _ = fs::remove_dir_all(&dir);
-    let expected = expected_refusal(
-        "calibrate cargo-mutants",
-        "--out",
-        "art/mutants.out/outcomes.json",
-        "--mutants-json",
-    );
-    if member.status.code() != Some(2) || member_stderr != expected || outcomes_after != SENTINEL {
-        return Err(format!(
-            "directory member was not protected: exit {:?}; {member_stderr}",
-            member.status.code()
-        ));
+    if !member_failures.is_empty() {
+        return Err(member_failures.join("\n"));
     }
     if missing_stderr.contains("names the same file as") {
         return Err(format!(
