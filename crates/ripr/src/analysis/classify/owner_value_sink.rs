@@ -89,6 +89,17 @@ const ARGUMENT_COMPARING_METHODS: &[&str] = &[
     "ends_with",
 ];
 
+/// Assertion macros (the `claims` family) that check a variant and return
+/// its payload.
+const PAYLOAD_EXTRACTING_MACROS: &[&str] = &[
+    "assert_ok",
+    "assert_err",
+    "assert_some",
+    "assert_ready",
+    "assert_ready_ok",
+    "assert_ready_err",
+];
+
 /// Free functions that hand their one argument on.
 const FORWARDING_CALLEES: &[&str] = &["from", "black_box", "identity"];
 
@@ -506,6 +517,15 @@ impl Reader<'_> {
                 _ => Sink::Masked,
             },
             Some("vec") => self.container(items.iter().map(read)),
+            // `claims`-style extraction (`let v = assert_ok!(parse(5));`)
+            // asserts the variant and returns its payload, so the result is
+            // the owner's value again.
+            Some(name) if PAYLOAD_EXTRACTING_MACROS.contains(&name) => {
+                match items.first().map(read) {
+                    Some(sink) if sink.reaches() => Sink::Value,
+                    _ => Sink::Masked,
+                }
+            }
             // Every argument is formatted into the result.
             Some("format") => self.any_value(items.iter().map(read)),
             Some("dbg") => match items.as_slice() {
@@ -720,6 +740,29 @@ mod tests {
             flow(
                 "let a = over(10); let b = Some(a); assert_eq!(b.is_some(), true);",
                 "assert_eq!(b.is_some(), true);"
+            ),
+            OwnerValueFlow::Masked
+        );
+        // A `claims` extraction returns the payload it asserted on.
+        assert_eq!(
+            flow(
+                "let v = assert_ok!(over(10)); assert_eq!(v, true);",
+                "assert_eq!(v, true);"
+            ),
+            OwnerValueFlow::Reaches
+        );
+        assert_eq!(
+            flow(
+                "let v = assert_some!(Some(over(10))); assert_eq!(v, true);",
+                "assert_eq!(v, true);"
+            ),
+            OwnerValueFlow::Reaches
+        );
+        // Control: a macro outside the list keeps the masked reading.
+        assert_eq!(
+            flow(
+                "let v = assert_matches!(over(10), true); assert_eq!(v, ());",
+                "assert_eq!(v, ());"
             ),
             OwnerValueFlow::Masked
         );
