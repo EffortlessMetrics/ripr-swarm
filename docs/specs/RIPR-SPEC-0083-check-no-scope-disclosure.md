@@ -139,10 +139,13 @@ merge base is `HEAD` while the base tip is another commit: a branch behind its
 base, or merged into it), the range is also empty by construction, and the
 headline says "HEAD is already contained in the comparison base, so the diff
 from their merge base is empty (no changed files)" instead of naming analyzed
-languages (#14265). The `Safe next action` then names the base, says there is
-no diff, and gives the two moves that can produce one: switch to the branch
-that has the change, or `ripr check --base HEAD~1` when `HEAD~1` resolves
-(otherwise commit a change). It does not suggest `--worktree`. One predicate
+languages (#14265). In a bare `ripr check`, whose scope-missing `Safe next
+action` is rendered, that line names the base, says there is no diff, and gives
+the two moves that can produce one: switch to the branch that has the change,
+or `ripr check --base HEAD~1` when `HEAD~1` resolves (otherwise commit a
+change). It does not suggest `--worktree`. An explicit `--base` and
+`human-full` get the headline without a `Safe next action`, as for every other
+empty range. One predicate
 (`output::analyzed_revisions::head_is_contained_in_base`) feeds both lines;
 unresolved commits and working-tree reads never establish it. JSON, GitHub and
 SARIF wording is unchanged: they carry the merge base and head as fields.
@@ -358,7 +361,7 @@ a gitlink (#10648).
 - `crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed` (#9033: a deletion-only range never gets a "no behavior changed" assurance)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer` (#9222: a default-base deletion-only range never gets a "no behavior changed" assurance in human, GitHub or JSON output, and still says nothing was analyzed)
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
-- `crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead` (#14265: the contained-HEAD predicate and its five refusals)
+- `crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead` (#14265: the contained-HEAD predicate and its refusals, including an unresolved base tip)
 - `crates/ripr/src/output/human.rs::tests::a_base_that_already_contains_head_names_that_cause_in_the_headline` (#14265: the contained-HEAD headline in both human forms, beside the same-commit, working-tree and changed-files controls)
 - `crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause` (#14265: built binary on a branch behind `main`, both `HEAD~1` arms, explicit `--base`, and a feature-branch control)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)

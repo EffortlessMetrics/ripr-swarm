@@ -72,9 +72,12 @@ pub(crate) fn is_working_tree_read(output: &crate::app::CheckOutput) -> bool {
 /// construction (a branch that is behind its base, or already merged into
 /// it), which is a different cause from "no file in a language ripr
 /// analyzes". A working-tree read is excluded: its diff ends at the tree, not
-/// at `HEAD`. Unresolved commits never establish it.
+/// at `HEAD`. Unresolved commits never establish it: an unknown base tip is
+/// not evidence that the base is ahead (a base that is `HEAD` itself, whose
+/// tip probe failed, also has `HEAD` as its merge base).
 pub(crate) fn head_is_contained_in_base(revisions: &AnalyzedRevisions) -> bool {
     !revisions.working_tree
+        && revisions.base_commit.is_some()
         && revisions.merge_base_commit.is_some()
         && revisions.merge_base_commit == revisions.head_commit
         && revisions.base_commit != revisions.head_commit
@@ -200,6 +203,11 @@ mod tests {
         let mut no_merge_base = contained.clone();
         no_merge_base.merge_base_commit = None;
         assert!(!head_is_contained_in_base(&no_merge_base));
+        // The base tip probe failed while HEAD and the merge base resolved:
+        // `None != Some(HEAD)` must not read as "the base is ahead".
+        let mut no_base = contained.clone();
+        no_base.base_commit = None;
+        assert!(!head_is_contained_in_base(&no_base));
         let mut no_head = contained.clone();
         no_head.head_commit = None;
         assert!(!head_is_contained_in_base(&no_head));

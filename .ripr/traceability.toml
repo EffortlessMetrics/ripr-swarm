@@ -8074,7 +8074,9 @@ code = [
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/github.rs",
   "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/analyzed_revisions.rs",
   "crates/ripr/src/output/human/agent.rs",
+  "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/output/json/report.rs"
 ]
 outputs = [
