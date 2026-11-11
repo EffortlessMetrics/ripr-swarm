@@ -3597,6 +3597,70 @@ mod tests {
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove policy dir: {err}"))?;
         Ok(())
     }
+    /// #14311: a supplied gate decision that is missing, not JSON, empty, or
+    /// another artifact never yields a `ready_for_*` recommendation; the run
+    /// writes `config_error` and refuses, naming the input.
+    #[test]
+    fn policy_readiness_refuses_an_unusable_supplied_input() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-readiness-unusable");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let out = dir.join("policy-readiness.json");
+        let out_md = dir.join("policy-readiness.md");
+        let gate = dir.join("gate-decision.json");
+        for body in [
+            None,
+            Some("not json {"),
+            Some("{}"),
+            Some("[]"),
+            Some(r#"{"schema":"ripr.other","x":1}"#),
+        ] {
+            if gate.exists() {
+                std::fs::remove_file(&gate).map_err(|err| format!("remove gate: {err}"))?;
+            }
+            if let Some(body) = body {
+                std::fs::write(&gate, body).map_err(|err| format!("write gate: {err}"))?;
+            }
+            let Err(err) = policy(&args(&[
+                "readiness",
+                "--gate-decision",
+                &gate.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ])) else {
+                return Err(format!("gate decision {body:?} must be refused"));
+            };
+            assert!(
+                err.contains("policy readiness could not use 1 supplied input")
+                    && err.contains("gate-decision.json")
+                    && err.contains("written as `config_error`"),
+                "{body:?}: {err}"
+            );
+            let report: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&out).map_err(|err| format!("read report: {err}"))?,
+            )
+            .map_err(|err| format!("parse report: {err}"))?;
+            assert_eq!(report["status"], "config_error", "{body:?}");
+        }
+        // Discriminating control: a real gate decision still completes.
+        std::fs::write(
+            &gate,
+            r#"{"schema_version":"0.1","status":"advisory","mode":"visible-only","summary":{"blocking":0,"acknowledged":0,"advisory":0,"suppressed":0,"not_applicable":0},"decisions":[]}"#,
+        )
+        .map_err(|err| format!("write gate: {err}"))?;
+        policy(&args(&[
+            "readiness",
+            "--gate-decision",
+            &gate.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
     #[test]
     fn policy_operations_command_writes_reports() -> Result<(), String> {
         let dir = unique_command_test_dir("policy-operations");

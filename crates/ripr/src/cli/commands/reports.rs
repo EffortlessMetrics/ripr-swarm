@@ -127,6 +127,18 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    // A readable source that is not this kind's input (invalid JSON, an
+    // empty file, another artifact) means the command could not complete
+    // (exit 2, docs/EXIT_CODES.md). The `blocked` ledger is still written
+    // first so it replaces any earlier ledger at `--out`: a stale ledger left
+    // in place would be read downstream as this run's result (#14311).
+    if let Some(cause) = report.source_parse_error() {
+        return Err(gap_ledger_source_refusal(
+            &options.source,
+            &options.root,
+            cause,
+        ));
+    }
     Ok(())
 }
 
@@ -139,6 +151,34 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
             .join(path)
     };
     Ok(output::baseline_delta::display_path(&absolute))
+}
+
+/// The refusal for a readable `reports gap-ledger` source that is not a valid
+/// input of its kind: the flag and path, the parse cause, that nothing was
+/// written, and the command that produces a valid input (#14311).
+fn gap_ledger_source_refusal(source: &GapDecisionLedgerSource, root: &str, cause: &str) -> String {
+    let root = crate::agent::loop_commands::shell_arg(root);
+    let (flag, expected, producer) = match source {
+        GapDecisionLedgerSource::Records(_) => (
+            "--records",
+            "GapRecord JSON (a records/gap_records/cases object or a record array)",
+            "`ripr reports gap-ledger --repo-exposure PATH` or `--check-output PATH` to derive records instead".to_string(),
+        ),
+        GapDecisionLedgerSource::RepoExposure(_) => (
+            "--repo-exposure",
+            "repo-exposure JSON",
+            format!("`ripr pilot --root {root}` (pass the repo-exposure.json it writes)"),
+        ),
+        GapDecisionLedgerSource::CheckOutput(_) => (
+            "--check-output",
+            "`ripr check` JSON output",
+            "`ripr check --format json > check.json`".to_string(),
+        ),
+    };
+    format!(
+        "reports gap-ledger {flag} {} is not {expected}: {cause}; the ledger was written as `blocked` with no records. Pass the right file, or generate one with {producer}",
+        output::path::human_path(source.path()),
+    )
 }
 
 fn typescript_limitations(args: &[String]) -> Result<(), String> {
@@ -786,6 +826,57 @@ mod tests {
         assert!(markdown.contains("gate candidates=`1`"));
 
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove gap ledger dir: {err}"))?;
+        Ok(())
+    }
+
+    /// #14311: a readable source that is not a valid input of its kind exits
+    /// non-zero with a refusal naming the flag, the cause and the producer,
+    /// after writing the `blocked` ledger over any earlier one. A valid empty
+    /// record array stays a successful `no_records` run.
+    #[test]
+    fn reports_gap_ledger_refuses_a_malformed_source_after_writing_blocked() -> Result<(), String> {
+        let dir = unique_command_test_dir("gap-ledger-malformed");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let root = dir.display().to_string();
+        for (flag, body, producer) in [
+            ("--records", "not json {", "--repo-exposure PATH"),
+            ("--records", "", "--repo-exposure PATH"),
+            ("--records", "{}", "--repo-exposure PATH"),
+            ("--repo-exposure", "not json {", "ripr pilot --root"),
+            (
+                "--check-output",
+                "{\"schema\":\"other\"",
+                "ripr check --format json",
+            ),
+        ] {
+            let input = dir.join("input.json");
+            std::fs::write(&input, body).map_err(|err| format!("write input: {err}"))?;
+            let out = dir.join("ledger.json");
+            std::fs::write(
+                &out,
+                r#"{"kind":"gap_decision_ledger","status":"advisory"}"#,
+            )
+            .map_err(|err| format!("write stale ledger: {err}"))?;
+            let Err(err) = gap_ledger_from(&root, flag, &input, &out) else {
+                return Err(format!("{flag} {body:?} must be refused, not exit 0"));
+            };
+            assert!(
+                err.contains(&format!("reports gap-ledger {flag} "))
+                    && err.contains("the ledger was written as `blocked`")
+                    && err.contains(producer),
+                "{flag} {body:?}: {err}"
+            );
+            assert_eq!(
+                read_json_file(&out)?["status"],
+                "blocked",
+                "{flag} {body:?}"
+            );
+        }
+        let input = dir.join("empty-array.json");
+        std::fs::write(&input, "[]").map_err(|err| format!("write input: {err}"))?;
+        let ledger = gap_ledger_from(&root, "--records", &input, &dir.join("ok.json"))?;
+        assert_eq!(ledger["status"], "no_records");
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
     }
 

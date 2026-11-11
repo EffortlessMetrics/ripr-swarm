@@ -162,6 +162,13 @@ reached the caller.
   names the root, and does not write `gate-decision.{json,md}`. Evaluation
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
+- **Unusable report input**: `ripr reports gap-ledger` with a source that
+  is readable but not valid JSON or not that source kind's shape, and
+  `ripr policy readiness` with a supplied input that is missing, unreadable,
+  not JSON, empty, or another artifact, exit `2` and name the flag, path and
+  cause on stderr. The `blocked` ledger or `config_error` readiness report is
+  still written first, so it replaces an earlier report at `--out` instead of
+  leaving a stale one for a later step to read (#14311).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its

@@ -83,6 +83,18 @@ pub(crate) struct GapDecisionLedgerReport {
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
+    /// Why the supplied source could not be read as this source kind (not
+    /// JSON, or not a gap-ledger input shape). Not rendered: the CLI refuses
+    /// the run with it instead of writing a `blocked` ledger (#14311).
+    source_parse_error: Option<String>,
+}
+
+impl GapDecisionLedgerReport {
+    /// The parse failure of the supplied source, when it was readable but
+    /// was not a valid input of the selected source kind.
+    pub(crate) fn source_parse_error(&self) -> Option<&str> {
+        self.source_parse_error.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -672,6 +684,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut parsed_cleanly = false;
     let mut source_value_snapshot = None;
     let mut source_content_committed = false;
+    let mut source_parse_error = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -713,6 +726,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 }
                 Err(err) => {
                     warnings.push(format!("parse {} failed: {err}", input.records_path));
+                    source_parse_error = Some(err);
                     Vec::new()
                 }
             };
@@ -913,6 +927,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         analysis_coverage,
         records,
         warnings,
+        source_parse_error,
         limits: vec![
             "Advisory static gap decisions only.".to_string(),
             "Gate-decision artifacts remain the only configured pass/fail authority.".to_string(),
