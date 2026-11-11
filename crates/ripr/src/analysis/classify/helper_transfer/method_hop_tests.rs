@@ -358,3 +358,17 @@ fn a_method_hop_never_forwards_a_result_or_an_effect_target() -> Result<(), Stri
     assert!(chain_has_method_hop(&chain));
     Ok(())
 }
+
+/// A receiver spelled with a non-ASCII identifier (`р`, Cyrillic) is not a
+/// receiver this rule reads. The hop declines; slicing the call text one byte
+/// past the receiver's last char used to panic inside that char.
+#[test]
+fn a_non_ascii_receiver_declines_instead_of_panicking() -> Result<(), String> {
+    for receiver in ["р", "größe", "值"] {
+        let helper = format!(
+            "fn check({receiver}: ByteSize, si: bool) {{\n    assert_eq!(\"x\", {receiver}.to_string_as(si));\n}}\n"
+        );
+        assert_declined(&crate_with("", METHOD, &helper), receiver)?;
+    }
+    Ok(())
+}
