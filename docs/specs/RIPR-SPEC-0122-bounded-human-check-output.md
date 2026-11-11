@@ -211,6 +211,21 @@ class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
 is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
 findings every one is listed and the output is unchanged (#14233).
 
+Omitted findings that share file, owner, class, currentness label and reason
+print as one row that names the line span, the count, the owner and the
+kinds, for example:
+
+```text
+- src/lib.rs:1078-1241 (weak, lower-priority candidate); 44 changed behaviors in `parse_headers_iter_uninit`; kinds: field_construction, call_deletion; reason: …
+```
+
+Members that share line and kind keep the single
+row with its `(xN)` repeat count. A finding that offers its own test stub
+keeps its own row. The 20-row window then bounds rows, not findings: beyond
+20 rows it keeps the rows whose best member ranks highest in the priority
+order above, printed in the order of each row's first finding, and the
+remainder line counts the findings in the rows it left out (#14299).
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -1133,6 +1148,9 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_groups_same_owner_class_and_reason_into_one_row`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

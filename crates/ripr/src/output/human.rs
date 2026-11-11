@@ -4220,6 +4220,146 @@ mod tests {
         );
     }
 
+    /// #14299: omitted findings that share file, owner, class, currentness and
+    /// reason print as one row naming the line span, count and kinds. A
+    /// different owner or class keeps its own row.
+    #[test]
+    fn hidden_block_groups_same_owner_class_and_reason_into_one_row() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for line in 10..16 {
+            let mut finding = sample_finding();
+            finding.id = format!("parse-{line}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+            finding.probe.family = if line % 2 == 0 {
+                ProbeFamily::Predicate
+            } else {
+                ProbeFamily::ReturnValue
+            };
+            finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+            findings.push(finding);
+        }
+        let mut other_owner = sample_finding();
+        other_owner.id = "other".to_string();
+        other_owner.class = ExposureClass::Exposed;
+        other_owner.probe.owner = Some(SymbolId("src/lib.rs::other".to_string()));
+        other_owner.probe.location = SourceLocation::new("src/lib.rs", 12, 1);
+        findings.push(other_owner);
+        let mut other_class = sample_finding();
+        other_class.id = "unknown".to_string();
+        other_class.class = ExposureClass::StaticUnknown;
+        other_class.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+        other_class.probe.location = SourceLocation::new("src/lib.rs", 13, 1);
+        findings.push(other_class);
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 3, "{rendered}");
+        let exposed = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rows[0].starts_with(&format!(
+                "    - src/lib.rs:10-15 ({exposed}); 6 changed behaviors in `parse`; kinds: predicate, return_value; reason: "
+            )),
+            "{rendered}"
+        );
+        assert!(
+            rows[1].starts_with(&format!("    - src/lib.rs:12 ({exposed}); kind: ")),
+            "{rendered}"
+        );
+        assert!(rows[2].starts_with("    - src/lib.rs:13 ("), "{rendered}");
+        assert!(
+            rendered.contains("  8 lower-priority finding(s) omitted"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("more omitted finding(s)"), "{rendered}");
+    }
+
+    /// #14299: the window bounds rows, and a grouped row is chosen by its best
+    /// member's priority; the remainder counts the findings in unlisted rows.
+    #[test]
+    fn hidden_block_window_counts_grouped_rows_and_remainder_findings() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for index in 0..25 {
+            let mut finding = sample_finding();
+            finding.id = format!("exposed-{index}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        // 30 gaps in one late Python owner: no stub route, so they group.
+        for line in 1..31 {
+            let mut finding = sample_finding();
+            finding.id = format!("py-gap-{line}");
+            finding.probe.owner = Some(SymbolId("python:src/z.py::shorten".to_string()));
+            finding.probe.location = SourceLocation::new("src/z.py", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "{rendered}");
+        assert!(
+            rows[19].starts_with(
+                "    - src/z.py:1-30 (weak); 30 changed behaviors in `shorten`; kind: predicate; reason: "
+            ),
+            "{rendered}"
+        );
+        assert!(rows[18].starts_with("    - src/b18.rs:1 "), "{rendered}");
+        let exposed = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rendered.contains(&format!(
+                "    - … and 6 more omitted finding(s): 6 {exposed}; "
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// #14299: a finding that offers its own test stub keeps its own row even
+    /// when another finding shares its owner, class and reason.
+    #[test]
+    fn hidden_block_keeps_stub_route_findings_one_row_each() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        for line in [7, 9] {
+            let mut finding = sample_finding();
+            finding.id = format!("stub-{line}");
+            finding.probe.owner = Some(SymbolId("src/sample.rs::sample".to_string()));
+            finding.probe.location = SourceLocation::new("src/sample.rs", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("    - src/sample.rs:7 (weak); kind: "),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/sample.rs:9 (weak); kind: "),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("changed behaviors in"), "{rendered}");
+    }
+
     /// The remainder line counts every finding outside the window by class,
     /// including findings that share an id with a listed row.
     #[test]

@@ -744,7 +744,25 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in &listed {
+        for row_members in hidden_rows(&triage.omitted) {
+            // #14299: one row stands for every omitted finding that shares
+            // file, owner, class, currentness and reason. Members that also
+            // share line and kind keep the legacy row and its repeat count.
+            let members: Vec<&Finding> = row_members
+                .iter()
+                .filter_map(|index| triage.omitted.get(*index).copied())
+                .collect();
+            let Some(finding) = members.first().copied() else {
+                continue;
+            };
+            if let Some(row) = grouped_hidden_row(&output.root, &members, label_currentness) {
+                if let Some((prev, count)) = previous.take() {
+                    push_hidden_row(out, &prev, count);
+                }
+                out.push_str(&row);
+                continue;
+            }
+            let repeat = members.len();
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -784,12 +802,12 @@ pub(crate) fn render_human_triage(
                 }
             }
             match previous.as_mut() {
-                Some((prev, count)) if *prev == row => *count += 1,
+                Some((prev, count)) if *prev == row => *count += repeat,
                 _ => {
                     if let Some((prev, count)) = previous.take() {
                         push_hidden_row(out, &prev, count);
                     }
-                    previous = Some((row, 1));
+                    previous = Some((row, repeat));
                 }
             }
         }
@@ -854,17 +872,148 @@ fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
         .collect()
 }
 
-/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+/// Positions in `omitted` of the findings the listed rows stand for, ascending.
 fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
-    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
-        return (0..omitted.len()).collect();
+    let mut kept: Vec<usize> = hidden_rows(omitted).into_iter().flatten().collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// #14299: the rows the `Hidden:` list prints, each a list of positions in
+/// `omitted` (ascending). Findings that share file, owner, class,
+/// currentness label and reason form one row, so a diff that changes one
+/// function does not spend the window on one line per probe. Findings that
+/// offer a per-finding test stub stay one row each, since each row carries
+/// its own `Test id`. The window bounds rows, not findings: beyond
+/// [`HIDDEN_FINDINGS_LISTED`] rows it keeps the rows whose best member ranks
+/// highest in the shared check-JSON priority order (#14235), printed in the
+/// order of each row's first member.
+fn hidden_rows(omitted: &[&Finding]) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut row_of_key: std::collections::BTreeMap<HiddenRowKey, usize> =
+        std::collections::BTreeMap::new();
+    for (index, finding) in omitted.iter().enumerate() {
+        if offers_test_stub(finding) {
+            rows.push(vec![index]);
+            continue;
+        }
+        let key = hidden_row_key(finding);
+        match row_of_key.get(&key) {
+            Some(&row) => {
+                if let Some(members) = rows.get_mut(row) {
+                    members.push(index);
+                }
+            }
+            None => {
+                row_of_key.insert(key, rows.len());
+                rows.push(vec![index]);
+            }
+        }
     }
-    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+    if rows.len() <= HIDDEN_FINDINGS_LISTED {
+        return rows;
+    }
+    let mut rank = vec![usize::MAX; omitted.len()];
+    for (position, index) in crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(slot) = rank.get_mut(index) {
+            *slot = position;
+        }
+    }
+    let best_rank = |members: &Vec<usize>| {
+        members
+            .iter()
+            .filter_map(|index| rank.get(*index).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    let mut by_priority: Vec<usize> = (0..rows.len()).collect();
+    by_priority.sort_by_key(|row| rows.get(*row).map_or(usize::MAX, best_rank));
+    let mut kept: Vec<usize> = by_priority
         .into_iter()
         .take(HIDDEN_FINDINGS_LISTED)
         .collect();
     kept.sort_unstable();
-    kept
+    kept.into_iter()
+        .filter_map(|row| rows.get(row).cloned())
+        .collect()
+}
+
+/// What a grouped `Hidden:` row has in common: file, owner, class,
+/// currentness label and the reason text the row prints.
+type HiddenRowKey = (
+    std::path::PathBuf,
+    Option<String>,
+    &'static str,
+    &'static str,
+    String,
+);
+
+fn hidden_row_key(finding: &Finding) -> HiddenRowKey {
+    (
+        finding.probe.location.file.clone(),
+        finding.probe.owner.as_ref().map(|owner| owner.0.clone()),
+        finding.class.as_str(),
+        hidden_bullet_currentness(finding),
+        hidden_finding_reason(finding),
+    )
+}
+
+/// #14299: the one row for a group whose members differ by line or kind:
+/// the line span, the count, the owner and the kinds. `None` when the group
+/// is a single finding or its members share line and kind, which keep the
+/// legacy row (with a repeat count for identical members).
+fn grouped_hidden_row(
+    root: &std::path::Path,
+    members: &[&Finding],
+    label_currentness: bool,
+) -> Option<String> {
+    let first = members.first()?;
+    let mut kinds: Vec<&'static str> = Vec::new();
+    for finding in members {
+        let kind = super::evidence_lines::plain_probe_family(&finding.probe.family);
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    let first_line = members.iter().map(|f| f.probe.location.line).min()?;
+    let last_line = members.iter().map(|f| f.probe.location.line).max()?;
+    if members.len() < 2 || (first_line == last_line && kinds.len() == 1) {
+        return None;
+    }
+    let lines = if first_line == last_line {
+        first_line.to_string()
+    } else {
+        format!("{first_line}-{last_line}")
+    };
+    let currentness = if label_currentness {
+        format!(", {}", hidden_bullet_currentness(first))
+    } else {
+        String::new()
+    };
+    let owner = first
+        .probe
+        .owner
+        .as_ref()
+        .and_then(|owner| owner.0.rsplit("::").next())
+        .filter(|name| !name.is_empty())
+        .map(|name| format!(" in `{name}`"))
+        .unwrap_or_default();
+    let label = if kinds.len() == 1 { "kind" } else { "kinds" };
+    Some(format!(
+        "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
+        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        lines,
+        first.class.plain_label_with_stage(),
+        currentness,
+        members.len(),
+        owner,
+        label,
+        kinds.join(", "),
+        hidden_finding_reason(first)
+    ))
 }
 
 /// Class counts of the omitted findings outside the listed window, in the

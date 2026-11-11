@@ -261,8 +261,10 @@ fn identical_hidden_rows_collapse_with_a_repeat_count() {
     );
 }
 
+/// #14299: rows for different files stay separate; identical rows merge into
+/// the first one's position even when another row sits between them.
 #[test]
-fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
+fn distinct_hidden_rows_stay_separate_and_non_consecutive_identical_rows_merge() {
     let findings = [0usize, 1, 0]
         .iter()
         .enumerate()
@@ -276,6 +278,13 @@ fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
         })
         .collect();
     let rendered = render(&bounded_output_with_findings(findings));
-    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
-    assert!(!rendered.contains(" (x"), "{rendered}");
+    let rows: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.starts_with("    - "))
+        .collect();
+    assert_eq!(rows.len(), 2, "{rendered}");
+    assert!(rows[0].starts_with("    - src/f0.rs:7 "), "{rendered}");
+    assert!(rows[0].ends_with(" (x2)"), "{rendered}");
+    assert!(rows[1].starts_with("    - src/f1.rs:7 "), "{rendered}");
+    assert!(!rows[1].contains(" (x"), "{rendered}");
 }
