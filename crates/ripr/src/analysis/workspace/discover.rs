@@ -687,6 +687,30 @@ mod tests {
         Ok(())
     }
 
+    /// #14078: the human headline for an unchanged path the walk could not
+    /// read must not call it a changed file. The detail says "unchanged", so
+    /// a headline saying "changed" contradicts its own line.
+    #[test]
+    fn unreadable_unchanged_path_limitation_headline_does_not_call_it_changed() -> Result<(), String>
+    {
+        let limitations =
+            limitations_for_unreadable_unchanged_paths(&[PathBuf::from("src/locked.rs")])?;
+        let [limitation] = limitations.as_slice() else {
+            return Err(format!("expected one limitation, got {limitations:?}"));
+        };
+        let headline = limitation.kind.plain_label();
+        assert_eq!(headline, "some files were not fully analyzed");
+        assert!(!headline.contains("changed"), "{headline}");
+        assert!(
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("unchanged")),
+            "{limitation:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn unreadable_unchanged_path_limitation_survives_a_refused_name() -> Result<(), String> {
         let limitations =
