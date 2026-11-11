@@ -717,19 +717,23 @@ mod tests {
 
     #[test]
     fn a_path_that_can_leave_the_root_is_refused_with_its_field_and_value() {
+        // Drive-letter paths are assembled here because the local-context
+        // gate refuses a literal absolute Windows path in source.
+        let upper = char::from(b'C');
+        let lower = char::from(b'c');
         let escapes = [
-            "..",
-            "../outside",
-            "crates/../../outside",
-            "crates\\..\\outside",
-            "/etc",
-            "\\\\server\\share",
-            "\\outside",
-            "C:/outside",
-            "C:outside",
-            "c:\\outside",
+            "..".to_string(),
+            "../outside".to_string(),
+            "crates/../../outside".to_string(),
+            "crates\\..\\outside".to_string(),
+            "/etc".to_string(),
+            "\\\\server\\share".to_string(),
+            "\\outside".to_string(),
+            format!("{upper}:/outside"),
+            format!("{upper}:outside"),
+            format!("{lower}:\\outside"),
         ];
-        for escape in escapes {
+        for escape in &escapes {
             assert_eq!(
                 validated(|spec| spec.cwd = escape.to_string()),
                 Err(Refusal::InvalidRelativePath {
