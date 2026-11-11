@@ -1423,11 +1423,16 @@ tests = [
   "xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results",
   "xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result",
   "xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning",
-  "xtask/src/main.rs::tests::sarif_policy_missing_baseline_is_advisory_by_default"
+  "xtask/src/main.rs::tests::sarif_policy_missing_baseline_is_advisory_by_default",
+  "crates/ripr/src/output/github.rs::tests::same_line_same_class_findings_fold_into_one_annotation",
+  "crates/ripr/src/output/github.rs::tests::the_denominator_counts_folded_findings",
+  "crates/ripr/src/output/github.rs::tests::a_fold_keeps_every_folded_canonical_gap_id",
+  "crates/ripr/src/output/github.rs::tests::card_findings_on_one_line_never_fold"
 ]
 fixtures = []
 code = [
   "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/github.rs",
   "crates/ripr/tests/sarif_uri_identity.rs",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/cli/parse.rs",

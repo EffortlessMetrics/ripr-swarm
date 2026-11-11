@@ -2553,6 +2553,31 @@ mod tests {
         );
     }
 
+    /// #14302 review: a finding with its own repair card never folds, so two
+    /// same-line, same-class card findings keep one card annotation each.
+    #[test]
+    fn card_findings_on_one_line_never_fold() {
+        let mut output = output_with_perl_preview_card();
+        let first = output.findings[0].clone();
+        assert!(
+            super::perl_preview_card(&first).is_some(),
+            "fixture carries a card"
+        );
+        let mut second = first.clone();
+        second.id = format!("{}:second", first.id);
+        second.probe.id = ProbeId(second.id.clone());
+        output.findings = vec![first, second];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 2, "{rendered}");
+        assert!(
+            located
+                .iter()
+                .all(|line| line.contains("Perl preview card:") && !line.contains("Also covers")),
+            "{rendered}"
+        );
+    }
+
     fn output_with_unknown_finding() -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
