@@ -538,8 +538,10 @@ fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
         return true;
     };
     let start = path
-        .rfind(|ch: char| !(is_ident_char(ch) || ch == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| !(is_ident_char(ch) || ch == ':'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
     let segments: Vec<&str> = path[start..]
         .split("::")
         .filter(|segment| !segment.is_empty())
@@ -562,8 +564,10 @@ fn typed_fn_pointer_initializer(code: &str, at: usize) -> bool {
     while let Some(rest) = before.strip_suffix("::") {
         let rest = rest.trim_end();
         let start = rest
-            .rfind(|ch: char| !is_ident_char(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !is_ident_char(ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         before = rest[..start].trim_end();
     }
     let Some(before) = before.strip_suffix('=') else {
@@ -926,8 +930,10 @@ fn executor_wraps_owner_call(code: &str, owner: &str, test: &TestFact, index: &R
         };
         let open = open.trim_end();
         let callee_start = open
-            .rfind(|ch: char| !(is_ident_char(ch) || ch == ':'))
-            .map_or(0, |at| at + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !(is_ident_char(ch) || ch == ':'))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
         let callee = &open[callee_start..];
         let leaf = callee.rsplit("::").next().unwrap_or(callee);
         if !is_ident(leaf) || leaf == owner {
@@ -1159,5 +1165,26 @@ mod tests {
         assert!(is_path("crate::def_add"));
         assert!(!is_path("2 + 3"));
         assert!(!is_path(""));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_qualifier_ending_in_a_multibyte_non_identifier_char_is_not_read() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        assert!(!super::qualifier_may_name_owner(
+            "क्::",
+            &["Owner".to_string()]
+        ));
+        let code = "let f: fn(u32) -> u32 = क्::";
+        assert!(!super::typed_fn_pointer_initializer(code, code.len()));
+        // The ASCII spelling still reads as before.
+        let code = "let f: fn(u32) -> u32 = helpers::";
+        assert!(super::typed_fn_pointer_initializer(code, code.len()));
+        assert!(super::qualifier_may_name_owner(
+            "Owner::",
+            &["Owner".to_string()]
+        ));
     }
 }

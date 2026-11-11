@@ -2105,8 +2105,10 @@ impl OwnerPinSyntax {
             }
             let before = masked[..at].trim_end();
             let start = before
-                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .map_or(0, |last| last + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch.is_ascii_alphanumeric() || ch == '_' || !ch.is_ascii()))
+                .map_or(0, |(last, ch)| last + ch.len_utf8());
             let name = &before[start..];
             // A `!` with no identifier before it negates a parenthesized
             // expression; it is not a macro invocation.
@@ -15312,8 +15314,10 @@ fn index_operand(before: &str) -> bool {
                 // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
                 // starts an array pattern or value, not an index.
                 let word_start = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map_or(0, |at| at + 1);
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, c)| !(c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()))
+                    .map_or(0, |(at, c)| at + c.len_utf8());
                 // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
                 // indexed place either.
                 if head[..word_start].ends_with('\'')
@@ -16323,8 +16327,14 @@ pub(super) fn unit_struct_value(
             let before = masked[..offset].trim_end();
             let after = masked[offset + name.len()..].trim_start();
             let word_start = before
-                .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-                .map_or(0, |position| position + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, character)| {
+                    !(character.is_ascii_alphanumeric()
+                        || character == '_'
+                        || !character.is_ascii())
+                })
+                .map_or(0, |(position, character)| position + character.len_utf8());
             let word = &before[word_start..];
             let item_end = after.starts_with('{') || starts_with_word(after, "where");
             let inert = match word {

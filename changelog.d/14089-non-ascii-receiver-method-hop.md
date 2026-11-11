@@ -1,5 +1,7 @@
 <!-- section: Fixed -->
-- `ripr check` no longer loses a Rust file's analysis ("part of the analysis
-  failed during language analysis") when a test calls a changed method on a
-  receiver spelled with a non-ASCII identifier, such as `р.remise(10)`; the
-  method-hop reader measured the char before the receiver as one byte (#14089).
+- `ripr check` no longer loses a file's analysis ("part of the analysis failed
+  during language analysis") on source that spells an identifier with
+  non-ASCII chars next to a call, path, macro or index, such as
+  `р.remise(10)`, `Größe::Bad { .. }`, `prüfe!(..)` or `größe.approx(..)`;
+  sixteen readers in the Rust, Python and TypeScript analysis measured a
+  multibyte char as one byte and sliced inside it (#14089).

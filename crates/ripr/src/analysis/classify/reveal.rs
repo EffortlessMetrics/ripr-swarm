@@ -2059,8 +2059,10 @@ fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
         inner.match_indices('!').all(|(bang, _)| {
             let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
             let name_start = inner[..bang]
-                .rfind(|ch: char| !ident(ch))
-                .map_or(0, |index| index + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !ident(ch))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
             !invoked
                 || (matches!(&inner[name_start..bang], "vec" | "format")
                     && !inner[..name_start].ends_with(':'))
@@ -2116,8 +2118,10 @@ pub(in crate::analysis) fn owner_called_on_other_receiver(
         };
         let receiver_end = masked[..receiver_end].trim_end().len();
         let receiver_start = masked[..receiver_end]
-            .rfind(|ch: char| !ident(ch))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !ident(ch))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
         masked[..receiver_start].trim_end().ends_with('.')
             || masked[receiver_start..receiver_end] != *binding
     })
@@ -14146,6 +14150,34 @@ return Err(\"typed pin\".into());
             body,
             "other",
             "Inventory"
+        ));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_macro_or_receiver_named_with_a_multibyte_mark_fails_closed() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        // A nested macro that is not `vec!`/`format!` may write the binding.
+        assert!(!plain_assertion_or_unrelated(
+            "assert!(क्!(order.items))",
+            "order"
+        ));
+        assert!(plain_assertion_or_unrelated(
+            "assert_eq!(order.items, vec![1])",
+            "order"
+        ));
+        // A call on another receiver counts, whatever its spelling.
+        assert!(owner_called_on_other_receiver(
+            "fn t() { क्.add(1); }",
+            "order",
+            "add"
+        ));
+        assert!(!owner_called_on_other_receiver(
+            "fn t() { order.add(1); }",
+            "order",
+            "add"
         ));
     }
 }

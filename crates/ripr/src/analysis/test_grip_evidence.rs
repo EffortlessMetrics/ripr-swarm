@@ -1479,8 +1479,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
         }
         let before = before.trim_end();
         let start = before
-            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .map_or(0, |found| found + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(0, |(found, ch)| found + ch.len_utf8());
         let mut original = &before[start..];
         if original == "self" {
             // `use Type::{Other, self as Name}`: the original is the segment
@@ -1501,8 +1503,10 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             let head = open.map_or("", |open| before[..open].trim_end());
             let head = head.strip_suffix("::").unwrap_or(head);
             let begin = head
-                .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .map_or(0, |found| found + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_'))
+                .map_or(0, |(found, ch)| found + ch.len_utf8());
             original = &head[begin..];
         }
         if !original.is_empty() {
