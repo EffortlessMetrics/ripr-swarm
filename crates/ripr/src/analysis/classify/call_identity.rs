@@ -19,7 +19,9 @@
 //!   at the test body's top level, then each enclosing module's own `use`
 //!   items and item definitions, following `use super::*` outward and
 //!   reading other globs. A binding inside a nested block of the test leaves
-//!   every call of that name unsettled.
+//!   every call of that name unsettled. A `const`, `static` or tuple
+//!   `struct` of the name in one of those scopes is what the bare call runs,
+//!   so the call settles away from every definition (#14087).
 //!
 //! A call settles on the owner only when the spelled path matches the
 //! owner and nothing else. It settles on another definition only when it
@@ -641,9 +643,18 @@ enum Matches {
     Some(BTreeSet<usize>),
 }
 
+/// Stands in [`Matches::Some`] for a binding that is none of the indexed
+/// definitions: a `const`, `static` or tuple-`struct` item of the name.
+const ELSEWHERE: usize = usize::MAX;
+
 impl Matches {
     fn none() -> Self {
         Self::Some(BTreeSet::new())
+    }
+
+    /// The name is bound to an item that is not one of the definitions.
+    fn elsewhere() -> Self {
+        Self::Some(BTreeSet::from([ELSEWHERE]))
     }
 
     fn union(self, other: Self) -> Self {
@@ -1063,6 +1074,20 @@ impl OwnerCallIdentity {
                     matches = matches.union(found);
                 }
                 return from_globs.union(matches);
+            }
+            if scope.value_items.contains(name) {
+                // A `const`, `static` or tuple `struct` of the name binds the
+                // bare call to itself (#14087). A module that also holds a
+                // placed `fn` of the name (a `cfg` alternative) keeps both
+                // readings; a function body's item is never the module's.
+                let item = Matches::elsewhere();
+                let here = match base {
+                    Some(base) if !scope.fn_body && self.module_is_placed(base) => {
+                        item.union(self.matches_module(Some(base.to_vec())))
+                    }
+                    _ => item,
+                };
+                return from_globs.union(here);
             }
             if scope.defines.contains(name) {
                 return from_globs.union(self.matches_module(base.map(<[String]>::to_vec)));
@@ -3304,6 +3329,45 @@ fn qualified_call_names_owner(
         None => (false, qualifier),
     };
     anchored && module_reexports_owner(index, owner, &owner_path, &owner_crate, rest)
+}
+
+/// Whether every call of free function `owner`'s name in `test` is a bare
+/// call that a `const`, a `static` or a tuple `struct` of that name binds in
+/// the scopes around the test (#14087):
+///
+/// ```text
+/// mod tests {
+///     const render: fn(i32) -> i32 = super::other;
+///     #[test] fn t() { assert_eq!(render(100), 10); }
+/// }
+/// ```
+///
+/// The item beats a glob and every enclosing scope, so the test runs the
+/// item's value and the changed `fn render` never runs. `true` withholds the
+/// owner; anything the scopes do not settle keeps the prior relation: a
+/// qualified call of the owner beside the bare one, the owner passed as a
+/// value, a nested-block binding, an unparseable file. A `const` that itself
+/// aliases the owner (`const render: fn(i32) -> i32 = super::render;`) is
+/// withheld too: the initializer is not read.
+pub(in crate::analysis) fn test_calls_only_a_local_value_item(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    // The scopes are memoized per test; most tests declare no such item and
+    // stop here.
+    identity.name_scopes(test, index).is_some_and(|scopes| {
+        scopes
+            .scopes
+            .iter()
+            .any(|scope| scope.value_items.contains(&owner.name))
+    }) && identity.resolve_test(test, index) == CallTarget::Other
 }
 
 /// Whether every call of `name` in `test` is spelled through a module that the
@@ -5706,5 +5770,257 @@ mod tests {
             Some(CallTarget::Owner)
         );
         Ok(())
+    }
+
+    /// The #14087 single-file crate: a unique-name owner at the root beside a
+    /// differently named function, and one test module with `items` and a
+    /// test named `bound` whose body is `body`.
+    fn value_item_lib(items: &str, body: &str) -> String {
+        format!(
+            "pub fn render(x: i32) -> i32 {{\n    x + 1\n}}\n\
+             pub fn other(x: i32) -> i32 {{\n    x * 2\n}}\n\
+             #[cfg(test)]\nmod tests {{\n{items}\n    #[test]\n    fn bound() {{\n        {body}\n    }}\n}}\n"
+        )
+    }
+
+    /// Whether the `bound` test of `source` is withheld from the root
+    /// `render` by [`test_calls_only_a_local_value_item`], and whether a bare
+    /// `render(..)` in it may still lend a boundary input.
+    fn value_item_reading(source: &str) -> Option<(bool, bool)> {
+        let index = index(&[("src/lib.rs", source)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with("lib.rs::render"));
+        let test = index.tests().iter().find(|test| test.name == "bound");
+        assert!(
+            owner.is_some() && test.is_some(),
+            "the root `render` and the `bound` test must be indexed: {source}"
+        );
+        let (owner, test) = (owner?, test?);
+        Some((
+            test_calls_only_a_local_value_item(&index, owner, test),
+            qualified_owner_calls_resolve(&index, owner, test, "render(2)", test.start_line + 1),
+        ))
+    }
+
+    /// #14087: a `const`, `static` or tuple `struct` of the owner's name in a
+    /// scope around the test binds the bare call to itself. It beats a glob
+    /// and every enclosing scope, so the owner never runs: the test is
+    /// withheld and its call lends no boundary input.
+    #[test]
+    fn a_bare_call_bound_by_a_local_value_item_never_names_the_owner() {
+        const BARE: &str = "assert_eq!(render(2), 4);";
+        let cases = [
+            (
+                "module const",
+                "    const render: fn(i32) -> i32 = super::other;",
+                BARE.to_string(),
+            ),
+            (
+                "module static",
+                "    static render: fn(i32) -> i32 = super::other;",
+                BARE.to_string(),
+            ),
+            (
+                "module const beside a glob of the owner's module",
+                "    use super::*;\n    const render: fn(i32) -> i32 = other;",
+                BARE.to_string(),
+            ),
+            (
+                "tuple struct constructor",
+                "    #[derive(Debug, PartialEq)]\n    struct render(i32);",
+                "assert_eq!(render(2), render(2));".to_string(),
+            ),
+            (
+                "const at the top of the test body",
+                "    use super::*;",
+                format!("const render: fn(i32) -> i32 = other; {BARE}"),
+            ),
+        ];
+        for (label, items, body) in cases {
+            let source = value_item_lib(items, &body);
+            assert_eq!(
+                value_item_reading(&source),
+                Some((true, false)),
+                "{label}: {source}"
+            );
+        }
+    }
+
+    /// The controls for the rule above: each keeps the prior reading, so the
+    /// withholding is the value item's and nothing else's.
+    #[test]
+    fn a_local_value_item_withholds_only_the_bare_calls_it_binds() {
+        const BARE: &str = "assert_eq!(render(2), 3);";
+        let cases = [
+            (
+                "no item: the glob supplies the owner",
+                "    use super::*;",
+                BARE.to_string(),
+            ),
+            (
+                "a braced struct binds no value",
+                "    use super::*;\n    struct render { x: i32 }",
+                BARE.to_string(),
+            ),
+            (
+                "a unit struct is not callable",
+                "    use super::*;\n    struct render;",
+                BARE.to_string(),
+            ),
+            (
+                "a differently named const",
+                "    use super::*;\n    const rendered: fn(i32) -> i32 = other;",
+                BARE.to_string(),
+            ),
+            (
+                "a const inside a nested block binds only there",
+                "    use super::*;",
+                format!("{{ const render: fn(i32) -> i32 = other; let _ = render; }} {BARE}"),
+            ),
+        ];
+        for (label, items, body) in cases {
+            let source = value_item_lib(items, &body);
+            let reading = value_item_reading(&source);
+            assert_eq!(
+                reading.map(|(withheld, _)| withheld),
+                Some(false),
+                "{label}: {source}"
+            );
+        }
+        // The first three still lend the bare call as an owner input.
+        for (items, body) in [
+            ("    use super::*;", BARE),
+            ("    use super::*;\n    struct render { x: i32 }", BARE),
+            (
+                "    use super::*;\n    const rendered: fn(i32) -> i32 = other;",
+                BARE,
+            ),
+        ] {
+            let source = value_item_lib(items, body);
+            assert_eq!(value_item_reading(&source), Some((false, true)), "{source}");
+        }
+        // A qualified call of the owner beside the item names the owner: the
+        // test keeps its relation although the bare name is bound away.
+        let qualified = value_item_lib(
+            "    const render: fn(i32) -> i32 = super::other;",
+            "assert_eq!(super::render(2), 3); assert_eq!(render(2), 4);",
+        );
+        assert_eq!(
+            value_item_reading(&qualified),
+            Some((false, false)),
+            "{qualified}"
+        );
+        // The owner passed as a value may still run.
+        let as_value = value_item_lib(
+            "    const render: fn(i32) -> i32 = super::other;",
+            "let f: fn(i32) -> i32 = super::render; assert_eq!(f(2), 3); assert_eq!(render(2), 4);",
+        );
+        assert_eq!(
+            value_item_reading(&as_value).map(|(withheld, _)| withheld),
+            Some(false),
+            "{as_value}"
+        );
+        // A const in a sibling module is not in scope.
+        let sibling = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[cfg(test)]\nmod elsewhere {\n    const render: fn(i32) -> i32 = super::other;\n}\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn bound() {\n        assert_eq!(render(2), 3);\n    }\n}\n";
+        assert_eq!(
+            value_item_reading(sibling),
+            Some((false, true)),
+            "{sibling}"
+        );
+        // A `cfg` alternative of the owner in the owner's own module keeps
+        // both readings: the call is unsettled, not settled away.
+        let alternative = "#[cfg(not(test))]\npub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             #[cfg(test)]\nconst render: fn(i32) -> i32 = other;\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[test]\nfn bound() {\n    assert_eq!(render(2), 4);\n}\n";
+        assert_eq!(
+            value_item_reading(alternative).map(|(withheld, _)| withheld),
+            Some(false),
+            "{alternative}"
+        );
+    }
+
+    /// #14087 among same-named rivals: the item beats the glob of the
+    /// owner's module, so the call settles away instead of on the owner.
+    #[test]
+    fn a_local_value_item_beats_a_glob_of_the_owners_module() {
+        let source = format!(
+            "{RENDER_LIB}\n#[cfg(test)]\nmod tests {{\n    use crate::a::*;\n    \
+             const render: fn(i32) -> i32 = crate::b::render;\n    \
+             #[test]\n    fn through_the_const() {{ assert_eq!(render(2), 4); }}\n}}\n\
+             #[cfg(test)]\nmod control {{\n    use crate::a::*;\n    \
+             #[test]\n    fn through_the_glob() {{ assert_eq!(render(2), 3); }}\n}}\n"
+        );
+        let index = index(&[("src/lib.rs", source.as_str())]);
+        assert_eq!(
+            settle(&index, "::a::render", "through_the_const"),
+            Some(CallTarget::Other)
+        );
+        assert_eq!(
+            settle(&index, "::a::render", "through_the_glob"),
+            Some(CallTarget::Owner)
+        );
+    }
+
+    /// #14087 on the retained selection path: diff-mode related tests drop
+    /// the test whose only call is bound by the item, and keep the one that
+    /// reaches the owner through the glob.
+    #[test]
+    fn related_tests_drop_a_test_whose_bare_call_a_local_value_item_binds() {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation, SymbolId,
+        };
+        let source = "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n\
+             pub fn other(x: i32) -> i32 {\n    x * 2\n}\n\
+             #[cfg(test)]\nmod hidden {\n    const render: fn(i32) -> i32 = super::other;\n    \
+             #[test]\n    fn through_the_const() {\n        assert_eq!(render(2), 4);\n    }\n}\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+             #[test]\n    fn through_the_glob() {\n        assert_eq!(render(2), 3);\n    }\n}\n";
+        let index = index(&[("src/lib.rs", source)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.id.0.ends_with("lib.rs::render"));
+        assert!(owner.is_some(), "the root `render` must be indexed");
+        let Some(owner) = owner else {
+            return;
+        };
+        let probe = Probe {
+            id: ProbeId("probe:render".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(SymbolId(owner.id.0.clone())),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some("x + 1".to_string()),
+            expression: "x + 1".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related: Vec<(String, RelationReason)> =
+            super::super::related_tests::find_related_tests(
+                &probe,
+                Some(owner),
+                &index,
+                true,
+                None,
+                None,
+            )
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect();
+        assert_eq!(
+            related,
+            vec![(
+                "through_the_glob".to_string(),
+                RelationReason::DirectOwnerCall
+            )],
+            "{source}"
+        );
     }
 }

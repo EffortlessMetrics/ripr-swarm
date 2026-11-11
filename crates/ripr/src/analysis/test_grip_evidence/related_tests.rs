@@ -103,6 +103,24 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
         });
     }
 
+    // #14087: a test whose every call of the owner's name is a bare call
+    // bound by a test-local `const`, `static` or tuple `struct` of that name
+    // runs the item, not the owner: the same rule diff-mode applies.
+    if owner.free_function
+        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+    {
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    !crate::analysis::classify::test_calls_only_a_local_value_item(
+                        context.index,
+                        owner_fn,
+                        indexed.test,
+                    )
+                })
+        });
+    }
+
     // Newly registered property facts carry assertion interpretation, not
     // authority to call any owner with the same spelling. Bind them before
     // every evidence stage, including value-insensitive direct-call credit.

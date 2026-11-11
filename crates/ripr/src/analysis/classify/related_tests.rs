@@ -1390,6 +1390,24 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
+        // #14087: with or without a rival, a bare call that a test-local
+        // `const`, `static` or tuple `struct` of the owner's name binds runs
+        // that item, not the owner. A test that also calls another hop
+        // caller of the helper chain keeps its relation; the test's own
+        // name-only hop (its body spells the owner's name) is not one.
+        if calls_owner
+            && owner_fn.is_some_and(|owner| {
+                super::call_identity::test_calls_only_a_local_value_item(index, owner, test)
+            })
+            && !helper_chain.is_some_and(|chain| {
+                chain.hops.iter().any(|hop| {
+                    !(hop.caller.file == test.file && hop.caller.start_line == test.start_line)
+                        && test.calls.iter().any(|call| call.name == hop.caller.name)
+                })
+            })
+        {
+            continue;
+        }
 
         // Token text discarded by a property macro cannot re-enter through
         // raw-body, test-name or file-name affinity. An independent ordinary

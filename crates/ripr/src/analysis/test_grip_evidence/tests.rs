@@ -22624,6 +22624,56 @@ fn given_integration_test_when_local_module_shadows_library_crate_then_owner_get
     Ok(())
 }
 
+/// #14087: a `const`, `static` or tuple `struct` of the owner's name in the
+/// test's own file binds the bare call to itself, with or without a glob of
+/// the library that also offers the name (an item beats a glob). The owner
+/// never runs, so the seam gets no related test. The control keeps the same
+/// item but calls the production function through its path.
+#[test]
+fn given_integration_test_when_bare_call_is_bound_by_a_local_value_item_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let stub = "fn stub(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let bare = "#[test]\nfn bare_item() {\n    assert_eq!(discounted_total(100, 100), 777);\n}\n";
+    let mut failures = Vec::new();
+    for (label, source) in [
+        (
+            "const fn pointer",
+            format!("{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"),
+        ),
+        (
+            "static fn pointer",
+            format!("{stub}static discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"),
+        ),
+        (
+            "const beside a glob of the library",
+            format!(
+                "use lib_proptest::*;\n{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n{bare}"
+            ),
+        ),
+        (
+            "const at the top of the test body",
+            format!(
+                "{stub}#[test]\nfn bare_item() {{\n    const discounted_total: fn(i32, i32) -> i32 = stub;\n    assert_eq!(discounted_total(100, 100), 777);\n}}\n"
+            ),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        if !related.is_empty() {
+            failures.push(format!("{label}: {related:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#14087: a bare call bound by a local value item must not relate the owner: {failures:?}"
+    );
+    let control = format!(
+        "{stub}const discounted_total: fn(i32, i32) -> i32 = stub;\n\n#[test]\nfn qualified_real() {{\n    assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&control)?;
+    assert_eq!(related, vec!["qualified_real".to_string()], "{control}");
+    Ok(())
+}
+
 #[test]
 fn given_integration_test_when_no_local_module_shadows_then_owner_keeps_related_test()
 -> Result<(), String> {

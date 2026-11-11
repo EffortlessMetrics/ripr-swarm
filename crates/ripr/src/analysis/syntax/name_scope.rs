@@ -63,6 +63,11 @@ pub(crate) struct NameScope {
     /// Names of non-module items declared directly in this scope (`fn`,
     /// `const`, `static`, types, traits).
     pub(crate) defines: BTreeSet<String>,
+    /// The subset of `defines` that binds a callable value which is not a
+    /// function: a `const`, a `static` or a tuple `struct` (its constructor).
+    /// A bare call of such a name runs that item, never a same-named `fn`
+    /// a glob or an enclosing scope would otherwise supply.
+    pub(crate) value_items: BTreeSet<String>,
     /// Names of `mod` items declared directly in this scope.
     pub(crate) child_modules: BTreeSet<String>,
     /// Names an item inside a nested block of this function body binds.
@@ -559,8 +564,11 @@ fn nearest_item_scope(node: &SyntaxNode) -> Option<SyntaxNode> {
 }
 
 fn record_item(item: &ast::Item, scope: &mut NameScope) {
-    let mut define = |name: Option<ast::Name>| {
+    let mut define = |name: Option<ast::Name>, value_item: bool| {
         if let Some(name) = name {
+            if value_item {
+                scope.value_items.insert(name.text().to_string());
+            }
             scope.defines.insert(name.text().to_string());
         }
     };
@@ -587,14 +595,17 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
                 scope.child_modules.insert(name.text().to_string());
             }
         }
-        ast::Item::Fn(item) => define(item.name()),
-        ast::Item::Const(item) => define(item.name()),
-        ast::Item::Static(item) => define(item.name()),
-        ast::Item::Struct(item) => define(item.name()),
-        ast::Item::Enum(item) => define(item.name()),
-        ast::Item::Union(item) => define(item.name()),
-        ast::Item::Trait(item) => define(item.name()),
-        ast::Item::TypeAlias(item) => define(item.name()),
+        ast::Item::Fn(item) => define(item.name(), false),
+        ast::Item::Const(item) => define(item.name(), true),
+        ast::Item::Static(item) => define(item.name(), true),
+        ast::Item::Struct(item) => {
+            let tuple = matches!(item.field_list(), Some(ast::FieldList::TupleFieldList(_)));
+            define(item.name(), tuple);
+        }
+        ast::Item::Enum(item) => define(item.name(), false),
+        ast::Item::Union(item) => define(item.name(), false),
+        ast::Item::Trait(item) => define(item.name(), false),
+        ast::Item::TypeAlias(item) => define(item.name(), false),
         ast::Item::MacroRules(_) | ast::Item::MacroCall(_) => {
             // A macro may expand to an item of any name; the caller sees
             // only spelled bindings. Item-producing macros are a documented
@@ -711,6 +722,43 @@ mod tests {
 
     fn imports_of(scope: &NameScope, name: &str) -> Vec<UseBinding> {
         scope.imports_of(name).cloned().collect()
+    }
+
+    /// #14087: `value_items` holds exactly the items whose name a bare call
+    /// runs as a value that is not a function.
+    #[test]
+    fn records_const_static_and_tuple_struct_items_as_value_items() {
+        let source = "\
+mod tests {
+    const limit: fn(u32) -> u32 = other;
+    static table: fn(u32) -> u32 = other;
+    struct wrap(u32);
+    struct unit;
+    struct braced { x: u32 }
+    enum choice { A }
+    type alias = u32;
+    trait shape {}
+    fn helper() {}
+    fn probe() {
+        const inner: u32 = 1;
+        assert_eq!(limit(1), 1);
+    }
+}
+";
+        let found = scopes(source, 11, "probe");
+        assert_eq!(found.scopes.len(), 3, "fn body, mod tests, file root");
+        let names = |names: &BTreeSet<String>| names.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(names(&found.scopes[0].value_items), strings(&["inner"]));
+        assert_eq!(
+            names(&found.scopes[1].value_items),
+            strings(&["limit", "table", "wrap"])
+        );
+        for name in [
+            "limit", "table", "wrap", "unit", "braced", "choice", "alias", "shape", "helper",
+        ] {
+            assert!(found.scopes[1].defines.contains(name), "{name} is defined");
+        }
+        assert!(found.scopes[2].value_items.is_empty());
     }
 
     #[test]
