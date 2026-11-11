@@ -10,6 +10,26 @@ pub(crate) fn expect_value<'a>(
         .ok_or_else(|| format!("missing value for {flag}; pass a value right after it"))
 }
 
+/// The value of a path-taking flag, refused when it is empty or blank.
+///
+/// An empty path is almost always an unset shell variable (`--out "$DIR"`).
+/// Left alone it reaches the filesystem as the current directory or as a
+/// nameless file and fails far from the cause, or, for an output directory,
+/// writes into the working tree and exits 0.
+pub(crate) fn expect_path_value<'a>(
+    args: &'a [String],
+    idx: usize,
+    flag: &str,
+) -> Result<&'a str, String> {
+    let value = expect_value(args, idx, flag)?;
+    if value.trim().is_empty() {
+        return Err(format!(
+            "{flag} requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)"
+        ));
+    }
+    Ok(value)
+}
+
 /// Reconcile a `--root VALUE` occurrence against the root a command parser
 /// has already accepted (#9008, #10542).
 ///

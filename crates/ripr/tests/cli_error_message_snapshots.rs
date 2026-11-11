@@ -132,6 +132,60 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH; pass one source, for example `--check-output check.json` saved by `ripr check --format json > check.json`\n",
     },
+    // An empty path value (usually an unset shell variable) is refused before
+    // any work. `pilot --out ""` used to write its five reports into the
+    // working directory and exit 0; the scratch-directory check below pins
+    // that nothing is written.
+    Case {
+        args: &["check", "--diff", ""],
+        exit: 2,
+        stderr: "ripr: --diff requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["check", "--write-artifact", ""],
+        exit: 2,
+        stderr: "ripr: --write-artifact requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["check", "--suppression-policy", ""],
+        exit: 2,
+        stderr: "ripr: --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["evidence-health", "--root", ""],
+        exit: 2,
+        stderr: "ripr: --root requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["evidence-health", "--out", ""],
+        exit: 2,
+        stderr: "ripr: --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["evidence-health", "--out-md", ""],
+        exit: 2,
+        stderr: "ripr: --out-md requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["evidence-health", "--mutation-calibration", ""],
+        exit: 2,
+        stderr: "ripr: --mutation-calibration requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["pilot", "--out", ""],
+        exit: 2,
+        stderr: "ripr: --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["pilot", "--out", "  "],
+        exit: 2,
+        stderr: "ripr: --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["evidence-health", "--root", "/ripr-missing-root"],
+        exit: 2,
+        stderr: "ripr: evidence-health root /ripr-missing-root does not exist or is not a directory; pass `--root <dir>` naming the workspace directory\n",
+    },
 ];
 
 #[test]
@@ -189,6 +243,17 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
         failures.push(format!(
             "ripr pr-evidence outside a repository: exit {:?} (wanted 2)\n  got: {refusal:?}",
             output.status.code()
+        ));
+    }
+    // Every case is a refusal, so none may leave a file behind.
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|error| format!("list scratch: {error}"))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    if !leftovers.is_empty() {
+        failures.push(format!(
+            "refusals wrote into the working directory: {leftovers:?}"
         ));
     }
     let _ = std::fs::remove_dir_all(&dir);

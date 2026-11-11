@@ -2,8 +2,8 @@ use crate::analysis;
 use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
-    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
-    reconcile_root,
+    base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_path_value,
+    expect_value, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -270,7 +270,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     let options = parse_evidence_health_options(args)?;
     if !options.root.is_dir() {
         return Err(format!(
-            "evidence-health root {} is not a directory",
+            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
             options.root.display()
         ));
     }
@@ -1105,7 +1105,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
                 let reconciled = reconcile_root(
                     &root,
                     root_explicit,
-                    expect_value(args, i, "--root")?,
+                    expect_path_value(args, i, "--root")?,
                     "evidence-health",
                 )?;
                 root = reconciled;
@@ -1113,15 +1113,15 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             }
             "--out" => {
                 i += 1;
-                out = PathBuf::from(expect_value(args, i, "--out")?);
+                out = PathBuf::from(expect_path_value(args, i, "--out")?);
             }
             "--out-md" => {
                 i += 1;
-                out_md = PathBuf::from(expect_value(args, i, "--out-md")?);
+                out_md = PathBuf::from(expect_path_value(args, i, "--out-md")?);
             }
             "--mutation-calibration" => {
                 i += 1;
-                mutation_calibration = Some(PathBuf::from(expect_value(
+                mutation_calibration = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--mutation-calibration",

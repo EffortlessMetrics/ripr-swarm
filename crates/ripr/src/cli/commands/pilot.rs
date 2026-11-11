@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode, reconcile_root};
+use crate::cli::parse::{expect_path_value, expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -960,7 +960,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             }
             "--out" => {
                 i += 1;
-                options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                options.out_dir = PathBuf::from(expect_path_value(args, i, "--out")?);
                 out_explicit = true;
             }
             "--mode" => {
