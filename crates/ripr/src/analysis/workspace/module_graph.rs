@@ -270,11 +270,13 @@ where
                 Some(Origin::Evidence) => {
                     owner_proves_unreached = false;
                     reached = true;
+                    context.module_graph_reached.insert(relative.clone());
                 }
                 None => owner_proves_unreached &= walk.proves_unreached(),
             }
         }
         if owner_reaches_production {
+            context.module_graph_reached.insert(relative);
             continue;
         }
         // Only a package walk can prove a file unreached.

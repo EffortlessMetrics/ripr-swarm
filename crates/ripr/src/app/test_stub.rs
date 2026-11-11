@@ -1901,10 +1901,10 @@ pub(crate) fn run_command(
 /// cargo target name is established, and an inline `#[cfg(test)]` module
 /// test runs by name in its owning package. `None` when the file is not a
 /// Rust file, the name is not a plain identifier, no package owns the file,
-/// an integration target cannot be named, or the module-tree walk proves an
-/// inline file unreached (an orphan or an unresolved route to it): no command
-/// is offered rather than one that would run nothing or a different test. A
-/// walk that cannot decide keeps the layout answer.
+/// an integration target cannot be named, or no resolved module edge from
+/// the owning package reaches an inline file: no command is offered rather
+/// than one that would run nothing or a different test. A walk that cannot
+/// decide offers nothing.
 pub(crate) fn focused_test_run_command(
     root: &Path,
     test_file: &str,
@@ -1931,15 +1931,15 @@ pub(crate) fn focused_test_run_command(
     let manifest = package_manifest_for(root, &integration)?;
     // Outside an established integration target, a by-name run reaches the
     // test only when a target `cargo test` runs compiles the file. The
-    // module-tree walk and the layout role answer that, not path guesses:
-    // `src/tests/pricing.rs` declared from the library runs by name, while
-    // an orphan, a bench, an example or a build script gets no command.
+    // module-tree walk (a positive reach, never a missing orphan verdict)
+    // and the layout role answer that, not path guesses: `src/tests/pricing.rs`
+    // declared from the library runs by name, while an orphan, a file an
+    // incomplete walk cannot place, a bench, an example or a build script
+    // gets no command.
     let compiled_by_cargo_test = || {
         let mut context = analysis::context_for_files(root, [file.as_path()]);
         analysis::apply_module_graph_evidence(root, &mut context, [file.as_path()]);
-        let reached = !context.module_graph_orphans.contains(&file)
-            && !context.module_graph_unresolved_routes.contains_key(&file);
-        reached
+        context.module_graph_reached.contains(&file)
             && matches!(
                 analysis::classify_with(&file, &context),
                 analysis::SourceRole::ProductionSubject
@@ -1971,11 +1971,9 @@ pub(crate) fn focused_test_run_command(
         _ => return None,
     };
     let manifest = root.join(&manifest);
-    let manifest = manifest
-        .strip_prefix(".")
-        .unwrap_or(&manifest)
-        .to_string_lossy()
-        .replace('\\', "/");
+    // A literal `\` in a Unix checkout root is part of the path, so the
+    // manifest renders natively, as the repair start command renders it.
+    let manifest = root_path_display(manifest.strip_prefix(".").unwrap_or(&manifest));
     run_command(&shell_arg(&manifest), &stub, target.as_deref())
 }
 
@@ -2542,8 +2540,7 @@ mod tests {
         ] {
             std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
         }
-        let manifest = root.join("Cargo.toml").to_string_lossy().replace('\\', "/");
-        let manifest = shell_arg(&manifest);
+        let manifest = shell_arg(&root_path_display(&root.join("Cargo.toml")));
         // A file the library never declares gets no command (module graph).
         assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
         // A `./` spelling reaches the same module-graph verdict.
@@ -2615,6 +2612,50 @@ mod tests {
             focused_test_run_command(&root, "tests/pricing.rs", "t"),
             None
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_needs_a_positive_module_reach() -> Result<(), String> {
+        // `mod bad;` names a file that is not UTF-8, so the library walk is
+        // incomplete and proves nothing about `src/stray.rs`. No command is
+        // offered for it, while the declared `src/tests/pricing.rs` is still
+        // reached and runs by name (#14320 review).
+        let root = std::env::temp_dir()
+            .join(format!(
+                "ripr-focused-reach-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_nanos()
+            ))
+            // A literal `\` is part of a Unix directory name and must
+            // survive into the printed manifest path.
+            .join(if cfg!(unix) { "team\\repo" } else { "repo" });
+        std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        for (path, text) in [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"price\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", "mod bad;\n#[cfg(test)]\nmod tests;\n"),
+            ("src/tests/mod.rs", "mod pricing;\n"),
+            ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("src/stray.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(root.join("src/bad.rs"), [0xff_u8, 0xfe, 0x00])
+            .map_err(|error| error.to_string())?;
+        assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        let command = focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold")
+            .ok_or("a declared inline test file must still run by name")?;
+        assert!(command.ends_with(" equal_threshold"), "{command}");
+        if cfg!(unix) {
+            assert!(command.contains("team\\repo"), "{command}");
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

@@ -132,19 +132,19 @@ test's exact command is established, spelled like the stub run command. A file
 runs as `--test TARGET NAME` when the package's manifest or `tests/`
 discovery names its target and that name is a plain cargo target name
 (ASCII alphanumerics, `_`, `-`, not starting with `-`). Otherwise the
-file runs by name only when a target `cargo test` runs compiles it: the
-module-tree walk (`apply_module_graph_evidence`) does not prove it unreached,
-and its source role is a production subject, test evidence or production-like
-test infrastructure. A file named by a `#[path]` edge that cannot be resolved
-gets no command. Otherwise an incomplete walk (an unresolved `cfg_if!` or
-dynamic edge elsewhere, or the file bound) proves nothing, so it keeps the
-layout answer. In that case a file that is not compiled can still get a by-name
-command, and `cargo test` reports 0 tests run. For example, `src/tests/` is
-declared from the library, and a helper module is shared by an integration
-test. Every other case gets no line: a file no target reaches, a bench,
-example or build script, a registered target ripr cannot name, a non-Rust
-file, a non-identifier test name, or a file outside any package. JSON output
-is unchanged.
+file runs by name only when a target `cargo test` runs compiles it: a
+resolved module edge from its owning package's target roots reaches it
+(`apply_module_graph_evidence` records it in `module_graph_reached`), and its
+source role is a production subject, test evidence or production-like test
+infrastructure. Not being an orphan is not enough: an incomplete walk (an
+unresolved `cfg_if!` or `#[path]` edge, an unreadable file, or the file bound)
+cannot place the file, so it gets no command rather than one that runs 0
+tests. For example, `src/tests/` declared from the library and a helper module
+shared by an integration test run by name. The manifest path renders natively,
+so a literal `\` in a Unix checkout root is kept. Every other case gets no
+line: a file no resolved edge reaches, a bench, example or build script, a
+registered target ripr cannot name, a non-Rust file, a non-identifier test
+name, or a file outside any package. JSON output is unchanged.
 
 ## Required Evidence
 
@@ -169,6 +169,7 @@ is unchanged.
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate`
 - `crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification`
 - `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_names_the_target_or_refuses`
+- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_needs_a_positive_module_reach`
 - `crates/ripr/src/cli/commands/agent.rs::tests::human_stdout_names_the_focused_test_command_when_known`
 - `crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_repair_start_prints_one_next_command_inside_a_line_budget`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`
