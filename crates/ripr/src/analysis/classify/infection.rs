@@ -916,7 +916,10 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if let Some(literal) = unresolved_boundary
                 .is_none()
                 .then_some(())
-                .filter(|()| !owner_has_other_callers)
+                // A rebound assertion macro may discard the owner call whose
+                // argument is read below (#10386), as the truth-table branch
+                // above also declines.
+                .filter(|()| !owner_has_other_callers && !assertion_macros_rebound)
                 .and(owner)
                 .and_then(|owner| added_string_arm_input(probe, activation, owner))
             {
@@ -1153,7 +1156,11 @@ fn added_string_arm_input(
     if after_arms.iter().any(|(name, _)| name != parameter) || literals.len() != after_arms.len() {
         return None;
     }
+    // A parameter type with its own `PartialEq<&str>` could make an original
+    // arm true on the new literal, so only plain string types qualify.
     if !super::activation::call_parameter_names(owner).contains(parameter)
+        || !super::activation::parameter_type(owner, parameter)
+            .is_some_and(|ty| is_plain_string_type(&ty))
         || parameter_is_rebound(&owner.body, parameter)
         || !chain_is_first_decision(&owner.body, &probe.expression)
     {
@@ -1217,6 +1224,24 @@ fn chain_is_first_decision(function: &str, chain: &str) -> bool {
             "if" | "match" | "while" | "for" | "loop" | "return" | "break" | "continue"
         )
     })
+}
+
+/// Whether `ty` is `&str`, `&'a str`, `String` or `&String`: types whose
+/// `==` against a string literal compares the text itself.
+fn is_plain_string_type(ty: &str) -> bool {
+    let compact = ty.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(borrowed) = compact.strip_prefix('&') else {
+        return compact == "String";
+    };
+    let borrowed = borrowed.trim_start();
+    let inner = match borrowed.strip_prefix('\'') {
+        Some(lifetime) => match lifetime.split_once(' ') {
+            Some((name, rest)) if is_plain_identifier(name) => rest,
+            _ => return false,
+        },
+        None => borrowed,
+    };
+    matches!(inner, "str" | "String")
 }
 
 /// `name == "literal"` or `"literal" == name` as `(name, "literal")`, for a
@@ -1996,6 +2021,17 @@ mod tests {
         inputs: &[&str],
         other_callers: bool,
     ) -> StageEvidence {
+        added_string_arm_evidence_with(body, before, after, inputs, other_callers, false)
+    }
+
+    fn added_string_arm_evidence_with(
+        body: &str,
+        before: &str,
+        after: &str,
+        inputs: &[&str],
+        other_callers: bool,
+        assertion_macros_rebound: bool,
+    ) -> StageEvidence {
         let mut changed = probe(ProbeFamily::Predicate, after);
         changed.before = Some(before.to_string());
         let owner = owner_with_body(body);
@@ -2020,7 +2056,7 @@ mod tests {
                 slice_counter_boundary: None,
             },
             other_callers,
-            false,
+            assertion_macros_rebound,
         )
     }
 
@@ -2052,6 +2088,36 @@ mod tests {
         let wrapped =
             added_string_arm_evidence(body, before, after, &["flag = \"--verbose\""], true);
         assert_ne!(wrapped.state, StageState::Yes, "{}", wrapped.summary);
+        // A rebound assertion macro may discard the owner call.
+        let discarded = added_string_arm_evidence_with(
+            body,
+            before,
+            after,
+            &["flag = \"--verbose\""],
+            false,
+            true,
+        );
+        assert_ne!(discarded.state, StageState::Yes, "{}", discarded.summary);
+        // A parameter type with its own `PartialEq<&str>` may make an
+        // original arm true on the new literal; plain string types qualify.
+        let custom =
+            "pub fn pick(flag: Flag) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        let opaque =
+            added_string_arm_evidence(custom, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(opaque.state, StageState::Yes, "{}", opaque.summary);
+        for plain in [
+            "pub fn pick(flag: String) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick<'a>(flag: &'a str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+        ] {
+            let evidence =
+                added_string_arm_evidence(plain, before, after, &["flag = \"--verbose\""], false);
+            assert_eq!(
+                evidence.state,
+                StageState::Yes,
+                "{plain}: {}",
+                evidence.summary
+            );
+        }
         // The argument binds a different parameter.
         let two = "pub fn pick(mode: &str, flag: &str) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
         let elsewhere =
