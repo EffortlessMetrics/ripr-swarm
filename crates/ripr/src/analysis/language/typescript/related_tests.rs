@@ -3271,6 +3271,7 @@ pub(crate) fn class_names_for_class_method_owner(
     let mut names = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
         && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+        && !body_declares_class_named(&test.body_text, class_name)
         && !enclosing_scope_shadows(test, class_name)
     {
         push_unique_string(&mut names, class_name.to_string());
@@ -3283,6 +3284,7 @@ pub(crate) fn class_names_for_class_method_owner(
         }
         if import.imported.as_deref() == Some(class_name)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !body_declares_class_named(&test.body_text, &import.local)
             && !enclosing_scope_shadows(test, &import.local)
         {
             push_unique_string(&mut names, import.local.clone());

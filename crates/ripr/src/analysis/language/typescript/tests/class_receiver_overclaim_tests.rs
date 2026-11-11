@@ -23,6 +23,7 @@ const OTHER_URL_CLASS: &str = "export class Url {\n  constructor(input = \"\") {
 enum Subject {
     Origin,
     Constructor,
+    StaticScheme,
 }
 
 fn test_source(import_line: &str, body: &str) -> String {
@@ -73,6 +74,7 @@ fn relation_with(
                 && match subject {
                     Subject::Origin => owner.name == "origin",
                     Subject::Constructor => owner.method_kind == TypeScriptMethodKind::Constructor,
+                    Subject::StaticScheme => owner.name == "scheme",
                 }
         })
         .collect();
@@ -305,6 +307,47 @@ fn a_body_local_class_shadows_the_owner_the_test_imports() -> Result<(), String>
         return Err(format!(
             "body-local class under the owner's default import: expected no credit, got {reason:?}"
         ));
+    }
+    Ok(())
+}
+
+/// A static method is reached through the class name, so the same shadow
+/// applies: `Url.scheme(..)` under a body-local `class Url` calls the local
+/// class, whether the test imports the owner by name or under an alias.
+#[test]
+fn a_body_local_class_shadows_the_owner_of_a_static_method() -> Result<(), String> {
+    const STATIC_URL_CLASS: &str = "export class Url {\n  static scheme(input: string): string {\n    return input.split(\":\")[0];\n  }\n}\n";
+    const CALL: &str = "  expect(Url.scheme(\"https://x\")).toBe(\"https\");";
+    const LOCAL: &str = "  class Url { static scheme(_: string) { return \"https\"; } }\n";
+    let relate = |import: &str, body: &str| {
+        relation_with(
+            &[("src/u.ts", STATIC_URL_CLASS)],
+            &test_source(import, body),
+            Subject::StaticScheme,
+        )
+    };
+    for (label, import, rename) in [
+        ("named import", "import { Url } from \"../src/u\";", None),
+        (
+            "alias import",
+            "import { Url as Link } from \"../src/u\";",
+            Some("Link"),
+        ),
+    ] {
+        let rename = |text: &str| match rename {
+            Some(local) => text.replace("Url", local),
+            None => text.to_string(),
+        };
+        let call = rename(CALL);
+        if relate(import, &call)?.is_none() {
+            return Err(format!("{label} control: expected credit, got none"));
+        }
+        let shadowed = format!("{}{call}", rename(LOCAL));
+        if let Some(reason) = relate(import, &shadowed)? {
+            return Err(format!(
+                "{label} under a body-local class: expected no relation, got {reason:?}"
+            ));
+        }
     }
     Ok(())
 }
