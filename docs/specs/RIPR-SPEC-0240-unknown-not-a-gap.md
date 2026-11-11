@@ -836,9 +836,13 @@ under `rust_indirect_owner_call_unresolved`:
   bound is the owner's trait spelled as one bare name, the owner impl, the
   blanket entry and that trait's only declaration share one module (so the
   bare name cannot be an import of another crate's trait), no second trait
-  of either name is declared or named by another impl, and no other function
-  shares the entry method's name (a concrete `impl ToText for f64` is what
-  Rust runs, and an unrelated trait's method matches the same spelling). A
+  of either name is declared or named by another impl, and no function other
+  than the entry and its trait's own declaration shares the entry method's
+  name (a concrete `impl ToText for f64` is what Rust runs, and an unrelated
+  trait's method matches the same spelling). Symbol ids carry no fn-body
+  scope and a macro-generated impl is not indexed, so a trait declared inside
+  a function body or a generated concrete impl is a known reading limit; it
+  can only withhold a gap, never credit one. A
   module-qualified or differently parameterised bound, a generic free helper
   (`fn text_of<T: Render>(x: &T)`) and a call on another receiver type are not
   the hop and keep the ordinary reading. A blanket test is judged even beside
