@@ -2221,6 +2221,9 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
