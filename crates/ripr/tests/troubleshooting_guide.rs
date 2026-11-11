@@ -201,6 +201,9 @@ const SITUATIONS: &[Situation] = &[
         section: "The changed language is in preview and not enabled",
         exit: 0,
         reproduce: || {
+            if !cfg!(feature = "lang-python") {
+                return Ok(None);
+            }
             let repo = Scratch::repo()?;
             repo.write("over.py", "def over(qty):\n    return qty > 10\n")?;
             repo.git(&["add", "over.py"])?;
@@ -211,6 +214,9 @@ const SITUATIONS: &[Situation] = &[
         section: "Rust is switched off in `ripr.toml`",
         exit: 0,
         reproduce: || {
+            if !cfg!(feature = "lang-python") {
+                return Ok(None);
+            }
             let repo = Scratch::repo()?;
             repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
             repo.write("src/lib.rs", CHANGED_SRC)?;

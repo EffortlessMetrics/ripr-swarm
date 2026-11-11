@@ -7,6 +7,11 @@
 //! `[languages]` has no such note, so the line used to say "(see the note
 //! below)" above nothing, while the agent, GitHub and `human-full` formats
 //! all printed the recovery. It now prints the producer's own recovery.
+//!
+//! Every case here needs a preview-language adapter in the binary, so the
+//! file is empty in a build without them.
+
+#![cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 
 use std::path::PathBuf;
 use std::process::Command;

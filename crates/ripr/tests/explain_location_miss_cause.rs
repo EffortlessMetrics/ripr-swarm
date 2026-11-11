@@ -263,7 +263,9 @@ fn a_miss_in_an_existing_file_without_findings_gives_the_run_counts() -> Result<
 
 /// An incomplete run may never have analyzed the file, so it must not give
 /// the "nothing there to report" reason. Rust is switched off here, so the
-/// changed `src/lib.rs` has no finding because it was not analyzed.
+/// changed `src/lib.rs` has no finding because it was not analyzed. A build
+/// without the Python adapter rejects that `ripr.toml`, so the case needs it.
+#[cfg(feature = "lang-python")]
 #[test]
 fn a_miss_in_an_incomplete_run_does_not_claim_the_file_was_analyzed() -> Result<(), String> {
     let repo = Repo::create()?;
