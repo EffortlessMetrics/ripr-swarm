@@ -318,14 +318,13 @@ pub(crate) fn build_gate_decision_report(
     } else {
         None
     };
-    // #14082: a changed file the parser declined yields no seams, so zero
-    // candidates from it is not a clean result. The warning keeps the
-    // top-level status off `pass` and reaches the Markdown warnings section.
-    if let Some(warning) = analysis_scope
-        .as_ref()
-        .and_then(parser_declined_scope_warning)
-    {
-        warnings.push(warning);
+    // #14082: a changed file the parser declined yields no seams, and a seam
+    // withheld as a static limitation never becomes a candidate, so zero
+    // candidates from either is not a clean result. The warnings keep the
+    // top-level status off `pass` and reach the Markdown warnings section.
+    if let Some(scope) = analysis_scope.as_ref() {
+        warnings.extend(parser_declined_scope_warning(scope));
+        warnings.extend(static_limited_scope_warning(scope));
     }
     let policy = GatePolicy {
         mode: input.mode,
@@ -1531,6 +1530,30 @@ fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
                  files were parsed is not established and the absence of a gate candidate \
                  is not evidence that the changes are tested; regenerate the gate input, \
                  then rerun"
+            .to_string(),
+    })
+}
+
+/// The gate warning for an analysis scope that discloses changed seams
+/// withheld as static limitations (`static_limited_omitted_seams`, present
+/// only when nonzero): ripr could not judge them, so they are not gate
+/// candidates and their absence is not a clean result. A value that is not a
+/// non-negative integer warns too.
+fn static_limited_scope_warning(scope: &Value) -> Option<String> {
+    let value = scope.get("static_limited_omitted_seams")?;
+    Some(match value.as_u64() {
+        Some(0) => return None,
+        Some(count) => format!(
+            "analysis_scope lists static_limited_omitted_seams: {count} changed seam(s) were \
+             withheld because their static evidence is opaque or unknown at a stage; they \
+             are not gate candidates, so the absence of a gate candidate for them is not \
+             evidence that the changes are tested; run `ripr check` on the same diff to \
+             inspect them"
+        ),
+        None => "analysis_scope has a malformed static_limited_omitted_seams, so how many \
+                 changed seams were withheld as static limitations is not established and \
+                 the absence of a gate candidate is not evidence that the changes are \
+                 tested; regenerate the gate input, then rerun"
             .to_string(),
     })
 }

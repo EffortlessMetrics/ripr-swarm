@@ -5767,6 +5767,7 @@ fn e2e_review_comments_doc(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        omitted_static_limited: 0,
     };
     let config = crate::config::RiprConfig::default();
     let context = ReviewCommentsRenderContext {
@@ -6376,6 +6377,36 @@ fn parser_declined_scope_warning_follows_the_disclosed_list() -> Result<(), Stri
             gate["warnings"][0]
                 .as_str()
                 .is_some_and(|w| w.contains("malformed parser_declined_files")),
+            "{gate}"
+        );
+    }
+
+    // The same list rule for the static-limitation count: absent or zero is
+    // silent, a positive count warns with the number, anything else is malformed.
+    let with_limited = |value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(&clean_doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["static_limited_omitted_seams"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let zero = with_limited(json!(0))?;
+    assert_eq!(zero["status"], "pass", "{zero}");
+    assert_eq!(zero["warnings"], json!([]), "{zero}");
+    let three = with_limited(json!(3))?;
+    assert_eq!(three["status"], "advisory", "{three}");
+    assert!(
+        three["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("static_limited_omitted_seams: 3 changed seam(s)")),
+        "{three}"
+    );
+    for malformed in [json!("3"), json!(-1), json!(1.5), json!([3])] {
+        let gate = with_limited(malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed static_limited_omitted_seams")),
             "{gate}"
         );
     }
