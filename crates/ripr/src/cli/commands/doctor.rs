@@ -1275,8 +1275,14 @@ fn doctor_start_here_lines(
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
         output::doctor::DoctorFirstCommand::UnbornHead => {}
-        // The advisory `git_default_base` line carries the reason and repair.
-        output::doctor::DoctorFirstCommand::NoDefaultBase => {}
+        // The advisory `git_default_base` line carries the reason and repair;
+        // say what the placeholder stands for and how to read local edits.
+        output::doctor::DoctorFirstCommand::NoDefaultBase => {
+            lines.push(
+                "- Base note: replace `REF` with the branch or commit this work started from; `--base HEAD` reads uncommitted tracked edits."
+                    .to_string(),
+            );
+        }
     }
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a

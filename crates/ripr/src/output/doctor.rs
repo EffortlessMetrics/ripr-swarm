@@ -75,7 +75,8 @@ pub(crate) enum DoctorFirstCommand {
     UnbornHead,
     /// `HEAD` resolves but no default base does (a shallow CI checkout, a
     /// default branch that is neither `main` nor `master`): a bare
-    /// `ripr check` stops there, so name the `--base` form and keep pilot.
+    /// `ripr check` stops there, so name the explicit `--base` form, bound to
+    /// the diagnosed root like every other runnable recommendation.
     NoDefaultBase,
     /// Git can read the work tree, but HEAD's metadata needs repair.
     DamagedRefs,
@@ -96,6 +97,9 @@ impl DoctorFirstCommand {
     pub(crate) const SAVED_DIFF_LINE: &'static str = "ripr check --diff PATH";
     pub(crate) const WORKTREE_LINE: &'static str = "ripr check";
     pub(crate) const DEFAULT_LINE: &'static str = "ripr check";
+    /// `REF` is a placeholder, as `PATH` is in the saved-diff line: the
+    /// advisory `git_default_base` line above it says which refs exist.
+    pub(crate) const NO_DEFAULT_BASE_LINE: &'static str = "ripr check --base REF";
 
     /// `dirty_worktree` is only evaluated when git can run, so a gitless
     /// environment is not probed (and not told to run `--worktree`).
@@ -198,10 +202,10 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
+            Self::NoDefaultBase => Some(Self::NO_DEFAULT_BASE_LINE),
             Self::MissingRoot
             | Self::OutsideGit
             | Self::UnbornHead
-            | Self::NoDefaultBase
             | Self::DamagedRefs
             | Self::InvalidConfig
             | Self::FailedPrerequisites => None,
@@ -336,40 +340,7 @@ impl DoctorFirstCommand {
                     Err(error) => Self::recommendation_lines(Err(error)),
                 }
             }
-            Self::NoDefaultBase => {
-                use crate::agent::loop_commands::shell_arg;
-                // The advisory `git_default_base` line above carries the
-                // loader's reason and repair. This line names what runs now:
-                // an explicit base, or pilot, which needs no Git history.
-                let bound = match root.canonicalize() {
-                    Ok(resolved) => doctor_command_root_display(root, &resolved),
-                    Err(_) => absolute_doctor_root_display(root),
-                };
-                let bash = bound.and_then(|bound| {
-                    let bash = crate::domain::whole_repo_pilot_command(&shell_arg(&bound));
-                    require_single_line_command(&bash).map(|()| bash)
-                });
-                match bash {
-                    Ok(bash) => {
-                        const LEAD: &str = "`ripr check` cannot pick a base here (see the \
-                            base line above); name one with `ripr check --base <ref>` \
-                            (`--base HEAD` analyzes uncommitted edits), or explore the \
-                            repository without Git history";
-                        let mut lines =
-                            vec![format!("- Recommended first command: {LEAD}: `{bash}`")];
-                        if let crate::output::markdown::PowershellForm::Translated(powershell) =
-                            crate::output::markdown::powershell_form(&bash)
-                        {
-                            lines.push(format!(
-                                "- Recommended first command (PowerShell): {LEAD}: `{powershell}`"
-                            ));
-                        }
-                        lines
-                    }
-                    Err(error) => Self::recommendation_lines(Err(error)),
-                }
-            }
-            Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {
+            Self::SavedDiff | Self::Worktree | Self::DefaultCheck | Self::NoDefaultBase => {
                 Self::recommendation_lines(self.command_line_for_root(root))
             }
         }
@@ -6250,6 +6221,10 @@ mod tests {
         Ok(())
     }
 
+    /// Fixture construction is not the behavior under test, so it gets a
+    /// deadline a loaded host can meet; doctor's own probes keep theirs.
+    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(120);
+
     /// A committed fixture for the default-base tests: one commit on
     /// `branch`, no remote. Asserts each Git step, since `git_in` reports
     /// only spawn failures.
@@ -6282,7 +6257,7 @@ mod tests {
             ],
         ] {
             let output =
-                crate::git::run_git_output_with_deadline(&root, args, Some(DOCTOR_TOOL_TIMEOUT))
+                crate::git::run_git_output_with_deadline(&root, args, Some(FIXTURE_GIT_DEADLINE))
                     .map_err(|error| format!("fixture git {args:?}: {error}"))?;
             if !output.status.success() {
                 let _ = std::fs::remove_dir_all(&root);
@@ -6399,7 +6374,7 @@ mod tests {
         let mut failure = None;
         for (dir, args) in steps {
             let ran =
-                crate::git::run_git_output_with_deadline(dir, args, Some(DOCTOR_TOOL_TIMEOUT));
+                crate::git::run_git_output_with_deadline(dir, args, Some(FIXTURE_GIT_DEADLINE));
             if !ran.is_ok_and(|output| output.status.success()) {
                 failure = Some(format!("fixture git {args:?} failed"));
                 break;
@@ -6430,27 +6405,33 @@ mod tests {
         Ok(())
     }
 
-    /// The NoDefaultBase recommendation names the explicit-base form and
-    /// keeps pilot runnable; it never prints a bare `ripr check` command.
+    /// The NoDefaultBase recommendation is the explicit-base check, bound
+    /// to the diagnosed root exactly as the default check is; it never
+    /// prints the bare `ripr check` that stops there.
     #[test]
-    fn no_default_base_recommendation_names_explicit_base_and_pilot() -> Result<(), String> {
+    fn no_default_base_recommendation_names_explicit_base_bound_to_root() -> Result<(), String> {
+        assert_eq!(
+            DoctorFirstCommand::NoDefaultBase.command_line_for_root(Path::new("."))?,
+            "ripr check --base REF"
+        );
         let root = doctor_scope_root("no-default-base-rec", &[])?;
+        let bound = DoctorFirstCommand::NoDefaultBase.command_line_for_root(&root);
+        let default = DoctorFirstCommand::DefaultCheck.command_line_for_root(&root);
         let lines = DoctorFirstCommand::NoDefaultBase.recommendation_lines_for(&root);
         let _ = std::fs::remove_dir_all(&root);
-        let first = lines
-            .first()
-            .ok_or("the no-default-base recommendation must render")?;
-        for needle in [
-            "ripr check --base <ref>",
-            "--base HEAD",
-            "ripr pilot --root",
-        ] {
-            if !first.contains(needle) {
-                return Err(format!("recommendation {first:?} misses {needle:?}"));
-            }
+        let (bound, default) = (bound?, default?);
+        if !default.starts_with("ripr check --root ") {
+            return Err(format!(
+                "fixture: a non-`.` root must be bound: {default:?}"
+            ));
         }
-        if DoctorFirstCommand::NoDefaultBase.command_line().is_some() {
-            return Err("NoDefaultBase must not name a runnable bare check".to_string());
+        if bound != format!("{default} --base REF") {
+            return Err(format!(
+                "the explicit-base check must bind the same root: {bound:?}"
+            ));
+        }
+        if lines.first() != Some(&format!("- Recommended first command: {bound}")) {
+            return Err(format!("unexpected recommendation: {lines:?}"));
         }
         Ok(())
     }
