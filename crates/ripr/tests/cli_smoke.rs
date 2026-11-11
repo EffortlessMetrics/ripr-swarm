@@ -35730,9 +35730,13 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
 {
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
-    let cases: [(&[&str], i32); 2] = [
+    let cases: [(&[&str], i32); 4] = [
         (&["pr-summary", "--baseline", "/dev/zero"], 0),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
+        // `first-pr` folds an unreadable artifact into its Malformed state and
+        // writes a blocked packet, so an oversized input takes that route.
+        (&["first-pr", "--check-output", "/dev/zero"], 0),
+        (&["first-pr", "--gap-ledger", "/dev/zero"], 0),
     ];
     let result = (|| {
         for (args, expected) in cases {
@@ -35750,6 +35754,86 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     })();
     let _ = std::fs::remove_dir_all(&cwd);
     result
+}
+
+/// `receipt check --ledger` reads the gap decision ledger after the receipt
+/// itself validates, so a valid receipt is needed to reach the read. An endless
+/// ledger must hit the shared input limit and name it.
+#[cfg(unix)]
+#[test]
+fn receipt_check_ledger_from_endless_device_is_refused_at_input_limit() -> Result<(), std::io::Error>
+{
+    let cwd = unique_temp_workspace("endless-receipt-ledger");
+    std::fs::create_dir_all(&cwd)?;
+    let receipt = cwd.join("receipt.json");
+    std::fs::write(
+        &receipt,
+        serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": "gap:test:ledger",
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-06-14T00:00:00Z"
+        })
+        .to_string(),
+    )?;
+    let receipt_arg = receipt.display().to_string();
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "receipt",
+            "check",
+            "--path",
+            &receipt_arg,
+            "--ledger",
+            "/dev/zero",
+        ],
+        Stdio::null(),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    assert_input_limit_refusal(&output?, "receipt check --ledger /dev/zero");
+    Ok(())
+}
+
+/// `pr-comments summary --raw -` reads the pages from standard input after it
+/// has read the review comments packet; an endless producer must hit the same
+/// cap as the file-backed routes.
+#[cfg(unix)]
+#[test]
+fn pr_comments_summary_raw_stdin_from_endless_stream_is_refused_at_input_limit()
+-> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-summary-stdin");
+    let review = cwd.join("target").join("ripr").join("review");
+    std::fs::create_dir_all(&review)?;
+    std::fs::write(review.join("comments.json"), "{\"comments\":[]}")?;
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "pr-comments",
+            "summary",
+            "--pull-request",
+            "1",
+            "--head-sha",
+            "abc",
+            "--raw",
+            "-",
+        ],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    let output = output?;
+    assert_input_limit_refusal(&output, "pr-comments summary --raw - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not read standard input"),
+        "the refusal must name standard input:\n{stderr}"
+    );
+    Ok(())
 }
 
 /// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
