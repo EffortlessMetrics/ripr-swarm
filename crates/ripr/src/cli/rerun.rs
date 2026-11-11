@@ -4469,6 +4469,29 @@ mod tests {
                 .authority_boundary
                 .contains("explicit before-state movement was unavailable")
         );
+        // The artifact carried no fingerprint, so the cache block is untouched.
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
+
+        // The input-change disclosure runs before the seam check, so an
+        // artifact that lacks the selected seam still names a changed input.
+        let mut changed = sample_input_fingerprint();
+        changed.lockfile_hash = "older-lockfile".to_string();
+        let root = unique_temp_root("before-other-seam-changed-input")?;
+        let before = write_before_artifact(&root, "seam:other", "weakly_gripped", Some(&changed))?;
+        let mut report = current_state_report();
+        apply_before(&mut report, &before);
+        assert_eq!(report.state, "limited");
+        assert!(report.movement.is_none());
+        assert_eq!(
+            report.limitation.as_ref().map(|limitation| limitation.kind),
+            Some("before_artifact_incompatible")
+        );
+        assert_eq!(report.cache.invalidation_status, "workspace_input_changed");
+        assert_eq!(
+            report.cache.recomputation_reasons,
+            vec!["input_changed:lockfile_hash".to_string()]
+        );
 
         // A before artifact that is not JSON at all.
         let root = unique_temp_root("before-not-json")?;
@@ -4489,6 +4512,9 @@ mod tests {
             "unexpected message: {}",
             limitation.message
         );
+        // Unparsable text has no fingerprint to compare.
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
 
         // A compatible artifact cannot attest movement for an empty selection.
         let root = unique_temp_root("before-no-current")?;
@@ -4506,6 +4532,8 @@ mod tests {
             limitation.message,
             "targeted rerun selected no current seams"
         );
+        assert_eq!(report.cache.invalidation_status, "not_available");
+        assert!(report.cache.recomputation_reasons.is_empty());
         Ok(())
     }
 
