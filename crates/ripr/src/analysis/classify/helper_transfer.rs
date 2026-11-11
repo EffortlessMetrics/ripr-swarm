@@ -1528,7 +1528,10 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
     if masked.len() != call.text.len() {
         return None;
     }
-    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // A non-ASCII char continues an identifier (`größe`, `р`): it is a word
+    // char here, so a receiver or a longer name spelled with one stays whole
+    // and is declined below as a non-plain identifier.
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || !ch.is_ascii();
     let mentions: Vec<usize> = masked
         .match_indices(callee_name)
         .map(|(at, _)| at)
@@ -1548,6 +1551,8 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         return None;
     }
     let before = masked[..at].strip_suffix('.')?;
+    // `is_word` holds every non-ASCII char, so the char found here is ASCII
+    // and one byte wide.
     let receiver_start = before
         .rfind(|ch: char| !is_word(ch))
         .map_or(0, |found| found + 1);

@@ -14398,3 +14398,14 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(!file_renames_to(&renames, "Fxo"));
     }
 }
+
+/// #14089: the word before `[` was measured with an ASCII-only predicate, so
+/// a non-ASCII identifier char was the char found and the slice started one
+/// byte later, inside it. The identifier now stays whole.
+#[test]
+fn index_operand_reads_a_non_ascii_indexed_place() {
+    assert!(index_operand("größe["));
+    assert!(index_operand("values["));
+    assert!(!index_operand("return ["));
+    assert!(!index_operand("grö ["));
+}

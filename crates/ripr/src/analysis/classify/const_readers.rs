@@ -818,8 +818,10 @@ fn code_reads(masked: &str, name: &str) -> bool {
         }
         if let Some(path) = before.strip_suffix("::") {
             let segment_start = path
-                .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .map_or(0, |i| i + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, c)| !(c.is_alphanumeric() || c == '_'))
+                .map_or(0, |(i, c)| i + c.len_utf8());
             if !matches!(&path[segment_start..], "Self" | "self") {
                 continue;
             }
@@ -1294,5 +1296,15 @@ mod tests {
             2
         );
         assert_eq!(declaration_count("const _: u32 = 3;", "LIMIT"), 0);
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_path_qualifier_ending_in_a_multibyte_non_identifier_char_is_another_path() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        assert!(!super::code_reads("let x = क्::LIMIT;", "LIMIT"));
+        assert!(super::code_reads("let x = Self::LIMIT;", "LIMIT"));
     }
 }

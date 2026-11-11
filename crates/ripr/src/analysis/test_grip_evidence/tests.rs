@@ -23627,3 +23627,18 @@ fn field_write_facts_with_tail(
         .map(|fact| fact.value.clone())
         .collect())
 }
+
+/// #14089: the original name before `as` was measured one byte past a
+/// multibyte char. `क्` ends in U+094D, a virama (an identifier char that is not alphanumeric,
+/// three bytes), so no original is read from it.
+#[test]
+fn renamed_from_skips_an_original_ending_in_a_multibyte_mark() {
+    assert_eq!(
+        renamed_from("use a::क् as Name;", "Name"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        renamed_from("use a::Original as Name;", "Name"),
+        vec!["Original".to_string()]
+    );
+}

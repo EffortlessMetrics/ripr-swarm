@@ -201,3 +201,21 @@ fn ordinary_test_each_and_direct_test_stay_fully_extracted() {
     );
     assert!(detect_partial_test_extraction(file, each, &each_tests).is_none());
 }
+
+/// #14089: the word before a `(` that holds the context name was measured
+/// one byte past a multibyte char. `helper\u{301}` ends in a combining acute
+/// accent, an identifier char that is not alphanumeric.
+#[test]
+fn a_call_on_a_callee_with_a_combining_mark_is_not_a_rebinding() {
+    for callee in ["helper\u{301}", "helpe\u{301}r", "größe", "helper"] {
+        let masked = format!("(t) => {{ {callee}(t); }}");
+        assert!(nested_rebinding_bodies(&masked, "t").is_empty(), "{masked}");
+    }
+    // A nested function that rebinds the name is still found.
+    let masked = "(t) => { run(function (t) { t.skip(); }); }";
+    let bodies: Vec<&str> = nested_rebinding_bodies(masked, "t")
+        .into_iter()
+        .map(|range| &masked[range])
+        .collect();
+    assert_eq!(bodies, vec!["{ t.skip(); "]);
+}

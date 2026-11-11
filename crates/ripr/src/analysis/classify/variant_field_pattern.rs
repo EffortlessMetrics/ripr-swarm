@@ -177,8 +177,10 @@ fn enclosing_literal_path(line: &str, expression: &str) -> Option<Vec<String>> {
 fn path_before(text: &str) -> Option<Vec<String>> {
     let text = text.trim_end();
     let start = text
-        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
-        .map_or(0, |index| index + 1);
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || !ch.is_ascii()))
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
     let segments: Vec<String> = text[start..].split("::").map(str::to_string).collect();
     let last = segments.last()?;
     (!segments.iter().any(String::is_empty)
@@ -611,5 +613,19 @@ mod tests {
         assert!(initialized_field("pos").is_none());
         assert!(initialized_field("crate::pos").is_none());
         assert_eq!(initialized_field("pos: usize::from(i)"), Some("pos"));
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_non_ascii_path_segment_stays_whole() {
+        assert_eq!(
+            path_before("return Err(Größe::BadDigit "),
+            Some(vec!["Größe".to_string(), "BadDigit".to_string()])
+        );
+        assert_eq!(
+            path_before("Err(ParseError::BadDigit"),
+            Some(vec!["ParseError".to_string(), "BadDigit".to_string()])
+        );
     }
 }
