@@ -73,6 +73,19 @@ STATE_TOKEN = re.compile(
     re.IGNORECASE,
 )
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
+# A line that states a disposition: after optional list, quote, heading or emphasis
+# markers it opens with a ``disposition:`` field or a state token. Only such a line
+# after the first one changes what the review says. A state word inside prose, such
+# as a backticked quotation of a marker or "the earlier review is superseded", is
+# narration and is not read: free text scanning ejected fully green queue entries
+# after a whole run (#11566).
+# A line that is nothing but a state token, however it is marked up (including
+# backticks), still states it.
+STATE_LINE = re.compile(
+    r"^[ \t>*\-+_#~]*(?:disposition[ \t*_]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
+    r"|^[ \t>*\-+_#~`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$",
+    re.IGNORECASE,
+)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
@@ -179,8 +192,8 @@ def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
     The first substantive line must be a marker line with an allowed tail. Any later
-    line that mentions disposition or a readiness state must itself be a positive
-    line; retraction or blocker text refuses on later lines and inside fenced blocks.
+    line that states a disposition (see STATE_LINE) must itself be a positive line;
+    retraction or blocker text refuses on later lines and inside fenced blocks.
     """
     parts = split_body(body)
     if parts is None:
@@ -189,17 +202,17 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
+    if any(STATE_LINE.match(line) or NEGATION.search(line) for line in fenced):
         return False
     return all(
         positive_line(line)
-        or not (STATE_MENTION.search(line) or NEGATION.search(line))
+        or not (STATE_LINE.match(line) or NEGATION.search(line))
         for line in substantive[1:]
     )
 
 
 def comment_body_negative(body: str) -> bool:
-    """Whether a COMMENT body speaks about disposition without being exactly positive.
+    """Whether a COMMENT body states a disposition without being exactly positive.
 
     Ordinary chatter with no state mention is neutral. Structurally ambiguous bodies
     count as negative so they can never silently drop a refusal.
@@ -210,8 +223,8 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
-    return any(STATE_MENTION.search(line) for line in visible) or any(
-        STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced
+    return any(STATE_LINE.match(line) for line in visible) or any(
+        STATE_LINE.match(line) or NEGATION.search(line) for line in fenced
     )
 
 
@@ -483,6 +496,13 @@ def self_test() -> None:
         ("REVIEW_READY\nBlocked.", False),
         ("REVIEW_READY\nStale", False),
         ("REVIEW_READY\nI do not approve", False),
+        ("REVIEW_READY\n`REPAIR_REQUIRED`", False),
+        ("REVIEW_READY\n## SUPERSEDED", False),
+        ("REVIEW_READY\nDisposition: repair the oracle first", False),
+        # Narration that only mentions a state word is not a state line (#11566).
+        ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
+        ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
+        ("REVIEW_READY\nThe admission script reads the review disposition from the first line.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)

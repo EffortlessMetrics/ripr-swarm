@@ -332,9 +332,9 @@ fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
         )]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, &name)?;
     }
-    if ready != 11 || refused != 7 {
+    if ready != 12 || refused != 7 {
         return Err(format!(
-            "expected 11 ready and 7 refuse fixtures, saw {ready}/{refused}"
+            "expected 12 ready and 7 refuse fixtures, saw {ready}/{refused}"
         ));
     }
     Ok(())

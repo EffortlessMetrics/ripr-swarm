@@ -106,7 +106,12 @@ time; the Result job repeats the read before the eligibility recheck. A trusted
 (OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
-free-prose retraction on later lines is best-effort (#12835). The PR author can still
+free-prose retraction on later lines is best-effort (#12835). A later line changes the
+disposition only when it states one: it opens, after list, quote, heading or emphasis
+markers, with a `disposition:` field or a state token, or it is a state token alone.
+A state word inside prose, such as a backticked quotation of a marker or "the earlier
+review is superseded", is narration and is not read, because that scan ejected fully
+green queue entries after the whole run (#11566). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
