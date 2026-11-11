@@ -100,9 +100,9 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
-The admission job also refuses a `merge-ready` pull-request request whose PR has
-unresolved review threads, naming each thread, so the author learns in seconds
-instead of after the roughly hour-long run. It is an early courtesy only: a read
+The admission job checks the admitted H for both pull-request and native queue
+requests before starting expensive proof. It also refuses known unresolved review
+threads, naming each thread, so a known blocker does not consume a full run. It is an early courtesy only: a read
 failure is a warning, and the late recheck above remains the authority.
 
 Source review disposition (#8157): a `merge-ready` request also needs a current-head

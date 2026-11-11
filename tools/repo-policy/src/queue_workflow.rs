@@ -108,6 +108,28 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         "intake must not execute or allocate candidate capacity",
     );
     let admission = job(source, "admission").unwrap_or("");
+    for name in [
+        "Require source review disposition at request time",
+        "Refuse unresolved review threads at request time",
+    ] {
+        let preflight = step(admission, name).unwrap_or("");
+        require(
+            preflight.contains("if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'")
+                && preflight.contains("PR_NUMBER: ${{ steps.entry.outputs.pr }}"),
+            &format!("admitted queue head lacks early review control: {name}"),
+        );
+    }
+    let review = step(
+        admission,
+        "Require source review disposition at request time",
+    )
+    .unwrap_or("");
+    require(
+        review.contains("PR_HEAD: ${{ steps.entry.outputs.head }}")
+            && review.contains("python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py")
+            && review.contains("--head \"$PR_HEAD\""),
+        "early review must invoke the verified trusted reader for admitted H",
+    );
     for binding in [
         "uses: ./.admission-trusted/.github/actions/verify-merge-group-subject",
         "subject-sha: ${{ github.event.merge_group.head_sha }}",
@@ -440,6 +462,18 @@ mod tests {
     #[test]
     fn heavy_allocation_and_terminal_success_require_authenticated_intake() {
         for (before, after) in [
+            (
+                "(github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'",
+                "github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'",
+            ),
+            (
+                "PR_HEAD: ${{ steps.entry.outputs.head }}",
+                "PR_HEAD: ${{ github.event.merge_group.head_sha }}",
+            ),
+            (
+                "python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py",
+                "python3 -I .github/actions/pr-candidate-admission/review_disposition.py",
+            ),
             ("    needs: [intake]\n", "    needs: []\n"),
             (
                 "    needs: [intake, detect-docs-only]\n",
