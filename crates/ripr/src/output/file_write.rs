@@ -640,16 +640,19 @@ mod output_dir_tests {
     }
 
     #[test]
-    fn occupying_file_create_does_not_name_the_flag() -> Result<(), String> {
+    fn occupying_file_is_a_wrong_flag_value_not_an_unwritable_tree() -> Result<(), String> {
         let env = OutputDirFixture::occupying_file("helper-file", "pilot")?;
         let error = match create_output_dir(&env.target, "--out") {
             Err(error) => error,
             Ok(()) => return Err("file path must fail".to_string()),
         };
+        // A file in the way says the flag names a directory (#14313), with
+        // no raw `os error` tail.
         assert!(
-            error.contains(&format!("create {} failed:", env.target.display())),
+            error.contains("is an existing file, but --out names the directory"),
             "{error}"
         );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying the path is not a not-writable tree: {error}"

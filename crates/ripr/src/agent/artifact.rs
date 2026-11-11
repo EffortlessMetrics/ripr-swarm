@@ -664,10 +664,15 @@ fn without_serde_type_names(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     loop {
-        let next = [("struct ", "an object"), ("enum ", "a documented value")]
-            .into_iter()
-            .filter_map(|(marker, words)| rest.find(marker).map(|at| (at, marker, words)))
-            .min_by_key(|(at, _, _)| *at);
+        // serde phrases type names as `expected struct Name`; anchoring on
+        // that phrase leaves user text such as "construct x" untouched.
+        let next = [
+            ("expected struct ", "expected an object"),
+            ("expected enum ", "expected a documented value"),
+        ]
+        .into_iter()
+        .filter_map(|(marker, words)| rest.find(marker).map(|at| (at, marker, words)))
+        .min_by_key(|(at, _, _)| *at);
         let Some((at, marker, words)) = next else {
             break;
         };
@@ -3072,6 +3077,20 @@ mod tests {
     /// Matching current `producer.version` is not a substitution refusal.
     /// An incomplete envelope still fails as a canonical shape error.
     #[test]
+    fn serde_type_names_are_replaced_only_in_serde_phrasing() {
+        assert_eq!(
+            without_serde_type_names(
+                "invalid type: string \"construct x\", expected struct RepoExposure at line 1"
+            ),
+            "invalid type: string \"construct x\", expected an object at line 1"
+        );
+        assert_eq!(
+            without_serde_type_names("unknown variant `x`, expected enum Mode_v2"),
+            "unknown variant `x`, expected a documented value"
+        );
+    }
+
+    #[test]
     fn matching_producer_stamp_keeps_canonical_shape_errors() -> Result<(), String> {
         let version = env!("CARGO_PKG_VERSION");
         let schema = crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION;
@@ -3086,7 +3105,7 @@ mod tests {
                 "matching stamp must keep the canonical shape error: {error}"
             ));
         }
-        if !error.contains("regenerate the before snapshot")
+        if !error.contains("Regenerate the before snapshot")
             || !error.contains("`ripr agent verify --help`")
         {
             return Err(format!(
