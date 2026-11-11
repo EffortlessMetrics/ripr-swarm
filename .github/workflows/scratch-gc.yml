@@ -1,11 +1,9 @@
 name: Scratch GC
 
-# Reclamation of self-hosted CI scratch disk that does not depend on PR
-# traffic (#1028). Mirrors the existing inline "Prepare scratch" step in
-# routed-rust.yml. It was built to run on a timer so idle build runners (the
-# ones that would otherwise never get a PR-triggered cleanup) were swept
-# regularly; the timer is currently off and the sweep is manual, see `on:`
-# below. Idle runners therefore get no automatic sweep right now.
+# Scheduled reclamation of self-hosted CI scratch disk so recovery does not
+# depend on PR traffic (#1028). Mirrors the existing inline "Prepare scratch" step
+# in routed-rust.yml, but on a timer: idle build runners (exactly the ones that
+# would otherwise never get a PR-triggered cleanup) get swept regularly.
 #
 # Covers all three routed-rust runner pools (cx43, cpx42, cx53) — each runs the
 # same routed lanes with the same /mnt/ci-scratch layout and the same disk guard,
@@ -22,18 +20,9 @@ name: Scratch GC
 # shared .github/actions/ci-scratch-lease authority deletes a per-run tree only
 # while holding the flock lease of a terminal job this repository owns.
 
-# Manual only since 2026-11-11 (#4984). Every job here needs a self-hosted
-# runner from one of the three pools, and none has accepted a job since at
-# least 2026-11-09: 95 of the last 100 scheduled fires ended `cancelled` after
-# all three pool jobs waited 30 minutes in the queue and the next fire replaced
-# them. Required work runs on the GitHub-hosted leg, which has no persistent
-# scratch disk to reclaim, and the inline rust-gates.yml reclaim still runs on
-# any self-hosted job that does start. A timer that only queues is noise that
-# reads as 48 cancelled runs a day, so the half-hourly schedule is off.
-# To bring the timer back with the pools, restore:
-#   schedule:
-#     - cron: "17,47 * * * *"
 on:
+  schedule:
+    - cron: "17,47 * * * *"
   workflow_dispatch:
 
 permissions:
