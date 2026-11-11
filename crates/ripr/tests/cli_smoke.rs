@@ -6488,6 +6488,60 @@ fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
 }
 
 #[test]
+fn pr_review_front_panel_names_unusable_inputs_on_stderr() -> Result<(), Box<dyn std::error::Error>>
+{
+    // #14371: a mistyped or non-JSON input stays advisory (exit 0), but
+    // stderr names the input and the cause in plain words.
+    let workspace = unique_temp_workspace("front-panel-bad-input");
+    std::fs::create_dir_all(&workspace)?;
+    let missing = workspace.join("no-such-guidance.json");
+    let malformed = workspace.join("not-json-gate.json");
+    std::fs::write(&malformed, "not json")?;
+    let out = workspace.join("panel.json");
+    let out_md = workspace.join("panel.md");
+    let missing_proof = workspace.join("typo/test-oracle-assistant-proof.json");
+    let missing_proof_arg = missing_proof.display().to_string();
+    let missing_arg = missing.display().to_string();
+    let malformed_arg = malformed.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "pr-review",
+        "front-panel",
+        "--assistant-proof",
+        &missing_proof_arg,
+        "--pr-guidance",
+        &missing_arg,
+        "--gate-decision",
+        &malformed_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warnings: 3"), "{stderr}");
+    assert!(
+        stderr.contains("Assistant proof artifact is missing: ")
+            && stderr.contains("typo/test-oracle-assistant-proof.json"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Optional PR guidance input is unreadable: read PR guidance")
+            && stderr.contains("no-such-guidance.json failed: not found"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Optional gate decision input is malformed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("first-action");
     std::fs::create_dir_all(&workspace)?;

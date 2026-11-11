@@ -1072,10 +1072,9 @@ fn raw_shell_words(command: &str) -> Option<Vec<&str>> {
 
 fn repair_markdown_line(repair: &RepairItem) -> String {
     match repair.repair_kind.as_str() {
-        "regenerate_proof" => {
-            "regenerate proof; supply selected seam and before/after static movement context."
-                .to_string()
-        }
+        // The reason names what is wrong with this proof (missing file,
+        // malformed JSON, missing context), so the Markdown repeats it.
+        "regenerate_proof" => format!("regenerate proof: {}", repair.reason),
         "inspect_unchanged_attempt" => format!(
             "{} - unchanged movement; inspect whether the focused test observes the missing equality boundary.",
             repair_location(repair)
@@ -1360,7 +1359,7 @@ mod tests {
         assert!(rendered.contains("\"repair_kind\": \"attach_receipt\""));
 
         let markdown = render_assistant_loop_health_markdown(&report);
-        assert!(markdown.contains("regenerate proof; supply selected seam"));
+        assert!(markdown.contains("regenerate proof: Proof input is missing selected seam"));
         assert!(markdown.contains("src/lib.rs:7 - missing receipt"));
         Ok(())
     }
