@@ -583,6 +583,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_receiver.rs::test_module_child_file_keeps_no_direct_call",
   "crates/ripr/tests/crate_qualified_receiver.rs::enum_variant_spelling_is_not_a_constructor_receiver",
   "crates/ripr/tests/crate_qualified_receiver.rs::function_local_namesake_type_method_gets_no_credit",
+  "crates/ripr/tests/crate_qualified_receiver.rs::crate_qualified_receiver_of_a_same_named_type_in_another_module_gets_no_direct_call",
+  "crates/ripr/tests/crate_qualified_receiver.rs::crate_qualified_receiver_of_the_only_type_in_a_module_stays_a_direct_owner_call",
   "fixtures/rust_qualified_foreign_receiver",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",

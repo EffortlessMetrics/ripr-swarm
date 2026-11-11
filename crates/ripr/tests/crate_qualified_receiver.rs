@@ -237,7 +237,7 @@ fn function_local_namesake_type_method_gets_no_credit() -> Result<(), String> {
 const OWNER_WITHOUT_NEW: &str = "pub struct Rng(u32);\nimpl Rng {\n    pub fn digit(&mut self, base: u32) -> u32 {\n        if base > 9 { 2 } else { 1 }\n    }\n}\n";
 
 /// A second library module's same-named type, with the constructor.
-const RIVAL_WITH_NEW: &str = "pub struct Rng(u32);\nimpl Rng {\n    pub fn new() -> Rng {\n        Rng(0)\n    }\n    pub fn digit(&mut self, base: u32) -> u32 {\n        if base > 4 { 2 } else { 1 }\n    }\n}\n";
+const RIVAL_WITH_NEW: &str = "pub struct Rng(u32);\nimpl Rng {\n    pub fn new() -> Rng {\n        Rng(0)\n    }\n    pub fn digit(&mut self, base: u32) -> u32 {\n        if base >= 10 { 2 } else { 1 }\n    }\n}\n";
 
 const CRATE_QUALIFIED_TEST: &str = "#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 2);\n    assert_eq!(rng.digit(9), 1);\n}\n";
 
