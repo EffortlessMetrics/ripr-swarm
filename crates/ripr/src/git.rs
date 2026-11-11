@@ -322,7 +322,218 @@ fn git_null_device_path() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
 
+/// Refusal flag for a repository whose filter-driver configuration ripr
+/// cannot neutralize. Git rejects the unknown option and exits before it
+/// reads the index or the worktree, so no filter program can start.
+const REFUSED_FILTER_CONFIG_FLAG: &str = "--ripr-refused-repository-filter-config";
+
+/// Deadline and capture bound for the filter-driver configuration listing.
+const FILTER_CONFIG_PROBE_DEADLINE: Duration = Duration::from_secs(10);
+const FILTER_CONFIG_PROBE_MAX_BYTES: usize = 1024 * 1024;
+
+/// Most roots the filter-pin cache keeps before it starts over.
+const FILTER_PIN_CACHE_MAX_ROOTS: usize = 64;
+
+/// What `git_command` adds for the repository's own filter drivers (#14242).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RepositoryFilterPins {
+    /// `key=value` overrides, each passed as `-c`. Empty when the repository
+    /// configuration defines no filter driver.
+    Overrides(Vec<String>),
+    /// The repository-defined drivers cannot be overridden; refuse the call.
+    Refused,
+}
+
+/// `(modified, length)` of `<root>/.git/config`, the cheap freshness signal
+/// for the cached pins. `None` when `.git` is a gitfile or absent; those
+/// roots keep their first answer for the life of the process.
+type FilterConfigFingerprint = Option<(Option<std::time::SystemTime>, u64)>;
+
+type FilterPinCache =
+    std::collections::BTreeMap<PathBuf, (FilterConfigFingerprint, RepositoryFilterPins)>;
+
+static FILTER_PIN_CACHE: std::sync::Mutex<FilterPinCache> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn filter_config_fingerprint(root: &Path) -> FilterConfigFingerprint {
+    let metadata = std::fs::metadata(root.join(".git").join("config")).ok()?;
+    Some((metadata.modified().ok(), metadata.len()))
+}
+
+/// Overrides that stop a `filter.<driver>.clean`, `.smudge` or `.process`
+/// program named by the repository's own configuration from running (#14242).
+///
+/// `git status`, `git ls-files -m` and a worktree `git diff` pass a path
+/// through its clean filter to compare it with the index, so a planted
+/// `.git/config` driver plus an attribute line runs a program on a read-only
+/// ripr call. Git has no switch that disables filters, and an override needs
+/// the driver name, so the names are listed once per root. A driver the user
+/// configured in their system or global configuration (Git LFS, for
+/// example) keeps that definition: each repository-defined key is reset to
+/// the value the trusted scopes give it, or to nothing.
+fn repository_filter_pins(root: &Path) -> RepositoryFilterPins {
+    let fingerprint = filter_config_fingerprint(root);
+    {
+        let cache = FILTER_PIN_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((cached_fingerprint, pins)) = cache.get(root)
+            && *cached_fingerprint == fingerprint
+        {
+            return pins.clone();
+        }
+    }
+    let pins = probe_repository_filter_pins(root);
+    if pins == RepositoryFilterPins::Refused {
+        // A refusal can come from a cancelled or timed-out listing, which
+        // says nothing about the next call.
+        return pins;
+    }
+    let mut cache = FILTER_PIN_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.len() >= FILTER_PIN_CACHE_MAX_ROOTS {
+        cache.clear();
+    }
+    cache.insert(root.to_path_buf(), (fingerprint, pins.clone()));
+    pins
+}
+
+const FILTER_CONFIG_PATTERN: &str = r"^filter\..*\.(clean|smudge|process|required)$";
+
+fn filter_config_listing(root: &Path, with_scope: bool) -> Result<Output, CoreError> {
+    let mut args = vec!["config"];
+    if with_scope {
+        args.push("--show-scope");
+    }
+    args.extend(["--includes", "-z", "--get-regexp", FILTER_CONFIG_PATTERN]);
+    // Reading configuration runs no filter, so the listing itself needs no
+    // filter pins; it keeps the other shared pins.
+    let command =
+        git_command_with_filter_pins(root, &args, &RepositoryFilterPins::Overrides(Vec::new()));
+    // The listing is bookkeeping for the caller's one git call, so it stays
+    // out of the per-thread spawn count tests use to pin call budgets.
+    #[cfg(test)]
+    let spawns_before = TEST_PROCESS_SPAWNS.with(std::cell::Cell::get);
+    let output = collect_output_with_optional_deadline_and_limit(
+        command,
+        Some(FILTER_CONFIG_PROBE_DEADLINE),
+        FILTER_CONFIG_PROBE_MAX_BYTES,
+        "git config --get-regexp (filter drivers)",
+    );
+    #[cfg(test)]
+    TEST_PROCESS_SPAWNS.with(|count| count.set(spawns_before));
+    output
+}
+
+fn probe_repository_filter_pins(root: &Path) -> RepositoryFilterPins {
+    if !root.is_dir() {
+        // The caller's own spawn fails on this root and reports it.
+        return RepositoryFilterPins::Overrides(Vec::new());
+    }
+    for with_scope in [true, false] {
+        let output = match filter_config_listing(root, with_scope) {
+            Ok(output) => output,
+            // A missing git reports itself on the caller's spawn. A listing
+            // that timed out or overran its bound is not a known-empty one.
+            Err(error) if is_git_not_found_on_path(&error.to_string()) => {
+                return RepositoryFilterPins::Overrides(Vec::new());
+            }
+            Err(_) => return RepositoryFilterPins::Refused,
+        };
+        match output.status.code() {
+            Some(0) => return filter_pins_from_listing(&output.stdout, with_scope),
+            // No matching key.
+            Some(1) => return RepositoryFilterPins::Overrides(Vec::new()),
+            // Git before 2.26 has no `--show-scope`: list again without it
+            // and treat every definition as the repository's.
+            Some(129) if with_scope => continue,
+            // Unreadable configuration: the caller's git call reads the same
+            // files and fails on them with its own message.
+            _ => return RepositoryFilterPins::Overrides(Vec::new()),
+        }
+    }
+    RepositoryFilterPins::Refused
+}
+
+/// Parse `git config [--show-scope] -z --get-regexp` output into overrides.
+///
+/// Scoped entries are `<scope> NUL <key> LF <value> NUL`; unscoped ones are
+/// `<key> LF <value> NUL`. `system`, `global` and `command` scopes are the
+/// user's; everything else (`local`, `worktree`, an unknown scope, or any
+/// entry of an unscoped listing) is the repository's.
+fn filter_pins_from_listing(stdout: &[u8], with_scope: bool) -> RepositoryFilterPins {
+    let mut trusted: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut repository_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut fields = stdout.split(|byte| *byte == 0);
+    loop {
+        let scope = if with_scope {
+            match fields.next() {
+                Some(scope) if !scope.is_empty() => scope,
+                _ => break,
+            }
+        } else {
+            b"local".as_slice()
+        };
+        let Some(entry) = fields.next() else {
+            if with_scope {
+                return RepositoryFilterPins::Refused;
+            }
+            break;
+        };
+        if entry.is_empty() && !with_scope {
+            break;
+        }
+        let (key, value) = match entry.iter().position(|byte| *byte == b'\n') {
+            Some(split) => (&entry[..split], &entry[split + 1..]),
+            None => (entry, b"".as_slice()),
+        };
+        let (Ok(key), Ok(value)) = (std::str::from_utf8(key), std::str::from_utf8(value)) else {
+            return RepositoryFilterPins::Refused;
+        };
+        if matches!(scope, b"system" | b"global" | b"command") {
+            trusted.insert(key.to_string(), value.to_string());
+        } else {
+            // `git -c <key>=<value>` splits at the first `=`, so a driver
+            // name containing one cannot be overridden.
+            if key.contains('=') {
+                return RepositoryFilterPins::Refused;
+            }
+            repository_keys.insert(key.to_string());
+        }
+    }
+    RepositoryFilterPins::Overrides(
+        repository_keys
+            .into_iter()
+            .map(|key| {
+                let fallback = if key.ends_with(".required") {
+                    "false"
+                } else {
+                    ""
+                };
+                let value = trusted.get(&key).map_or(fallback, String::as_str);
+                format!("{key}={value}")
+            })
+            .collect(),
+    )
+}
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
+    git_command_with_filter_pins(root, args, &repository_filter_pins(root))
+}
+
+/// `git_command` for test fixture setup, which stages and commits through
+/// the repository's own filter drivers on purpose.
+#[cfg(test)]
+fn fixture_git_command(root: &Path, args: &[&str]) -> Command {
+    git_command_with_filter_pins(root, args, &RepositoryFilterPins::Overrides(Vec::new()))
+}
+
+fn git_command_with_filter_pins(
+    root: &Path,
+    args: &[&str],
+    filter_pins: &RepositoryFilterPins,
+) -> Command {
     let mut command = Command::new("git");
     // Several callers read Git's stderr for a known cause (dubious ownership,
     // no merge base, a damaged repository). A translated Git would word those
@@ -352,7 +563,21 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         // an empty value still tries to open a file, so use Git's null device.
         // #9375: match `hooksPath` and use `NUL` on native Windows git builds.
         .args(["-c", &format!("diff.orderFile={null_device}")])
-        .args(args);
+        // #14242: a repository's `log.showSignature=true` makes `git log` and
+        // `git show` run its `gpg.program` on every signed commit they print.
+        // ripr never reads signature status.
+        .args(["-c", "log.showSignature=false"]);
+    match filter_pins {
+        RepositoryFilterPins::Overrides(overrides) => {
+            for pin in overrides {
+                command.args(["-c", pin]);
+            }
+        }
+        RepositoryFilterPins::Refused => {
+            command.arg(REFUSED_FILTER_CONFIG_FLAG);
+        }
+    }
+    command.args(args);
     command
 }
 
@@ -708,7 +933,7 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         ));
     }
     let describe = format!("isolated git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
+    let mut command = fixture_git_command(root, args);
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     command
         .env("GIT_CONFIG_GLOBAL", null_config)
@@ -1644,6 +1869,10 @@ fn drain_pipe_reader(
         )),
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "git_helper_pin_tests.rs"]
+mod helper_pin_tests;
 
 #[cfg(test)]
 #[expect(
