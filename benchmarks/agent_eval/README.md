@@ -130,7 +130,9 @@ human legend, cannot leak from one route into the next.
   to-answer tokens up more than 10% plus 20 tokens, more failed steps (a
   nonzero exit, a JSON-RPC error or an MCP `isError` result), more missed or
   extra gaps, a loop check that was yes and is now NO or missing (except the
-  cargo-only key checks under `--skip-cargo`, which are unmeasured), or (on a
+  cargo-only key checks under `--skip-cargo`, which are unmeasured), a cargo
+  key check that could not build or report a test result (named as an
+  instrument failure, never shown as NO), or (on a
   full run) a baseline scenario or route that no longer runs. A check that is
   already NO in the baseline is not guarded; fixing it shows as a note, and
   the fixing PR rebaselines so it stays fixed.

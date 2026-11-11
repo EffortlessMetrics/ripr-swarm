@@ -608,6 +608,9 @@ fn verify_complete(agent_report: &str) -> bool {
         .any(|line| line.starts_with("verify=complete"))
 }
 
+/// Run one test target. A run that did not compile or report a test result
+/// is an instrument failure and comes back as `Err`, so it is never read as
+/// the key holding or failing.
 fn cargo_test(root: &Path, target_dir: &Path, test: &str) -> Result<bool, String> {
     let target = target_dir.display().to_string();
     let output = capture(
@@ -617,7 +620,43 @@ fn cargo_test(root: &Path, target_dir: &Path, test: &str) -> Result<bool, String
         None,
         &[("CARGO_TARGET_DIR", target.as_str())],
     )?;
-    Ok(output.exit == Some(0))
+    let text = format!("{}\n{}", output.stdout, output.stderr);
+    match trial::classify_suite(output.exit, &text) {
+        trial::Suite::Pass => Ok(true),
+        trial::Suite::TestFailed => Ok(false),
+        trial::Suite::NotEstablished(reason) => Err(format!("cargo test --test {test}: {reason}")),
+    }
+}
+
+/// A cargo key check: pass at head, then at base (with `src/lib.rs` put back
+/// to head afterwards whatever happened).
+fn cargo_key(
+    root: &Path,
+    target_dir: &Path,
+    scenario: &Scenario,
+    test: &str,
+) -> Result<(bool, bool), String> {
+    let at_head = cargo_test(root, target_dir, test);
+    write_file(&root.join("src/lib.rs"), scenario.base_lib)?;
+    let at_base = cargo_test(root, target_dir, test);
+    write_file(&root.join("src/lib.rs"), scenario.head_lib)?;
+    Ok((at_head?, at_base?))
+}
+
+/// Store a cargo key result, or null plus the instrument failure.
+fn record_key(
+    result: &mut Value,
+    flag: &str,
+    outcome: Result<(bool, bool), String>,
+    holds: fn(bool, bool) -> bool,
+) {
+    match outcome {
+        Ok((at_head, at_base)) => result[flag] = json!(holds(at_head, at_base)),
+        Err(reason) => {
+            result[flag] = Value::Null;
+            result["cargo_not_established"] = json!(reason);
+        }
+    }
 }
 
 fn add_intent(root: &Path, relative: &str) -> Result<(), String> {
@@ -665,11 +704,10 @@ fn usefulness(
             expected.iter().all(|line| still.contains(line)) && !verify_complete(&after.stdout)
         );
         if !skip_cargo {
-            let at_head = cargo_test(&workspace.root, &target_dir, "eval_weak")?;
-            write_file(&workspace.root.join("src/lib.rs"), scenario.base_lib)?;
-            let at_base = cargo_test(&workspace.root, &target_dir, "eval_weak")?;
-            write_file(&workspace.root.join("src/lib.rs"), scenario.head_lib)?;
-            result["weak_key_valid"] = json!(at_head && at_base);
+            let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_weak");
+            record_key(&mut result, "weak_key_valid", outcome, |head, base| {
+                head && base
+            });
         }
         git(
             &workspace.root,
@@ -687,11 +725,10 @@ fn usefulness(
             verify_complete(&after.stdout) && expected.iter().all(|line| !still.contains(line))
         );
         if !skip_cargo {
-            let at_head = cargo_test(&workspace.root, &target_dir, "eval_reference")?;
-            write_file(&workspace.root.join("src/lib.rs"), scenario.base_lib)?;
-            let at_base = cargo_test(&workspace.root, &target_dir, "eval_reference")?;
-            write_file(&workspace.root.join("src/lib.rs"), scenario.head_lib)?;
-            result["reference_key_valid"] = json!(at_head && !at_base);
+            let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_reference");
+            record_key(&mut result, "reference_key_valid", outcome, |head, base| {
+                head && !base
+            });
         }
     }
     Ok(result)
@@ -874,10 +911,15 @@ pub(crate) fn compare(
                 notes.push(format!("{id}: {count} {then} -> {now}"));
             }
         }
+        // A cargo run that could not build or report is an instrument
+        // failure: it fails the compare under its own name, not as a NO.
+        if let Some(reason) = scenario["loop"]["cargo_not_established"].as_str() {
+            regressions.push(format!("{id}: cargo key check not established: {reason}"));
+        }
         for flag in LOOP_FLAGS {
             let (now, then) = (&scenario["loop"][flag], &base["loop"][flag]);
             // `--skip-cargo` leaves the cargo-only key checks unmeasured
-            // (null); that is not a regression. A scenario that loses its
+            // (null); that is not a regression by itself. A scenario that loses its
             // test still regresses through `reference_test_closes_loop`.
             if now.is_null() && CARGO_FLAGS.contains(&flag) {
                 continue;
@@ -1229,6 +1271,14 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(compare_full(&skipped, &keyed).is_empty());
         skipped["scenarios"][0]["loop"]["reference_key_valid"] = json!(false);
         assert_eq!(compare_full(&skipped, &keyed).len(), 1);
+        // A cargo run that could not build fails under its own name.
+        let mut broken = keyed.clone();
+        broken["scenarios"][0]["loop"]["reference_key_valid"] = Value::Null;
+        broken["scenarios"][0]["loop"]["cargo_not_established"] = json!("no toolchain");
+        assert_eq!(
+            compare_full(&broken, &keyed),
+            vec!["s: cargo key check not established: no toolchain".to_string()]
+        );
         let mut no_route = report(1000, true, true);
         no_route["scenarios"][0]["routes"] = json!([]);
         assert_eq!(
