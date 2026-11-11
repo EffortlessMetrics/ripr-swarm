@@ -3300,11 +3300,24 @@ pub(crate) fn constructor_names_for_method_owner(
         return Vec::new();
     };
     let mut names = Vec::new();
+    // Locals a named or default import binds to the owner's class.
+    let mut imported_class_locals: Vec<String> = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file) {
         push_unique_string(&mut names, class_name.to_string());
     }
     for import in &test.imports_in_file {
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            continue;
+        }
+        // Two `var` requires may bind one local to different exports
+        // (`var { Cart } = require('./cart'); var { Cart } =
+        // require('./other')`); which one the test constructs is not read.
+        if test.imports_in_file.iter().any(|other| {
+            other.local == import.local
+                && (other.source != import.source
+                    || other.imported != import.imported
+                    || other.namespace != import.namespace)
+        }) {
             continue;
         }
         if import.namespace {
@@ -3323,16 +3336,26 @@ pub(crate) fn constructor_names_for_method_owner(
             // A named import, or a default import of the owner's
             // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
+            push_unique_string(&mut imported_class_locals, import.local.clone());
         }
     }
     // A constructor name the test scope or body rebinds (`const Cart =
     // class {}`, `const shop = {...}`) constructs something else.
+    //
+    // A file-level binding of an imported class local is not a rebind: it is
+    // the CommonJS import itself (`const { Cart } = require('./cart')`
+    // declares the very local the import record names, #14088), as the
+    // static-method path reads it (`class_names_for_class_method_owner`). A
+    // namespace receiver (`shop.Cart`) and a same-file class name keep the
+    // strict rule: a `const shop = require(...)` object is mutable, and a
+    // class binding can be reassigned.
     names.retain(|name| {
         let local = name.split('.').next().unwrap_or(name);
+        let imported_class = imported_class_locals.contains(name);
         !test
             .scope_bindings
             .iter()
-            .any(|binding| binding.name == local)
+            .any(|binding| binding.name == local && !(imported_class && binding.file_level))
             && !local_identifier_declared_in_test_body(&test.body_text, local)
     });
     names

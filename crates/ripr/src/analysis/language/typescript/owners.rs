@@ -1763,6 +1763,9 @@ fn extract_imports_from_statements_inner(
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // Names a non-`require()` file-level declaration re-declares (computed on
+    // the first mutable `require()` binding).
+    let mut redeclared_names: Option<std::collections::HashSet<String>> = None;
     // `const lib = require('./y')` namespace bindings, so a member picked off
     // `lib` later reads as that module's member (#10447).
     let mut namespaces: std::collections::HashMap<String, String> =
@@ -1881,11 +1884,24 @@ fn extract_imports_from_statements_inner(
                 // hold the module's export, so it is not an import (#10401). A
                 // `const` cannot be reassigned.
                 let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                // A `var` binding that a file-level declaration other than a
+                // `require()` re-declares (`var { Cart } = require('./cart');
+                // var Cart = class {}`, or a hoisted `function Cart() {}`)
+                // holds whichever value was written last, which this scan does
+                // not order, so it is not an import (#14088). Two `require()`
+                // bindings of one name stay recorded, both of them: the
+                // admission scan reads the package one, and a relation that
+                // needs one module tells them apart by the record.
                 let mut written = |name: &str| {
                     mutable
-                        && written_names
-                            .get_or_insert_with(|| identifier_writes(statements))
+                        && (redeclared_names
+                            .get_or_insert_with(|| {
+                                names_redeclared_beside_require(statements, &top_level_names)
+                            })
                             .contains(name)
+                            || written_names
+                                .get_or_insert_with(|| identifier_writes(statements))
+                                .contains(name))
                 };
                 // One member of a literal require: `const f = require('./y').f`
                 // picks the named export `f` out of the module (#9188). It is
@@ -1982,6 +1998,48 @@ fn extract_imports_from_statements_inner(
         }
     }
     out
+}
+
+/// The names declared at file level more often than program-level
+/// `require("<literal>")` declarators bind them: some other declaration (a
+/// second `var`, a function, a function a sloppy block hoists) binds the name
+/// too. `top_level_names` lists every file-level declaration, once each.
+fn names_redeclared_beside_require(
+    statements: &[Statement<'_>],
+    top_level_names: &[String],
+) -> std::collections::HashSet<String> {
+    let mut declared: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in top_level_names {
+        *declared.entry(name.as_str()).or_insert(0) += 1;
+    }
+    if declared.values().all(|count| *count < 2) {
+        return std::collections::HashSet::new();
+    }
+    let mut required: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let no_namespaces = std::collections::HashMap::new();
+    for stmt in statements {
+        let Statement::VariableDeclaration(declaration) = stmt else {
+            continue;
+        };
+        for declarator in &declaration.declarations {
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            if require_string_literal_source(init).is_none()
+                && require_member_source(init, &no_namespaces).is_none()
+            {
+                continue;
+            }
+            for identifier in declarator.id.get_binding_identifiers() {
+                *required.entry(identifier.name.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    declared
+        .into_iter()
+        .filter(|(name, count)| *count > 1 && *count > required.get(*name).copied().unwrap_or(0))
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// Extract the string literal source from a `require('...')` call expression.
