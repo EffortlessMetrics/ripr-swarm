@@ -196,6 +196,36 @@ fn a_user_owned_ignore_file_is_kept_and_an_uncovered_tree_still_gets_the_hint() 
     Ok(())
 }
 
+/// A user-owned `target/ripr/.gitignore` that ignores most of the tree but
+/// unignores `reports/` still leaves reports addable, so the hint must keep
+/// firing: only ripr's own exact `*` file counts as covering the tree.
+#[test]
+fn a_user_negation_rule_keeps_the_hint() -> Result<(), String> {
+    let scratch = project("negation")?;
+    std::fs::create_dir_all(scratch.0.join("target/ripr/reports"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        scratch.0.join("target/ripr/.gitignore"),
+        "*\n!reports/\n!reports/**\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("target/ripr/reports/result.json"), "{}\n")
+        .map_err(|error| error.to_string())?;
+    // Fixture: git really would stage the report.
+    let status = git_stdout(
+        &scratch.0,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?;
+    assert!(
+        status.contains("target/ripr/reports/result.json"),
+        "{status}"
+    );
+    let out = check(&scratch.0, &[])?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stderr.matches(ENTRY).count(), 1, "{stderr}");
+    Ok(())
+}
+
 #[test]
 fn quiet_and_a_covering_entry_silence_the_hint() -> Result<(), String> {
     let scratch = project("silent")?;

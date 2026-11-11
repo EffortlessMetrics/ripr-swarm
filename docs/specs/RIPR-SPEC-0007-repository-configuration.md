@@ -116,8 +116,12 @@ guard's containment check, the tree is marked only after the check passes on
 its own.
 
 Because Git applies that rule to the tree's contents rather than to the
-`target/ripr` name, the artifact-ignore probe treats an existing root as
-covered when either the root itself or a would-be entry inside it is ignored.
+`target/ripr` name, the artifact-ignore probe treats the existing default
+root as covered when the root itself is ignored, or when its ignore file is
+exactly the one ripr writes and a would-be entry inside it is ignored. A
+user-owned ignore file there is judged by the root probe alone, because it may
+unignore part of the tree, and the Cargo `target` probe never uses the
+fallback.
 Before the first write, the default root needs no warning: doctor and the
 first-`check` note warn only for relocated in-repository roots. A Cargo
 project's whole-`target/` requirement above is unchanged, because the

@@ -2879,16 +2879,26 @@ pub(crate) fn uncovered_artifact_roots(
     Some(uncovered)
 }
 
-/// Whether ignore rules inside an existing artifact root cover what ripr
-/// writes there. ripr's own `target/ripr/.gitignore` holds `*`, which git
-/// applies to the directory's contents, not to the directory name, so the
-/// plain root probe answers "not ignored" while `git status` stays clean.
-/// Probing a would-be entry asks the question that matters: would a file ripr
-/// writes under this root be committed by `git add -A`? `Some(false)` for a
-/// missing root (nothing inside it can carry a rule yet); `None` when git
-/// could not answer.
+/// Whether ripr's own self-ignore file covers the default artifact root.
+/// ripr's `target/ripr/.gitignore` holds `*`, which git applies to the
+/// directory's contents, not to the directory name, so the plain root probe
+/// answers "not ignored" while `git status` stays clean. Only the default
+/// `target/ripr` root qualifies, and only when its ignore file is exactly the
+/// one ripr writes: a user-owned file there may unignore part of the tree
+/// (`!reports/`), and the Cargo `target` substitute must keep its own
+/// whole-directory verdict (#9006). Git still decides the answer: a
+/// would-be entry is probed so an outer negation rule is honored. `Some(false)`
+/// when the fallback does not apply; `None` when git could not answer.
 fn self_ignored_contents(root: &Path, pathspec: &str) -> Option<bool> {
-    if !root.join(pathspec).is_dir() {
+    if pathspec != crate::atomic_file::DEFAULT_OUTPUT_ROOT {
+        return Some(false);
+    }
+    let marker = root.join(pathspec).join(".gitignore");
+    let is_ripr_marker = std::fs::symlink_metadata(&marker)
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+        && std::fs::read_to_string(&marker)
+            .is_ok_and(|text| text == crate::atomic_file::DEFAULT_OUTPUT_ROOT_GITIGNORE);
+    if !is_ripr_marker {
         return Some(false);
     }
     let entry = format!("{pathspec}/ripr-artifact");
@@ -5455,6 +5465,19 @@ mod tests {
             .ok_or("missing advice")?
             .1;
         assert_eq!(entry, "/target/", "{warning}");
+        // A child-only ignore file inside `target/` (git applies it to the
+        // contents, not to `target` itself) does not satisfy the preflight
+        // either, so the ripr self-ignore fallback must not read it as
+        // coverage of the build directory.
+        std::fs::write(root.join("target/.gitignore"), "*\n").map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+                DoctorArtifactIgnore::Unignored { .. }
+            ),
+            "a child-only target/.gitignore must keep the /target/ advice"
+        );
+        std::fs::remove_file(root.join("target/.gitignore")).map_err(|error| error.to_string())?;
         // A child-only `/target/ripr/` rule (the old advice) does not satisfy
         // the preflight, so doctor still flags it and names `/target/`.
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
