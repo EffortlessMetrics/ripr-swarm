@@ -1901,8 +1901,10 @@ pub(crate) fn run_command(
 /// cargo target name is established, and an inline `#[cfg(test)]` module
 /// test runs by name in its owning package. `None` when the file is not a
 /// Rust file, the name is not a plain identifier, no package owns the file,
-/// or an integration target cannot be named: no command is offered rather
-/// than one that would run nothing or a different test.
+/// an integration target cannot be named, or the module-tree walk proves an
+/// inline file unreached (an orphan or an unresolved route to it): no command
+/// is offered rather than one that would run nothing or a different test. A
+/// walk that cannot decide keeps the layout answer.
 pub(crate) fn focused_test_run_command(
     root: &Path,
     test_file: &str,
@@ -2544,6 +2546,8 @@ mod tests {
         let manifest = shell_arg(&manifest);
         // A file the library never declares gets no command (module graph).
         assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        // A `./` spelling reaches the same module-graph verdict.
+        assert_eq!(focused_test_run_command(&root, "./src/stray.rs", "t"), None);
         assert_eq!(
             focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
             Some(format!(
@@ -2576,6 +2580,12 @@ mod tests {
         // library, not an integration target (#14320 review).
         assert_eq!(
             focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} equal_threshold"
+            ))
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "./src/tests/pricing.rs", "equal_threshold"),
             Some(format!(
                 "cargo test --manifest-path {manifest} equal_threshold"
             ))

@@ -135,9 +135,10 @@ discovery names its target and that name is a plain cargo target name
 file runs by name only when a target `cargo test` runs compiles it: the
 module-tree walk (`apply_module_graph_evidence`) does not prove it unreached,
 and its source role is a production subject, test evidence or production-like
-test infrastructure. An incomplete walk (an unresolved `cfg_if!` or dynamic
-`#[path]` edge, or the file bound) proves nothing, so it keeps the layout
-answer. In that case a file that is not compiled can still get a by-name
+test infrastructure. A file named by a `#[path]` edge that cannot be resolved
+gets no command. Otherwise an incomplete walk (an unresolved `cfg_if!` or
+dynamic edge elsewhere, or the file bound) proves nothing, so it keeps the
+layout answer. In that case a file that is not compiled can still get a by-name
 command, and `cargo test` reports 0 tests run. For example, `src/tests/` is
 declared from the library, and a helper module is shared by an integration
 test. Every other case gets no line: a file no target reaches, a bench,
