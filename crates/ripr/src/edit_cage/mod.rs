@@ -1631,7 +1631,7 @@ fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathStat
 /// Whether Git itself would EOL-normalize `path` in `root`'s repository: the
 /// `text` attribute decides when set or unset (`-text`), and `core.autocrlf`
 /// decides when the attribute is unspecified (#7377 review). The EOL-only
-/// skip in [`delta_from_repository_states`] is only sound for paths Git
+/// skip in [`delta_from_repository_states_with_overrides`] is only sound for paths Git
 /// rewrites: for every other path a byte flip stays visible to `git status`
 /// and must keep naming an author in the delta. A probe failure fails
 /// closed — the change stays in the delta.
@@ -1695,14 +1695,6 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
-fn delta_from_repository_states(
-    before: &AttemptBaseline,
-    after: &AttemptBaseline,
-    committed: Option<&[AttemptPathChange]>,
-) -> AttemptDelta {
-    delta_from_repository_states_with_overrides(before, after, committed, &BTreeMap::new())
-}
-
 fn delta_from_repository_states_with_overrides(
     before: &AttemptBaseline,
     after: &AttemptBaseline,
@@ -2148,6 +2140,9 @@ fn writable_path_components_are_safe_in(
         if metadata.file_type().is_symlink() || is_windows_reparse_point(&metadata) {
             return Ok(false);
         }
+        // Only the Unix hard-link check below reads the explicit store scopes.
+        #[cfg(not(unix))]
+        let _ = explicit_store_scopes;
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
@@ -6610,7 +6605,12 @@ mod tests {
         }
         let verdict = evaluate_edit_cage(
             &baseline.policy,
-            &delta_from_repository_states(&baseline, &after, Some(&[])),
+            &delta_from_repository_states_with_overrides(
+                &baseline,
+                &after,
+                Some(&[]),
+                &BTreeMap::new(),
+            ),
         );
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(

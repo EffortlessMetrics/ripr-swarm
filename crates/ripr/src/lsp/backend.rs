@@ -14641,6 +14641,7 @@ fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
 /// is never cached: a lagging server clock can stamp a just-written file as
 /// older than the window and a same-length rewrite in the same server tick
 /// would then match the cached key.
+#[cfg(any(target_os = "linux", test))]
 const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
     "nfs",
     "nfs3",
@@ -14662,6 +14663,7 @@ const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
 ];
 
 /// Decodes the `\040`-style octal escapes `/proc/self/mountinfo` uses.
+#[cfg(any(target_os = "linux", test))]
 fn unescape_mountinfo_field(field: &str) -> String {
     let bytes = field.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -14688,6 +14690,7 @@ fn unescape_mountinfo_field(field: &str) -> String {
 
 /// The filesystem type of the longest mount point containing `path`, read from
 /// `mountinfo` text. `None` when no mount line matches.
+#[cfg(any(target_os = "linux", test))]
 fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
     for line in mountinfo.lines() {
@@ -14715,6 +14718,7 @@ fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
     best.map(|(_, fstype)| fstype)
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn fstype_is_remote(fstype: &str) -> bool {
     // Any FUSE subtype other than the block-device `fuseblk` (ntfs-3g, exfat)
     // may be network-backed (ftpfs, gvfsd-fuse, ...), so it is treated as
