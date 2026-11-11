@@ -1515,13 +1515,7 @@ fn inventory_entry_facts(
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
-    let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
-        root,
-        config,
-        &[relative],
-        &[],
-    )
-    .ok()?;
+    let scoped = analysis::inventory_file_guidance_at_with_config(root, config, &relative).ok()?;
     // Disclosure only: a failed warm's stand-in class is not a real class.
     scoped.require_complete_evidence("test stub").ok()?;
     scoped
