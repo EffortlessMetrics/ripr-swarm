@@ -223,9 +223,12 @@ def comment_body_negative(body: str) -> bool:
     if parts is None:
         return True
     visible, fenced = parts
-    return any(STATE_LINE.match(line) for line in visible) or any(
-        STATE_LINE.match(line) or NEGATION.search(line) for line in fenced
-    )
+    # A prose line that names a state and retracts or blocks it still speaks: another
+    # reviewer's "the earlier REVIEW_READY is withdrawn" must not read as chatter.
+    return any(
+        STATE_LINE.match(line) or (STATE_MENTION.search(line) and NEGATION.search(line))
+        for line in visible
+    ) or any(STATE_LINE.match(line) or NEGATION.search(line) for line in fenced)
 
 
 def body_attests_head(body: str, head: str) -> bool:
@@ -555,6 +558,21 @@ def self_test() -> None:
         ],
         head=head,
     )
+    # Another reviewer's prose that names a state and retracts it still refuses, while
+    # prose that only quotes a state word is narration (#11566).
+    for body, allowed in (
+        ("Tests fail here, so the earlier REVIEW_READY is withdrawn.", False),
+        ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+    ):
+        assert reviews_allow_source_attestation(
+            [
+                review(state="COMMENTED", commit_id=head, id=1, body="REVIEW_READY",
+                       submitted_at="2026-10-15T01:00:01Z"),
+                review(state="COMMENTED", commit_id=head, id=2, body=body,
+                       submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+            ],
+            head=head,
+        ) is allowed, body
     # A decisive review without submitted_at cannot be ordered, so refuse.
     assert not reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head
