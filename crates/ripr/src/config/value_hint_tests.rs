@@ -85,3 +85,24 @@ fn hint_does_not_change_the_typed_diagnostic() -> Result<(), String> {
     assert!(diagnostic.message.ends_with("(did you mean `draft`?)"));
     Ok(())
 }
+
+/// An oversized rejected value is never aligned against the accepted names:
+/// the load still fails with the plain error and no hint. The distance table
+/// for a large value would otherwise grow with its length times every name.
+#[test]
+fn oversized_value_fails_without_a_hint() -> Result<(), String> {
+    let huge = "d".repeat(256 * 1024);
+    for text in [
+        format!("[analysis]\nmode = \"{huge}\"\n"),
+        format!("[languages]\nenabled = [\"{huge}\"]\n"),
+    ] {
+        let message = error(&text)?;
+        assert!(message.contains("expected instant") || message.contains("unknown language"));
+        assert!(!message.contains("did you mean"));
+    }
+    assert_eq!(
+        super::suggest::did_you_mean(&huge, &["draft", "deep"]),
+        None
+    );
+    Ok(())
+}
