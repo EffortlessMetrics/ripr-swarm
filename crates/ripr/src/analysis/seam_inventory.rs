@@ -4247,6 +4247,39 @@ pub(crate) fn scoped_file_seams(
     Ok(seams)
 }
 
+/// The root-relative production file that declares `seam_id`, or `None` when
+/// no seam has that id (#14369). A seam id is repo-wide, so this walks every
+/// production seam with no exposure seam limit: the capped classified
+/// inventory holds only a prefix of a large workspace, and a seam id past
+/// that prefix (any changed seam `ripr check` reports, for example) would
+/// otherwise be unresolvable. Locating a seam needs no test-grip evidence,
+/// so the walk reads only cached file facts; the caller classifies the one
+/// file it names.
+pub(crate) fn locate_seam_file_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    seam_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    let state = collect_workspace_state(root, config)?;
+    let production_files = production_files_from_state_with_role(&state, config);
+    let mut cached = state.build_index(config)?;
+    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    #[cfg(test)]
+    SEAM_FILE_LOCATIONS.with(|count| count.set(count.get() + 1));
+    Ok(seams_from_index_files(&production_files, &cached.index)?
+        .into_iter()
+        .find(|seam| seam.id().as_str() == seam_id)
+        .map(|seam| seam.file().to_path_buf()))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Uncapped seam-id walks [`locate_seam_file_at_with_config`] ran on this
+    /// thread.
+    pub(crate) static SEAM_FILE_LOCATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Classify only the seams in `file`, gathering test-grip evidence from a
 /// bounded index of `file` plus `evidence_files` — the files a caller
 /// already knows carry the relevant finding's related tests (#8320).

@@ -172,14 +172,32 @@ pub(crate) fn resolve_test_stub(
     selector: &TestStubSelector,
 ) -> Result<TestStubResolution, TestStubError> {
     match selector {
-        // A seam id is repo-wide, so it is looked up in the full inventory.
+        // A seam id is repo-wide, so it is located by the uncapped seam walk
+        // and then classified with its own file, the same file-scoped
+        // classification `ripr check` validates the printed command against
+        // (#14369). The capped workspace inventory held only a prefix of a
+        // large repository, so a changed seam past it was "not found" after a
+        // repo-wide evidence walk.
         TestStubSelector::SeamId(id) => {
-            let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+            let not_found = || TestStubError::NotFound(format!("seam_id {id} was not found"));
+            let file = analysis::locate_seam_file_at_with_config(root, config, id)
+                .map_err(TestStubError::Operational)?
+                .ok_or_else(not_found)?;
+            let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                root,
+                config,
+                &[file],
+                &[],
+            )
+            .map_err(TestStubError::Operational)?;
+            scoped
+                .require_complete_evidence("test stub")
                 .map_err(TestStubError::Operational)?;
-            let entry = classified
+            let entry = scoped
+                .classified
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == id)
-                .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
+                .ok_or_else(not_found)?;
             let source = read_owner_source(root, &entry.seam)?;
             Ok(resolution_for(root, config, entry, source))
         }
@@ -2144,7 +2162,6 @@ mod tests {
                 ids,
                 &mut index,
             );
-            let _ = std::fs::remove_dir_all(&root);
             // #14369: candidates from one file are validated against that
             // file's classified seams, never a whole-workspace inventory.
             assert_eq!(
@@ -2152,6 +2169,44 @@ mod tests {
                 before,
                 "a file-scoped ambiguity must not classify the whole workspace"
             );
+            // The printed `--seam-id` command must itself succeed, even for a
+            // seam past the capped workspace inventory (#14369): with a cap of
+            // one seam the capped inventory does not hold the narrowed seam,
+            // yet the seam-id resolution still produces its stub.
+            let executed = match &decision {
+                StubRouteDecision::SeamStub { seam_id } => {
+                    let _cap = analysis::PilotInventoryDefault::widen_to(1);
+                    let (capped, _) =
+                        analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+                    assert!(
+                        capped
+                            .iter()
+                            .all(|entry| entry.seam.id().as_str() != seam_id),
+                        "precondition: the cap hides the narrowed seam"
+                    );
+                    let located = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get);
+                    let resolved = resolve_test_stub(
+                        &root,
+                        &config,
+                        &TestStubSelector::SeamId(seam_id.clone()),
+                    );
+                    assert_eq!(
+                        analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get),
+                        located + 1,
+                        "a seam id is located by the uncapped seam walk"
+                    );
+                    Some(resolved.map(|resolution| resolution.seam_id))
+                }
+                _ => None,
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            if let StubRouteDecision::SeamStub { seam_id } = &decision {
+                assert_eq!(
+                    executed,
+                    Some(Ok(seam_id.clone())),
+                    "the printed seam-id command resolves the same seam"
+                );
+            }
             Ok(decision)
         };
         let decision = decide("narrow-weak", &weak)?;
