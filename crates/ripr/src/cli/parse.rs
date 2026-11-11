@@ -86,12 +86,14 @@ fn emit_attached_terminal_stdin_note(
 /// refuses as it would `--root ""`. `argv[0]`, short flags, positional
 /// values and every token after a literal `--` are left unchanged.
 ///
-/// A boolean-literal value (`--quiet=false`, `--json=true`, `yes`/`no`,
-/// `on`/`off`) is never split: ripr's switches take no value, and splitting
-/// would turn `--quiet=false` into `--quiet` plus a stray `false` that a
-/// command with a positional item reads as that item, the opposite of what
-/// was typed. The intact token reaches the command parser, which refuses it
-/// as an unknown argument naming exactly what was typed.
+/// A documented switch is never split (`--quiet=false`, `--json=true`):
+/// switches take no value, and splitting would turn `--quiet=false` into
+/// `--quiet` plus a stray `false` that a command with a positional item
+/// reads as that item, the opposite of what was typed. The intact token
+/// reaches the command parser, which refuses it as an unknown argument
+/// naming exactly what was typed. Whether a name is a switch comes from the
+/// command help the `ripr help --json` flag inventory is built from, so the
+/// rule follows the documented options rather than a second list.
 #[doc(hidden)]
 pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
@@ -120,19 +122,32 @@ pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
 fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
     let (name, value) = arg.split_once('=')?;
     let bare = name.strip_prefix("--")?;
-    if is_boolean_literal(value) {
-        return None;
-    }
     let mut chars = bare.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
     let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '-');
-    (first_ok && rest_ok).then_some((name, value))
+    (first_ok && rest_ok && !is_documented_switch(name)).then_some((name, value))
 }
 
-fn is_boolean_literal(value: &str) -> bool {
-    ["true", "false", "yes", "no", "on", "off"]
-        .iter()
-        .any(|literal| value.eq_ignore_ascii_case(literal))
+/// Whether every command help that documents `name` documents it as a
+/// switch (no value). A name no help documents, or one that takes a value
+/// anywhere, is not a switch. Only consulted for `--name=value` tokens, so
+/// ordinary argv never pays for the help scan.
+fn is_documented_switch(name: &str) -> bool {
+    let mut documented = false;
+    for entry in super::command_catalog::catalog() {
+        let Some(body) = super::help::help_text_for(entry.path) else {
+            continue;
+        };
+        for flag in super::help_flags::flags_for(entry.path, body) {
+            if flag.name == name {
+                if flag.takes_value {
+                    return false;
+                }
+                documented = true;
+            }
+        }
+    }
+    documented
 }
 
 /// Extract every global `-v`/`--verbose` occurrence from argv, reporting
@@ -216,8 +231,9 @@ mod tests {
                 "--=x",
                 "--bad name=x",
                 "--quiet=false",
-                "--json=TRUE",
+                "--json=yes",
                 "--base=a=b",
+                "--root=no",
             ])),
             args(&[
                 "ripr",
@@ -237,9 +253,11 @@ mod tests {
                 "--=x",
                 "--bad name=x",
                 "--quiet=false",
-                "--json=TRUE",
+                "--json=yes",
                 "--base",
                 "a=b",
+                "--root",
+                "no",
             ])
         );
     }
