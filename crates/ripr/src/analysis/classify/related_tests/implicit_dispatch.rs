@@ -188,4 +188,60 @@ mod tests {
         let after = "fn t() {\n    drop(g);\n    if c { return; }\n}";
         assert!(at_test_top_level(after, offset(after, "drop(g")));
     }
+
+    #[test]
+    fn every_exit_macro_and_only_a_whole_exit_word_refuses() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        let top_level = |exit: &str| {
+            let body = format!("fn t() {{\n    {exit}\n    drop(g);\n}}");
+            at_test_top_level(&body, offset(&body, "drop(g"))
+        };
+        assert!(!top_level("if c { todo!(); }"));
+        assert!(!top_level("if c { unimplemented!(\"later\"); }"));
+        // Whitespace may separate the macro name from its `!`.
+        assert!(!top_level("if c { panic !(\"no\"); }"));
+        // An exit word without `!` names something else.
+        assert!(top_level("let hook = std::panic::take_hook();"));
+        assert!(top_level("let todo = 1; let unreachable = 2;"));
+        // `return` inside a longer name, on either side.
+        assert!(top_level("let no_return = 1;"));
+        assert!(top_level("let return_code = 1;"));
+    }
+
+    #[test]
+    fn the_fn_header_is_outside_the_body() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        // A `?` in a header bound is not an early exit.
+        let generic = "fn t<T: ?Sized>() {\n    drop(g);\n}";
+        assert!(at_test_top_level(generic, offset(generic, "drop(g")));
+        // A point in the header is not in the body.
+        assert!(!at_test_top_level(generic, 0));
+        // Only the word `fn` makes the first brace the body's own: after a
+        // name that merely starts with it, the brace opens a nested block.
+        let block = "fnmatch(a, b); drop(g); { inner(h); }";
+        assert!(at_test_top_level(block, offset(block, "drop(g")));
+        assert!(!at_test_top_level(block, offset(block, "inner(h")));
+    }
+
+    #[test]
+    fn a_statement_starts_after_the_last_separator() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        // A block that ends without `;` still ends its statement, so its
+        // `|` and its attribute do not reach the next one.
+        let after_match = "fn t() {\n    match x { A | B => (), _ => () }\n    drop(g);\n}";
+        assert!(at_test_top_level(
+            after_match,
+            offset(after_match, "drop(g")
+        ));
+        let after_block = "fn t() {\n    #[allow(unused)] { keep(k) }\n    drop(g);\n}";
+        assert!(at_test_top_level(
+            after_block,
+            offset(after_block, "drop(g")
+        ));
+        // Inside one statement, an earlier `|` or a leading attribute refuses.
+        let argument = "fn t() {\n    run(|| 1, drop(g));\n}";
+        assert!(!at_test_top_level(argument, offset(argument, "drop(g")));
+        let attributed = "fn t() {\n    #[cfg(any())] let n = drop(g);\n}";
+        assert!(!at_test_top_level(attributed, offset(attributed, "drop(g")));
+    }
 }
