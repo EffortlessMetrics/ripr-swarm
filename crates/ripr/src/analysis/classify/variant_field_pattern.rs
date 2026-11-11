@@ -672,6 +672,7 @@ mod tests {
             // The same field name one group down belongs to another value.
             pattern("inner: Inner { pos: 0 }"),
             pattern("inner: (pos, 0)"),
+            pattern("inner: Inner { a: 1, pos: 0, b: 2 }"),
             // The variant head is spelled twice, or with generic arguments.
             "assert_matches!(parse_num(\"x1\"), Err(Pair(BadDigit { pos: 0 }, BadDigit { pos: 0 })));"
                 .to_string(),
@@ -711,6 +712,8 @@ mod tests {
             "my_parse_num(\"x1\")",
             "parse_num(\"x1\")?",
             "parse_num(\"x1\").await",
+            "parse_num(\"x1\")(\"x2\")",
+            "parse_num(\"x1\") == other(\"x2\")",
             // One argument is not a literal.
             "parse_num(\"x1\", n)",
             "parse_num(MAX)",
@@ -732,15 +735,19 @@ mod tests {
     #[test]
     fn a_literal_the_probe_line_does_not_open_is_not_read() {
         let assertion = scrutinee("parse_num(\"x1\")");
-        let pins_at = |owner_body: &str, probe_line: usize, probe_expression: &str| {
-            let changed = ConstructedField {
-                owner_body,
-                owner_start_line: 10,
-                owner_name: "parse_num",
-                probe_line,
-                probe_expression,
+        let pins_as =
+            |assertion: &str, owner_body: &str, probe_line: usize, probe_expression: &str| {
+                let changed = ConstructedField {
+                    owner_body,
+                    owner_start_line: 10,
+                    owner_name: "parse_num",
+                    probe_line,
+                    probe_expression,
+                };
+                pattern_pins_constructed_field(&changed, assertion, assertion, &|_| true, &|_| 1)
             };
-            pattern_pins_constructed_field(&changed, &assertion, &assertion, &|_| true, &|_| 1)
+        let pins_at = |owner_body: &str, probe_line: usize, probe_expression: &str| {
+            pins_as(&assertion, owner_body, probe_line, probe_expression)
         };
         let one_line = "pub fn parse_num(s: &str) -> Result<u32, ParseError> {
     Err(ParseError::BadDigit { pos: 0 + s.len() })
@@ -760,10 +767,15 @@ mod tests {
     })
 }";
         assert!(!pins_at(split, 12, "pos: 0 + s.len()"));
-        // The brace before the initializer does not follow an uppercase path.
+        // The brace before the initializer does not follow an uppercase
+        // path, even when the pattern spells the same head.
         for head in ["build!", "bad_digit", "ParseError::bad_digit"] {
-            let other = one_line.replace("ParseError::BadDigit", head);
-            assert!(!pins_at(&other, 11, "pos: 0 + s.len()"), "{head}");
+            let owner = one_line.replace("ParseError::BadDigit", head);
+            let same_head = assertion.replace("ParseError::BadDigit", head);
+            assert!(
+                !pins_as(&same_head, &owner, 11, "pos: 0 + s.len()"),
+                "{head}"
+            );
         }
         // A closed group earlier on the line is skipped on the way back to
         // the literal's own brace.
