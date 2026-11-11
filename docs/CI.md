@@ -124,12 +124,9 @@ is qualified.
 
 ## Development events and retained bootstrap route
 
-Focused checks, useful tool feedback, substantive review and repair run in the
-owning session before admission. Draft publication, Ready transitions and PR
-updates start no repository Actions workflow. The automated UB Review and Droid
-mention subscribers are retired; their review configuration and guidance remain
-available to the session. A skipped job would still allocate a workflow, so a
-job guard is not an exception to this rule.
+Development checks and review run in-session, using retained UB/Droid guidance.
+Draft publication, Ready transitions and PR updates start no repository Actions;
+retired subscribers cannot be replaced with job guards that still allocate runs.
 
 The source retirement under #4842 removes 41 automatic event roots from 28
 workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
@@ -140,8 +137,7 @@ sentinel, including its exact timer and job payload, remains for the dependent
 incident-probe stage under #4842. That stage carries timer retirement, selected
 commit evidence, tracker changes and their tests together.
 
-This is a source migration stage, not completed native activation. These
-remaining event edges are explicit bootstrap debt:
+Native activation remains incomplete; these event edges are bootstrap debt:
 
 | Retained source | Event and purpose | Retirement condition |
 | --- | --- | --- |
@@ -159,18 +155,14 @@ until its replacement is qualified. After verified activation, admission is
 conditional authorization to land, actual G is qualified once, and the owning
 session reconciles M without routine main replay.
 
-Run `cargo policy check-workflows` in the owning session before publication.
-The existing policy command checks the source event perimeter. It rejects new PR, review, comment and
-push subscribers even when all jobs would be skipped, and rejects unauditable
-flow/alias/duplicate event declarations. The retained label/main exceptions are
-bound to exact files and declarations; the policy cannot establish live settings,
-execution, queue admission or economic acceptance.
+Before publication, run `cargo policy check-workflows`: it rejects new PR,
+review, comment and push subscribers (even skipped jobs), plus unauditable
+flow/alias/duplicate declarations. Exact-file label/main exceptions establish
+no live settings, execution, queue admission or economic acceptance.
 
-Schedules have no blanket exception. The policy preserves only the following
-inspected roots and their current exact cron declarations; an unknown name,
-renamed main-health timer or expanded cadence fails. This inventory preserves
-current separate purposes during preparation, not a claim that every cadence
-is economical or that the final lifecycle is activated.
+Only the inspected roots and exact crons below are allowed; unknown names,
+renamed main-health timers and expanded cadences fail. Retaining these separate
+purposes establishes neither economical cadence nor lifecycle activation.
 
 | Retained scheduled root | Current purpose |
 | --- | --- |

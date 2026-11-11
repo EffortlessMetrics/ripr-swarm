@@ -1,5 +1,5 @@
 <!-- section: Internal / CI -->
 
-- Remove the Unix integration harness and process exceptions for the retired PR
-  dogfood workflow so its deleted YAML no longer breaks test compilation. Check both retired Droid
-  wrapper extensions and clarify historical guidance (#12973).
+- Remove retired PR dogfood harness/process exceptions that broke compilation.
+  Check both retired Droid wrapper extensions, clarify historical guidance,
+  and align the source-of-truth digest contract with retired triggers (#12973).

@@ -1,23 +1,12 @@
 # Historical Factory Droid Rollout
 
-**Historical mention-workflow rollout reference.** Under #4984/#4842, RIPR-SWARM
-no longer supplies or runs `droid.yml`; development review belongs in the owning
-session. Do not copy or recreate its PR/comment event subscriptions. Only the
-separately purposed security scan remains an Actions lane. The historical setup
-and permission findings below retain their original scope; they do not authorize
-restoring development Actions.
-
-This document records the former Factory Droid rollout procedure, including
-its MiniMax BYOK bridge and retired trusted-mention workflow. It is retained as
-historical setup evidence, not a supported procedure for a new repository.
-For current RIPR-SWARM review, use the owning session. The separate security-scan
-configuration remains in `.github/workflows/droid-security-scan.yml`.
+Automatic review (#5086) and mention review (#4984/#4842) are retired.
+Development review belongs in the owning session; only the separate security
+scan remains in `.github/workflows/droid-security-scan.yml`. The MiniMax BYOK
+setup, permissions and rollback steps below are historical evidence, not
+instructions to install an external reviewer or restore event subscriptions.
 
 ## Archived rollout procedure
-
-The remaining steps describe the historical arrangement, including permissions
-and rollback choices. They do not authorize installing an external reviewer or
-restoring a mention-triggered workflow.
 
 ### Former rollout posture
 
