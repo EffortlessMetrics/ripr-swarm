@@ -1007,6 +1007,27 @@ pub(crate) fn capture_bytes_in_dir_with_env_budget(
     )
 }
 
+/// `capture_bytes_in_dir_with_env_budget` that also writes `input` to the
+/// child's stdin (an MCP stdio session with a configured environment).
+pub(crate) fn capture_bytes_in_dir_with_input_env_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: &[(&str, &str)],
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
+        envs,
+        &[],
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
 fn capture_bytes_with_input(
     program: &Path,
     args: &[String],

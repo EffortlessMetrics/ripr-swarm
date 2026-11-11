@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `cargo xtask agent-eval` runs answer-keyed scenarios through each agent route (the `init --agents` CLI loop, human check, `json-terse`, `agent brief`, MCP) and records estimated tokens to the actionable answer, total route tokens, and whether the loop closes (missed and extra gaps, weak test still flagged, reference test ends with `verify=complete`, cargo-confirmed keys), with a committed baseline that `--compare` checks for regressions (#14298).
