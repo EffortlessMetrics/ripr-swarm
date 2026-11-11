@@ -107,7 +107,7 @@ time; the Result job repeats the read before the eligibility recheck. A trusted
 first line is the readiness marker with an allowed tail; a trusted reviewer's later
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). A later line changes the
-disposition only when it states one: it opens, after list, quote, heading or emphasis
+disposition only when it states one: it opens, after list, quote, heading, emphasis or code
 markers, with a `disposition:` field or a state token, or it is a state token alone.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
