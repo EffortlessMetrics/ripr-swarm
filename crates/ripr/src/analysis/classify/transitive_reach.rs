@@ -143,6 +143,7 @@ fn find_transitive_witness(owner_name: &str, index: &RustIndex) -> Option<Transi
 pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     index: &'a RustIndex,
     graph: OnceLock<ReachGraph<'a>>,
+    pub(in crate::analysis) effect_method_names: super::effect_carrier::EffectMethodNames<'a>,
 }
 
 struct ReachGraph<'a> {
@@ -1526,6 +1527,7 @@ impl<'a> TransitiveReachIndex<'a> {
         Self {
             index,
             graph: OnceLock::new(),
+            effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
         }
     }
 
@@ -1590,9 +1592,16 @@ impl<'a> TransitiveReachIndex<'a> {
             .get(callee_name)
             .is_some_and(|functions| functions.len() > 1)
             && shared_owner_call_identity(self.index, callee).is_some();
+        // `callers` holds exactly the names of the production functions
+        // whose non-macro call facts name `callee_name` (built over the same
+        // `by_name` population), so only those names' functions are checked
+        // instead of every function in the workspace on every hop.
         graph
-            .by_name
-            .values()
+            .callers
+            .get(callee_name)
+            .into_iter()
+            .flatten()
+            .filter_map(|caller_name| graph.by_name.get(caller_name))
             .flatten()
             .filter(|function| !function.source_role.is_evidence_role())
             .filter(|function| {
@@ -4395,12 +4404,12 @@ mod tests {
                 })
                 .collect(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4426,10 +4435,10 @@ mod tests {
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -5188,7 +5197,8 @@ mod tests {
                     line: index * 10 + 2,
                     name: "render".to_string(),
                     text: text.into(),
-                }];
+                }]
+                .into();
                 test
             })
             .collect();

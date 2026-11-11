@@ -400,18 +400,27 @@ impl ClassifiedSeamsReport {
     /// pass-wide, and names no causing file. Callers that can render the
     /// limitation read `evidence_limitations` instead.
     pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
-        match self.evidence_limitations.first() {
-            None => Ok(()),
-            Some(limitation) => Err(format!(
-                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
-                limitation.kind.as_str(),
-                limitation
-                    .bounded_detail
-                    .as_deref()
-                    .unwrap_or("every seam reads as an opaque stand-in"),
-                limitation.recovery.detail
-            )),
-        }
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
+    }
+}
+
+/// The one refusal text for a consumer that cannot render the pass-wide
+/// `producer_failure` limitation; the full and the scoped inventory share it.
+fn refuse_failed_evidence(
+    limitations: &[AnalysisLimitation],
+    consumer: &str,
+) -> Result<(), String> {
+    match limitations.first() {
+        None => Ok(()),
+        Some(limitation) => Err(format!(
+            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            limitation.kind.as_str(),
+            limitation
+                .bounded_detail
+                .as_deref()
+                .unwrap_or("every seam reads as an opaque stand-in"),
+            limitation.recovery.detail
+        )),
     }
 }
 
@@ -892,7 +901,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
             serde_json::json!({
                 "path": portable_store_failure_path(&failure.path),
                 "stage": failure.stage,
-                "error": failure.error,
+                "error": portable_store_failure_error(&failure.error),
             })
         })
         .collect()
@@ -903,7 +912,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
 /// rows and states the remainder, so a broken cache cannot flood the terminal.
 const ORDINARY_STORE_FAILURE_LINES: usize = 5;
 
-fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
+pub(crate) fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     if stats.store_errors == 0 {
         return Vec::new();
     }
@@ -929,7 +938,7 @@ fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     lines
 }
 
-fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+pub(crate) fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
     let rows = file_fact_store_failure_rows(stats);
     serde_json::json!({
         "schema_version": "0.1",
@@ -951,13 +960,46 @@ fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
 fn portable_store_failure_path(path: &Path) -> Option<String> {
     let mut parts = Vec::new();
     for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return None;
+        }
         let part = component.as_os_str().to_str()?;
-        if part.contains('\\') {
+        if part.contains('\\') || (parts.is_empty() && part.as_bytes().get(1) == Some(&b':')) {
             return None;
         }
         parts.push(part);
     }
-    Some(parts.join("/"))
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// Store errors are normally path-free, but an unexpected producer message
+/// must not disclose a host path through the public receipt or stderr.
+fn portable_store_failure_error(error: &str) -> &str {
+    if !error.contains(['/', '\\']) {
+        return error;
+    }
+    // A native OS error may itself contain a slash (for example Linux EIO or
+    // Windows error 1117). Only accept the exact platform-generated message,
+    // optionally following a path-free producer context and a single `: `.
+    let native = error
+        .rsplit_once(" (os error ")
+        .and_then(|(_, code)| code.strip_suffix(')'))
+        .and_then(|code| code.parse::<i32>().ok())
+        .map(|code| std::io::Error::from_raw_os_error(code).to_string());
+    let safe_context = native
+        .as_deref()
+        .and_then(|detail| error.strip_suffix(detail))
+        .is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix
+                    .strip_suffix(": ")
+                    .is_some_and(|context| !context.contains(['/', '\\', ':']))
+        });
+    if safe_context {
+        error
+    } else {
+        "details withheld: error contains a path separator"
+    }
 }
 
 fn cache_store_status_label(reason: &str) -> String {
@@ -1483,6 +1525,13 @@ impl ScopedClassifiedSeamInventory {
     /// replayed as complete.
     pub(crate) fn evidence_incomplete(&self) -> bool {
         !self.evidence_limitations.is_empty()
+    }
+
+    /// Fail closed for a scoped consumer that cannot render the pass-wide
+    /// limitation (#13340); the same refusal as
+    /// `ClassifiedSeamsReport::require_complete_evidence`.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
     }
 }
 
@@ -2151,6 +2200,42 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Complete canonical inventory for one file's stub guidance (#11358).
+/// Only result reuse differs from the ordinary diff-scoped wrapper: every
+/// scoped seam is classified against the full workspace evidence, with no
+/// staged filtering, caller expansion, or repo-wide seam-limit computation.
+/// The full content/configuration key and source revalidation still govern
+/// both memory and disk hits; an unavailable cache falls back to that same work.
+pub(crate) fn inventory_file_guidance_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let changed = [file.to_path_buf()];
+    let identity = file_guidance_reuse_identity(file);
+    let mut inputs = DiffScopeInputs::canonical(&changed, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        inputs,
+        !no_impact_fast_path_disabled(),
+        None,
+        None,
+    )
+}
+
+/// Disjoint from staged/bound identities. Preserve the exact native path
+/// spelling: a literal backslash on Unix must not alias a directory separator.
+/// Equivalent spellings may conservatively miss; neither scope normalization
+/// nor lossy display text owns this cache key. The workspace key separately
+/// binds the root, analyzer, configuration and complete consumed corpus.
+fn file_guidance_reuse_identity(file: &Path) -> Vec<u8> {
+    let mut identity = b"file-guidance-v3-lossless-key\0".to_vec();
+    identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+    identity
+}
+
 /// Whether a seam can be named by a changed finding's gap: it sits in a
 /// changed file, or its owner is exactly a changed gap owner. Every
 /// seam-to-finding join the card binding and the shared repair validator run
@@ -2219,6 +2304,7 @@ pub(crate) fn inventory_diff_scoped_bound_seams_at_with_config(
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: true,
+            complete_scope_reuse: None,
         },
         !no_impact_fast_path_disabled(),
         Some(&stages),
@@ -2497,6 +2583,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
             changed_owner_names: &[],
             generated_context: Some(changed_paths),
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         },
         false,
         Some(&stages),
@@ -2756,6 +2843,9 @@ struct DiffScopeInputs<'a> {
     generated_context: Option<&'a [PathBuf]>,
     /// Also derive the repo-wide seam-limit fact from the built index.
     with_repo_seam_limit: bool,
+    /// Explicit opt-in for a complete canonical scope, independently of the
+    /// two-stage consumer. Its identity must bind the exact scope selection.
+    complete_scope_reuse: Option<&'a [u8]>,
 }
 
 impl<'a> DiffScopeInputs<'a> {
@@ -2765,6 +2855,7 @@ impl<'a> DiffScopeInputs<'a> {
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         }
     }
 }
@@ -2951,6 +3042,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         changed_owner_names,
         generated_context,
         with_repo_seam_limit,
+        complete_scope_reuse,
     } = inputs;
     cancellation::checkpoint()?;
     let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
@@ -2981,7 +3073,14 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
             Duration::ZERO,
         );
     }
-    let reuse_requested = stages.and_then(|stages| stages.reuse).is_some() && consumer.is_none();
+    // Complete-scope reuse never changes the staged/streamed consumers or
+    // borrows their identity. Its sole caller asks for the canonical file scope.
+    let complete_scope_reuse = complete_scope_reuse
+        .filter(|_| stages.is_none() && generated_context.is_none() && !with_repo_seam_limit);
+    let reuse_candidate = stages
+        .and_then(|stages| stages.reuse)
+        .or(complete_scope_reuse);
+    let reuse_requested = reuse_candidate.is_some() && consumer.is_none();
     let state = if reuse_requested {
         if let Some(paths) = generated_context {
             let (corpus, _) =
@@ -2998,12 +3097,16 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         workspace_state_from_paths(root, config, rust_files)
     };
     cancellation::checkpoint()?;
-    let reuse_identity = stages
-        .and_then(|stages| stages.reuse)
-        .filter(|_| consumer.is_none());
     let (reuse_identity, workspace_cache_key) = if reuse_requested {
         let key = state.cache_key();
-        (reuse_identity.filter(|_| key.is_reusable()), Some(key))
+        // The shared key folds lossy text and rewrites `\\` to `/`. Complete
+        // guidance names a file by native bytes, so it reuses only when this
+        // corpus and root round-trip through that key exactly (#11358).
+        let representable = complete_scope_reuse.is_none() || state.key_represents_paths_exactly();
+        (
+            reuse_candidate.filter(|_| consumer.is_none() && key.is_reusable() && representable),
+            Some(key),
+        )
     } else {
         (None, None)
     };
@@ -3016,6 +3119,11 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
             Duration::ZERO,
         );
         reused.absent_changed_files = absent_changed_files;
+        if complete_scope_reuse.is_some() {
+            // Like a persisted hit, this invocation did no file-fact work. The
+            // persisted entry's own disk read sits outside these file-fact stats.
+            reused.file_fact_cache = FileFactCacheStats::default();
+        }
         // The entry is for the hashed corpus; confirm it is still those bytes.
         // The carrier is this invocation's own observation of that corpus.
         reused.consumed_sources = state.consumed.clone();
@@ -3877,6 +3985,13 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
+/// platform separator is `separator`. Split out so the Windows rule is testable
+/// on every host.
+fn paths_fold_losslessly_in_key(text: &str, separator: char) -> bool {
+    separator == '\\' || !text.contains('\\')
+}
+
 /// Owned workspace state for the inventory pipeline (issue #4996).
 ///
 /// Holds sorted corpus paths plus the aggregate `files_content_hash` —
@@ -4074,6 +4189,23 @@ impl OwnedWorkspaceState {
                 self.workspace_root.display()
             ))
         }
+    }
+
+    /// Whether the aggregate key distinguishes every corpus path and the root
+    /// by their exact spelling. It folds `to_string_lossy` text and maps `\\`
+    /// to `/`, so a non-UTF-8 name or a literal backslash can collide with a
+    /// different path (for example `tests\\a.rs` against `tests/a.rs`).
+    ///
+    /// Where `\` is the platform separator (native Windows) it is the same
+    /// separator the key folds to `/`, so it loses nothing and stays reusable;
+    /// elsewhere it is an ordinary file-name byte and is unrepresentable.
+    fn key_represents_paths_exactly(&self) -> bool {
+        self.workspace_root.to_str().is_some()
+            && self.files.iter().all(|path| {
+                path.to_str().is_some_and(|text| {
+                    paths_fold_losslessly_in_key(text, std::path::MAIN_SEPARATOR)
+                })
+            })
     }
 
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
@@ -4679,7 +4811,16 @@ fn build_seam_from_shape(
         Some(field) => RequiredDiscriminator::FieldValue { field },
         None => required_discriminator_for(kind, &expression),
     };
-    let expected_sink = expected_sink_for(kind);
+    let expected_sink = if kind == SeamKind::PredicateBoundary
+        && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
+            owner_fact.body.as_str(),
+            owner_fact.start_line,
+            shape.start_line,
+        ) {
+        ExpectedSink::SideEffect
+    } else {
+        expected_sink_for(kind)
+    };
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
     // CRLF working tree and an LF checkout of the same commit must produce
@@ -4925,6 +5066,128 @@ mod tests {
         assert_eq!(value["store_failures"][1]["path"], expected_bar);
         assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    /// Host-path samples are assembled at run time so the repository's local
+    /// context policy does not see a literal machine path in this source.
+    fn host_text(template: &str) -> String {
+        template
+            .replace("<unix-home>", &format!("/{}/user", "home"))
+            .replace("<win-home>", &format!("{}:{}Users{}user", 'C', '\\', '\\'))
+    }
+
+    #[test]
+    fn cache_failure_projection_refuses_host_paths_and_preserves_safe_details() {
+        let mut stats = FileFactCacheStats::zero_work();
+        for (path, message) in [
+            (
+                "<unix-home>/cache/secret",
+                "write <unix-home>/cache/secret failed",
+            ),
+            ("../outside.rs", "permission denied"),
+            ("<win-home>\\cache", "write <win-home>\\cache failed"),
+            ("src/lib.rs", "permission denied"),
+        ] {
+            stats.record_store_failure(
+                PathBuf::from(host_text(path)),
+                super::super::seam_cache::FileFactStoreError {
+                    stage: super::super::seam_cache::FileFactStoreStage::Write,
+                    message: host_text(message),
+                },
+            );
+        }
+        let receipt = file_fact_cache_receipt(&stats);
+        let rows = &receipt["store_failures"];
+        for index in 0..3 {
+            assert!(rows[index]["path"].is_null());
+        }
+        assert_eq!(rows[3]["path"], "src/lib.rs");
+        assert_eq!(rows[3]["error"], "permission denied");
+        let rendered = format!("{receipt} {:?}", file_fact_store_failure_summary(&stats));
+        assert!(!rendered.contains(&host_text("<unix-home>")));
+        assert!(!rendered.contains("Users"));
+    }
+
+    #[test]
+    fn cache_failure_error_preserves_eio_but_not_paths_beside_it() {
+        #[cfg(target_os = "linux")]
+        let eio = format!(
+            "create file fact cache dir failed: {}",
+            std::io::Error::from_raw_os_error(5)
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(portable_store_failure_error(&eio), eio);
+        #[cfg(target_os = "linux")]
+        {
+            let remote = format!("write: {}", std::io::Error::from_raw_os_error(121));
+            assert_eq!(portable_store_failure_error(&remote), remote);
+            for errno in 1..=255 {
+                let bare = std::io::Error::from_raw_os_error(errno).to_string();
+                assert_eq!(portable_store_failure_error(&bare), bare, "errno {errno}");
+                let detail = format!("write: {bare}");
+                assert_eq!(
+                    portable_store_failure_error(&detail),
+                    detail,
+                    "errno {errno}"
+                );
+            }
+        }
+        #[cfg(windows)]
+        {
+            let detail = format!("write: {}", std::io::Error::from_raw_os_error(1117));
+            assert_eq!(portable_store_failure_error(&detail), detail);
+        }
+        for safe in [
+            "permission denied (os error 13)",
+            "No space left on device (os error 28)",
+        ] {
+            assert_eq!(portable_store_failure_error(safe), safe);
+        }
+        for unsafe_detail in [
+            "write <unix-home>/cache failed",
+            "write <win-home>\\cache failed",
+            "write \\\\server\\share\\cache failed",
+            "write ../outside/cache failed",
+            "Input/output error (os error 5): <unix-home>/cache",
+            "<unix-home>/Input/output error (os error 5)",
+            "Remote I/O error (os error 121): \\\\server\\share",
+            "C:private: Input/output error (os error 5)",
+            "open <unix-home>: Input/output error (os error 5)",
+            "Input/output error (os error 5): ../outside",
+            "nested: context: Input/output error (os error 5)",
+            "write: Input/output error (os error 99999999999999999999999)",
+            "write: Input/output error (os error five)",
+            "write: Input/output error (os error 5) <unix-home>",
+        ] {
+            assert_eq!(
+                portable_store_failure_error(&host_text(unsafe_detail)),
+                "details withheld: error contains a path separator"
+            );
+        }
+    }
+
+    #[test]
+    fn merged_cache_failure_snapshots_keep_cap_order_and_denominator() {
+        let mut merged = FileFactCacheStats::zero_work();
+        for batch in 0..3 {
+            let mut source = FileFactCacheStats::zero_work();
+            for index in 0..if batch == 1 { 40 } else { 20 } {
+                source.record_store_failure(
+                    PathBuf::from(format!("src/{batch}-{index}.rs")),
+                    super::super::seam_cache::FileFactStoreError {
+                        stage: super::super::seam_cache::FileFactStoreStage::Write,
+                        message: "blocked".to_string(),
+                    },
+                );
+            }
+            merged.merge_from(&source);
+        }
+        let receipt = file_fact_cache_receipt(&merged);
+        assert_eq!(receipt["store_errors"], 80);
+        assert_eq!(receipt["store_failures"].as_array().map(Vec::len), Some(32));
+        assert_eq!(receipt["store_failures_dropped"], 48);
+        assert_eq!(receipt["store_failures"][0]["path"], "src/0-0.rs");
+        assert_eq!(receipt["store_failures"][31]["path"], "src/1-11.rs");
     }
 
     #[test]
@@ -8425,14 +8688,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 1,
             end_line: 5,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8480,14 +8743,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 10,
             end_line: 14,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::TestAttribute,
-            attrs: vec!["#[test]".to_string()],
+            attrs: vec!["#[test]".to_string()].into(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -15908,3 +16171,7 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "lang-rust"))]
+#[path = "file_guidance_inventory_tests.rs"]
+mod file_guidance_inventory_tests;

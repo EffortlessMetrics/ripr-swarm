@@ -109,6 +109,29 @@ negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding s
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
 
+When GitHub throttles review writes ("was submitted too quickly"; the limit is per
+account), the same attestation can be carried by the pull request description
+instead (#4984). Put exactly one line at column zero, outside code fences and HTML
+comments:
+
+```text
+Source review: REVIEW_READY <full 40-character head SHA>
+```
+
+`SOURCE_REVIEW_READY` is accepted in place of `REVIEW_READY`. The SHA must be the
+full lowercase current head, so the line goes stale on the next push and has to be
+rewritten for the new head. The line is read only for a same-repository pull
+request whose author association is OWNER, MEMBER or COLLABORATOR, the same accounts
+that could already self-attest with a COMMENT review. It is another carrier for the
+same statement, not another authority: a `CHANGES_REQUESTED` review or a trusted
+reviewer's current negative review still refuses, and removing the line withdraws
+the attestation before the Result job's recheck. A description that also carries a
+`disposition:` line attests nothing, and a trusted reviewer's negative current-head
+review keeps refusing after that reviewer's own neutral thread replies, until they
+post a ready review themselves. Record what the review inspected
+in the description or a later comment; the line itself carries no prose. Prefer
+the native review when it can be posted, since its commit binding is set by GitHub.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -144,14 +167,16 @@ superseded.
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
   with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
+  only when `merge-ready` is re-applied. UB is the explicit exception:
+  `full-ci` alone requests its advisory review, and `merge-ready` never does.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
-- Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+- Explicit exception: `ub-review` is requested by `full-ci` itself, never by
+  `merge-ready` alone. Its event, concurrency and publication contracts are
+  pinned by `pr_readiness_workflow_contract`. The Python wheel workflow and
+  `source-of-truth` keep their own triggers; their cutover is tracked under #4984.
 
 ### What starts what
 
@@ -162,6 +187,10 @@ superseded.
 | Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
 | Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
 | Any other label | no (posts `Merge-ready Nonrequest`) | no |
+
+The required-check and gated-lane columns here do not include UB's direct
+`full-ci` advisory event, which creates no required check. See the UB notes
+below for its separate publication and concurrency behavior.
 
 The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
 is review state only and starts no required work. Gating the required job by
@@ -183,7 +212,7 @@ reviewed candidate, never as a general "please run CI" signal.
 
 | State | How to read it on the PR | Next action |
 | --- | --- | --- |
-| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Candidate | Draft or Ready, no `merge-ready` for this head; light checks run on push, UB waits for `full-ci`, and gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
 | Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
 | Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
 | Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
@@ -191,7 +220,8 @@ reviewed candidate, never as a general "please run CI" signal.
 
 A green `ub-review` wrapper is advisory: read its review and sensor output, not
 only the conclusion (see the `ub-review` notes under Current Workflows). A
-cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
+cancelled `ub-review` run was superseded by re-requesting `full-ci` for a head
+and is not a result.
 
 ## Verification Economics Policy
 
@@ -461,8 +491,8 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. For the gated lanes in this table, add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; those labels have no effect without it. **UB is the exception:** `full-ci` alone requests UB advisory review, and `merge-ready` alone never requests UB. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `full-ci` | Its own labeled event requests advisory UB review, independently of `merge-ready`. It also selects required, advisory and release-like lanes when `merge-ready` is applied; for Routed Rust Small it must be present then. Demotes `ripr-waive` for this PR. Expected to cost more. Adding it afterward does not rerun those lanes or repeat UB; re-apply `full-ci` for a new head. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -513,7 +543,15 @@ and single-platform CI was the root cause enabling both.
   reported spawn status 127, or an expected test is missing, duplicated or
   ignored in the log: a status file alone cannot tell these four tests from a
   renamed filter that matched nothing (#10621).
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its warm build produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **Retained file-policy evidence.** After the two-run verdict, an isolated
+  `policy_checker_facade_runs_current_repo_checks` run writes the report and
+  subject sidecar, then `cargo xtask windows-advisory-file-policy-evidence`
+  admits `target/ripr/reports/file-policy.md` only when the facade log, cargo
+  status, checkout head, sidecar report-byte SHA-256, and packet oracle agree
+  (#5044). A sidecar from another report cannot qualify changed bytes even when
+  both reports have valid coverage rows. Uploading
+  the path with `if-no-files-found: ignore` is not admission.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -712,8 +750,8 @@ normalization behavior surfaced only on a maintainer's local run.
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
 
-- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
-  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+- **What runs.** `cargo xtask kani`, which runs `cargo kani` once per owning package (`ripr`
+  and `ripr-contract`) over discovered `#[kani::proof]` harnesses (harnesses live in `#[cfg(kani)]` modules next to the
   code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
   harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
@@ -728,10 +766,11 @@ check and does not run on ordinary pushes or PR updates.
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
 - **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
-  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
-  workflow (same guard shape as the merge-ready label flow; re-apply
-  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
-  run takes minutes and several GB of memory.
+  pull request that touches `crates/ripr/src/**`, `crates/ripr-contract/src/**`,
+  `xtask/src/kani_lane.rs` or the workflow (same guard shape as the merge-ready
+  label flow; re-apply `merge-ready` for a later head). Kani runs once per owning
+  package (`ripr`, then `ripr-contract`) under one whole-run deadline and compiles
+  each whole library, so a run takes minutes and several GB of memory.
 
 ### Advisory Printed-Command Paste Lane
 
@@ -954,18 +993,30 @@ the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
-UB retains early review on `opened`, `synchronize`, and `reopened`, including
-Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
-cancels active UB review nor repeats completed advisory work. Its existing
-same-repository guard and concurrency remain unchanged. Automatic Droid PR
-review is retired under #5086; manual `@droid` commands and scheduled security
-scans retain their separate triggers and safeguards. UB explicitly lists all
-three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
+UB runs only for a same-repository `full-ci` labeled event. The workflow
+subscribes only to `labeled`, and its executable job guard additionally requires
+`github.event.action == 'labeled'` and `github.event.label.name == 'full-ci'`.
+Non-full-ci labels, `merge-ready` alone, Ready, reopen and push do not execute
+the UB job or invoke its sensors. `full-ci` requests one advisory review of the
+exact head passed by `pr-head-sha`. Remove and re-apply `full-ci` after a new
+head is ready for advisory review. The same-repository fork guard is unchanged.
+Admitted `full-ci` requests share a per-PR concurrency group with cancellation,
+so a new request supersedes its predecessor. Other labels use unique per-run
+groups and cannot cancel the admitted UB run before their own job is skipped.
+In either case, `cancel-in-progress` applies only within that group and a
+cancelled old run is not review evidence.
+
+The full-ci label is an explicit operator review request, so the job selects
+`run-pass: manual`. The pinned action's `pull_request_other` pass is
+artifact-only, while its documented manual operator request bypasses the pass
+publication list. The workflow still requires the same-repository/full-ci job
+guard and exact `pr-head-sha`; `manual` here records that explicit opt-in rather
+than relabeling it as `synchronize`. `.ub-review.toml` retains the original
+`opened`, `synchronize` and `reopened` publication events. The action pin,
+sensors, evidence receipts, exact head, artifacts and advisory posture are
+unchanged. Automatic Droid PR review remains retired under
+#5086; manual `@droid` commands and scheduled security scans retain their
+separate triggers and safeguards.
 
 Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
 action/config identity, and review receipts. The same PR head with a changed
@@ -973,10 +1024,11 @@ base or merge tree is a different review identity; this event change supplies
 no cache hit or integration re-review. Before merge, inspect material integration
 changes and obtain applicable fresh review through the existing review route.
 Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
+failed, or skipped provider remains missing review evidence; no synthetic
+success replaces it. A green wrapper remains advisory: inspect the review and
+sensor output rather than treating the wrapper as proof or qualification.
+`xtask/tests/pr_readiness_workflow_contract.rs` checks parsed event/config and
+executable guard contracts, not hosted provider execution.
 
 UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
 workflow test and run commands use `--no-default-features` to build the JSON
@@ -1016,8 +1068,8 @@ needs its own evidence.
 - A push after the request leaves the new head without the required check.
   Refresh affected proof and review, then remove and re-apply `merge-ready`
   for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+- For lanes other than UB, labels such as `full-ci` take effect at the next
+  `merge-ready` request, not when they are added; add them before the request.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1317,17 +1369,25 @@ automation code from obscuring product quality:
 The component split uses Codecov's path-based named statuses. Future coverage
 ratchets should follow the [calibration strategy](IMPLEMENTATION_CAMPAIGNS.md).
 
-The Test Analytics workflow currently runs:
+The Test Analytics workflow currently runs the all-features suite as four
+nextest hash partitions (#12916), mirroring the required shards, plus doctests
+on shard 1 only:
 
 ```bash
-cargo nextest run --workspace --all-features --profile ci
+cargo nextest run --workspace --all-features --profile ci --partition hash:N/4
 cargo test --workspace --doc
 ```
 
-It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
-the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
-on trusted runs. Fork pull requests still run tests and upload the artifact, but
-skip the Codecov test-results upload because repository secrets are unavailable.
+A combine job verifies the four partitions are a disjoint, complete, green
+cover of the all-features workspace (`cargo xtask verify-test-shards
+--all-features`) and only then uploads the combined JUnit XML as the
+`rust-junit` GitHub Actions artifact, publishes the advisory slow-test report
+(`cargo xtask slow-test-report`), and uploads the same combined file to
+Codecov Test Analytics only when `CODECOV_TOKEN` is available on trusted
+runs. Fork pull requests still run tests and upload the artifact, but skip
+the Codecov test-results upload because repository secrets are unavailable.
+The lane remains advisory; the required shards remain the blocking test
+enforcement.
 
 ### Merge-ready Conflict Notice
 
@@ -1440,11 +1500,27 @@ per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and
 closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
+detection latency is roughly forty minutes (interval plus probe).
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Main's push gates do finish, because their
+concurrency supersedes only queued runs, so about one run per gate completes
+each hour. Each fire therefore also reads the latest completed, non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Gate-level detection latency is the gate
+cadence plus up to thirty minutes. The
 `xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
 shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 
@@ -1827,7 +1903,9 @@ ripr review-comments \
 ```
 
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
-not post to GitHub by itself. The generated workflow then:
+not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
+can pair it with `ripr gate evaluate --mode acknowledgeable`; see
+[coming from cargo-mutants](FROM_CARGO_MUTANTS.md). The generated workflow then:
 
 - appends the Markdown summary to `$GITHUB_STEP_SUMMARY`;
 - emits check annotations from changed-line entries;
@@ -2730,7 +2808,7 @@ The coverage and Test Analytics workflows run on `ubuntu-latest`. Both lanes
 remain advisory, but release candidates need an observable green boundary; these
 lanes must not depend on self-hosted runner availability just to prove that the
 current workspace can produce coverage and JUnit artifacts. The jobs still run
-only on pull requests, pushes to `main`/`master`, and manual dispatches, and
+only on pull requests, a daily schedule on `main`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
 The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
@@ -2928,17 +3006,44 @@ and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
 
 ## Install Receipt
 
-`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
-(#13064) records the per-platform, per-channel install seconds behind the R0
-install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
-JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
-into a directory and pass it as `--cells`. The command merges them with the
-hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
-archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
-cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
-`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
-default and re-validates the checked-in receipt offline. It is not part of
-`precommit`.
+`cargo xtask install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]`
+(#13064, #12909) records the per-platform, per-channel install seconds behind the
+R0 install row in `docs/METRICS.md`. `published-install-matrix.yml` (cargo, PyPI,
+npm, binstall) and `first-run-archive.yml` (release archive) upload one JSON file
+per cell (`install-cell-<channel>-<os>`). Download each run's artifacts into its
+own directory and pass one `--cells <dir> --run-id <id>` pair per run; a cell may
+appear in several runs but only once per run. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels no workflow installs: the
+editor extension, generated CI and Homebrew) and refuses a missing, repeated or
+unknown cell.
+
+Each cell is judged on all its samples. A failed or broken sample fails it; a
+cell that is a documented gap in every run is `not_established`. A working cell
+is timed by the median of its working samples of the newest version it reports
+(older-release samples stay listed but are not judged): prebuilt channels (archive,
+binstall, PyPI, npm) against the 300 s first-value bar, and `cargo install`,
+which compiles from source on a runner whose speed varies run to run, against
+900 s on the median of at least three samples. The 900 s source-build bar was
+requested by the release ladder owner, who reconciles the R0 row in
+`docs/METRICS.md`. The archive cell records `failed` when the binary does not
+report the resolved release. `--write` writes
+`metrics/install/receipt.json` and `receipt.md`; `--check` is the default and
+re-derives the whole checked-in receipt from its own samples offline. It is not
+part of `precommit`. The binstall cells stay `known_gap` until a release carries
+the binstall metadata (0.11.0); they install only our own release archive, never
+a third-party prebuilt or a source build.
+
+After a publication, dispatch `published-install-matrix.yml` with
+`release_version` set to the exact release (for example `0.11.0`). That pins
+cargo, PyPI and npm to it and fails any non-gap cell whose `ripr --version` is
+not `ripr <release_version>` (an appended build commit, `(<40 hex>[-dirty])`, is
+accepted; a gap cell that installs the wrong version is
+reported with a warning), so one run answers "does every channel serve the
+version we announced". Record it with `cargo xtask install-receipt --cells <matrix-dir> --run-id
+<matrix-run> --cells <archive-dir> --run-id <archive-run> --write`, adding the
+artifacts of a `first-run-archive.yml` run because the receipt needs every
+archive cell too. Set it instead of `cargo_version`; if both are set, `cargo_version`
+wins for the install and the version check then fails the cargo cells. A scheduled run leaves it empty and checks whatever is latest.
 
 ## Capability Registry Docs Block
 

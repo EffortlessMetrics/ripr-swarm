@@ -1826,11 +1826,20 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
         snapshot.base.as_deref(),
         crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
     );
-    Some(json!({
+    let mut hint = json!({
         "why": why,
         "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
         "pass_source": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
-    }))
+    });
+    // #13096: a base-less empty scope most often means the default base
+    // resolved to the analyzed commit. Name the concrete last-commit retry so
+    // the agent is told which base to pass. Nothing is inferred or run, and a
+    // `HEAD~1` that does not exist fails closed with a typed base failure.
+    if snapshot.base.is_none() && !snapshot.outcome.kind.is_no_behavioral_candidates() {
+        hint["pass_base_last_commit"] =
+            json!(AnalysisOutcomeKind::EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE);
+    }
+    Some(hint)
 }
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
@@ -2623,8 +2632,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -3089,8 +3101,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -3170,8 +3185,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -5702,6 +5720,16 @@ mod tests {
             {
                 return Err(format!("why must match the outcome kind: {default_why}"));
             }
+            // #13096: the last-commit retry is named only for the kinds whose
+            // default base resolved to the analyzed commit.
+            let last_commit = document["empty_scope_hint"].get("pass_base_last_commit");
+            let expected = (kind != AnalysisOutcomeKind::NoBehavioralCandidates)
+                .then(|| json!(AnalysisOutcomeKind::EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE));
+            if last_commit != expected.as_ref()
+                || last_commit.is_some_and(|route| !route.to_string().contains("HEAD~1"))
+            {
+                return Err(format!("{kind:?} last-commit retry mismatch: {document}"));
+            }
             // #13273: a later request names a newer base and fails; the
             // retained snapshot still analyzed the default base, so its hint
             // must keep saying so. This is the removal control: deriving the
@@ -5760,6 +5788,14 @@ mod tests {
                 return Err(format!(
                     "retained explicit-base snapshot must explain its own base: {named_why}"
                 ));
+            }
+            // A snapshot analyzed against an explicit base never offers the
+            // default-base last-commit retry.
+            if named["empty_scope_hint"]
+                .get("pass_base_last_commit")
+                .is_some()
+            {
+                return Err(format!("explicit-base hint offered HEAD~1: {named}"));
             }
             let retained_some = named["verify"]["mcp"]["arguments"].clone();
             if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {

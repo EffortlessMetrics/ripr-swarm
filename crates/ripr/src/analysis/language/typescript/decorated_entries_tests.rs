@@ -327,3 +327,232 @@ fn only_a_plain_function_expression_wrapper_is_admitted() {
     ));
     assert_eq!(decorator_entries(AUDITED).len(), 1);
 }
+
+fn memo_source(declaration: &str, wrapper_body: &str) -> String {
+    format!(
+        r#"
+export function audited(_target: object, _key: string, descriptor: PropertyDescriptor): void {{
+  const original = descriptor.value as (n: number) => number;
+  {declaration}
+  descriptor.value = function (this: unknown, n: number): number {{
+{wrapper_body}
+  }};
+}}
+
+export class Calc {{
+  @audited
+  square(n: number): number {{
+    return n * n;
+  }}
+}}
+"#
+    )
+}
+
+const MEMO_CACHE: &str = "const cache = new Map<number, number>();";
+const MEMO_BODY: &str = "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n) + 1);
+    }
+    return cache.get(n) as number;";
+
+#[test]
+fn memoizing_decorator_records_the_cache_set_lines() {
+    let entries = decorator_entries(&memo_source(MEMO_CACHE, MEMO_BODY));
+    assert_eq!(entries.len(), 1, "expected one entry, got {entries:?}");
+    assert_eq!(entries[0].name, "square");
+    assert_eq!(
+        entries[0].decorated,
+        Some(TypeScriptDecoratedMethod {
+            class_name: "Calc".to_string(),
+            default_export: false,
+            return_start_line: 7,
+            return_end_line: 7,
+        })
+    );
+    // A braceless guard with the set on its own line and a non-null return
+    // are the same idiom.
+    let braceless = "    if (!cache.has(n))
+      cache.set(n, original.call(this, n));
+    return cache.get(n)!;";
+    assert_eq!(
+        decorator_entries(&memo_source(MEMO_CACHE, braceless)).len(),
+        1,
+        "a braceless guard and a non-null return are the same idiom"
+    );
+    // A set sharing its line with the guard: an edit there can disable the
+    // memo (`if (true) cache.set(..)`) without changing any result.
+    let shared = "    if (!cache.has(n)) cache.set(n, original.call(this, n));
+    return cache.get(n)!;";
+    assert_no_decorated_entry(&memo_source(MEMO_CACHE, shared));
+}
+
+#[test]
+fn memoizing_decorator_refuses_a_cache_that_can_hold_other_values() {
+    // Prefilled, rebindable, or not a Map: `get` can return a value `set`
+    // never computed.
+    for declaration in [
+        "const cache = new Map<number, number>([[4, 99]]);",
+        "let cache = new Map<number, number>();",
+        "const cache = new WeakMap<object, number>();",
+        "const cache = makeCache();",
+        "",
+    ] {
+        assert_no_decorated_entry(&memo_source(declaration, MEMO_BODY));
+    }
+    // Any other use of the cache name can clear, prefill or leak it.
+    let leaked = memo_source(
+        "const cache = new Map<number, number>(); registry.push(cache);",
+        MEMO_BODY,
+    );
+    assert_no_decorated_entry(&leaked);
+}
+
+#[test]
+fn memoizing_decorator_refuses_mismatched_keys_and_extra_flow() {
+    for body in [
+        // `get` reads another key than `set` wrote.
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(0) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n + 1, original.call(this, n));
+    }
+    return cache.get(n) as number;",
+        // An else branch, an extra statement, or a combined return.
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    } else {
+      calls.push(n);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+      calls.push(n);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return (cache.get(n) as number) + 1;",
+        // A guard that is not `!cache.has(key)`.
+        "    if (cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(n) as number;",
+        // The stored value is not the original's result, or rebinds the key.
+        "    if (!cache.has(n)) {
+      cache.set(n, 99);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, (n = 5)));
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n) || 0);
+    }
+    return cache.get(n) as number;",
+    ] {
+        assert_no_decorated_entry(&memo_source(MEMO_CACHE, body));
+    }
+    // `get` reads another identifier key than `set` wrote.
+    let other_key = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(m) as number;",
+    )
+    .replace("n: number)", "n: number, m: number)");
+    assert!(other_key.contains("m: number)"), "fixture must declare `m`");
+    assert_no_decorated_entry(&other_key);
+    // A destructured or rest parameter can hide a default that rebinds the
+    // key.
+    for parameters in [
+        "n: number, { bump = () => { n = 0; } }: { bump?: () => void }",
+        "n: number, ...[bump = () => { n = 0; }]: Array<() => void>",
+    ] {
+        let hidden =
+            memo_source(MEMO_CACHE, MEMO_BODY).replace("n: number)", &format!("{parameters})"));
+        assert!(
+            hidden.contains("bump = "),
+            "fixture must carry the hidden default"
+        );
+        assert_no_decorated_entry(&hidden);
+    }
+}
+
+#[test]
+fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
+    // `Map` rebound or patched anywhere in the file, an escape that spells a
+    // name the counts cannot see, or dynamic evaluation: the cache may not be
+    // a plain Map.
+    let base = memo_source(MEMO_CACHE, MEMO_BODY);
+    for prefix in [
+        "import { Map } from \"immutable\";\n",
+        "class Map<K, V> { get(_k: K): V | undefined { return undefined; } }\n",
+        "const Map = FakeMap;\n",
+        "Map.prototype.get = () => 99;\n",
+        "const M\\u0061p = FakeMap;\n",
+        "eval(\"ca\" + \"che.set(4, 99)\");\n",
+        "new Function(\"return 1\")();\n",
+        "(globalThis as any)[\"Ma\" + \"p\"] = FakeMap;\n",
+        "(globalThis as any)[\"\\x4dap\"].prototype.get = () => 99;\n",
+        "Reflect.set(window, String.fromCharCode(77, 97, 112), FakeMap);\n",
+        "self[`M${\"ap\"}`] = FakeMap;\n",
+        "global[\"\\115ap\"] = FakeMap;\n",
+        "(() => 0).constructor(\"this.M\" + \"ap = FakeMap\")();\n",
+        "Object.setPrototypeOf(FakeMap, null);\n",
+        "const d = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => 0));\n",
+        "const p = ({} as any).__proto__;\n",
+        "Reflect.ownKeys({});\n",
+        "window.name = \"\";\n",
+        "const c = String.fromCharCode(77);\n",
+        "const o = Object.prototype;\n",
+    ] {
+        assert_no_decorated_entry(&format!("{prefix}{base}"));
+    }
+    let escaped = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    \\u0063ache.set(4, 99);
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&escaped);
+    // A `set` split over lines records no range.
+    let split = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(
+        n,
+        original.call(this, n),
+      );
+    }
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&split);
+    // A sloppy-mode `arguments` passed to the original aliases the key.
+    let aliased = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) cache.set(n, original.call(this, arguments));
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&aliased);
+    // A default parameter can close over the key and rebind it.
+    let defaulted = memo_source(MEMO_CACHE, MEMO_BODY).replace(
+        "function (this: unknown, n: number)",
+        "function (this: unknown, n: number, bump = () => { n = n + 1; })",
+    );
+    assert!(
+        defaulted.contains("bump = "),
+        "fixture must carry the default"
+    );
+    assert_no_decorated_entry(&defaulted);
+    // A script without `export` may run sloppy, where `this` is the global.
+    let script = memo_source(MEMO_CACHE, MEMO_BODY).replace("export ", "");
+    assert!(!script.contains("export"), "fixture must drop every export");
+    assert_no_decorated_entry(&script);
+}

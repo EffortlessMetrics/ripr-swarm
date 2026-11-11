@@ -4,6 +4,7 @@ mod input;
 mod model;
 mod presentation;
 mod repair_route;
+mod structured_acknowledgements;
 
 use super::gap_decision_ledger::{self, GapRecord};
 use super::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
@@ -25,6 +26,7 @@ use serde_json::Value;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -228,6 +230,43 @@ pub(crate) fn build_gate_decision_report(
         }
         None => None,
     };
+    let structured_acknowledgements = match input.acknowledgements.as_ref() {
+        Some(path) => {
+            let resolved = resolve_root_path(&input.root, path);
+            let display = display_path(path);
+            let ledger_result = consumed
+                .read_toml_text_and_record(&resolved, &display)
+                .and_then(|(text, digest)| {
+                    consumed.acknowledgements = Some(digest);
+                    structured_acknowledgements::load_structured_acknowledgements_from_text(
+                        &text, &display,
+                    )
+                });
+            match ledger_result {
+                Ok(ledger) => {
+                    if config_errors.is_empty() {
+                        if let Err(error) = structured_acknowledgements::validate_ledger_root(
+                            &ledger,
+                            &display_path(&input.root),
+                            &display,
+                        ) {
+                            config_errors.push(error);
+                            None
+                        } else {
+                            Some(ledger)
+                        }
+                    } else {
+                        Some(ledger)
+                    }
+                }
+                Err(error) => {
+                    config_errors.push(error);
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     let candidates = if config_errors.is_empty() {
         if let Some(records) = gap_ledger.as_ref() {
             candidates_from_gap_ledger(records)
@@ -286,6 +325,11 @@ pub(crate) fn build_gate_decision_report(
         acknowledgement_labels: acknowledgement_labels(input),
         default_workflow_posture: "advisory".to_string(),
     };
+    let gate_root = display_path(&input.root);
+    let today = crate::output::suppressions::current_iso_date();
+    let legacy_acknowledgement_label = acknowledgement_label(&policy, &labels);
+    let mut acknowledgement_match_counters = structured_acknowledgements::MatchCounters::default();
+    let structured_loaded = structured_acknowledgements.is_some();
     let mut decisions = candidates
         .iter()
         .map(|candidate| {
@@ -293,6 +337,12 @@ pub(crate) fn build_gate_decision_report(
                 candidate,
                 &policy,
                 &labels,
+                legacy_acknowledgement_label.as_deref(),
+                structured_acknowledgements.as_ref(),
+                structured_loaded,
+                &mut acknowledgement_match_counters,
+                &today,
+                &gate_root,
                 &recommendation_calibration,
                 &mutation_calibration,
                 &baseline,
@@ -374,6 +424,10 @@ pub(crate) fn build_gate_decision_report(
                 .exception_policy
                 .as_ref()
                 .map(|path| display_path(path)),
+            acknowledgements: input
+                .acknowledgements
+                .as_ref()
+                .map(|path| display_path(path)),
         },
         subject,
         policy,
@@ -430,6 +484,7 @@ fn build_gate_subject(
         ("mutation_calibration", input.mutation_calibration.as_ref()),
         ("baseline", input.baseline.as_ref()),
         ("exception_policy", input.exception_policy.as_ref()),
+        ("acknowledgements", input.acknowledgements.as_ref()),
     ] {
         let Some(path) = path else {
             continue;
@@ -448,12 +503,13 @@ fn build_gate_subject(
             "mutation_calibration" => consumed.mutation_calibration.clone(),
             "baseline" => consumed.baseline.clone(),
             "exception_policy" => consumed.exception_policy.clone(),
+            "acknowledgements" => consumed.acknowledgements.clone(),
             // repo_exposure, sarif_policy, agent_verify, agent_receipt are
             // validated readable but not parsed for decisions; they hash a
             // fresh read at subject-build time.
             _ => {
                 let resolved = resolve_root_path(&input.root, path);
-                std::fs::read(&resolved)
+                crate::bounded_input::read(&resolved)
                     .ok()
                     .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)))
             }
@@ -759,10 +815,22 @@ fn candidate_from_gap_record(record: &GapRecord) -> GateCandidate {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "policy:1966: gate decision threads policy, baseline, causal, and acknowledgement state for one candidate"
+)]
 fn gate_decision(
     candidate: &GateCandidate,
     policy: &GatePolicy,
-    labels: &[String],
+    _labels: &[String],
+    legacy_acknowledgement_label: Option<&str>,
+    structured_acknowledgements: Option<
+        &structured_acknowledgements::StructuredAcknowledgementLedger,
+    >,
+    structured_loaded: bool,
+    acknowledgement_match_counters: &mut structured_acknowledgements::MatchCounters,
+    today: &str,
+    gate_root: &str,
     recommendation_calibration: &CalibrationIndex,
     mutation_calibration: &CalibrationIndex,
     baseline: &BaselineIndex,
@@ -810,7 +878,6 @@ fn gate_decision(
     // `is_baseline_new = true` is the deferred deprecation question.
     let baseline_match_kind = (!canonical_hit && fallback_hit)
         .then(|| BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS.to_string());
-    let acknowledgement_label = acknowledgement_label(policy, labels);
     let causal_attribution = causal_delta
         .map(|authority| authority.attribution_for(candidate.canonical_gap_id.as_deref()));
     let causal_allows_blocking = causal_attribution
@@ -825,6 +892,81 @@ fn gate_decision(
         &mutation_calibration,
         causal_allows_blocking,
     );
+    let acknowledgement_resolution = if would_block {
+        structured_acknowledgements::resolve_candidate_acknowledgement(
+            structured_acknowledgements,
+            acknowledgement_match_counters,
+            today,
+            gate_root,
+            candidate.canonical_gap_id.as_deref(),
+            candidate.seam_id.as_deref(),
+            legacy_acknowledgement_label,
+            structured_loaded,
+        )
+    } else {
+        structured_acknowledgements::CandidateAcknowledgement::None
+    };
+    let (
+        acknowledgement_label,
+        acknowledgement_id,
+        acknowledgement_match_kind,
+        acknowledgement_actor,
+        acknowledgement_reason,
+        acknowledgement_expires_at,
+        acknowledgement_review_after,
+        acknowledgement_global_scope,
+        acknowledgement_limitation,
+    ) = match &acknowledgement_resolution {
+        structured_acknowledgements::CandidateAcknowledgement::Applied(applied) => (
+            legacy_acknowledgement_label.map(str::to_string),
+            Some(applied.acknowledgement_id.clone()),
+            Some(applied.match_kind.clone()),
+            Some(applied.actor.clone()),
+            Some(applied.reason.clone()),
+            applied.expires_at.clone(),
+            applied.review_after.clone(),
+            Some(applied.global_scope),
+            None,
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::LegacyGlobal { label } => (
+            Some(label.clone()),
+            None,
+            Some(structured_acknowledgements::MATCH_KIND_LEGACY_LABEL.to_string()),
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::Limitation { kind, detail } => (
+            legacy_acknowledgement_label.map(str::to_string),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(format!("{kind}: {detail}")),
+        ),
+        structured_acknowledgements::CandidateAcknowledgement::None => (
+            legacy_acknowledgement_label.map(str::to_string),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    };
+    let acknowledged = matches!(
+        acknowledgement_resolution,
+        structured_acknowledgements::CandidateAcknowledgement::Applied(_)
+            | structured_acknowledgements::CandidateAcknowledgement::LegacyGlobal { .. }
+    );
     let route_limited = candidate_is_policy_eligible_without_route(candidate)
         && !gate_repair_route_is_complete(candidate);
     let decision = if candidate.suppressed || candidate.configured_off {
@@ -834,7 +976,7 @@ fn gate_decision(
         && !route_limited
     {
         "not_applicable"
-    } else if would_block && acknowledgement_label.is_some() {
+    } else if would_block && acknowledged {
         "acknowledged"
     } else if would_block {
         "blocking"
@@ -852,6 +994,9 @@ fn gate_decision(
             recommendation_calibration: &recommendation_calibration,
             mutation_calibration: &mutation_calibration,
             acknowledgement_label: acknowledgement_label.as_deref(),
+            acknowledgement_id: acknowledgement_id.as_deref(),
+            acknowledgement_global_scope,
+            acknowledgement_limitation: acknowledgement_limitation.as_deref(),
         },
         // #2640: the configured labels travel alongside the matched one so a
         // blocking reason can name the label that would have acknowledged it.
@@ -884,6 +1029,14 @@ fn gate_decision(
             threshold: policy.threshold.clone(),
             acknowledgement_label,
             baseline_identity,
+            acknowledgement_id,
+            acknowledgement_match_kind,
+            acknowledgement_actor,
+            acknowledgement_reason,
+            acknowledgement_expires_at,
+            acknowledgement_review_after,
+            acknowledgement_global_scope,
+            acknowledgement_limitation,
         },
         evidence: GateEvidence {
             missing_discriminator: candidate.missing_discriminator.clone(),
@@ -1185,11 +1338,27 @@ fn gate_reason(
             .to_string();
     }
     match context.decision {
-        "acknowledged" => format!(
-            "policy-eligible gap acknowledged by {}",
+        "acknowledged" => {
+            if let Some(id) = context.acknowledgement_id {
+                format!("policy-eligible gap acknowledged by structured record `{id}`")
+            } else {
+                let label = context
+                    .acknowledgement_label
+                    .unwrap_or(DEFAULT_ACKNOWLEDGEMENT_LABEL);
+                if context.acknowledgement_global_scope == Some(true) {
+                    format!(
+                        "policy-eligible gap acknowledged by {label} (global_scope=true legacy compatibility)"
+                    )
+                } else {
+                    format!("policy-eligible gap acknowledged by {label}")
+                }
+            }
+        }
+        "blocking" if context.acknowledgement_limitation.is_some() => format!(
+            "policy-eligible gap blocks under acknowledgeable mode ({})",
             context
-                .acknowledgement_label
-                .unwrap_or(DEFAULT_ACKNOWLEDGEMENT_LABEL)
+                .acknowledgement_limitation
+                .unwrap_or("acknowledgement_limitation")
         ),
         "blocking"
             if candidate.source == "gap_decision_ledger"
@@ -1369,7 +1538,7 @@ fn read_json_value_and_bytes_with_display(
     display: &Path,
 ) -> Result<(Value, Vec<u8>), String> {
     let display = display_path(display);
-    let bytes = fs::read(path).map_err(|err| {
+    let bytes = crate::bounded_input::read(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {
@@ -1383,7 +1552,7 @@ fn read_json_value_and_bytes_with_display(
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = fs::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {

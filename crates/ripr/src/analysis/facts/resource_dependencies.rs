@@ -4,14 +4,17 @@ use super::RustIndex;
 use super::includes::repository_relative_target;
 use crate::analysis::stable_path_text;
 use crate::analysis::syntax::ra::{
-    EmbedResourceMacroShadowFacts, RustEmbedResourceDirective, RustEmbedResourceMacro,
-    rust_embed_resource_directives,
+    EmbedFileScan, EmbedMacroShadows, RustEmbedResourceDirective, RustEmbedResourceMacro,
+    rust_embed_file_scan,
 };
+use crate::analysis::workspace::package_root;
 use crate::domain::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
     ResourcePresenceV1, SymbolId,
 };
 use sha2::{Digest, Sha256};
+use std::cell::{Cell, OnceCell};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const MAX_RESOURCE_EDGES: usize = 4096;
@@ -38,7 +41,8 @@ pub(crate) fn collect_resource_dependency_edges(
     let mut facts = ResourceDependencyFacts::default();
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
-    let crate_shadows = crate_embed_shadow_facts(index);
+    let (scans, package_shadows) = scan_embed_files(index);
+    let spans = ConsumerSpans::new(index);
 
     for (parent, file_facts) in &index.files {
         if file_facts.used_lexical_fallback {
@@ -54,12 +58,14 @@ pub(crate) fn collect_resource_dependency_edges(
         if !source.contains("include_str!") && !source.contains("include_bytes!") {
             continue;
         }
-        let directives = match rust_embed_resource_directives(
-            parent,
-            &file_facts.source,
-            MAX_RESOURCE_EDGES,
-            &crate_shadows,
-        ) {
+        let scope_shadows = package_shadows
+            .get(&shadow_scope(parent))
+            .copied()
+            .unwrap_or_default();
+        let Some(scan) = scans.get(parent) else {
+            continue;
+        };
+        let directives = match scan.directives(scope_shadows) {
             Ok(directives) => directives,
             Err(reason_code) => {
                 facts.limitations.push(limitation(
@@ -72,6 +78,15 @@ pub(crate) fn collect_resource_dependency_edges(
             }
         };
         for directive in directives {
+            if directive.shadowed {
+                facts.limitations.push(limitation(
+                    parent,
+                    directive.line,
+                    &directive.expression,
+                    "rust_resource_macro_shadowed",
+                ));
+                continue;
+            }
             edge_count += 1;
             if edge_count > MAX_RESOURCE_EDGES {
                 facts.limitations.push(limitation(
@@ -90,7 +105,7 @@ pub(crate) fn collect_resource_dependency_edges(
             };
             let Some(ref literal) = directive.literal_path else {
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -107,7 +122,7 @@ pub(crate) fn collect_resource_dependency_edges(
                     "rust_resource_path_outside_repository",
                 ));
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -140,7 +155,7 @@ pub(crate) fn collect_resource_dependency_edges(
                     "rust_resource_symlink_escape",
                 ));
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -150,7 +165,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 continue;
             }
             let content_identity = content_identity_for_path(root, index, &candidate);
-            let consumer_id = consumer_for_line(index, parent, directive.line);
+            let consumer_id = spans.consumer_for_line(parent, directive.line);
             let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
                 resource_kind,
                 &candidate,
@@ -194,36 +209,44 @@ pub(crate) fn collect_resource_dependency_edges(
     facts
 }
 
+/// The package a file's macros are visible in. Files outside a conventional
+/// package layout form a scope of their own, so only same-file shadows apply.
+fn shadow_scope(file: &Path) -> String {
+    package_root(file).unwrap_or_else(|| format!("file:{}", stable_path_text(file)))
+}
+
+/// Parse each file that mentions an embed macro once, and union the shadows
+/// they define or import per package. Module-scoped, `#[macro_use]` and
+/// `use`-imported shadows all reduce to this: it fails closed, so a shadow in
+/// any file of the package flags every unqualified call in that package.
+/// Files the parser could not read still count, by textual mention. The scans
+/// are returned so the directive pass reuses the same parse.
+fn scan_embed_files(
+    index: &RustIndex,
+) -> (
+    BTreeMap<&PathBuf, EmbedFileScan>,
+    BTreeMap<String, EmbedMacroShadows>,
+) {
+    let mut scans = BTreeMap::new();
+    let mut scopes: BTreeMap<String, EmbedMacroShadows> = BTreeMap::new();
+    for (path, file_facts) in &index.files {
+        let source = file_facts.source.as_ref();
+        if !source.contains("include_str") && !source.contains("include_bytes") {
+            continue;
+        }
+        let scan = rust_embed_file_scan(source, MAX_RESOURCE_EDGES);
+        scopes
+            .entry(shadow_scope(path))
+            .or_default()
+            .merge(scan.shadows());
+        scans.insert(path, scan);
+    }
+    (scans, scopes)
+}
+
 /// Attach producer-owned resource dependency facts to a finished parse tree.
 pub(crate) fn attach_resource_dependencies(root: &Path, index: &mut RustIndex) {
     index.resource_dependencies = collect_resource_dependency_edges(root, index);
-}
-
-/// Crate-wide shadow facts for the embed-resource macros (#13046): `true`
-/// when any indexed Rust source defines `macro_rules! include_str` (or
-/// `include_bytes`), wherever in the crate the definition lives — another
-/// module, a `#[macro_use]`-annotated one, or the same file. The scan is a
-/// lexical prefilter over indexed sources and deliberately conservative: a
-/// `macro_rules!` mention inside a comment or string can only over-skip
-/// (fail closed), never under-skip, an exact resource edge.
-fn crate_embed_shadow_facts(index: &RustIndex) -> EmbedResourceMacroShadowFacts {
-    let mut facts = EmbedResourceMacroShadowFacts::default();
-    for (path, file_facts) in &index.files {
-        if path.extension().is_none_or(|extension| extension != "rs") {
-            continue;
-        }
-        let source = file_facts.source.as_ref();
-        if !facts.include_str && source.contains("macro_rules! include_str") {
-            facts.include_str = true;
-        }
-        if !facts.include_bytes && source.contains("macro_rules! include_bytes") {
-            facts.include_bytes = true;
-        }
-        if facts.include_str && facts.include_bytes {
-            break;
-        }
-    }
-    facts
 }
 
 fn content_identity_for_path(root: &Path, index: &RustIndex, path: &Path) -> String {
@@ -245,26 +268,55 @@ fn source_digest(source: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(source.as_bytes()))
 }
 
-fn consumer_for_line(index: &RustIndex, file: &Path, line: usize) -> SymbolId {
-    let mut best: Option<(usize, SymbolId)> = None;
-    for id in index.live_function_ids() {
-        let function = &index.function_facts[id];
-        if function.file.as_path() != file {
-            continue;
-        }
-        if line >= function.start_line && line <= function.end_line {
-            let depth_key = function.start_line;
-            if best.as_ref().is_none_or(|(start, _)| depth_key >= *start) {
-                best = Some((depth_key, function.id.clone()));
-            }
+/// Function spans grouped by file, built on first use so the live function
+/// list is walked once per pass instead of once per embed directive.
+type FileSpans<'a> = BTreeMap<&'a Path, Vec<(usize, usize, &'a SymbolId)>>;
+
+struct ConsumerSpans<'a> {
+    index: &'a RustIndex,
+    by_file: OnceCell<FileSpans<'a>>,
+    /// Table builds, pinned by a ratchet test (one per pass, not per directive).
+    builds: Cell<usize>,
+}
+
+impl<'a> ConsumerSpans<'a> {
+    fn new(index: &'a RustIndex) -> Self {
+        Self {
+            index,
+            by_file: OnceCell::new(),
+            builds: Cell::new(0),
         }
     }
-    best.map(|(_, id)| id)
-        .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
+
+    /// Innermost function containing `line`; among equal starts the later
+    /// live function wins. Falls back to a file-scope symbol.
+    fn consumer_for_line(&self, file: &Path, line: usize) -> SymbolId {
+        let by_file = self.by_file.get_or_init(|| {
+            self.builds.set(self.builds.get() + 1);
+            let mut grouped = FileSpans::new();
+            for id in self.index.live_function_ids() {
+                let function = &self.index.function_facts[id];
+                grouped.entry(function.file.as_path()).or_default().push((
+                    function.start_line,
+                    function.end_line,
+                    &function.id,
+                ));
+            }
+            grouped
+        });
+        let mut best: Option<(usize, &SymbolId)> = None;
+        for &(start, end, id) in by_file.get(file).map(Vec::as_slice).unwrap_or_default() {
+            if line >= start && line <= end && best.is_none_or(|(s, _)| start >= s) {
+                best = Some((start, id));
+            }
+        }
+        best.map(|(_, id)| id.clone())
+            .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
+    }
 }
 
 fn push_opaque_edge(
-    index: &RustIndex,
+    spans: &ConsumerSpans<'_>,
     facts: &mut ResourceDependencyFacts,
     parent: &Path,
     directive: &RustEmbedResourceDirective,
@@ -276,7 +328,7 @@ fn push_opaque_edge(
         stable_path_text(parent),
         directive.line
     ));
-    let consumer_id = consumer_for_line(index, parent, directive.line);
+    let consumer_id = spans.consumer_for_line(parent, directive.line);
     let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
         resource_kind,
         &placeholder,
@@ -338,7 +390,9 @@ mod tests {
         let mut index = RustIndex::default();
         for (relative, source) in sources {
             let path = PathBuf::from(relative);
-            let facts = if relative.ends_with(".rs") {
+            // A file the parser rejects is indexed as source text only, the way a
+            // lexical fallback would hold it, so the collector sees it.
+            let facts = if relative.ends_with(".rs") && !relative.contains("broken") {
                 adapter.summarize_file(&path, source)?
             } else {
                 use crate::analysis::facts::FileFacts;
@@ -346,6 +400,9 @@ mod tests {
                 FileFacts {
                     path: path.clone(),
                     source: Arc::from(*source),
+                    // Production indexes a parse failure through the lexical
+                    // fallback; hold the fixture to the same state.
+                    used_lexical_fallback: relative.ends_with(".rs"),
                     ..FileFacts::default()
                 }
             };
@@ -354,6 +411,142 @@ mod tests {
         index.finalize()?;
         let _ = root;
         Ok(index)
+    }
+
+    fn shadow_fixture(
+        sources: &[(&str, &str)],
+    ) -> Result<(ResourceDependencyFacts, PathBuf), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-shadow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("crates/a/fixtures"))?;
+        fs::create_dir_all(root.join("crates/b/fixtures"))?;
+        fs::write(root.join("crates/a/fixtures/data.json"), "{}\n")?;
+        fs::write(root.join("crates/b/fixtures/data.json"), "{}\n")?;
+        let index = manual_index(&root, sources)?;
+        Ok((collect_resource_dependency_edges(&root, &index), root))
+    }
+
+    const EMBED: &str = "const D: &str = include_str!(\"../fixtures/data.json\");\n";
+
+    #[test]
+    fn cross_file_macro_rules_shadow_produces_no_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-macro-shadow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/data.json"), "{}\n")?;
+        let macros = "macro_rules! include_str {\n    ($path:literal) => { \"fixed\" };\n}\n";
+        fs::write(root.join("src/macros.rs"), macros)?;
+        let lib = "const DATA: &str = include_str!(\"../fixtures/data.json\");\n";
+        fs::write(root.join("src/lib.rs"), lib)?;
+        let sources = [("src/macros.rs", macros), ("src/lib.rs", lib)];
+        let index = manual_index(&root, &sources)?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        assert!(
+            facts.edges.is_empty(),
+            "unqualified include_str! shadowed crate-wide must not yield an exact edge: {:?}",
+            facts.edges
+        );
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cross_file_macro_shadow_in_the_package_withholds_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // The consumer and the shadowing macro live in different files of
+        // one package; the old same-file check missed this.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            (
+                "crates/a/src/macros.rs",
+                "macro_rules! include_str { ($p:literal) => { \"fixed\" }; }\n",
+            ),
+        ])?;
+        assert!(facts.edges.is_empty(), "{:?}", facts.edges);
+        assert!(
+            facts
+                .limitations
+                .iter()
+                .any(|l| l.reason_code == "rust_resource_macro_shadowed"
+                    && l.consumer_file == Path::new("crates/a/src/lib.rs")),
+            "{:?}",
+            facts.limitations
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparseable_sibling_that_mentions_the_macro_withholds_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // A sibling file the parser cannot read might define the shadowing
+        // macro; the package fails closed on it, and a package that does not
+        // mention the name keeps its edge.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            ("crates/a/src/broken.rs", "fn ( ??? include_str ???"),
+            ("crates/b/src/lib.rs", EMBED),
+            ("crates/b/src/broken.rs", "fn ( ??? nothing here ???"),
+        ])?;
+        let consumers: Vec<&Path> = facts
+            .edges
+            .iter()
+            .map(|edge| edge.consumer_file.as_path())
+            .collect();
+        assert_eq!(
+            consumers,
+            vec![Path::new("crates/b/src/lib.rs")],
+            "{facts:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn use_imported_shadow_withholds_the_exact_edge() -> Result<(), Box<dyn std::error::Error>> {
+        let (facts, root) = shadow_fixture(&[
+            (
+                "crates/a/src/lib.rs",
+                "use crate::macros::include_str;\nconst D: &str = include_str!(\"../fixtures/data.json\");\n",
+            ),
+            ("crates/a/src/macros.rs", "pub fn unrelated() {}\n"),
+        ])?;
+        assert!(facts.edges.is_empty(), "{:?}", facts.edges);
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn shadow_in_another_package_and_other_macro_name_leave_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Controls: a shadow of include_str in crate b does not touch crate
+        // a, and a shadow of include_bytes does not touch an include_str call.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            (
+                "crates/a/src/bytes.rs",
+                "macro_rules! include_bytes { () => {}; }\n",
+            ),
+            (
+                "crates/b/src/macros.rs",
+                "macro_rules! include_str { () => {}; }\n",
+            ),
+        ])?;
+        assert_eq!(facts.edges.len(), 1, "{:?}", facts);
+        assert_eq!(
+            facts.edges[0].consumer_file,
+            PathBuf::from("crates/a/src/lib.rs")
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
     }
 
     #[test]
@@ -388,33 +581,6 @@ mod tests {
         assert_eq!(
             facts.edges[0].access_kind,
             ResourceAccessKindV1::ExactLiteralRepositoryPath
-        );
-        fs::remove_dir_all(&root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn cross_file_macro_rules_shadow_produces_no_exact_edge()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-resource-deps-macro-shadow-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(root.join("fixtures"))?;
-        fs::create_dir_all(root.join("src"))?;
-        fs::write(root.join("fixtures/data.json"), "{}\n")?;
-        let macros = "macro_rules! include_str {\n    ($path:literal) => { \"fixed\" };\n}\n";
-        fs::write(root.join("src/macros.rs"), macros)?;
-        let lib = "const DATA: &str = include_str!(\"../fixtures/data.json\");\n";
-        fs::write(root.join("src/lib.rs"), lib)?;
-        let sources = [("src/macros.rs", macros), ("src/lib.rs", lib)];
-        let index = manual_index(&root, &sources)?;
-        let facts = collect_resource_dependency_edges(&root, &index);
-        assert!(
-            facts.edges.is_empty(),
-            "unqualified include_str! shadowed crate-wide must not yield an exact edge: {:?}",
-            facts.edges
         );
         fs::remove_dir_all(&root)?;
         Ok(())
@@ -487,6 +653,70 @@ fn production() {}
                 .any(|item| item.contains("resource_plan_empty_with_opaque_boundary"))
         );
         assert_eq!(projection.widened_packages.len(), 1);
+    }
+
+    #[test]
+    fn several_embeds_in_one_file_each_pick_their_own_consumer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-multi-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/a.txt"), "a\n")?;
+        fs::write(root.join("fixtures/b.txt"), "b\n")?;
+        fs::write(root.join("fixtures/c.txt"), "c\n")?;
+        let source = r#"
+const TOP: &str = include_str!("../fixtures/c.txt");
+fn first() -> &'static str {
+    include_str!("../fixtures/a.txt")
+}
+fn second() -> &'static str {
+    include_str!("../fixtures/b.txt")
+}
+"#;
+        fs::write(root.join("src/lib.rs"), source)?;
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        let consumer = |name: &str| {
+            facts
+                .edges
+                .iter()
+                .find(|edge| edge.resource_path.ends_with(name))
+                .map(|edge| edge.consumer_id.0.clone())
+        };
+        assert_eq!(facts.edges.len(), 3);
+        assert!(consumer("a.txt").is_some_and(|id| id.contains("first")));
+        assert!(consumer("b.txt").is_some_and(|id| id.contains("second")));
+        assert!(consumer("c.txt").is_some_and(|id| id.ends_with("::file_scope")));
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_spans_build_the_function_table_once_across_many_lookups()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "fn a() {\n    let _ = 1;\n}\nfn b() {\n    let _ = 2;\n}\n";
+        let root = std::env::temp_dir();
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let spans = ConsumerSpans::new(&index);
+        assert_eq!(spans.builds.get(), 0, "table is built lazily");
+        let file = Path::new("src/lib.rs");
+        for line in [2, 5, 1, 4, 99] {
+            let _ = spans.consumer_for_line(file, line);
+        }
+        assert_eq!(spans.builds.get(), 1, "one build for five lookups");
+        assert_eq!(spans.consumer_for_line(file, 2).0, "src/lib.rs::a");
+        assert_eq!(spans.consumer_for_line(file, 5).0, "src/lib.rs::b");
+        assert!(
+            spans
+                .consumer_for_line(file, 99)
+                .0
+                .ends_with("::file_scope")
+        );
+        Ok(())
     }
 
     #[test]

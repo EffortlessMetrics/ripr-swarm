@@ -7,7 +7,7 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::SeamLimitInfo;
 use crate::analysis::seams::SeamGripClass;
-use crate::analysis_outcome::AnalysisOutcome;
+use crate::analysis_outcome::{AnalysisLimitation, AnalysisOutcome};
 use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
@@ -178,6 +178,7 @@ const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 /// Run-level result disclosures carried into the SARIF property bag.
 struct SarifRunDisclosures<'a> {
     omitted_not_current: usize,
+    withheld_by_owner_opt_out: usize,
     folded_same_line: usize,
     results_bound: Option<&'a SarifResultsBound>,
 }
@@ -201,9 +202,25 @@ pub(crate) fn render_findings_sarif_with_budget(
         .iter()
         .filter(|finding| !finding.is_candidate_actionable())
         .count();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld from actionable output, so it opens no code-scanning alert.
+    // Policy suppressions keep their SARIF-native `suppressions` marking
+    // below; only owner opt-outs are dropped, and the run discloses how many.
+    let owner_withheld: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    let withheld_by_owner_opt_out = output
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .filter(|finding| owner_withheld.contains(finding.id.as_str()))
+        .count();
     let results = output
         .findings
         .iter()
+        .filter(|finding| !owner_withheld.contains(finding.id.as_str()))
         // Candidate-actionable eligibility (#3281): a SARIF result is a
         // current diagnostic for CI annotation consumers; base-side
         // evidence and unresolved subjects stay visible on the check JSON
@@ -221,6 +238,7 @@ pub(crate) fn render_findings_sarif_with_budget(
         output.analyzed_revisions.as_ref(),
         SarifRunDisclosures {
             omitted_not_current,
+            withheld_by_owner_opt_out,
             folded_same_line,
             results_bound: results_bound.as_ref(),
         },
@@ -311,6 +329,7 @@ fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
 pub(crate) fn render_repo_seams_sarif_with_budget(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
 ) -> String {
@@ -324,7 +343,13 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
         .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
         .collect::<Vec<_>>();
     let (results, results_bound) = bound_sarif_results(results, results_budget);
-    sarif_document_repo_seam(rules, results, limit_info, results_bound.as_ref())
+    sarif_document_repo_seam(
+        rules,
+        results,
+        limit_info,
+        evidence_limitations,
+        results_bound.as_ref(),
+    )
 }
 
 /// Render diff-scoped Findings as minified SARIF (#13195): the
@@ -374,11 +399,13 @@ pub(crate) fn render_refusal_sarif_compact(
 pub(crate) fn render_repo_seams_sarif_compact(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
 ) -> Result<String, String> {
     Ok(render_repo_seams_sarif_compact_with_budget(
         classified,
         limit_info,
+        evidence_limitations,
         config,
         sarif_results_byte_budget()?,
     ))
@@ -387,12 +414,14 @@ pub(crate) fn render_repo_seams_sarif_compact(
 fn render_repo_seams_sarif_compact_with_budget(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
 ) -> String {
     minify_sarif_document(&render_repo_seams_sarif_with_budget(
         classified,
         limit_info,
+        evidence_limitations,
         config,
         results_budget,
     ))
@@ -414,10 +443,34 @@ fn minify_sarif_document(pretty: &str) -> String {
     }
 }
 
+/// Notification id the repo-seam SARIF declares and references when the
+/// shared seam-evidence warm failed (#13340). One declared id; the typed
+/// limitation rides in the notification's and the run's property bags.
+const SARIF_EVIDENCE_FAILED_NOTIFICATION_ID: &str = "seam_evidence_limited";
+
+fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
+    let mut entry = Map::new();
+    entry.insert("category".to_string(), json!(limitation.kind.as_str()));
+    entry.insert(
+        "producer_stage".to_string(),
+        json!(limitation.producer_stage.as_str()),
+    );
+    entry.insert("scope".to_string(), json!("pass_wide"));
+    if let Some(detail) = limitation.bounded_detail.as_deref() {
+        entry.insert("detail".to_string(), json!(detail));
+    }
+    entry.insert(
+        "repair_route".to_string(),
+        json!(limitation.recovery.detail),
+    );
+    Value::Object(entry)
+}
+
 fn sarif_document_repo_seam(
     rules: Vec<Value>,
     results: Vec<Value>,
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     results_bound: Option<&SarifResultsBound>,
 ) -> String {
     let mut props = Map::new();
@@ -427,45 +480,100 @@ fn sarif_document_repo_seam(
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
     props.insert("scope".to_string(), json!("repo_seam"));
+    // A failed evidence warm outranks the seam cut for `run_status` (the same
+    // precedence as repo-exposure JSON): every seam is an opaque stand-in, so
+    // no count read from the results is a complete answer.
+    let evidence_failed = !evidence_limitations.is_empty();
+    let mut limitations: Vec<Value> = Vec::new();
     match limit_info {
         None => {
-            props.insert("run_status".to_string(), json!("complete"));
+            if !evidence_failed {
+                props.insert("run_status".to_string(), json!("complete"));
+            }
         }
         Some(info) => {
-            props.insert("run_status".to_string(), json!("seam_limit_applied"));
-            let limitation = json!({
+            if !evidence_failed {
+                props.insert("run_status".to_string(), json!("seam_limit_applied"));
+            }
+            limitations.push(json!({
                 "category": "repo_seam_limit_applied",
                 "seams_analyzed": info.analyzed,
                 "seams_total": info.total,
                 "limit_source": info.source.as_str(),
                 "control": "RIPR_REPO_EXPOSURE_SEAM_LIMIT"
-            });
-            props.insert("limitations".to_string(), json!([limitation]));
+            }));
         }
+    }
+    if evidence_failed {
+        props.insert(
+            "run_status".to_string(),
+            json!(crate::output::repo_exposure::EVIDENCE_FAILED_RUN_STATUS),
+        );
+        limitations.extend(evidence_limitations.iter().map(evidence_limitation_value));
+    }
+    if !limitations.is_empty() {
+        props.insert("limitations".to_string(), Value::Array(limitations));
     }
     if let Some(bound) = results_bound {
         insert_sarif_bound_properties(&mut props, bound);
     }
-    let document = json!({
+    let mut run = json!({
+        "columnKind": SARIF_COLUMN_KIND,
+        "tool": {
+            "driver": {
+                "name": "ripr",
+                "semanticVersion": env!("CARGO_PKG_VERSION"),
+                "informationUri": "https://github.com/EffortlessMetrics/ripr",
+                "rules": rules
+            }
+        },
+        "results": results,
+        "properties": props
+    });
+    if evidence_failed {
+        insert_evidence_failed_notification(&mut run, evidence_limitations);
+    }
+    json_pretty(json!({
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
-        "runs": [
-            {
-                "columnKind": SARIF_COLUMN_KIND,
-                "tool": {
-                    "driver": {
-                        "name": "ripr",
-                        "semanticVersion": env!("CARGO_PKG_VERSION"),
-                        "informationUri": "https://github.com/EffortlessMetrics/ripr",
-                        "rules": rules
-                    }
-                },
-                "results": results,
-                "properties": props
+        "runs": [run]
+    }))
+}
+
+/// Declare the notification and attach a warning-level
+/// `toolExecutionNotifications` entry per failed-warm limitation, so a SARIF
+/// consumer that reads invocations (not ripr properties) still sees that the
+/// inventory is degraded. The run executed to completion, so
+/// `executionSuccessful` stays true; no result or rule is added.
+fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisLimitation]) {
+    let notifications: Vec<Value> = limitations
+        .iter()
+        .map(|limitation| {
+            json!({
+                "level": "warning",
+                "descriptor": { "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID },
+                "message": { "text": format!(
+                    "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
+                    limitation.recovery.detail
+                ) },
+                "properties": evidence_limitation_value(limitation)
+            })
+        })
+        .collect();
+    run["tool"]["driver"]["notifications"] = json!([
+        {
+            "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID,
+            "shortDescription": {
+                "text": "The shared seam-evidence pass failed; the inventory is limited, not complete."
             }
-        ]
-    });
-    json_pretty(document)
+        }
+    ]);
+    run["invocations"] = json!([
+        {
+            "executionSuccessful": true,
+            "toolExecutionNotifications": notifications
+        }
+    ]);
 }
 
 fn sarif_document(
@@ -531,6 +639,13 @@ fn sarif_document(
         properties.insert(
             "omitted_not_current".to_string(),
             json!(disclosures.omitted_not_current),
+        );
+    }
+    // Additive and absent when no owner opted out (#13819).
+    if disclosures.withheld_by_owner_opt_out > 0 {
+        properties.insert(
+            "withheld_by_owner_opt_out".to_string(),
+            json!(disclosures.withheld_by_owner_opt_out),
         );
     }
     if disclosures.folded_same_line > 0 {
@@ -1733,6 +1848,7 @@ pub(crate) fn render_repo_seams_sarif(
     render_repo_seams_sarif_with_budget(
         classified,
         limit_info,
+        &[],
         config,
         Some(DEFAULT_SARIF_RESULTS_BYTES),
     )
@@ -1900,6 +2016,7 @@ mod tests {
                 None,
                 SarifRunDisclosures {
                     omitted_not_current: 0,
+                    withheld_by_owner_opt_out: 0,
                     folded_same_line: 0,
                     results_bound: None,
                 },
@@ -3183,6 +3300,63 @@ weakly_gripped = "note"
         Ok(())
     }
 
+    /// #13340: a real seam cut and a failed evidence warm together keep BOTH
+    /// limitations in repo-sarif and repo-sarif-compact, with the failed warm
+    /// outranking the cut for `run_status`.
+    #[test]
+    fn sarif_repo_seams_keeps_the_seam_cut_beside_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let info = SeamLimitInfo {
+            analyzed: 7,
+            total: 2000,
+            source: SeamLimitSource::Default,
+        };
+        let failure = [AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::AnalysisPipeline,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Re-run the analysis.")?,
+        )];
+        let classified = [weakly_gripped_classified()];
+        let config = RiprConfig::default();
+        let full = render_repo_seams_sarif_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        let compact = render_repo_seams_sarif_compact_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        for (name, rendered) in [("repo-sarif", full), ("repo-sarif-compact", compact)] {
+            let sarif = parse_json(&rendered)?;
+            let props = &sarif["runs"][0]["properties"];
+            assert_eq!(props["run_status"], "limited_seam_evidence", "{name}");
+            let limitations = props["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("{name}: limitations missing"))?;
+            assert_eq!(limitations.len(), 2, "{name}: {sarif}");
+            let cut = limitations
+                .iter()
+                .find(|entry| entry["category"] == "repo_seam_limit_applied")
+                .ok_or_else(|| format!("{name}: seam cut dropped: {sarif}"))?;
+            assert_eq!(cut["seams_analyzed"], 7, "{name}");
+            assert_eq!(cut["seams_total"], 2000, "{name}");
+            assert_eq!(cut["limit_source"], "default", "{name}");
+            assert_eq!(cut["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT", "{name}");
+            let failed = limitations
+                .iter()
+                .find(|entry| entry["category"] == "producer_failure")
+                .ok_or_else(|| format!("{name}: producer failure dropped: {sarif}"))?;
+            assert_eq!(failed["scope"], "pass_wide", "{name}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sarif_repo_seams_shows_complete_run_status_when_no_cap() -> Result<(), String> {
         let rendered =
@@ -3487,9 +3661,12 @@ weakly_gripped = "note"
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }

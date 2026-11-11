@@ -25,6 +25,8 @@ roxmltree = { version = "0.21", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+# Maintained, safe-Rust YAML field extraction for guards and concurrency.
+yaml-rust2 = { version = "=0.10.4", default-features = false }
 
 [features]
 # Ordinary xtask commands and workspace tests retain their complete graph.

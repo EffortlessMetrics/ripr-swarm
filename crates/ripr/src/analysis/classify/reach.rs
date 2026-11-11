@@ -1,6 +1,6 @@
 use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use super::related_tests::is_established_free_function;
+use super::related_tests::{is_established_free_function, package_prefix};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
@@ -106,6 +106,19 @@ pub(in crate::analysis) fn reach_evidence(
     )
 }
 
+/// Whether `owner` is a method of a trait the workspace does not declare
+/// (`Display`, `Add`, `Deref`). The language dispatches those through
+/// operators, formatting macros and generic code that never spell the method
+/// name, so an owner no test is related to still may run under a test. This
+/// is the trait-impl clause of [`owner_may_be_reached_unseen`] on its own,
+/// for a caller that must not widen to "named elsewhere".
+pub(in crate::analysis) fn owner_runs_through_language_dispatch(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    is_trait_impl_method(owner) && !implements_workspace_trait(owner, index)
+}
+
 /// Whether a test could run `owner` without any indexed test body calling it
 /// by name.
 ///
@@ -149,6 +162,101 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
         || index.files().values().any(|file| {
             includes_external_docs_with(&file.source, file.data().macro_candidates.is_some())
         })
+}
+
+/// Attributes that never make a function callable without a source naming
+/// it. Any other attribute on the owner or its `impl` (`no_mangle`,
+/// `export_name`, `wasm_bindgen`, `ctor`, `proc_macro*`, `panic_handler`,
+/// registration macros, ...) may expose it to a caller ripr cannot see.
+const INERT_OWNER_ATTRS: &[&str] = &[
+    "inline",
+    "must_use",
+    "doc",
+    "allow",
+    "warn",
+    "deny",
+    "expect",
+    "deprecated",
+    "cold",
+    "track_caller",
+    "rustfmt",
+];
+
+/// RIPR-SPEC-0219: whether a ruled-out owner may be reported as
+/// `(unreferenced in workspace)`. Stricter than
+/// [`owner_may_be_reached_unseen`], and fail closed: the owner's file was
+/// parsed (not the lexical fallback, which records no attributes), it carries
+/// no attribute outside [`INERT_OWNER_ATTRS`], its signature declares no
+/// foreign ABI, and its name occurs as a whole word nowhere in the workspace
+/// outside its own definition, so a qualified call (`Self::pad(..)`) or any
+/// other spelling the naming scan does not model keeps the marker off.
+pub(in crate::analysis) fn owner_unreferenced_in_workspace(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if owner.name.is_empty() || owner.name == "main" {
+        return false;
+    }
+    let inert = |attr: &String| {
+        if attr.trim_start().starts_with("//") {
+            return true;
+        }
+        let inner = attr
+            .trim()
+            .trim_start_matches("#!")
+            .trim_start_matches('#')
+            .trim_start_matches('[')
+            .trim_start();
+        let name: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+            .collect();
+        INERT_OWNER_ATTRS.contains(&name.as_str())
+    };
+    if !owner.attrs.iter().all(inert) || !owner.impl_attrs.iter().all(inert) {
+        return false;
+    }
+    let mut own_file_seen = false;
+    for file in index.files().values() {
+        let own_file = file.path == owner.file;
+        if own_file {
+            own_file_seen = true;
+            if file.used_lexical_fallback {
+                return false;
+            }
+        }
+        if !file.source.contains(owner.name.as_str()) {
+            continue;
+        }
+        let mut signature_open = true;
+        for (number, line) in file.source.lines().enumerate() {
+            let number = number + 1;
+            let inside_own = own_file && (owner.start_line..=owner.end_line).contains(&number);
+            if inside_own {
+                // A foreign ABI on the signature (`extern "C" fn`) is called
+                // from outside Rust.
+                if signature_open && line.contains("extern") {
+                    return false;
+                }
+                if line.contains('{') {
+                    signature_open = false;
+                }
+                continue;
+            }
+            if contains_word(line, &owner.name) {
+                return false;
+            }
+        }
+    }
+    own_file_seen
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    line.match_indices(word).any(|(at, _)| {
+        !line[..at].chars().next_back().is_some_and(is_ident)
+            && !line[at + word.len()..].chars().next().is_some_and(is_ident)
+    })
 }
 
 /// Whether the workspace names `owner` anywhere but inside its own body, given
@@ -199,7 +307,6 @@ pub(in crate::analysis) struct UnseenReachNames {
 
 impl UnseenReachNames {
     pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
-        use rayon::prelude::*;
         let sources: Vec<&str> = index
             .files()
             .values()
@@ -224,58 +331,18 @@ impl UnseenReachNames {
         let external_docs = includes_external_docs_many(&with_clean)
             .into_iter()
             .any(|includes| includes);
-        fn collect_names<'a>(
-            mut names: HashMap<&'a str, usize>,
-            source: &'a str,
-        ) -> HashMap<&'a str, usize> {
-            for name in identifiers_outside_fn_definition(source) {
-                *names.entry(name).or_insert(0) += 1;
+        // Each source's tallies are a pure function of its text, and one diff
+        // run builds this struct over several overlapping indexes (admission,
+        // main, each widened reach index), so the run scope scans each
+        // distinct text once and every later build only sums the tallies.
+        let mut named: HashMap<String, usize> = HashMap::new();
+        let mut named_free: HashMap<String, usize> = HashMap::new();
+        for tallies in source_namings_many(&sources) {
+            for (name, named_count, free_count) in tallies.iter() {
+                add_tally(&mut named, name, named_count);
+                add_tally(&mut named_free, name, free_count);
             }
-            names
         }
-        fn collect_free_names<'a>(
-            mut names: HashMap<&'a str, usize>,
-            source: &'a str,
-        ) -> HashMap<&'a str, usize> {
-            for name in free_function_namings(source) {
-                *names.entry(name).or_insert(0) += 1;
-            }
-            names
-        }
-        fn merge_names<'a>(
-            mut left: HashMap<&'a str, usize>,
-            mut right: HashMap<&'a str, usize>,
-        ) -> HashMap<&'a str, usize> {
-            if left.len() < right.len() {
-                std::mem::swap(&mut left, &mut right);
-            }
-            for (name, count) in right {
-                *left.entry(name).or_insert(0) += count;
-            }
-            left
-        }
-        let named: HashMap<&str, usize> = if super::owner_pin::nested_parallelism_allowed() {
-            sources
-                .par_iter()
-                .fold(HashMap::new, |names, source| collect_names(names, source))
-                .reduce(HashMap::new, merge_names)
-        } else {
-            sources
-                .iter()
-                .fold(HashMap::new(), |names, source| collect_names(names, source))
-        };
-        let named_free: HashMap<&str, usize> = if super::owner_pin::nested_parallelism_allowed() {
-            sources
-                .par_iter()
-                .fold(HashMap::new, |names, source| {
-                    collect_free_names(names, source)
-                })
-                .reduce(HashMap::new, merge_names)
-        } else {
-            sources.iter().fold(HashMap::new(), |names, source| {
-                collect_free_names(names, source)
-            })
-        };
         let workspace_traits = workspace_trait_names(index);
         let workspace_crates = index.workspace_member_crates().clone();
         let foreign_imports = index
@@ -307,14 +374,8 @@ impl UnseenReachNames {
             workspace_crates,
             member_traits: OnceLock::new(),
             member_dirs: index.workspace_member_dirs.clone(),
-            named: named
-                .into_iter()
-                .map(|(name, count)| (name.to_string(), count))
-                .collect(),
-            named_free: named_free
-                .into_iter()
-                .map(|(name, count)| (name.to_string(), count))
-                .collect(),
+            named,
+            named_free,
             external_docs,
         }
     }
@@ -660,6 +721,111 @@ fn imported_names(source: &str, keep_root: impl Fn(&str) -> bool) -> Vec<String>
     names
 }
 
+/// How many production caller hops [`owner_tested_through_production_caller`]
+/// walks up from the owner before giving up.
+const PRODUCTION_CALLER_HOPS: usize = 6;
+
+/// A caller name that more production functions define than this is not
+/// followed as a link. Three keeps a small overload family on one path
+/// (semver's `matches` on `VersionReq`, `Comparator` and the free helper all
+/// lead to `matches_impl`), while a common name such as `new`, `get` or `len`
+/// cannot stand in for a path. Measured on the five-crate cargo-mutants
+/// corpus (#12900): at 1 and 2 the rule removes 21 and 28 false gaps; at 3 it
+/// removes 61 and moves 8 boundary misses on `matches_*` helpers, which the
+/// tests do run, to `weakly_exposed`; above 3 it changes 6 more.
+const MAX_LINK_DEFINITIONS: usize = 3;
+
+/// Whether a chain of production callers (at most
+/// [`PRODUCTION_CALLER_HOPS`] hops) leads from `owner` to a function that a
+/// registered test calls by name, directly or through a test-side helper
+/// that a registered test calls.
+///
+/// This is a name-level lookalike of transitive reach: it never establishes
+/// reach and never credits an oracle. It only answers whether tests that
+/// merely sit near the owner are the whole story. When the owner sits behind
+/// a production caller that tests do call (a private helper behind a public
+/// entry), a missing assertion on the nearby tests is no evidence that the
+/// change goes unnoticed (#12900).
+///
+/// `CallFact::name` is the bare callee identifier, so a link is matched by
+/// name. A caller whose name more than [`MAX_LINK_DEFINITIONS`] production
+/// functions define (`new`, `get`, `len`) is not followed: a same-named call
+/// could be any of them, and following it would let a common name stand for a
+/// real path. A caller no test calls (an unexercised sibling) does not count
+/// either. A link must sit in the owner's own workspace package
+/// ([`package_prefix`]): a caller in a dependent package is the cross-package
+/// wrapper case, which keeps its own transitive-reach limit (#10127).
+pub(in crate::analysis) fn owner_tested_through_production_caller(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    use super::super::facts::FunctionSourceRole;
+    if owner.name.is_empty() {
+        return false;
+    }
+    let production = || {
+        index
+            .functions()
+            .iter()
+            .filter(|function| function.source_role == FunctionSourceRole::Production)
+    };
+    let mut definitions: HashMap<&str, usize> = HashMap::new();
+    for function in production() {
+        *definitions.entry(function.name.as_str()).or_default() += 1;
+    }
+    // A registered test calls `name`, or calls a test-side helper (one hop)
+    // that calls it. A helper no registered test calls is dead evidence and
+    // never counts.
+    let test_calls = |name: &str| {
+        index
+            .tests()
+            .iter()
+            .any(|test| test.calls.iter().any(|call| call.name == name))
+    };
+    let tested = |name: &str| {
+        test_calls(name)
+            || index.functions().iter().any(|function| {
+                function.source_role != FunctionSourceRole::Production
+                    && !function.name.is_empty()
+                    && function.calls.iter().any(|call| call.name == name)
+                    && test_calls(&function.name)
+            })
+    };
+    let owner_package = package_prefix(&owner.file);
+    let mut seen: BTreeSet<&str> = BTreeSet::from([owner.name.as_str()]);
+    let mut frontier: Vec<&str> = vec![owner.name.as_str()];
+    for _ in 0..PRODUCTION_CALLER_HOPS {
+        let mut next: Vec<&str> = Vec::new();
+        for function in production() {
+            let name = function.name.as_str();
+            if function.id == owner.id
+                || name.is_empty()
+                || seen.contains(name)
+                || package_prefix(&function.file) != owner_package
+                || definitions.get(name).copied().unwrap_or(0) > MAX_LINK_DEFINITIONS
+            {
+                continue;
+            }
+            if function
+                .calls
+                .iter()
+                .any(|call| frontier.contains(&call.name.as_str()))
+            {
+                seen.insert(name);
+                next.push(name);
+            }
+        }
+        if next.iter().any(|name| tested(name)) {
+            return true;
+        }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
+    }
+    false
+}
+
 /// Parser-backed owner ids carry their impl segment
 /// (`src/lib.rs::impl Display for Money::fmt`).
 pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
@@ -750,6 +916,127 @@ fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
         .len();
     !TRANSPARENT_TEST_MACROS.contains(&&line[macro_name..bang])
+}
+
+/// One source's identifier tallies for [`UnseenReachNames`]: how often it
+/// names each identifier outside a `fn` definition, and how often a spelling
+/// can denote a module-level free function.
+///
+/// The run memo keeps one per workspace source for the whole run, so the
+/// distinct names are packed into one buffer instead of one `String` per
+/// name per map: two `HashMap<String, usize>` per file held about 94 MB at
+/// `check` peak on ripr-swarm (#13703).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SourceNamings {
+    /// Every distinct name, concatenated in sorted order.
+    names: Box<str>,
+    tallies: Box<[NameTally]>,
+}
+
+/// A name's end offset in [`SourceNamings::names`] (it starts where the
+/// previous name ends) and its two counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NameTally {
+    end: u32,
+    named: u32,
+    free: u32,
+}
+
+impl SourceNamings {
+    /// `(name, named count, free count)` for every distinct name.
+    fn iter(&self) -> impl Iterator<Item = (&str, usize, usize)> + '_ {
+        let mut start = 0usize;
+        self.tallies.iter().filter_map(move |tally| {
+            let end = tally.end as usize;
+            let name = self.names.get(start..end);
+            start = end;
+            Some((name?, tally.named as usize, tally.free as usize))
+        })
+    }
+}
+
+fn tally<'a>(names: impl Iterator<Item = &'a str>) -> HashMap<&'a str, usize> {
+    let mut counts: HashMap<&'a str, usize> = HashMap::new();
+    for name in names {
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn scan_source_namings(source: &str) -> SourceNamings {
+    let named = tally(identifiers_outside_fn_definition(source));
+    let free = tally(free_function_namings(source));
+    let mut keys: Vec<&str> = named
+        .keys()
+        .chain(free.keys().filter(|name| !named.contains_key(*name)))
+        .copied()
+        .collect();
+    keys.sort_unstable();
+    let count = |map: &HashMap<&str, usize>, name: &str| {
+        map.get(name)
+            .map_or(0, |n| u32::try_from(*n).unwrap_or(u32::MAX))
+    };
+    let mut names = String::with_capacity(keys.iter().map(|name| name.len()).sum());
+    let mut tallies = Vec::with_capacity(keys.len());
+    for name in keys {
+        names.push_str(name);
+        tallies.push(NameTally {
+            end: u32::try_from(names.len()).unwrap_or(u32::MAX),
+            named: count(&named, name),
+            free: count(&free, name),
+        });
+    }
+    SourceNamings {
+        names: names.into_boxed_str(),
+        tallies: tallies.into_boxed_slice(),
+    }
+}
+
+fn add_tally(total: &mut HashMap<String, usize>, name: &str, count: usize) {
+    if count == 0 {
+        return;
+    }
+    match total.get_mut(name) {
+        Some(sum) => *sum += count,
+        None => {
+            total.insert(name.to_string(), count);
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_NAMINGS_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Sources [`source_namings_many`] scanned on this thread's behalf since the
+/// last call (the scans run on pool workers; the owning thread is credited).
+#[cfg(test)]
+pub(in crate::analysis) fn take_source_namings_scans() -> usize {
+    SOURCE_NAMINGS_SCANS.with(|count| count.replace(0))
+}
+
+/// [`scan_source_namings`] for every source, in order. Inside a run scope the
+/// texts the scope has not seen scan on the rayon pool and are stored for the
+/// next index build of the run (see
+/// [`crate::analysis::syntax::run_memo::memoize_many`]); outside a scope every
+/// source scans, as before.
+fn source_namings_many(sources: &[&str]) -> Vec<std::sync::Arc<SourceNamings>> {
+    #[cfg(test)]
+    let scanned = std::sync::atomic::AtomicUsize::new(0);
+    let tallies = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::SourceNamings,
+        sources,
+        |source| {
+            #[cfg(test)]
+            scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            std::sync::Arc::new(scan_source_namings(source))
+        },
+    );
+    #[cfg(test)]
+    SOURCE_NAMINGS_SCANS
+        .with(|count| count.set(count.get() + scanned.load(std::sync::atomic::Ordering::Relaxed)));
+    tallies
 }
 
 /// The identifiers of `source` (see [`identifiers_outside_fn_definition`])
@@ -923,6 +1210,122 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    fn parsed_index(files: &[(&str, &str)]) -> Result<RustIndex, String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let mut index = RustIndex::default();
+        for (path, source) in files {
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), source)?;
+            let functions = facts.functions.clone();
+            let tests = facts.tests.clone();
+            index.insert_file_only(PathBuf::from(path), facts);
+            index.extend_functions(functions);
+            index.extend_tests(tests);
+        }
+        Ok(index)
+    }
+
+    fn owner_named<'a>(index: &'a RustIndex, name: &str) -> Result<&'a FunctionSummary, String> {
+        index
+            .functions()
+            .iter()
+            .find(|function| function.name == name)
+            .ok_or_else(|| format!("owner {name} indexed"))
+    }
+
+    /// #12900: a private helper behind a public entry that a test calls is
+    /// tested through that caller chain, at any hop up to the bound.
+    #[test]
+    fn helper_behind_a_tested_public_entry_is_tested_through_a_caller() -> Result<(), String> {
+        let lib = "pub fn parse(s: &str) -> u32 { step(s) }\n\
+                   fn step(s: &str) -> u32 { digits(s) + 1 }\n\
+                   fn digits(s: &str) -> u32 { s.len() as u32 }\n";
+        let test = "#[test]\nfn parses() { assert!(parse(\"ab\") > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/parse.rs", test)])?;
+        for owner in ["step", "digits"] {
+            assert!(
+                owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} is reached through the tested entry `parse`"
+            );
+        }
+        Ok(())
+    }
+
+    /// The negative: a caller that no test calls (an unexercised sibling, the
+    /// `compile_time_marker_test_no_observation` shape) gives no such chain,
+    /// and neither does an owner with no production caller at all.
+    #[test]
+    fn unexercised_sibling_caller_or_no_caller_is_not_a_tested_chain() -> Result<(), String> {
+        let lib = "struct W(u32);\n\
+                   impl W {\n    fn peek(&self) -> u32 { self.get() }\n    fn get(&self) -> u32 { self.0 }\n}\n\
+                   pub fn lonely() -> u32 { 1 }\n";
+        let test = "#[test]\nfn unrelated() { assert_eq!(2, 2); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/t.rs", test)])?;
+        for owner in ["get", "lonely"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} has no production caller that tests call"
+            );
+        }
+        Ok(())
+    }
+
+    /// A caller in a test-only module is a test-side lookalike, not a
+    /// production link, and a caller name that more than
+    /// `MAX_LINK_DEFINITIONS` production functions define is not followed: a
+    /// test calling `run` could mean any of them.
+    #[test]
+    fn test_module_caller_and_ambiguous_caller_name_are_not_links() -> Result<(), String> {
+        let lib = "fn helper() -> u32 { 1 }\n\
+                   pub mod a { pub fn run() -> u32 { super::helper() } }\n\
+                   pub mod b { pub fn run() -> u32 { 2 } }\n\
+                   pub mod c { pub fn run() -> u32 { 3 } }\n\
+                   pub mod d { pub fn run() -> u32 { 4 } }\n\
+                   fn lonely() -> u32 { 3 }\n\
+                   pub fn entry() -> u32 { orphan() }\n\
+                   fn orphan() -> u32 { 5 }\n\
+                   #[cfg(test)]\nmod tests {\n    fn wrap() -> u32 { super::lonely() }\n    fn unused() -> u32 { super::entry() }\n    #[test]\n    fn calls_wrap() { assert_eq!(wrap(), 3); }\n}\n";
+        let test = "#[test]\nfn runs() { assert!(ripr_fixture::a::run() > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/run.rs", test)])?;
+        for owner in ["helper", "lonely", "orphan"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} must not be tested through an ambiguous, test-side or dead-helper caller"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_free_and_method_names_when_packed_then_every_name_keeps_both_counts() {
+        let source =
+            "use crate::m::kb;\nfn kb() {}\nfn f() { kb(); kb(); x.kb(); Size::mb(); mb(); }\n";
+        let expected_named: HashMap<String, usize> =
+            tally(identifiers_outside_fn_definition(source))
+                .into_iter()
+                .map(|(name, n)| (name.to_string(), n))
+                .collect();
+        let expected_free: HashMap<String, usize> = tally(free_function_namings(source))
+            .into_iter()
+            .map(|(name, n)| (name.to_string(), n))
+            .collect();
+        assert!(!expected_named.is_empty() && !expected_free.is_empty());
+        let packed = scan_source_namings(source);
+        let mut named = HashMap::new();
+        let mut free = HashMap::new();
+        let mut previous: Option<&str> = None;
+        for (name, named_count, free_count) in packed.iter() {
+            assert!(previous < Some(name), "names are distinct and sorted");
+            previous = Some(name);
+            assert!(named_count + free_count > 0, "{name} carries a count");
+            add_tally(&mut named, name, named_count);
+            add_tally(&mut free, name, free_count);
+        }
+        assert_eq!(named, expected_named);
+        assert_eq!(free, expected_free);
+        assert_eq!(packed.tallies.len(), packed.iter().count());
+        assert_eq!(scan_source_namings(""), SourceNamings::default());
+    }
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {
@@ -1240,6 +1643,74 @@ mod tests {
         assert!(names.may_reach_unseen(&function("fragile_fee")));
         assert!(!names.may_reach_unseen(&function("lonely")));
         assert!(UnseenReachNames::build(&docs_index).may_reach_unseen(&function("lonely")));
+    }
+
+    /// #13577: one diff run builds this struct over several overlapping
+    /// indexes (one per distinct reach closure), and each build rescanned
+    /// every source. Inside a run scope each distinct text scans once; the
+    /// tallies equal an independent per-source reference, and a changed
+    /// source (a renamed free function) rescans only itself.
+    #[test]
+    fn unseen_reach_names_scan_each_source_once_per_run() {
+        let reference = |sources: &[&str]| {
+            let mut named: HashMap<String, usize> = HashMap::new();
+            let mut free: HashMap<String, usize> = HashMap::new();
+            for source in sources {
+                for name in identifiers_outside_fn_definition(source) {
+                    *named.entry(name.to_string()).or_insert(0) += 1;
+                }
+                for name in free_function_namings(source) {
+                    *free.entry(name.to_string()).or_insert(0) += 1;
+                }
+            }
+            (named, free)
+        };
+        let before = [
+            "pub fn price(w: u32) -> u32 { w }\nfn helper() { price(1); Money::price(2); }\n",
+            "pub fn lonely() {}\nfn other() { lonely(); }\n",
+            "fn third() { price(3); }\n",
+        ];
+        let renamed_text = before.map(|source| source.replace("price", "unit_price"));
+        let renamed = [
+            renamed_text[0].as_str(),
+            renamed_text[1].as_str(),
+            renamed_text[2].as_str(),
+        ];
+        let index_of = |sources: &[&str]| {
+            let files = sources
+                .iter()
+                .enumerate()
+                .map(|(position, source)| {
+                    let path = PathBuf::from(format!("src/f{position}.rs"));
+                    (
+                        path.clone(),
+                        FileFacts {
+                            path,
+                            source: (*source).into(),
+                            ..FileFacts::default()
+                        },
+                    )
+                })
+                .collect();
+            RustIndex::from_owned(OwnedRustIndex {
+                files,
+                ..Default::default()
+            })
+        };
+        let _ = take_source_namings_scans();
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        for (round, sources) in [&before, &before, &before, &renamed, &renamed]
+            .into_iter()
+            .enumerate()
+        {
+            let names = UnseenReachNames::build(&index_of(sources));
+            let (named, free) = reference(sources);
+            assert_eq!(names.named, named, "round {round}");
+            assert_eq!(names.named_free, free, "round {round}");
+        }
+        // Three distinct texts, then the two the rename touched (the third is
+        // unchanged and stays served): not five builds times three files.
+        assert_eq!(take_source_namings_scans(), 5);
     }
 
     /// #9169: a foreign trait's method runs through language dispatch that
@@ -2194,6 +2665,79 @@ mod tests {
         }
     }
 
+    fn unreferenced_fixture(source: &str, owner: &FunctionSummary, lexical: bool) -> bool {
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    used_lexical_fallback: lexical,
+                    ..FileFacts::default()
+                },
+            )]),
+            functions: vec![owner.clone()],
+            ..Default::default()
+        });
+        owner_unreferenced_in_workspace(owner, &index)
+    }
+
+    #[test]
+    fn unreferenced_marker_admits_only_a_parsed_unnamed_plain_owner() {
+        let lone = "pub fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n#[test]\nfn other() { assert_eq!(1, 1); }\n";
+        let owner = function("as_eb");
+        assert!(
+            unreferenced_fixture(lone, &owner, false),
+            "plain unnamed owner"
+        );
+        assert!(
+            !unreferenced_fixture(lone, &owner, true),
+            "lexical fallback has no attributes"
+        );
+
+        // A qualified call the naming scan may not count still names it.
+        let qualified = format!("{lone}fn caller() -> u64 {{ Self::as_eb(1) }}\n");
+        assert!(
+            !unreferenced_fixture(&qualified, &owner, false),
+            "Self::as_eb"
+        );
+
+        // Inert attributes and doc comments keep the marker.
+        let mut inline = owner.clone();
+        inline.attrs = vec!["#[inline(always)]".into(), "/// Returns exabytes.".into()].into();
+        assert!(unreferenced_fixture(lone, &inline, false), "inline + doc");
+
+        // Attributes that export the owner to an unseen caller drop it.
+        for attr in [
+            "#[no_mangle]",
+            "#[export_name = \"x\"]",
+            "#[wasm_bindgen]",
+            "#[ctor::ctor]",
+            "#[proc_macro]",
+        ] {
+            let mut exported = owner.clone();
+            exported.attrs = vec![attr.into()].into();
+            assert!(!unreferenced_fixture(lone, &exported, false), "{attr}");
+        }
+        let mut impl_exported = owner.clone();
+        impl_exported.impl_attrs = vec!["#[wasm_bindgen]".into()];
+        assert!(
+            !unreferenced_fixture(lone, &impl_exported, false),
+            "impl attr"
+        );
+
+        // A foreign ABI on the signature.
+        let ffi = "pub extern \"C\" fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n";
+        assert!(!unreferenced_fixture(ffi, &owner, false), "extern C");
+
+        // `main` is run by the build, never named.
+        let main = "fn main() {\n    run();\n}\n";
+        assert!(
+            !unreferenced_fixture(main, &function("main"), false),
+            "main"
+        );
+    }
+
     fn function(name: &str) -> FunctionSummary {
         FunctionSummary {
             id: SymbolId(format!("src/lib.rs::{name}")),
@@ -2202,14 +2746,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -2222,12 +2766,12 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

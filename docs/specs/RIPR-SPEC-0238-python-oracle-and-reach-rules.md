@@ -1166,7 +1166,57 @@ mutant calibrates the rule; ripr reports only the static shape.
     same way a `@pytest.mark.skip` decorator does (a condition is not
     evaluated, so a `skipif` on a name or comparison that is false on the
     host still abstains): the finding is `static_unknown` with
-    `decorator_indirection`. Two things are decidable from the source and
+    `decorator_indirection`. A control that provably keeps the body from
+    running under the default invocation is the exception: an unconditional
+    `@pytest.mark.skip` or `@unittest.skip`, a module-level
+    `pytest.skip(..., allow_module_level=True)`,
+    an empty literal parametrize table, a parametrize mark pytest refuses at
+    collection, and a later non-loop binding of the test name (rule 23). Such a test can
+    fail on no edit, so it is no evidence either way: it does not raise the
+    limit, and a finding no other test relates to is a gap (`weakly_exposed`,
+    with `related_test_never_runs` evidence and a missing check that says to
+    remove the control or add an active test), the way an `#[ignore]`d Rust
+    test is. Gap cases: `py-trap-skipped-test`, `py-idioms-skipped-test`,
+    `py-trap-empty-table`, `py-trap-shadowed-test`, and the `py-unrun-*`
+    module-level `pytest.skip` and empty tuple table. The exception is narrowed
+    wherever the test could still run: a unittest-style test counts only
+    `unittest.skip`, a module-level `pytest.skip` and a later binding (the
+    `python -m unittest` verify command ignores pytest marks, parametrize and
+    `__test__`), and so does a test in a class with any base this file does
+    not define other than `object` (it may be a `TestCase` the adapter cannot
+    see, such as `IsolatedAsyncioTestCase` or a project base, or a base name
+    the file binds more than once); a `__test__ = False` switch never counts
+    (a class one is the abstract-suite idiom, re-enabled by a subclass in this
+    file or another, and a literal `False` is recorded apart from an unresolved
+    binding only as evidence); a module-site skip (`pytestmark`) never counts, because pytest also collects a test
+    another module imports (even a module with no tests of its own) without
+    them; and a rebinding counts only when it is not a `for` target (a loop may
+    bind nothing), the earlier definition has no decorator other than a pytest
+    or unittest mark (a registering decorator may keep and run it), and every
+    mention of the name in the file is a statement that binds it (an alias
+    such as `kept = test_x` keeps the definition collected). A finding beside any other
+    controlled test keeps the limit. Conditional `skipif`/`skipIf`/`skipUnless`,
+    every `xfail` (its outcome depends on `strict`, `raises` and the project's
+    `xfail_strict`), `unittest.expectedFailure`, `importorskip`, an
+    unresolved `__test__` binding and the project-level collection rules
+    below (which a command line naming the file can bypass) stay
+    unestablished. Not modelled: `-p no:skipping` in `addopts` (which turns
+    skip marks off) and `empty_parameter_set_mark = xfail` (which runs the
+    body with `NOTSET` arguments, a call no exact assertion pins); both are
+    named limits, not claims that the tests run. Pytest before 7.2, which
+    applies only the first base's `pytestmark` under multiple inheritance, is
+    another named limit. A
+    skip whose decorator root name the file also binds outside an import
+    (`def skip(...)`, `skip = ...`, at any block depth) is not counted, nor
+    is a module-level `pytest.skip` called through a root the file rebinds
+    or patches through an attribute (`pytest.skip = ...`).
+    A pytest mark (skip, empty or refused parametrize) on a test that also
+    carries a decorator other than a pytest mark or unittest decorator is not
+    counted: that wrapper may return a fresh callable without the mark, which
+    pytest collects and runs; nor is any parametrize collection error on such
+    a test, since a class/method duplicate may come from the discarded mark.
+    `unittest.skip` replaces the body itself, so it still counts under such a
+    wrapper. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
     that never triggers the mark and is the only condition, given with the
     string `reason` the runner requires for a boolean
@@ -1182,8 +1232,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`py-trap-module-skipped`, `py-trap-empty-table`,
     `py-trap-skipif-false`, `py-trap-module-loaded`, #9691; the `py-unrun-*`
     cases add a module `pytestmark` skip, a module-level `pytest.skip`, an
-    `importorskip` of a missing module and an empty tuple table, which
-    abstain, and `xfail(False, reason=...)` and
+    `importorskip` of a missing module, which abstains, and an empty tuple
+    table, which is a gap, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
     A test pytest never collects is controlled the same way
     (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
@@ -1200,7 +1250,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     parse-everything-or-refuse: a collection form the adapter cannot
     evaluate (a computed `collect_ignore`, a collection hook, a character
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
-    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    `addopts`) withholds credit for its scope. A `norecursedirs` entry with
+    exactly one trailing `/` and no other `/` (`env/`) is read as the
+    basename pattern without the slash; every other `/`-bearing entry
+    (`a/b/`, `/`, `env//`) still refuses the config as unevaluated. This
+    deliberately over-withholds relative to pytest, whose path-pattern match
+    likely excludes nothing for `env/`; it never grants credit. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
     `pytest_collection_modifyitems`, and command-line arguments. Known
     limits: `testpaths` is assumed to govern collection (an invocation that
@@ -1456,6 +1511,25 @@ mutant calibrates the rule; ripr reports only the static shape.
     `outer.inner`". A call whose value may be returned, bound, passed or
     asserted keeps the credit, and so does a related test that calls the
     nested name itself.
+32. **An assertion helper called as a module attribute reads like an
+    imported helper only when the module binding is provably stable**
+    (#13629). A call statement `module.helper(args)` substitutes `helper`'s
+    single straight-line assertion, exactly as `from M import helper` does,
+    when `module` is bound by exactly one import in the test file and that
+    import names a workspace module file: `from . import conftest`, a
+    relative import inside a nested package, `from pkg import helpers` or
+    `import pkg.helpers as helpers`. It stays unresolved (no assertion) when:
+    any other import, `del`, assignment or walrus binds `module` anywhere in
+    the test file; the test file assigns or deletes the helper attribute; the
+    test file or the helper's own module has a star import, a walrus, or names
+    a patcher or dynamic namespace writer (`patch`, `setattr`, `globals`,
+    `sys.modules`, ...) anywhere, which covers module-level patches, autouse
+    fixtures and decorators; the package `__init__` binds the same name by
+    assignment, def, import or star import; the import is an undotted absolute
+    module (`import conftest`, `import conftest as c`), which resolves through
+    `sys.path`; a relative import escapes the package; or the call passes
+    keyword arguments. Over-refusal is accepted: a wrong substituted assertion
+    would be a wrong credit.
 
 ### Verdict ladder
 
@@ -1468,6 +1542,7 @@ the first matching row wins (reach / observe / discriminate):
 | --- | --- | --- | --- |
 | 1 | a static limit | `static_unknown` | no / no / no with no related test; else yes (eligible) or weak (heuristic only) / same / unknown |
 | 2 | no related test | `no_static_path` | no / no / no |
+| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | weak / no / no |
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |
@@ -1476,8 +1551,9 @@ the first matching row wins (reach / observe / discriminate):
 | 8 | weaker than strong | `weakly_exposed` | yes / weak / weak |
 
 Confidence is 0.6 for `exposed`, 0.2 for `static_unknown` and 0.4
-otherwise. Python never emits `reachable_unrevealed` or
-`infection_unknown`. The ladder is the existing behavior and is normative.
+otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
+related test replaces the owner itself so none runs the changed code; the
+class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
 ### Decisions
 
@@ -2004,6 +2080,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
     `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
     `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
+
+- example `package-init-ancestor`: `shapes/rates/table.py` changes
+  `RATE_TABLE = {"gold": 10, "silver": 5}` to gold 11. The ancestor
+  `shapes/__init__.py` loads the real table, then rebinds `rates` to an
+  alternate package whose `table.lookup` returns 10 independently. A test
+  imports `shapes.rates.table as t` and asserts `t.lookup("gold") == 10`:
+  no credit for the real table; the runtime mutant passes.
+- example `package-init-reexport`: The same table edit with
+  `shapes/rates/__init__.py` containing `from . import table` and an empty
+  ancestor initializer: the same exact assertion credits the real table;
+  the runtime mutant fails that assertion.
+- example `package-init-shadow`: The same table edit with the immediate
+  package initializer loading `table`, then binding `from . import alternate
+  as table`, where `alternate.lookup` returns 10 independently: the same
+  exact assertion gives no credit for the real table; the runtime mutant
+  passes. Import and test execution succeed in both negative cases.
 
 ## Test Mapping
 
