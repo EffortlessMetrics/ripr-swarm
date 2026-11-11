@@ -168,3 +168,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_test_case_arrow_coincident_row (14)
+
+Reason:
+RIPR-SPEC-0108: disclose existing weak infection or propagation evidence in missing; classifications unchanged (#9361)
+
+Command:
+`cargo xtask goldens bless rust_test_case_arrow_coincident_row --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

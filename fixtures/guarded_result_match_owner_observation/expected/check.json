@@ -176,7 +176,7 @@
         {"kind":"return_value","text":"Ok(build_response(expected_id, trimmed)?)","line":46}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "No complete owner-bound propagation witness found for returned value: Ok(build_response(expected_id, trimmed)?)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_response: validates_ready_response", "Strong oracle found: guarded Result match over the changed owner's result"],
-      "missing": [],
+      "missing": ["No complete owner-bound propagation witness found for returned value: Ok(build_response(expected_id, trimmed)?)"],
       "assertion_texts": {
         "6": "match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }",
         "8": "assert_eq!(response.id, \"ready\");",

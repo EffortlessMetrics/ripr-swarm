@@ -610,3 +610,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (51)
+
+Reason:
+RIPR-SPEC-0108: disclose existing weak infection or propagation evidence in missing; classifications unchanged (#9361)
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

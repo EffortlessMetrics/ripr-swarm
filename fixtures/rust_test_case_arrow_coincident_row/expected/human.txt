@@ -15,6 +15,8 @@ Start here:
   Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:scale:return_value:return_value:x*3
   Changed behavior: x * 3
+  Missing check: Every related test calls the owner with literal inputs at which the changed
+    expression and its baseline evaluate to the same value, so no test input reaches a difference
   Related test: src/lib.rs:11 rows
   Next step: The related test `rows` already has an exact assertion; this does not establish
     observation of the returned value. Check whether the change can affect the returned value. If it

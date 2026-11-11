@@ -10,12 +10,16 @@ fn fixture(name: &str) -> Result<CheckOutput, String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
         .join(name);
-    let mut config = ripr::config::RiprConfig::default();
+    let config = ripr::config::RiprConfig::default();
     #[cfg(feature = "lang-typescript")]
-    config
-        .languages
-        .enabled
-        .push(ripr::domain::LanguageId::TypeScript);
+    let config = {
+        let mut config = config;
+        config
+            .languages
+            .enabled
+            .push(ripr::domain::LanguageId::TypeScript);
+        config
+    };
     let output = check_workspace_with_config(
         CheckInput {
             root: dir.join("input"),

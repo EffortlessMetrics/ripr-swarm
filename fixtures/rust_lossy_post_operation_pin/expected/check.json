@@ -53,7 +53,7 @@
         {"kind":"return_value","text":"(x * 3) >> 4","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: (x * 3) >> 4", "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference", "Related tests appear to reach scale: scales_a_small_input", "Strong oracle found: exact value or pattern assertion"],
-      "missing": [],
+      "missing": ["Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference"],
       "assertion_texts": {
         "11": "assert_eq!(scale(4), 0);"
       },

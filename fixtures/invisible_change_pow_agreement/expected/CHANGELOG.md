@@ -194,3 +194,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — invisible_change_pow_agreement (16)
+
+Reason:
+RIPR-SPEC-0108: disclose existing weak infection or propagation evidence in missing; classifications unchanged (#9361)
+
+Command:
+`cargo xtask goldens bless invisible_change_pow_agreement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

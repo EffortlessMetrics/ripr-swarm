@@ -53,7 +53,7 @@
         {"kind":"return_value","text":"base * 3u64.pow(attempt)","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: base * 3u64.pow(attempt)", "Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart", "Related tests appear to reach backoff_ms: first_attempt_waits_the_base, retries_grow_past_the_first_wait", "Strong oracle found: exact value or pattern assertion"],
-      "missing": [],
+      "missing": ["Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart"],
       "assertion_texts": {
         "5": "assert_eq!(backoff_ms(0, 100), 100);",
         "10": "assert!(backoff_ms(3, 100) > backoff_ms(1, 100));"
