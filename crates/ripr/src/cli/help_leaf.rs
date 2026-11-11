@@ -40,6 +40,11 @@ pub(super) fn leaf_help(path: &str) -> Option<String> {
         help.push_str(line);
         help.push('\n');
     }
+    for note in leaf_notes(body, path) {
+        help.push('\n');
+        help.push_str(note);
+        help.push('\n');
+    }
     if let Some(example) = catalog_example(path)
         && !example.is_empty()
     {
@@ -78,6 +83,55 @@ fn usage_lines<'a>(body: &'a str, path: &str) -> Vec<&'a str> {
         in_usage_block = false;
     }
     lines
+}
+
+/// Opening words of the family-body prose paragraphs that describe each leaf:
+/// its contract, exit status, environment, and side effects. The scoped page
+/// keeps them so it drops sibling detail, not this leaf's own rules. A
+/// paragraph that covers several leaves is listed for each one.
+fn leaf_note_openings(path: &str) -> &'static [&'static str] {
+    const BASELINE_OUTPUT: &str = "Output discipline:";
+    const POLICY: &str = "The policy readiness report is read-only";
+    const PR_EXISTING_REQUESTS: &str = "`existing` keeps only marked comments";
+    match path {
+        "reports index" => &["The report-packet index"],
+        "reports ci-packet" => &["The CI packet runs"],
+        "reports ci-summary" => &["The CI summary prints"],
+        "reports gap-ledger" => &["The gap decision ledger"],
+        "reports kani" => &["The Kani report imports"],
+        "reports ts-limitations" => &["The TypeScript limitation leaderboard"],
+        "reports ts-false-actionable" => &["The TypeScript false-actionable audit report"],
+        "policy readiness"
+        | "policy operations"
+        | "policy history"
+        | "policy promote"
+        | "policy preview-promote"
+        | "policy waiver-aging"
+        | "policy suppression-health" => &[POLICY],
+        "baseline create" => &["The baseline create command", BASELINE_OUTPUT],
+        "baseline diff" => &["The baseline diff command", BASELINE_OUTPUT],
+        "baseline update" => &["The baseline update command", BASELINE_OUTPUT],
+        "pr-comments plan" => &["The PR comments plan"],
+        "pr-comments existing" | "pr-comments requests" => &[PR_EXISTING_REQUESTS],
+        "pr-comments summary" => &["`summary` renders"],
+        "assistant-loop proof" => &["The assistant-loop proof report"],
+        "assistant-loop health" => &["The assistant-loop health report"],
+        _ => &[],
+    }
+}
+
+/// The family-body paragraphs named by `leaf_note_openings`, in order. A
+/// paragraph is a run of non-blank lines; an opening that no longer matches
+/// a paragraph is skipped here and caught by the unit tests.
+fn leaf_notes<'a>(body: &'a str, path: &str) -> Vec<&'a str> {
+    leaf_note_openings(path)
+        .iter()
+        .filter_map(|opening| {
+            body.split("\n\n")
+                .map(|paragraph| paragraph.trim_matches('\n'))
+                .find(|paragraph| paragraph.starts_with(opening))
+        })
+        .collect()
 }
 
 /// The options section headed exactly `section`, from the heading through the
@@ -207,6 +261,37 @@ mod tests {
             from_leaf.dedup();
             assert_eq!(from_leaf, from_family, "{path}: {help}");
         }
+    }
+
+    /// Every leaf keeps its own contract prose, and each named opening
+    /// matches exactly one paragraph of the family body (#14366 review: the
+    /// scoped page had dropped exit status, environment and side effects).
+    #[test]
+    fn every_leaf_keeps_its_own_contract_paragraphs() {
+        for path in leaf_paths() {
+            let body = help_text_for(path).unwrap_or_default();
+            let openings = leaf_note_openings(path);
+            assert!(!openings.is_empty(), "{path}: no contract paragraph named");
+            for opening in openings {
+                let matches = body
+                    .split("\n\n")
+                    .filter(|paragraph| paragraph.trim_matches('\n').starts_with(opening))
+                    .count();
+                assert_eq!(matches, 1, "{path}: opening {opening:?}");
+            }
+            let help = leaf_help(path).unwrap_or_default();
+            for note in leaf_notes(body, path) {
+                assert!(help.contains(note), "{path}: missing {note:?}");
+            }
+        }
+        let kani = leaf_help("reports kani").unwrap_or_default();
+        assert!(kani.contains("Exit 0 means"), "{kani}");
+        assert!(!kani.contains("The CI packet runs"), "{kani}");
+        let ci = leaf_help("reports ci-packet").unwrap_or_default();
+        assert!(ci.contains("RIPR_GATE_MODE"), "{ci}");
+        let requests = leaf_help("pr-comments requests").unwrap_or_default();
+        assert!(requests.contains("requests.tsv"), "{requests}");
+        assert!(!requests.contains("`summary` renders"), "{requests}");
     }
 
     #[test]
