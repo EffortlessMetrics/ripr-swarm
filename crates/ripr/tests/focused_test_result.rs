@@ -124,7 +124,7 @@ fn after_with_receipt_surface_transition(
         &shim,
         r##"#!/bin/sh
 case "$*" in
-  *"diff --no-renames --no-ext-diff --name-only -z "*)
+  *"diff --no-renames --no-ext-diff --no-relative --name-only -z "*)
     if [ ! -e "$RIPR_TEST_MARKER" ]; then
       printf '\n// receipt surface transition\n' >> "$RIPR_TEST_TARGET" || exit 90
       : > "$RIPR_TEST_MARKER"
@@ -625,14 +625,17 @@ fn result_document(attempt: &str, head: &str, file: &str, events: Value) -> Valu
 
 fn existing_edited_attempt(label: &str) -> Result<(Fixture, Attempt), String> {
     let fixture = fixture(label)?;
+    let existing = "use proposal_fixture::discounted_total;\n#[test] fn above() { assert_eq!(discounted_total(200, 100), 190); }\n";
+    write(&fixture.root, PROPOSED_FILE, existing)?;
+    commit_all(&fixture.root, "existing related test")?;
+    let attempt = begin(&fixture.root)?;
+    // The external-file cage admits only insertion: keep every existing byte.
+    let inserted = NEW_TEST.replacen("use proposal_fixture::discounted_total;\n\n", "\n", 1);
     write(
         &fixture.root,
         PROPOSED_FILE,
-        "use proposal_fixture::discounted_total;\n#[test] fn above() { assert_eq!(discounted_total(200, 100), 190); }\n",
+        &format!("{existing}{inserted}"),
     )?;
-    commit_all(&fixture.root, "existing related test")?;
-    let attempt = begin(&fixture.root)?;
-    write(&fixture.root, PROPOSED_FILE, NEW_TEST)?;
     Ok((fixture, attempt))
 }
 

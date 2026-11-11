@@ -194,7 +194,7 @@ pub(in crate::analysis) fn missing_evidence(
 /// (also `assert_eq!`/`assert_ne!`/`debug_assert!` forms) or the
 /// `static_assertions` `const_assert*!` macros, bare or path-qualified. The
 /// match is on the written text only; anything else keeps its generic reason.
-fn is_compile_time_assertion(expression: &str) -> bool {
+pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {

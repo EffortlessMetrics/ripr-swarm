@@ -36,6 +36,7 @@ pub(crate) enum Product {
     ModuleScopes,
     ClosureArgumentPositions,
     InvokedCallbackParams,
+    ReceiverLetBindings,
 }
 
 impl Product {
@@ -51,6 +52,7 @@ impl Product {
             Self::ModuleScopes => "module_scopes",
             Self::ClosureArgumentPositions => "closure_argument_positions",
             Self::InvokedCallbackParams => "invoked_callback_params",
+            Self::ReceiverLetBindings => "receiver_let_bindings",
         }
     }
 }

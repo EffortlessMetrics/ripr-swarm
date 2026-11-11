@@ -144,14 +144,16 @@ superseded.
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
   with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
+  only when `merge-ready` is re-applied. UB is the explicit exception:
+  `full-ci` alone requests its advisory review, and `merge-ready` never does.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
-- Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+- Explicit exception: `ub-review` is requested by `full-ci` itself, never by
+  `merge-ready` alone. Its event, concurrency and publication contracts are
+  pinned by `pr_readiness_workflow_contract`. The Python wheel workflow and
+  `source-of-truth` keep their own triggers; their cutover is tracked under #4984.
 
 ### What starts what
 
@@ -162,6 +164,10 @@ superseded.
 | Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
 | Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
 | Any other label | no (posts `Merge-ready Nonrequest`) | no |
+
+The required-check and gated-lane columns here do not include UB's direct
+`full-ci` advisory event, which creates no required check. See the UB notes
+below for its separate publication and concurrency behavior.
 
 The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
 is review state only and starts no required work. Gating the required job by
@@ -183,7 +189,7 @@ reviewed candidate, never as a general "please run CI" signal.
 
 | State | How to read it on the PR | Next action |
 | --- | --- | --- |
-| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Candidate | Draft or Ready, no `merge-ready` for this head; light checks run on push, UB waits for `full-ci`, and gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
 | Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
 | Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
 | Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
@@ -191,7 +197,8 @@ reviewed candidate, never as a general "please run CI" signal.
 
 A green `ub-review` wrapper is advisory: read its review and sensor output, not
 only the conclusion (see the `ub-review` notes under Current Workflows). A
-cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
+cancelled `ub-review` run was superseded by re-requesting `full-ci` for a head
+and is not a result.
 
 ## Verification Economics Policy
 
@@ -461,8 +468,8 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. For the gated lanes in this table, add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; those labels have no effect without it. **UB is the exception:** `full-ci` alone requests UB advisory review, and `merge-ready` alone never requests UB. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `full-ci` | Its own labeled event requests advisory UB review, independently of `merge-ready`. It also selects required, advisory and release-like lanes when `merge-ready` is applied; for Routed Rust Small it must be present then. Demotes `ripr-waive` for this PR. Expected to cost more. Adding it afterward does not rerun those lanes or repeat UB; re-apply `full-ci` for a new head. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -720,8 +727,8 @@ normalization behavior surfaced only on a maintainer's local run.
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
 
-- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
-  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+- **What runs.** `cargo xtask kani`, which runs `cargo kani` once per owning package (`ripr`
+  and `ripr-contract`) over discovered `#[kani::proof]` harnesses (harnesses live in `#[cfg(kani)]` modules next to the
   code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
   harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
@@ -736,10 +743,11 @@ check and does not run on ordinary pushes or PR updates.
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
 - **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
-  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
-  workflow (same guard shape as the merge-ready label flow; re-apply
-  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
-  run takes minutes and several GB of memory.
+  pull request that touches `crates/ripr/src/**`, `crates/ripr-contract/src/**`,
+  `xtask/src/kani_lane.rs` or the workflow (same guard shape as the merge-ready
+  label flow; re-apply `merge-ready` for a later head). Kani runs once per owning
+  package (`ripr`, then `ripr-contract`) under one whole-run deadline and compiles
+  each whole library, so a run takes minutes and several GB of memory.
 
 ### Advisory Printed-Command Paste Lane
 
@@ -962,18 +970,30 @@ the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
-UB retains early review on `opened`, `synchronize`, and `reopened`, including
-Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
-cancels active UB review nor repeats completed advisory work. Its existing
-same-repository guard and concurrency remain unchanged. Automatic Droid PR
-review is retired under #5086; manual `@droid` commands and scheduled security
-scans retain their separate triggers and safeguards. UB explicitly lists all
-three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
+UB runs only for a same-repository `full-ci` labeled event. The workflow
+subscribes only to `labeled`, and its executable job guard additionally requires
+`github.event.action == 'labeled'` and `github.event.label.name == 'full-ci'`.
+Non-full-ci labels, `merge-ready` alone, Ready, reopen and push do not execute
+the UB job or invoke its sensors. `full-ci` requests one advisory review of the
+exact head passed by `pr-head-sha`. Remove and re-apply `full-ci` after a new
+head is ready for advisory review. The same-repository fork guard is unchanged.
+Admitted `full-ci` requests share a per-PR concurrency group with cancellation,
+so a new request supersedes its predecessor. Other labels use unique per-run
+groups and cannot cancel the admitted UB run before their own job is skipped.
+In either case, `cancel-in-progress` applies only within that group and a
+cancelled old run is not review evidence.
+
+The full-ci label is an explicit operator review request, so the job selects
+`run-pass: manual`. The pinned action's `pull_request_other` pass is
+artifact-only, while its documented manual operator request bypasses the pass
+publication list. The workflow still requires the same-repository/full-ci job
+guard and exact `pr-head-sha`; `manual` here records that explicit opt-in rather
+than relabeling it as `synchronize`. `.ub-review.toml` retains the original
+`opened`, `synchronize` and `reopened` publication events. The action pin,
+sensors, evidence receipts, exact head, artifacts and advisory posture are
+unchanged. Automatic Droid PR review remains retired under
+#5086; manual `@droid` commands and scheduled security scans retain their
+separate triggers and safeguards.
 
 Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
 action/config identity, and review receipts. The same PR head with a changed
@@ -981,10 +1001,11 @@ base or merge tree is a different review identity; this event change supplies
 no cache hit or integration re-review. Before merge, inspect material integration
 changes and obtain applicable fresh review through the existing review route.
 Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
+failed, or skipped provider remains missing review evidence; no synthetic
+success replaces it. A green wrapper remains advisory: inspect the review and
+sensor output rather than treating the wrapper as proof or qualification.
+`xtask/tests/pr_readiness_workflow_contract.rs` checks parsed event/config and
+executable guard contracts, not hosted provider execution.
 
 UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
 workflow test and run commands use `--no-default-features` to build the JSON
@@ -1024,8 +1045,8 @@ needs its own evidence.
 - A push after the request leaves the new head without the required check.
   Refresh affected proof and review, then remove and re-apply `merge-ready`
   for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+- For lanes other than UB, labels such as `full-ci` take effect at the next
+  `merge-ready` request, not when they are added; add them before the request.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1456,11 +1477,27 @@ per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and
 closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
+detection latency is roughly forty minutes (interval plus probe).
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Main's push gates do finish, because their
+concurrency supersedes only queued runs, so about one run per gate completes
+each hour. Each fire therefore also reads the latest completed, non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Gate-level detection latency is the gate
+cadence plus up to thirty minutes. The
 `xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
 shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 
@@ -3080,8 +3117,8 @@ branch.
 
 ## Invocation-local policy preparation
 
-The file-policy coverage producer records which explicit `--bin` and `--test`
-selectors belong to each existing package-set combined build. A successful
+The file-policy coverage producer records which explicit `--lib`, `--bin` and
+`--test` selectors belong to each existing package-set combined build. A successful
 combined build supplies preparation for those members during the same
 invocation. Native Cargo listings still execute with the original selector
 arguments, flags and host scope and remain the acceptance evidence. Failed,
@@ -3090,8 +3127,17 @@ targetless and unsupported selectors retain their own preparation. This shares
 no executable between jobs, stores no reusable successful result, and changes
 no package grouping, test selection, listing deadline or required test command.
 
-A retained allowlist command trace removes twelve redundant preparation
+An earlier retained allowlist command trace removes twelve redundant preparation
 invocations (18 to 6) and preserves all 33 ordered listings. Native small-Cargo
 controls establish the three-to-one preparation reduction for two explicit
 integration targets, including missing-subject and compiler-failure refusals.
 They do not establish product compilation savings or complete-lane timing.
+
+Explicit-library follow-through also reuses a library-only selector when that
+library target is in the combined build. A native library/binary/integration-test
+fixture reduces preparation from two invocations to one and retains all three
+original listings. Changing the launch context during preparation or before
+sibling reuse restores individual preparation; missing selectors and compiler
+failures still refuse. Targetless and feature-changing selectors keep their own
+builds. These controls establish eliminated redundant Cargo invocations, not a
+measured whole-repo CPU, memory, storage or wall-time reduction.

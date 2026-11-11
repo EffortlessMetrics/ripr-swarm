@@ -599,12 +599,12 @@ fn security_boundaries_hold_per_job() -> Result<(), String> {
     )?;
     require(
         &prepare,
-        ".protected",
-        "a protected or default head branch is refused before anything runs",
+        "[ \"$head_protected\" != \"false\" ]",
+        "a protected head branch or unreadable protection is refused before anything runs",
     )?;
     require(
         &prepare,
-        "default_branch",
+        "[ \"$head_branch\" = \"$default_branch\" ]",
         "the default branch is never a bless target",
     )
 }
