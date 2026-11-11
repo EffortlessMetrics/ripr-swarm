@@ -1357,7 +1357,9 @@ fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usiz
 /// comment/string-masked text. Fail closed: the closing line counts only when
 /// nothing but whitespace follows the `;`, and a declaration that never
 /// closes, closes outside its braces, or holds a character no `use` tree can
-/// hold marks nothing.
+/// hold marks nothing. A declaration that opens on the line where the
+/// previous one closed (`}; use b::{`) is not an opener, so its entries keep
+/// their probes.
 fn use_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let mut out = std::collections::BTreeSet::new();
     // Cheap reject: most files hold no wrapped import.
