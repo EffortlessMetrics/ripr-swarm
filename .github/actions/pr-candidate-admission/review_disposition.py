@@ -73,17 +73,19 @@ STATE_TOKEN = re.compile(
     re.IGNORECASE,
 )
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
-# A line that states a disposition: after optional list, quote, heading, emphasis or
-# code markers it opens with a ``disposition:`` field or a state token. Only such a line
+# A line that states a disposition: after optional list (bulleted, numbered or task),
+# quote, heading, emphasis or code markers it opens with a ``disposition:`` field or a state token. Only such a line
 # after the first one changes what the review says. A state word inside prose, such
 # as a backticked quotation of a marker or "the earlier review is superseded", is
 # narration and is not read: free text scanning ejected fully green queue entries
 # after a whole run (#11566).
 # A line that is nothing but a state token, however it is marked up (including
-# backticks), still states it.
+# backticks), still states it. The leading markup includes ordered-list numbers
+# (``1.``, ``1)``) and task-list boxes (``[ ]``, ``[x]``).
+STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
 STATE_LINE = re.compile(
-    r"^[ \t>*\-+_#~`]*(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
-    r"|^[ \t>*\-+_#~`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$",
+    STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
+    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -504,6 +506,12 @@ def self_test() -> None:
         ("REVIEW_READY\nDisposition: repair the oracle first", False),
         ("REVIEW_READY\n`REPAIR_REQUIRED`: fix the oracle", False),
         ("REVIEW_READY\n- `Disposition`: repair the oracle first", False),
+        ("REVIEW_READY\n1. REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n1) REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("REVIEW_READY\n- [x] Disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n```\n1. REPAIR_REQUIRED: repair oracle\n```", False),
+        ("REVIEW_READY\n1. The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
         # Narration that only mentions a state word is not a state line (#11566).
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
@@ -565,6 +573,10 @@ def self_test() -> None:
     for body, allowed in (
         ("Tests fail here, so the earlier REVIEW_READY is withdrawn.", False),
         ("`REPAIR_REQUIRED`: fix the oracle", False),
+        ("1. REPAIR_REQUIRED: repair oracle", False),
+        ("1) REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] Disposition: REPAIR_REQUIRED", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
@@ -629,6 +641,22 @@ def self_test() -> None:
     }
     assert reviews_allow_source_attestation([], head=head, pull=pull())
     assert not reviews_allow_source_attestation([], head=head, pull=None)
+    # A trusted reviewer's current negative state line refuses the description carrier
+    # whatever list markup leads it (#11566); narration does not.
+    for body, allowed in (
+        ("1. REPAIR_REQUIRED: repair oracle", False),
+        ("1) REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] REPAIR_REQUIRED: repair oracle", False),
+        ("- [ ] Disposition: REPAIR_REQUIRED", False),
+        ("- REPAIR_REQUIRED: repair oracle", False),
+        ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+    ):
+        assert reviews_allow_source_attestation(
+            [review(state="COMMENTED", commit_id=head, id=3, body=body,
+                    submitted_at="2026-10-15T01:00:03Z", user={"login": "other"})],
+            head=head,
+            pull=pull(),
+        ) is allowed, body
     assert not reviews_allow_source_attestation([], head=head)
     for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
         assert not reviews_allow_source_attestation(
