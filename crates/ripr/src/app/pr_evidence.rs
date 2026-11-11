@@ -1105,12 +1105,13 @@ fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str 
     packet.get(key).and_then(Value::as_str).unwrap_or(fallback)
 }
 
+/// Publish one packet file through the shared atomic writer: the bytes go to
+/// a same-directory temporary file that then replaces the destination. An
+/// interrupted or failed run leaves the previous complete file (or none), so
+/// a reader such as `ripr pr-evidence check` or a later CI step never sees a
+/// truncated packet, panel or diff.
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create parent dir for {label}: {err}"))?;
-    }
-    fs::write(path, contents).map_err(|err| format!("failed to write {label}: {err}"))
+    crate::atomic_file::write(path, contents.as_ref(), label)
 }
 
 #[cfg(test)]
@@ -1748,6 +1749,98 @@ mod tests {
         assert_eq!(packet["warnings"][0]["kind"], "tool_error");
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    /// A rerun replaces each packet file instead of rewriting it in place: a
+    /// reader still holding the previous file (modelled by a hard link taken
+    /// between two runs) keeps the complete previous bytes while the published
+    /// path carries the complete new ones. An in-place truncate-and-write
+    /// changes the held bytes too, and is what leaves a truncated packet
+    /// behind when a run is interrupted.
+    #[test]
+    fn rerun_replaces_packet_files_without_rewriting_them_in_place() -> Result<(), String> {
+        let repo = temp_repo("ripr-pr-evidence-atomic-rerun")?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "ripr-pr@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "RIPR PR Test"])?;
+        write_repo_file(&repo, "README.md", "# sample\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        write_repo_file(&repo, "src/lib.rs", "pub fn value() -> u8 { 1 }\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "add rust"])?;
+        let options = PrEvidenceOptions {
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            ..options()
+        };
+        let run = |error: &'static str| -> Result<(), String> {
+            match write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
+                Err(error.to_string())
+            }) {
+                Ok(()) => Err("producer failure did not fail closed".to_string()),
+                Err(_) => Ok(()),
+            }
+        };
+        let read = |path: &Path| -> Result<String, String> {
+            fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+
+        run("first run marker")?;
+        let outputs = [PR_EVIDENCE_JSON, PR_EVIDENCE_MD, PR_DIFF];
+        let mut held = Vec::new();
+        for output in outputs {
+            let published = repo.join(output);
+            let link = repo.join(format!("{output}.held"));
+            fs::hard_link(&published, &link).map_err(|err| format!("hold {output}: {err}"))?;
+            held.push((output, published.clone(), link, read(&published)?));
+        }
+        assert!(held[0].3.contains("first run marker"), "{}", held[0].3);
+        assert!(held[1].3.contains("first run marker"), "{}", held[1].3);
+
+        run("second run marker")?;
+        for (output, published, link, first_bytes) in &held {
+            // The held file is the previous complete output, untouched.
+            assert_eq!(&read(link)?, first_bytes, "{output} was rewritten in place");
+            // The published path carries a complete new output.
+            let second = read(published)?;
+            if *output != PR_DIFF {
+                assert!(second.contains("second run marker"), "{output}: {second}");
+                assert!(!second.contains("first run marker"), "{output}: {second}");
+            } else {
+                assert_eq!(&second, first_bytes, "{output} diff changed between runs");
+            }
+        }
+        let packet: Value = serde_json::from_str(&read(&repo.join(PR_EVIDENCE_JSON))?)
+            .map_err(|err| format!("parse packet: {err}"))?;
+        assert_eq!(packet["status"], "error");
+        // No temporary file is left next to the outputs.
+        let dir = repo
+            .join(PR_EVIDENCE_JSON)
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "packet has no parent".to_string())?;
+        let mut names = fs::read_dir(&dir)
+            .map_err(|err| format!("list {}: {err}", dir.display()))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        let mut expected = outputs
+            .iter()
+            .flat_map(|output| {
+                let name = Path::new(output)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                [name.clone(), format!("{name}.held")]
+            })
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(names, expected);
 
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
