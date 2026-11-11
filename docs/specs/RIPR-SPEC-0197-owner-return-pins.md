@@ -2630,7 +2630,29 @@ not themselves a static propagation proof.
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
-  module children otherwise look like a crate root of their own. The same
+  module children otherwise look like a crate root of their own. #14116
+  narrows that last clause to what the paste can reach. An `include!` of a
+  literal path inside the repository, either inside an inline module or at
+  file level with a target the index does not hold, is read: an inert
+  fragment (no out-of-line `mod`, no `include!`, no `#[path]`, so it compiles
+  no further file) that the index holds as a file no crate claims is already
+  scanned as a file any crate may compile, and one the index does not hold
+  is read from disk with the same assertion-macro scan every indexed file
+  gets. A fragment with no possible binding leaves placement on. One that
+  may bind an assertion macro turns placement off only for the including
+  crate when that crate is an integration test, bench or example root, which
+  nothing can import, and its crate-local sites stay charged to that crate;
+  inside a library or binary it keeps the workspace-wide refusal. A dynamic
+  expression, a missing, unreadable or oversized target, a fragment that
+  mounts a file, and a fragment that is itself a module of some crate keep
+  the workspace-wide refusal too. The fragment's items stay unread, so a
+  test that reaches a fragment's function by import, glob or path is not
+  taken for the owner's
+  (`an_include_in_a_test_crate_leaves_the_librarys_tests_credited`,
+  `a_read_inert_fragment_in_the_library_leaves_its_tests_credited`,
+  `an_unread_mounting_or_binding_fragment_keeps_the_refusal`,
+  `a_fragments_namesake_is_never_taken_for_the_owner`,
+  `the_glob_alone_and_an_unresolved_include_are_the_two_baselines`). The same
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
