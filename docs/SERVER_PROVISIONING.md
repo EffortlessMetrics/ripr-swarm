@@ -12,14 +12,15 @@ The VS Code/Open VSX extension resolves the server in this order:
 1. ripr.server.path
 2. bundled server binary, if present
 3. downloaded cached server binary
-4. ripr on PATH, when `ripr.server.version` is empty (checked before any download)
+4. ripr on PATH, when `ripr.server.version` is empty and its version is not older than the expected server version (checked before any download)
 5. verified first-run download from GitHub Releases
 6. ripr on PATH, when `ripr.server.version` is set or the download did not produce a server
 7. actionable error
 ```
 
 An unpinned install therefore never makes a network call for a user who already
-installed a compatible `ripr` (cargo, binstall, a package manager). Setting
+installed a current `ripr` (cargo, binstall, a package manager); an older PATH
+`ripr` falls through to the download and stays the warned fallback (#13638). Setting
 `ripr.server.version` asks for that exact managed release, so the download keeps
 its place ahead of `PATH`.
 
@@ -155,6 +156,36 @@ The manifest shape is:
 The checksum is for the downloaded archive. The extension verifies the archive
 before extraction and admits the result only after the staged binary's
 `ripr --version` probe and completed-receipt validation pass.
+
+## Non-publishing packaged managed-download rehearsal
+
+The read-only `server-archive-qualification.yml` workflow consumes its own
+Linux x64 archive and schema-4 archive receipt in
+`editors/vscode/test/managedDownload/rehearse.ts` (#9469). After the existing
+manifest producer and archive readback checks, it binds a distinct local HTTPS
+mirror manifest with `release-bind-server-descriptor`, packages and verifies
+one VSIX, and installs those exact VSIX bytes through the VS Code CLI.
+
+Three fresh extension-host profiles exercise successful managed download,
+parseable raw-manifest tampering, and archive tampering. The successful case
+requires `managed_download`, matching archive/executable/manifest digests,
+completed installation and a real LSP request after initialization. Each
+negative requires the intended checksum diagnostic, no running fallback server,
+and no completed install receipt. Request counts distinguish manifest refusal
+from archive refusal. Tests cannot use `RIPR_TEST_SERVER_PATH`.
+
+The mirror changes only manifest placement URLs before descriptor binding;
+the original manifest, archive and qualification receipt remain intact. A
+throwaway certificate is trusted only by the disposable test-host process via
+`NODE_EXTRA_CA_CERTS`; the CA private key is removed and excluded from uploads.
+Source and compiled descriptors are restored, and user profiles/settings are
+never reused. JSON evidence is uploaded as
+`ripr-packaged-managed-download-rehearsal`, including incomplete execution.
+
+This is a Linux composition rehearsal. It does not establish public retrieval,
+stable/RC placement, Windows/macOS parity, marketplace reuse (#9333), complete
+native runtime compatibility (#4489), or frozen-candidate qualification (#2769).
+No release, tag, asset attachment or marketplace publish is performed.
 
 ## Previous Public Release Proof
 

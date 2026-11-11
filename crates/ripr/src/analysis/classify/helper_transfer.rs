@@ -153,6 +153,33 @@ pub(crate) fn nested_call_value(
     helper_return_value(&callee, &bound, eval)
 }
 
+/// How a method hop's caller-side receiver is bound (#13411). Every consumer
+/// that reads the receiver as "a parameter of the caller" must go through
+/// [`HopReceiver::parameter`], so a receiver of any other binding can never be
+/// misread as one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReceiverBinding {
+    /// A typed parameter of the caller (`fn run(re: &Regex)`): the only binding
+    /// ripr forms today.
+    Parameter,
+}
+
+/// The caller-side receiver of a method hop and how it is bound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HopReceiver {
+    pub(crate) name: String,
+    pub(crate) binding: ReceiverBinding,
+}
+
+impl HopReceiver {
+    /// The receiver name when it is a parameter of the caller, else `None`.
+    pub(crate) fn parameter(&self) -> Option<&str> {
+        match self.binding {
+            ReceiverBinding::Parameter => Some(self.name.as_str()),
+        }
+    }
+}
+
 /// One hop of a resolved helper chain: the caller, the call site, and
 /// the positional argument texts at that site.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,7 +192,7 @@ pub(crate) struct HelperHop {
     /// and exclude it. `None` for a direct free call and a macro hop. A
     /// consumer that binds `arguments` positionally treats a hop with a
     /// receiver as unbindable unless it handles the receiver itself.
-    pub(crate) receiver: Option<String>,
+    pub(crate) receiver: Option<HopReceiver>,
     /// The caller hands the callee to a local `macro_rules!` macro as an
     /// identifier token (`twice!(base_rate)`, #6614) instead of calling it.
     /// ripr does not expand macros: such a hop carries reach only. It never
@@ -1572,7 +1599,10 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         caller: caller.clone(),
         call_text: call.text.to_string(),
         arguments,
-        receiver: Some(receiver.to_string()),
+        receiver: Some(HopReceiver {
+            name: receiver.to_string(),
+            binding: ReceiverBinding::Parameter,
+        }),
         through_macro: false,
         module_qualified: false,
         crate_qualifier: None,
@@ -3156,7 +3186,7 @@ pub(crate) fn asserting_method_entry<'a>(
     use crate::analysis::facts::FunctionSourceRole;
     let (top, below) = hops.split_last()?;
     let method = below.last()?.caller.name.as_str();
-    let receiver = top.receiver.as_deref()?;
+    let receiver = top.receiver.as_ref()?.parameter()?;
     if top.through_macro
         || top.caller.source_role != FunctionSourceRole::CfgTestModule
         || !hops_forward_owner_result(owner_name, below)
@@ -4434,12 +4464,13 @@ mod tests {
                 name: name.to_string(),
                 line: 2,
                 text: text.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -4461,12 +4492,12 @@ mod tests {
                 })
                 .collect(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4832,7 +4863,7 @@ mod tests {
 
         let mut local_wrapper =
             function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
-        local_wrapper.nested_fn_names = vec!["parse".to_string()];
+        local_wrapper.nested_fn_names = vec!["parse".to_string()].into();
         let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
         let calling_local_wrapper = index_with_tests(
             vec![
@@ -4925,7 +4956,7 @@ mod tests {
         );
 
         let mut local_and_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
-        local_and_qualified.nested_fn_names = vec!["from_str".to_string()];
+        local_and_qualified.nested_fn_names = vec!["from_str".to_string()].into();
         let mut workspace_from_str =
             function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
         workspace_from_str.impl_context = FunctionImplContext::Impl {
@@ -5062,7 +5093,7 @@ mod tests {
         );
 
         let mut local_parse = with_test("parse", "parse(\">=1.0\")");
-        local_parse.nested_fn_names = vec!["parse".to_string()];
+        local_parse.nested_fn_names = vec!["parse".to_string()].into();
         let calling_local = index_with_tests(vec![owner, parse, twin], vec![local_parse]);
         let chain = resolve_chain("op", &calling_local, true, &[]);
         assert_eq!(

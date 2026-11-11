@@ -8,7 +8,7 @@ use crate::output::preview_actionability::{
 /// finding (`--format json` carries more plus `related_tests_total`). Number of
 /// reaching tests is core exposure evidence, so a window that does not say it
 /// is a window reads as the whole evidence.
-const MAX_RELATED_TESTS_SHOWN: usize = 5;
+pub(super) const MAX_RELATED_TESTS_SHOWN: usize = 5;
 
 /// #4320: the human evidence window shows at most this many observed values
 /// per finding (`--format json` keeps its own ranked 32-value window and
@@ -346,6 +346,32 @@ fn evidence_path<T>(
         lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
+    // A test judged by several retained assertion rows used to repeat its
+    // miss sentence once per row, so the explain context carried the same
+    // sentence N times (agent-efficiency study, Nov 2-4: the observation
+    // hedge appeared 8x across 4 tests). The first row of a test states
+    // `<label>: <reason>`; later rows of the same test keep the label alone —
+    // the reason is one fact about one test. Distinct reasons per row stay,
+    // and `ripr explain`'s verdict block references the row instead of
+    // re-stating any of this.
+    let mut stated_reasons: std::collections::BTreeMap<(String, usize, String), Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut reason_already_stated =
+        |test: &crate::domain::RelatedTest, label: &str, why: &str| -> bool {
+            let key = (
+                test.file.to_string_lossy().into_owned(),
+                test.line,
+                test.name.clone(),
+            );
+            let stated = stated_reasons.entry(key).or_default();
+            let reason = format!("{label}: {why}");
+            if stated.contains(&reason) {
+                true
+            } else {
+                stated.push(reason);
+                false
+            }
+        };
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
         let why =
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
@@ -353,13 +379,17 @@ fn evidence_path<T>(
             // #5344: an examined test with no matched oracle says why it
             // misses, then shows the assertion it was judged by, so the
             // claim can be checked in the source.
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let mut line = format!(
-                "related test {}:{} {} {}: {why}",
+                "related test {}:{} {} {}",
                 display_path(&test.file),
                 test.line,
                 test.name,
-                crate::output::related_test_miss::related_test_miss_label(test),
+                label,
             );
+            if !reason_already_stated(test, label, why) {
+                line.push_str(&format!(": {why}"));
+            }
             if let Some(oracle) = &test.oracle {
                 line.push_str(&format!(
                     "; checked `{}`",
@@ -401,12 +431,14 @@ fn evidence_path<T>(
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
         if let Some(why) = why {
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let kept = line.trim_end_matches(';').len();
             line.truncate(kept);
-            line.push_str(&format!(
-                "; {}: {why}",
-                crate::output::related_test_miss::related_test_miss_label(test)
-            ));
+            if reason_already_stated(test, label, &why) {
+                line.push_str(&format!("; {label}"));
+            } else {
+                line.push_str(&format!("; {label}: {why}"));
+            }
         }
         lines.push(project(
             line,
@@ -507,6 +539,19 @@ fn evidence_path<T>(
                 .filter(|line| !is_preview_actionability_evidence_line(line))
                 .map(|line| project(line.clone(), EvidenceSource::Literal(line))),
         );
+    } else if let Some(line) = finding
+        .evidence
+        .iter()
+        .find(|line| line.starts_with(crate::domain::ASSERTION_NOT_CREDITED_PREFIX))
+    {
+        // #14038: the literal evidence is skipped once flow, related-test or
+        // source-value rows exist, which also dropped the one line saying why
+        // an assertion was not credited. The standard report prints it; keep
+        // it here so the full report and `explain` name the same reason.
+        // The note quotes source that can span lines; collapse it like the
+        // standard report does so no continuation lands at column 0.
+        let collapsed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        lines.push(project(collapsed, EvidenceSource::Literal(line)));
     }
 
     lines

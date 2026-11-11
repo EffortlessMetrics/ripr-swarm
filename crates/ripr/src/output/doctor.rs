@@ -1482,6 +1482,7 @@ pub(crate) fn canonical_next_action_for_doctor(
         transition_to: None,
         restart_route: "ripr doctor".to_string(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: Some(recovery),
         pilot_delegation: None,
         alternatives: Vec::new(),

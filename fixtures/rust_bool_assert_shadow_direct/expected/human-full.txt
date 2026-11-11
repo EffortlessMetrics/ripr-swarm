@@ -16,7 +16,7 @@ Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach can_ship: ships
   E2 [findings 1, 2]: propagation unknown: Propagation is not statically obvious from syntax-first analysis
   E3 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   E5 [findings 1, 2]: source assertion argument value true at line 11
   E6 [findings 1, 2]: source function argument value in_stock = true at line 11
   E7 [findings 1, 2]: source function argument value paid = true at line 11
@@ -25,6 +25,7 @@ Shared evidence and guidance
   E10 [findings 1, 2]: source function argument value paid = true at line 12
   E11 [findings 1, 2]: source assertion argument value false at line 13
   E12 [findings 1, 2]: source function argument value in_stock = true at line 13
+  E13 [findings 1, 2]: assertion not credited: `assert_eq!` in ships at tests/api.rs:11: tests/api.rs:3 defines a macro named `assert_eq`
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:349c27df
@@ -46,6 +47,7 @@ Evidence
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
   - source values (showing 8 of 9 read from related tests; full list in --format json)
+  shared evidence: E13
 Weakness
   - No detected boundary input for the changed predicate
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -82,6 +84,7 @@ Evidence
   - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
   - source values (showing 8 of 9 read from related tests; full list in --format json)
+  shared evidence: E13
 Weakness
   - ripr could not follow the changed value to something a test can check (a return value or side effect)
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

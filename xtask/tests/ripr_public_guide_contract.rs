@@ -527,6 +527,110 @@ fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
     Ok(())
 }
 
+/// #13323: the CLI First Hour must read run -> what you see -> what to do
+/// next -> reference, so a reader wanting the first result no longer reads
+/// progress rules, the glossary, the schema-value mapping, and JSON/agent
+/// handling first. The excerpt must quote the checked fixture output, and
+/// every piece of moved mechanism must live inside the marked reference
+/// subsection.
+fn quickstart_cli_first_hour_order(section: &str) -> Result<(), String> {
+    let see = section
+        .find("### What you see")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What you see`".to_string())?;
+    let next = section
+        .find("### What to do next")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What to do next`".to_string())?;
+    let reference = section
+        .find("### Reference: output mechanics and terms")
+        .ok_or_else(|| {
+            "Quickstart CLI First Hour lost `### Reference: output mechanics and terms`".to_string()
+        })?;
+    if !(see < next && next < reference) {
+        return Err(
+            "Quickstart CLI First Hour must read what-you-see, then what-to-do-next, then the reference"
+                .to_string(),
+        );
+    }
+    // The excerpt quotes the checked fixture output: whole lines, in order.
+    let (_, after_fence) = section
+        .split_once("```text\n")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt lost its text fence".to_string())?;
+    let (fence, _) = after_fence
+        .split_once("```")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt has no closing fence".to_string())?;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    let mut quoted = 0;
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "CLI First Hour excerpt line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the CLI First Hour excerpt to quote at least four lines".to_string());
+    }
+    // The moved mechanism lives inside the reference subsection...
+    let reference_body = &section[reference..];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        assert_contains(
+            "Quickstart CLI First Hour reference",
+            reference_body,
+            needle,
+        )?;
+    }
+    // ...and none of it may appear ahead of that subsection.
+    let before_reference = &section[..reference];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        if before_reference.contains(needle) {
+            return Err(format!(
+                "Quickstart CLI First Hour mechanism `{needle}` moved ahead of the reference subsection"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_cli_first_hour_puts_the_result_before_the_reference() -> Result<(), String> {
+    let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    quickstart_cli_first_hour_order(&section)?;
+    // Negative controls: a renamed reference heading, mechanism promoted
+    // ahead of the result, and a dropped excerpt must each fail.
+    let renamed = section.replace("### Reference: output mechanics and terms", "### Notes");
+    if quickstart_cli_first_hour_order(&renamed).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted a renamed reference subsection".to_string(),
+        );
+    }
+    let promoted = section.replacen(
+        "### What you see",
+        "### What you see\n\n`ripr progress: <stage> [<scope>]`\n",
+        1,
+    );
+    if quickstart_cli_first_hour_order(&promoted).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted progress rules ahead of the result".to_string(),
+        );
+    }
+    let no_excerpt = section.replacen("```text\n", "```\n", 1);
+    if quickstart_cli_first_hour_order(&no_excerpt).is_ok() {
+        return Err("CLI First Hour order guard accepted a dropped checked excerpt".to_string());
+    }
+    Ok(())
+}
+
 /// #7661: troubleshooting report links must open the swarm templates that
 /// exist in this repo. The README already routes problem reports to
 /// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same

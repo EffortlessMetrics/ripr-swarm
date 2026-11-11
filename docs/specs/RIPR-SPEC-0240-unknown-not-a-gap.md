@@ -1079,6 +1079,13 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
+"Calls the owner" is a callee identity, not a spelling (#6929). For a free-function
+owner `parse`, only a bare or module-qualified `parse(..)` counts, whatever its
+spacing. `Other::parse(..)` and `value.parse(..)` name a different function that shares
+the name, so a refusal on them never fronts for the owner in the disclosed
+"Not credited" note and never ranks ahead of the refusal that does call it. Method and
+associated-function owners keep the name-based reading.
+
 ### A TypeScript workspace walk cut short at its source cap or entry backstop (#11767)
 
 TypeScript discovery counts at most `RIPR_TS_MAX_WORKSPACE_FILES` candidate
@@ -1136,6 +1143,44 @@ the run partial. A sufficient-budget read with a reachable test keeps the
 test and its oracle; a finished read with no test keeps `no_static_path`.
 Refusing the changed source itself still produces no owner or invented
 finding. The byte caps and all reader refusals remain enforced.
+
+### A future created but never polled (#13702)
+
+Calling an `async fn` builds a future; its body runs only when something polls
+it. A direct-call relation from a synchronous `#[test]` that writes
+`let _f = fetch_len("abc");` and drops the future read as reach `yes` and a
+`reachable_unrevealed` gap, though the changed line never runs in that test.
+
+When the changed owner's declaration reads as `async`, every related test,
+whatever its relation, is a `direct_owner_call`, every indexed test that names
+the owner is one of them, no other function names the owner, every spelling of
+the owner's name in the indexed files is its own declaration, one of those test
+bodies or a plain `use` leaf (no `use … as …` rename, no `macro_rules!` or other
+item naming it), and
+each such test is a plain synchronous `#[test]` (only `#[test]` and lint
+attributes) whose every owner mention is a call that is a bare statement, the
+sole argument of `std::mem::drop(..)`/`core::mem::drop(..)` (or of a bare
+`drop(..)` when no user-defined `drop` is indexed or brought into the test's
+file), or the initializer of a `let` bound to `_` or to a name the test never
+mentions again, in a body with no `.await`, `async`,
+`block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn` or `poll` spelling,
+then the finding is rewritten through the shared `withhold_gap` owner to
+`static_unknown` under `rust_future_never_polled`. The reach stage becomes
+`unknown` with the summary "future created but never polled", infection
+becomes `unknown` when it reads `yes` or `weak`, and the replaced reach and
+infection evidence lines are dropped. Propagation reads the owner's own code
+and is kept. The rule
+runs in `apply_probe_and_oracle_limits` before the oracle-side limits.
+
+An awaited call in `#[tokio::test]`, `block_on(owner(..))`, an async test
+attribute, a binding used again, a future passed to another call, a closure
+whose tail expression is the call, a mention inside a macro, a `use … as …`
+alias or `macro_rules!` naming the owner, a user-defined `drop`, another
+function naming the owner and a helper relation all keep today's reading. A
+closure whose body drops the call as a statement
+(`let c = || { fetch_len("abc"); }; c();`) still drops the future unpolled
+and is named. Nothing is credited, no runtime is chosen,
+and repair still does not start.
 
 ## Scope boundary
 
@@ -1438,6 +1483,11 @@ is unchanged beside an unread unrelated source; and a refused changed source
 does not fabricate a finding. The shared withholding unit test also pins
 idempotence, zero-refusal behavior, other classes, and existing typed limits.
 
+The never-polled future rule (#13702) is exercised by
+`crates/ripr/tests/unpolled_future_limit.rs` and the fixtures
+`rust_async_future_unpolled`, `rust_async_future_awaited_control` and
+`rust_async_future_block_on_control`.
+
 Wire strings are pinned by
 `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
@@ -1465,6 +1515,8 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
   rule (#9441).
 - `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the
   indirect-owner decision.
+- `crates/ripr/src/analysis/classify/unpolled_future.rs` owns the
+  never-polled future decision (#13702).
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read

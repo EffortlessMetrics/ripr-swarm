@@ -4,7 +4,7 @@ pub(crate) mod gaps;
 mod panic_containment;
 mod protocol;
 mod repair;
-mod repair_admission;
+pub(crate) mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
@@ -26,7 +26,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 /// [`outer_envelope_budget`] always leaves a usable budget.
 pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
-/// Fixed wire overhead the pinned SDK (rmcp 3.7.0) can add around a
+/// Fixed wire overhead the pinned SDK (rmcp 3.9.0) can add around a
 /// measured tool or resource envelope when it serializes the complete
 /// JSON-RPC response: the `{"jsonrpc":"2.0","id":` + `,"result":` + `}` +
 /// `\n` frame fields (34 bytes) plus, when the negotiated peer keeps the
