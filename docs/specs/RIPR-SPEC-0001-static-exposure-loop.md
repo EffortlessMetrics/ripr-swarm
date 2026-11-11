@@ -734,7 +734,10 @@ probe: like a `use` import or a `mod name;` declaration it only links a crate
 and holds no behavior a test could notice (#14403). The renaming form
 (`extern crate core as std;`, `extern crate self as name;`) changes what a name
 means for the rest of the crate and keeps its probe, as does a line with any
-trailing code.
+trailing code. The rule reads one line on either diff side, so a removed
+`#[macro_use]` + `extern crate foo;` pair also seeds no probe, matching the
+existing `#[macro_use] mod name;` behavior; a macro that pair brought into scope
+is a known limitation, not a reported change.
 - `plain_extern_crate_is_ignored_but_a_rename_is_not`
 - `diff_producer_ignores_plain_extern_crate_but_probes_a_rename`
 
