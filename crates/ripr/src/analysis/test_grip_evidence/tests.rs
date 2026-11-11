@@ -3283,36 +3283,51 @@ fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), Str
 #[test]
 fn direct_candidate_walk_observes_cancellation() -> Result<(), String> {
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
-
-    let (index, seams) = parallel_evidence_fixture()?;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    let prod = PathBuf::from("src/value.rs");
+    let tests = (0..65)
+        .map(|i| format!("#[test] fn case_{i}() {{ assert_eq!(value(), 1); }}\n"))
+        .collect::<String>();
+    let index = index_from_files(&[
+        (prod.clone(), "pub fn value() -> i32 { 1 }"),
+        (PathBuf::from("tests/value.rs"), &tests),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams.first().ok_or("fixture needs a return seam")?;
     let context = CompactGripContext::new(&index);
-    let seam = seams
-        .iter()
-        .find(|seam| {
-            find_related_tests_with_context(seam, &context)
-                .iter()
-                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
-        })
-        .ok_or("fixture needs a directly related test")?;
     let owner = related_tests::OwnerContext::resolve(seam, &context);
     let mut complete = BTreeMap::new();
     related_tests::match_direct_owner_call(&mut complete, &context, None, &owner);
-    assert!(
-        !complete.is_empty(),
-        "the fixture must exercise direct matching"
+    assert_eq!(complete.len(), 65);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                started
+            } else {
+                started + Duration::from_secs(1)
+            }
+        }),
     );
-
-    let token = AnalysisCancellationToken::new();
-    token.cancel(AnalysisAbortKind::Cancelled);
     let mut interrupted = BTreeMap::new();
     cancellation::with_token(&token, || {
         related_tests::match_direct_owner_call(&mut interrupted, &context, None, &owner);
     });
-    assert!(
-        interrupted.is_empty(),
-        "the inner walk must stop before admitting a candidate"
+    assert_eq!(
+        interrupted.len(),
+        32,
+        "a live first batch must stop at the next periodic checkpoint"
     );
-    assert_eq!(token.observed_abort(), Some(AnalysisAbortKind::Cancelled));
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     Ok(())
 }
 
