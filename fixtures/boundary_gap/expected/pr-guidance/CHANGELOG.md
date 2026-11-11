@@ -3,6 +3,17 @@
 ## Pending
 
 Reason:
+RIPR-SPEC-0068: disclose version-1 unjoinable counted-check contracts at document
+and card level without altering selection or dispositions (EffortlessMetrics/ripr#1779).
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 target/debug/deps/ripr-0a5e6390c5cc28e7 output::review_comments::tests::review_comments_pr_guidance_fixtures_pin_required_cases --exact --nocapture`
+
+Updated: all seven `comments.json` cases. Markdown is unchanged.
+
+## Previous
+
+Reason:
 RIPR-SPEC-0068: emit `suggested_test.proposed_target` (`null` when the producer
 has no governed InlineUnit/Integration new-test proposal) on working-set review
 cards so the gate can project a distinct Proposed repair target (#3162).

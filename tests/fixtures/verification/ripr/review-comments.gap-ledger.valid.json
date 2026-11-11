@@ -119,6 +119,13 @@
         "prompt": "assert_eq!(discount(100, 100), 90) Do not change production behavior unless the existing tests prove it is necessary. Verify with `cargo xtask fixtures boundary_gap`.",
         "command": "ripr first-action --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json",
         "verify_command": "cargo xtask fixtures boundary_gap"
+      },
+      "counted_check_join": {
+        "schema_version": 1,
+        "status": "unjoinable",
+        "finding_ids": [],
+        "analysis_binding": null,
+        "reason": "producer_mapping_unavailable"
       }
     }
   ],
@@ -129,14 +136,28 @@
       "file": "src/pricing.rs",
       "line": 42,
       "reason": "duplicate_dedupe_fingerprint",
-      "message": "A GapRecord with producer-owned seam identity emits this PR comment dedupe key."
+      "message": "A GapRecord with producer-owned seam identity emits this PR comment dedupe key.",
+      "counted_check_join": {
+        "schema_version": 1,
+        "status": "unjoinable",
+        "finding_ids": [],
+        "analysis_binding": null,
+        "reason": "producer_mapping_unavailable"
+      }
     },
     {
       "gap_id": "gap:rust:pricing:discount:threshold-boundary",
       "file": "src/pricing.rs",
       "line": 42,
       "reason": "not_pr_comment_eligible",
-      "message": "missing_pr_comment_projection"
+      "message": "missing_pr_comment_projection",
+      "counted_check_join": {
+        "schema_version": 1,
+        "status": "unjoinable",
+        "finding_ids": [],
+        "analysis_binding": null,
+        "reason": "producer_mapping_unavailable"
+      }
     }
   ],
   "warnings": [],
@@ -161,5 +182,13 @@
       "static review guidance is advisory evidence only"
     ],
     "atomic_write_status": "committed"
+  },
+  "counted_check_join": {
+    "schema_version": 1,
+    "status": "unjoinable",
+    "finding_ids": [],
+    "analysis_binding": null,
+    "reason": "producer_mapping_unavailable",
+    "producer_version": "0.11.0"
   }
 }

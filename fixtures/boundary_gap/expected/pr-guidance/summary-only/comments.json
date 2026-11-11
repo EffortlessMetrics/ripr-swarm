@@ -25,6 +25,14 @@
   },
   "base": "main",
   "comments": [],
+  "counted_check_join": {
+    "analysis_binding": null,
+    "finding_ids": [],
+    "producer_version": "0.11.0",
+    "reason": "producer_mapping_unavailable",
+    "schema_version": 1,
+    "status": "unjoinable"
+  },
   "head": "HEAD",
   "limits_note": "Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking.",
   "mode": "draft",
@@ -44,6 +52,13 @@
   "summary_only": [
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:8f7fa8644fd12280:src/pricing.rs:88",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",

@@ -27,6 +27,13 @@
   "comments": [
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:53d21b642e4945bb:src/pricing.rs:10",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -95,6 +102,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:5b353664321bdea6:src/pricing.rs:20",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -163,6 +177,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:644b716437604271:src/pricing.rs:30",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -230,6 +251,14 @@
       }
     }
   ],
+  "counted_check_join": {
+    "analysis_binding": null,
+    "finding_ids": [],
+    "producer_version": "0.11.0",
+    "reason": "producer_mapping_unavailable",
+    "schema_version": 1,
+    "status": "unjoinable"
+  },
   "head": "HEAD",
   "limits_note": "Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking.",
   "mode": "draft",
@@ -249,6 +278,13 @@
   "summary_only": [
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:6d620c643ca5495c:src/pricing.rs:40",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -318,6 +354,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:7678476441e9ad27:src/pricing.rs:50",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -387,6 +430,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:7f21626446d108b2:src/pricing.rs:60",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -456,6 +506,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:86849d644aa3d7fd:src/pricing.rs:70",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -525,6 +582,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:8f9b38644fe8dee8:src/pricing.rs:80",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -594,6 +658,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:98b15364552d0c53:src/pricing.rs:90",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -663,6 +734,13 @@
     },
     {
       "canonical_gap_id": "gap:dedf923a13a00573",
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "dedupe_key": "ripr:b74a163aa6812b31:src/pricing.rs:100",
       "gap_state": "actionable",
       "grip_class": "weakly_gripped",
@@ -733,6 +811,13 @@
   ],
   "suppressed": [
     {
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "file": "src/pricing.rs",
       "line": 110,
       "message": "The PR guidance summary item cap was reached.",
@@ -740,6 +825,13 @@
       "seam_id": "ae33db3aa13cc766"
     },
     {
+      "counted_check_join": {
+        "analysis_binding": null,
+        "finding_ids": [],
+        "reason": "producer_mapping_unavailable",
+        "schema_version": 1,
+        "status": "unjoinable"
+      },
       "file": "src/pricing.rs",
       "line": 120,
       "message": "The PR guidance summary item cap was reached.",
