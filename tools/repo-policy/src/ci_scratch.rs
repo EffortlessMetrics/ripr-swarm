@@ -194,6 +194,36 @@ fn scratch_gc_violations(text: &str) -> Vec<String> {
             "{SCRATCH_GC_PATH}: the lease action needs a checkout step before `mode: reclaim` (#3841)"
         )),
     }
+    violations.extend(scratch_gc_trigger_violations(text));
+    violations
+}
+
+/// While no self-hosted pool accepts jobs the sweep is manual only (#4984): a
+/// timer there only queues runs that the next fire cancels. Restoring the timer
+/// with the pools is a deliberate edit of this rule and the workflow together.
+fn scratch_gc_trigger_violations(text: &str) -> Vec<String> {
+    let triggers: Vec<&str> = text
+        .lines()
+        .skip_while(|line| line.trim_end() != "on:")
+        .skip(1)
+        .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('#'))
+        .filter(|line| line.starts_with("  ") && !line[2..].starts_with([' ', '#']))
+        .map(str::trim)
+        .collect();
+    let mut violations = Vec::new();
+    if !triggers.contains(&"workflow_dispatch:") {
+        violations.push(format!(
+            "{SCRATCH_GC_PATH}: keep the `workflow_dispatch` trigger; it is the only way to run the sweep while its timer is off (#4984)"
+        ));
+    }
+    if let Some(other) = triggers
+        .iter()
+        .find(|trigger| **trigger != "workflow_dispatch:")
+    {
+        violations.push(format!(
+            "{SCRATCH_GC_PATH}: trigger `{other}` is not allowed while the sweep is manual only; a timer queues runs no self-hosted pool accepts (#4984)"
+        ));
+    }
     violations
 }
 

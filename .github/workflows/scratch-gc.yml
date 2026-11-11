@@ -30,7 +30,8 @@ name: Scratch GC
 # scratch disk to reclaim, and the inline rust-gates.yml reclaim still runs on
 # any self-hosted job that does start. A timer that only queues is noise that
 # reads as 48 cancelled runs a day, so the half-hourly schedule is off.
-# To bring the timer back with the pools, restore:
+# To bring the timer back with the pools, restore these lines and relax the
+# manual-only rule in tools/repo-policy/src/ci_scratch.rs with them:
 #   schedule:
 #     - cron: "17,47 * * * *"
 on:
