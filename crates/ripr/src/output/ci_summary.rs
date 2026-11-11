@@ -6,8 +6,10 @@
 //! same artifacts, so the step is one command. Reads only; it never runs
 //! analysis, edits source, or decides pass/fail.
 //!
-//! Field fallbacks, `repo_relative` rewriting, and raw report inclusion follow
-//! [`jq`]'s model of what the retired shell printed. Changed-behavior source
+//! Field fallbacks and `repo_relative` rewriting follow [`jq`]'s model of
+//! what the retired shell printed. Full reports are named for the
+//! `ripr-reports` artifact rather than inlined (#14301), except the opt-in
+//! comment publish plan. Changed-behavior source
 //! snippets and Why values use the shared Markdown code-span renderer so
 //! source backticks remain literal; other fields retain the legacy
 //! `markdown_inline` spelling.
@@ -231,20 +233,26 @@ impl Summary {
         path.is_file().then(|| Doc::read(&path))
     }
 
-    /// A collapsed full report. `relative` rewrites the checkout path in
-    /// reports that carry runnable commands.
-    fn full_report(&mut self, path: &str, relative: bool) {
+    /// One report kept inline, collapsed, as every report was before
+    /// #14301; only the comment publish plan uses it.
+    fn collapsed_report(&mut self, path: &str) {
         self.line(&format!("<details><summary>Full report: {path}</summary>"));
         self.blank();
         let bytes = fs::read(self.root.join(path)).unwrap_or_default();
-        if relative {
-            let rewritten = self.relative.file(&bytes);
-            self.out.extend(rewritten);
-        } else {
-            self.out.extend(bytes);
-        }
+        self.out.extend(bytes);
         self.blank();
         self.line("</details>");
+    }
+
+    /// Names a full report in the uploaded artifact instead of inlining it
+    /// (#14301). Inlined reports made a three-line pull request's summary
+    /// 50 KB / 1,000 lines, mostly restating the sections above them; the
+    /// report itself is unchanged in the `ripr-reports` artifact.
+    fn full_report(&mut self, path: &str) {
+        self.line(&format!(
+            "- Full report: {} in the `ripr-reports` artifact",
+            code_span(path)
+        ));
     }
 
     /// The policy and governance sections. With no gate configured they carry
@@ -555,7 +563,7 @@ impl Summary {
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
             self.blank();
-            self.full_report(START_HERE_MD, false);
+            self.full_report(START_HERE_MD);
         }
     }
 
@@ -840,7 +848,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(FRONT_PANEL_MD) {
-            self.full_report(FRONT_PANEL_MD, true);
+            self.full_report(FRONT_PANEL_MD);
         }
         self.blank();
     }
@@ -902,7 +910,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(FIRST_ACTION_MD) {
-            self.full_report(FIRST_ACTION_MD, true);
+            self.full_report(FIRST_ACTION_MD);
         }
         self.blank();
     }
@@ -910,7 +918,7 @@ impl Summary {
     fn top_recommendation(&mut self) {
         self.line("### Top recommendation");
         if self.is_file(PILOT_SUMMARY_MD) {
-            self.full_report(PILOT_SUMMARY_MD, false);
+            self.full_report(PILOT_SUMMARY_MD);
         } else {
             self.line("Pilot summary was not generated. Inspect the uploaded artifact packet and job logs.");
         }
@@ -941,7 +949,7 @@ impl Summary {
                 "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
             ));
         } else if self.is_file(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT) {
-            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT, false);
+            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT);
         } else {
             self.line("Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.");
         }
@@ -1001,7 +1009,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(INDEX_MD) {
-            self.full_report(INDEX_MD, false);
+            self.full_report(INDEX_MD);
         }
         self.blank();
     }
@@ -1060,7 +1068,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(LEDGER_MD) {
-            self.full_report(LEDGER_MD, false);
+            self.full_report(LEDGER_MD);
         } else if self.is_file(COMMENTS_JSON) {
             self.line("PR evidence ledger was not generated. Inspect `target/ripr/review/comments.json` and rerun `ripr pr-ledger record` locally.");
         } else {
@@ -1109,7 +1117,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1168,7 +1176,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1303,7 +1311,7 @@ impl Summary {
             let md = format!("{REPORTS}/policy-promotion-{mode}.md");
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1335,7 +1343,7 @@ impl Summary {
         for md in self.preview_promotion_files(".md") {
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1389,7 +1397,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file("target/ripr/reports/waiver-aging.md") {
-            self.full_report("target/ripr/reports/waiver-aging.md", false);
+            self.full_report("target/ripr/reports/waiver-aging.md");
         } else if self.is_file(LEDGER_JSON) {
             self.line("Waiver aging was not generated. Inspect `target/ripr/reports/pr-evidence-ledger.json` and rerun `ripr policy waiver-aging` locally.");
         } else {
@@ -1593,7 +1601,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(DELTA_MD) {
-            self.full_report(DELTA_MD, false);
+            self.full_report(DELTA_MD);
         } else if gate_baseline {
             self.line("Baseline debt delta was not generated. Check that `RIPR_GATE_MODE` produced `target/ripr/reports/gate-decision.json` and that `RIPR_GATE_BASELINE` points at a readable baseline.");
         } else {
@@ -1647,7 +1655,7 @@ impl Summary {
             self.blank();
         }
         if self.is_file(ZERO_MD) {
-            self.full_report(ZERO_MD, false);
+            self.full_report(ZERO_MD);
         } else if self.is_file(DELTA_JSON) {
             self.line("RIPR Zero status was not generated. Inspect `target/ripr/reports/baseline-debt-delta.json` and rerun `ripr zero status` locally.");
         } else {
@@ -1718,8 +1726,11 @@ impl Summary {
             self.line("- Plan artifacts: `target/ripr/review/comment-publish-plan.json`, `target/ripr/review/comment-publish-plan.md`");
             self.line("- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority.");
             self.blank();
+            // The plan is what `RIPR_COMMENT_MODE=plan` asks to see: which
+            // lines would get a comment and why others are skipped. It stays
+            // inline, collapsed; it is bounded by the inline-comment cap.
             if self.is_file("target/ripr/review/comment-publish-plan.md") {
-                self.full_report("target/ripr/review/comment-publish-plan.md", false);
+                self.collapsed_report("target/ripr/review/comment-publish-plan.md");
             }
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
@@ -1785,7 +1796,7 @@ impl Summary {
     /// The full report when it exists, otherwise the not-generated line.
     fn report_or(&mut self, path: &str, missing: &str) {
         if self.is_file(path) {
-            self.full_report(path, false);
+            self.full_report(path);
         } else {
             self.line(missing);
         }
