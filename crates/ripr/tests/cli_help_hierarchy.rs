@@ -929,6 +929,61 @@ fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), Stri
     Ok(())
 }
 
+/// A slip on one of `ripr help`'s own options, or a reach for a `workflow`
+/// command, is answered with the route that works. `help --al` used to be
+/// told to move the flag behind `check`, which has no such flag.
+#[test]
+fn help_route_typos_name_the_route_that_works() -> Result<(), String> {
+    for (args, expected) in [
+        (
+            &["help", "--al"][..],
+            "ripr: unknown help argument \"--al\". Did you mean `--all`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--jsn"][..],
+            "ripr: unknown help argument \"--jsn\". Did you mean `--json`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "workflows"][..],
+            "ripr: unknown command \"workflows\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        (
+            &["workflow"][..],
+            "ripr: unknown command \"workflow\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        // Controls: a command typo and a top-level flag slip keep their own
+        // suggestions after `help`.
+        (
+            &["help", "chekc"][..],
+            "ripr: unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--hlep"][..],
+            "ripr: unknown command \"--hlep\". Did you mean `--help`? Run `ripr --help`.",
+        ),
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            expected,
+            "{args:?}"
+        );
+    }
+    // The suggested routes themselves succeed.
+    for args in [
+        &["help", "--all"][..],
+        &["help", "--json"],
+        &["help", "workflow"],
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "{args:?} printed nothing");
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_workflow_fails_with_a_family_distinct_from_unknown_command() -> Result<(), String> {
     let output = run_ripr(&["help", "workflow", "repar-gap"])?;
