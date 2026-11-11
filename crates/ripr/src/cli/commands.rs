@@ -3643,6 +3643,30 @@ mod tests {
             .map_err(|err| format!("parse report: {err}"))?;
             assert_eq!(report["status"], "config_error", "{body:?}");
         }
+        // Another artifact's `kind` is refused on the input it was passed to.
+        let baseline = dir.join("baseline-debt-delta.json");
+        std::fs::write(
+            &baseline,
+            r#"{"schema_version":"0.1","kind":"waiver_aging","delta":{"still_present":0}}"#,
+        )
+        .map_err(|err| format!("write baseline: {err}"))?;
+        let Err(err) = policy(&args(&[
+            "readiness",
+            "--baseline-delta",
+            &baseline.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ])) else {
+            return Err(
+                "a waiver-aging document passed as --baseline-delta must be refused".to_string(),
+            );
+        };
+        assert!(
+            err.contains("its kind is `waiver_aging`, expected `baseline_debt_delta`"),
+            "{err}"
+        );
         // Discriminating control: a real gate decision still completes.
         std::fs::write(
             &gate,

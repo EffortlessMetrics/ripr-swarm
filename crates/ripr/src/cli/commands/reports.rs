@@ -175,8 +175,13 @@ fn gap_ledger_source_refusal(source: &GapDecisionLedgerSource, root: &str, cause
             "`ripr check --format json > check.json`".to_string(),
         ),
     };
+    // The parsers end their causes with a generic regenerate remedy; this
+    // refusal names the concrete producer instead, so keep one remedy.
+    let cause = cause
+        .strip_suffix("; regenerate the input with the command that wrote it, then rerun")
+        .unwrap_or(cause);
     format!(
-        "reports gap-ledger {flag} {} is not {expected}: {cause}; the ledger was written as `blocked` with no records. Pass the right file, or generate one with {producer}",
+        "reports gap-ledger {flag} {} could not be read as {expected}: {cause}; the ledger was written as `blocked` with no records. Pass the right file, or generate one with {producer}",
         output::path::human_path(source.path()),
     )
 }
@@ -862,7 +867,9 @@ mod tests {
             };
             assert!(
                 err.contains(&format!("reports gap-ledger {flag} "))
+                    && err.contains("could not be read as")
                     && err.contains("the ledger was written as `blocked`")
+                    && !err.contains("regenerate the input with the command that wrote it")
                     && err.contains(producer),
                 "{flag} {body:?}: {err}"
             );
