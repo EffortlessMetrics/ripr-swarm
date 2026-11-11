@@ -11111,6 +11111,7 @@ tests = [
   "crates/ripr/tests/check_dead_end_routes.rs::two_ungripped_fields_print_the_changed_fields_stub_not_the_first",
   "crates/ripr/tests/check_dead_end_routes.rs::hidden_row_stub_command_runs_and_succeeds",
   "crates/ripr/src/output/human/triage.rs::tests::hand_written_step_respects_the_stub_refusal",
+  "crates/ripr/src/output/human/triage.rs::tests::hand_written_predicate_step_matches_the_predicate_shape",
   "crates/ripr/src/app/test_stub.rs::tests::narrowed_field_seam_is_printed_only_when_the_seam_id_stub_succeeds",
   "crates/ripr/src/app/test_stub.rs::tests::fold_keeps_weak_oracle_distinct_from_refusal",
   "crates/ripr/src/app/test_stub.rs::tests::narrowed_ambiguity_withholds_with_a_plain_reason",

@@ -907,9 +907,19 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::OwnerGeneric.reason() => {
             "call the function with concrete types for its type parameters and an input on each side of the changed behavior, and assert the exact result each time"
         }
-        ProbeFamily::Predicate => {
-            "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
-        }
+        // #14349: the input pair depends on the changed predicate's shape.
+        // Only an ordering comparison has a limit to sit below, on and above.
+        ProbeFamily::Predicate => match predicate_test_shape(&finding.probe.expression) {
+            PredicateTestShape::Ordering => {
+                "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
+            }
+            PredicateTestShape::Equality => {
+                "call the function once with inputs whose compared values are equal and once with inputs whose compared values differ, and assert the exact result each time"
+            }
+            PredicateTestShape::Condition => {
+                "call the function once with an input that makes the changed condition true and once with one that makes it false, and assert the exact result each time"
+            }
+        },
         ProbeFamily::FieldConstruction => {
             "call the function and assert the exact value of the changed field on what it returns"
         }
@@ -928,6 +938,36 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // The repair advisory above names its own next step; do not claim
         // that no route exists beside it.
         format!("Write this test by hand: {shape}; then rerun `ripr check`.\n")
+    }
+}
+
+/// The kind of input pair that tells a changed predicate's two outcomes apart.
+#[derive(Debug, PartialEq, Eq)]
+enum PredicateTestShape {
+    /// `<`, `<=`, `>`, `>=`: a limit with a just-below, on and just-above side.
+    Ordering,
+    /// `==` / `!=` with no ordering operator: equal versus different values.
+    Equality,
+    /// No comparison operator: the condition's true and false sides.
+    Condition,
+}
+
+/// Classify the changed predicate text for the hand-written step. Fails
+/// toward `Ordering` (the long-standing wording) whenever an angle bracket
+/// remains after removing arrows and shifts, since a generic argument or an
+/// unrecognised form must not lose the boundary advice.
+fn predicate_test_shape(expression: &str) -> PredicateTestShape {
+    let stripped = expression
+        .replace("=>", " ")
+        .replace("->", " ")
+        .replace("<<", " ")
+        .replace(">>", " ");
+    if stripped.contains('<') || stripped.contains('>') {
+        PredicateTestShape::Ordering
+    } else if stripped.contains("==") || stripped.contains("!=") {
+        PredicateTestShape::Equality
+    } else {
+        PredicateTestShape::Condition
     }
 }
 
@@ -2408,6 +2448,52 @@ mod tests {
             routed.starts_with("Write this test by hand:") && !routed.contains("no repair route"),
             "{routed}"
         );
+    }
+
+    /// #14349: the hand-written predicate step names inputs that fit the
+    /// changed predicate: a limit for an ordering comparison, equal and
+    /// different values for an equality, true and false for a plain condition.
+    #[test]
+    fn hand_written_predicate_step_matches_the_predicate_shape() {
+        let mut finding = test_finding("predicate-shape");
+        finding.probe.family = ProbeFamily::Predicate;
+        let refusal = TestStubRefusal::ObserverRequired.reason();
+        for (expression, expected, absent) in [
+            (
+                "if len(text) <= max_length:",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "amount > limit",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "self.key.get() == other.key.get()",
+                "compared values are equal",
+                "just below",
+            ),
+            ("left != right", "compared values differ", "just below"),
+            (
+                "if enabled && ready",
+                "condition true and once with one that makes it false",
+                "just below",
+            ),
+            ("Some(x) => x.is_empty()", "condition true", "just below"),
+            ("flags >> 2 == 0", "compared values are equal", "just below"),
+            // A generic argument keeps the boundary wording (fail toward it).
+            ("v.is::<u8>() == true", "just below", "compared values"),
+        ] {
+            finding.probe.expression = expression.to_string();
+            let step = hand_written_test_step(&finding, refusal, true);
+            assert!(step.contains(expected), "{expression}: {step}");
+            assert!(!step.contains(absent), "{expression}: {step}");
+            assert!(
+                step.contains("exact result each time"),
+                "{expression}: {step}"
+            );
+        }
     }
 
     /// #10710 review: render the selected finding with a stub decision and a
