@@ -366,6 +366,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str(no_findings_line(output));
         out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
+            // The headline (and its base hint, when one prints) is its own
+            // paragraph: `Start here:` opens after a blank line here, as it
+            // does after the analysis-outcome block on a run with findings.
+            out.push('\n');
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
@@ -4654,6 +4658,23 @@ mod tests {
         assert!(rendered.contains("`ripr pilot --root .`"));
         assert!(rendered.contains("Nothing to check:"));
         assert!(!rendered.contains("No findings:"));
+        // `Start here:` is its own paragraph, not glued to the headline: the
+        // line before it is blank, and exactly one blank line separates them.
+        let lines: Vec<&str> = rendered.lines().collect();
+        let start = lines.iter().position(|line| *line == "Start here:");
+        let before = start.and_then(|index| index.checked_sub(1));
+        assert_eq!(
+            before.and_then(|index| lines.get(index).copied()),
+            Some(""),
+            "{rendered}"
+        );
+        let headline = before
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| lines.get(index).copied());
+        assert!(
+            headline.is_some_and(|line| line.starts_with("Nothing to check:")),
+            "{rendered}"
+        );
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
