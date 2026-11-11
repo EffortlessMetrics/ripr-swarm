@@ -18986,6 +18986,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::adaptor_gate_refuses_a_collect_into_a_rebound_vec",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refuses_an_empty_literal_argument",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::walked_parameter_refusal_reads_wrapped_calls_and_only_the_parameter",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::logical_or_is_not_closure_syntax",
 ]
 fixtures = [
   "fixtures/returned_closure_arithmetic_masking",
