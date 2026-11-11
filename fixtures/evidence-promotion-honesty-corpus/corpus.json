@@ -259,6 +259,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-coexist.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json"
   ],
   "cases": [
