@@ -6223,7 +6223,7 @@ mod tests {
 
     /// Fixture construction is not the behavior under test, so it gets a
     /// deadline a loaded host can meet; doctor's own probes keep theirs.
-    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(120);
+    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_mins(2);
 
     /// A committed fixture for the default-base tests: one commit on
     /// `branch`, no remote. Asserts each Git step, since `git_in` reports
