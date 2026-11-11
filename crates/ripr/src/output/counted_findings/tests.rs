@@ -6,6 +6,7 @@ fn fixture() -> Result<(Value, Binding), String> {
         producer_commit: "a".repeat(40),
         producer_identity: "test+languages:rust=1,typescript=0,python=0,perl=0".into(),
         cargo_input_identity: "test-cargo".into(),
+        environment_identity: crate::config::counted_environment_identity(),
         rust_sources: BTreeMap::from([("lib.rs".into(), digest(b"test bytes"))]),
         head_commit: "b".repeat(40),
         base_commit: "c".repeat(40),
@@ -74,6 +75,10 @@ fn changed_binding_or_incomplete_basis_never_receives_credit() -> Result<(), Str
     let (document, binding) = fixture()?;
     for (pointer, replacement) in [
         ("/counted_finding_dispositions/schema_version", json!(2)),
+        (
+            "/counted_finding_dispositions/analysis_binding/environment_identity",
+            json!("different-environment"),
+        ),
         (
             "/counted_finding_dispositions/analysis_binding/cargo_input_identity",
             json!("different-cargo"),

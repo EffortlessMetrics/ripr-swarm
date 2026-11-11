@@ -621,6 +621,41 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
     config_fingerprint(&pairs.join("\n"))
 }
 
+/// Bind all RIPR overrides, including scope/cap/feature switches not represented
+/// in RiprConfig, plus Rust tool selection inherited by metadata subprocesses.
+/// Include render-only overrides conservatively rather than omit future inputs.
+pub(crate) fn counted_environment_identity() -> String {
+    counted_environment_identity_from(std::env::vars_os())
+}
+
+fn counted_environment_identity_from(
+    environment: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut selected = environment
+        .filter(|(name, _)| {
+            let name = name.as_encoded_bytes().to_ascii_uppercase();
+            name.starts_with(b"RIPR_") || name.starts_with(b"RUST")
+        })
+        .map(|(name, value)| {
+            (
+                name.as_encoded_bytes().to_vec(),
+                value.as_encoded_bytes().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    selected.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"ripr-counted-environment-v1");
+    for (name, value) in selected {
+        for bytes in [name, value] {
+            hash.update((bytes.len() as u64).to_le_bytes());
+            hash.update(bytes);
+        }
+    }
+    format!("sha256:{:x}", hash.finalize())
+}
+
 /// The config identity published in the diff-check outcome identity block
 /// (#5988): the fingerprint of the exact `ripr.toml` text loaded for the run,
 /// so any change to the loaded config — finding-affecting allowlist fields,

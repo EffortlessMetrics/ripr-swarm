@@ -18,6 +18,7 @@ struct Binding {
     producer_commit: String,
     producer_identity: String,
     cargo_input_identity: String,
+    environment_identity: String,
     rust_sources: BTreeMap<String, String>,
     head_commit: String,
     base_commit: String,
@@ -190,6 +191,9 @@ fn bound_workspace_inputs(root: &Path) -> Option<()> {
 
 fn current_subject(root: &Path, base: &str, head: &str, binding: &Binding) -> Option<()> {
     bound_workspace_inputs(root)?;
+    if binding.environment_identity != crate::config::counted_environment_identity() {
+        return None;
+    }
     if crate::analysis::cargo_input_identity(root).as_ref() != Some(&binding.cargo_input_identity)
         || binding.rust_sources.is_empty()
         || binding.rust_sources.len() > 4096
@@ -388,6 +392,7 @@ fn produce(
         producer_commit: build_commit()?.to_string(),
         producer_identity: crate::build_identity::cache_identity().to_string(),
         cargo_input_identity: provenance.cargo_input_identity.clone(),
+        environment_identity: provenance.environment_identity.clone(),
         rust_sources: provenance.rust_sources.clone(),
         head_commit: revisions.head_commit.clone()?,
         base_commit: revisions.base_commit.clone()?,
@@ -509,6 +514,7 @@ pub(crate) fn attach_review(
         expected.producer_version = env!("CARGO_PKG_VERSION").to_string();
         expected.producer_commit = build_commit()?.to_string();
         expected.producer_identity = crate::build_identity::cache_identity().to_string();
+        expected.environment_identity = crate::config::counted_environment_identity();
         expected.cargo_input_identity = crate::analysis::cargo_input_identity(context.root)?;
         expected.diff_sha256 = digest(diff.as_bytes());
         expected.analysis_config_identity =

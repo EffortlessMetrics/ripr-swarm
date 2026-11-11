@@ -3181,3 +3181,30 @@ marker = "libtest_mimic"
     }
     Ok(())
 }
+
+#[test]
+fn counted_environment_scope_overrides_change_identity() {
+    let identity = |pairs: &[(&str, &str)]| {
+        super::counted_environment_identity_from(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).into(), (*value).into())),
+        )
+    };
+    let empty = identity(&[]);
+    for name in [
+        "RIPR_DIFF_DEPENDENT_SCOPE",
+        "RIPR_DIFF_NARROW_INDEX_FILES",
+        "RIPR_MAX_DIFF_INDEX_FILES",
+        "RIPR_CFG_FEATURES",
+        "RUSTC",
+    ] {
+        assert_ne!(empty, identity(&[(name, "first")]));
+        assert_ne!(identity(&[(name, "first")]), identity(&[(name, "second")]));
+    }
+    assert_eq!(empty, identity(&[("UNRELATED_RENDER_TEST", "value")]));
+    assert_eq!(
+        identity(&[("RIPR_A", "1"), ("RIPR_B", "2")]),
+        identity(&[("RIPR_B", "2"), ("RIPR_A", "1")])
+    );
+}

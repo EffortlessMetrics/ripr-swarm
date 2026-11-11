@@ -10499,7 +10499,10 @@ merge-base diff origin, SHA-256 of exact diff bytes, clean exact producer build
 and package version, semantic build identity including compiled features,
 finding-affecting configuration identity, separate
 count-policy identity, mode, selected languages and unchanged-test scope.
-It also carries Cargo configuration/environment identity captured before the
+It also carries `environment_identity` for all RIPR overrides and Rust tool
+selection variables, captured before analysis and checked again afterward and
+at consumption. Scope/cap/feature overrides therefore cannot silently change.
+It carries Cargo configuration/environment identity captured before the
 analysis and rechecked afterward, and `rust_sources`: SHA-256 commitments to
 raw Rust bytes actually consumed by that producer. Current reads verify those
 commitments; they never create a missing producer observation. Unavailable or

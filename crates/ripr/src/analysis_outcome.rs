@@ -520,6 +520,7 @@ pub(crate) struct CheckFindingsInputs {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CountedFindingProvenance {
+    pub(crate) environment_identity: String,
     pub(crate) cargo_input_identity: String,
     pub(crate) rust_sources: std::collections::BTreeMap<String, String>,
 }
