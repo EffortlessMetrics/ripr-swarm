@@ -525,6 +525,16 @@ fn verbose_worktree_check_names_the_worktree_scope() -> Result<(), String> {
         .args(["--format", "json"])
         .output()
         .map_err(|error| format!("run verbose worktree check: {error}"))?;
+    // Same tolerance as the worktree progress test below: a checkout where
+    // the worktree read fails stops before the line, and says so.
+    if !output.status.success() {
+        assert!(
+            stderr_text(&output).contains("ripr progress: failed [worktree]"),
+            "{}",
+            stderr_text(&output)
+        );
+        return Ok(());
+    }
     assert_eq!(
         verbose_mode_lines(&output),
         ["ripr: mode = draft; scope = worktree"],
