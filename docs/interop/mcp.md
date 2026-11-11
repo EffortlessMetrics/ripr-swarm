@@ -161,7 +161,7 @@ may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
 and `base` or `source: "worktree"` widen the diff. The hint never changes the
 outcome kind and an empty result is not an all-clear. For a base-less
 `no_scope` or `no_changed_lines` snapshot the hint also carries
-`pass_base_last_commit`, which names `{"base": "HEAD~1"}` as the retry when the
+`pass_base_last_commit`, which names `{"source": "committed", "base": "HEAD~1"}` as the retry when the
 change under review is the last commit (#13096); the server names it but never
 infers it.
 

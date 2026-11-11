@@ -2467,43 +2467,26 @@ fn check_failure(
     source: RefreshSource,
 ) -> AttemptFailure {
     let detail = format!("shared check authority failed: {error}");
+    // #13096: every retry names the source it was refused under. A
+    // base-only retry would re-run the default input selection, which reads
+    // saved tracked edits on a dirty tree even after an explicit committed
+    // request, so committed and worktree recoveries share one builder.
     let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
-    if source == RefreshSource::Worktree {
-        let recovery = match (error.check_refusal().identity, base) {
-            ("base_unresolvable", None) => format!(
-                "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
-                retry(Some("<ref>"))
-            ),
-            ("base_unresolvable", Some(_)) => format!(
-                "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
-                retry(Some("<ref>")),
-                retry(None)
-            ),
-            ("repository_root_unusable", _) => format!(
-                "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
-                retry(base)
-            ),
-            _ => check_retry_recovery(root, base, source),
-        };
-        return AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery);
-    }
     let recovery = match (error.check_refusal().identity, base) {
-        ("base_unresolvable", None) => {
-            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
-        }
-        ("base_unresolvable", Some(_)) => {
-            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, or omit `base` to use the default branch"
-        }
-        ("repository_root_unusable", _) => {
-            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
-        }
-        _ => {
-            return AttemptFailure::new(
-                CODE_ANALYSIS_FAILED,
-                detail,
-                check_retry_recovery(root, base, source),
-            );
-        }
+        ("base_unresolvable", None) => format!(
+            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
+            retry(Some("<ref>"))
+        ),
+        ("base_unresolvable", Some(_)) => format!(
+            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
+            retry(Some("<ref>")),
+            retry(None)
+        ),
+        ("repository_root_unusable", _) => format!(
+            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
+            retry(base)
+        ),
+        _ => check_retry_recovery(root, base, source),
     };
     AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
 }
@@ -3784,6 +3767,40 @@ mod tests {
             // #13096: the retry always names its source, because an omitted
             // source follows the tree's current state.
             assert_eq!(arguments["source"], source.as_str());
+        }
+        Ok(())
+    }
+
+    /// #13096: a base refusal under an explicit committed request names
+    /// `source: "committed"` in every retry it prints. A base-only retry would
+    /// take the default input selection, which reads saved tracked edits on a
+    /// dirty tree and so analyzes different input than the refused request.
+    #[test]
+    fn base_refusal_retries_keep_the_requested_source() -> Result<(), String> {
+        let root = std::env::temp_dir().join("base refusal root");
+        for source in [RefreshSource::Committed, RefreshSource::Worktree] {
+            for base in [None, Some("missing-base")] {
+                let failure = check_failure(
+                    &crate::core_error::CoreError::base_unresolvable("no such ref"),
+                    &root,
+                    base,
+                    source,
+                );
+                let retries: Vec<Value> = failure
+                    .recovery
+                    .match_indices('{')
+                    .filter_map(|(begin, _)| {
+                        let end = failure.recovery[begin..].find('}')? + begin + 1;
+                        serde_json::from_str(&failure.recovery[begin..end]).ok()
+                    })
+                    .collect();
+                if retries.is_empty() {
+                    return Err(format!("no JSON retry: {}", failure.recovery));
+                }
+                for retry in retries {
+                    assert_eq!(retry["source"], source.as_str(), "{}", failure.recovery);
+                }
+            }
         }
         Ok(())
     }

@@ -252,7 +252,7 @@ official SDK transport:
     same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
     both fields.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
-    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
     was captured with no explicit base (`snapshot.base` is absent) and its
     kind is `no_scope` or `no_changed_lines`, where the default base most
