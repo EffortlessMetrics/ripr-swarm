@@ -56,8 +56,9 @@ client advertises pull diagnostics (`textDocument.diagnostic`). A pull client
 is offered document pull only (`workspaceDiagnostics: false`), so it re-pulls
 each open file when ripr sends `workspace/diagnostic/refresh` after a save or
 refresh. Workspace pull is offered only to the ripr VS Code extension
-(`experimental.riprEditor`) (#1630). The server still answers a
-`workspace/diagnostic` request from any client.
+(`experimental.riprEditor`) (#1630), so a generic pull client shows
+diagnostics for open files only, not for changed files it has not opened. The
+server still answers a `workspace/diagnostic` request from any client.
 
 **Commands.** `executeCommandProvider` lists `ripr.refresh`,
 `ripr.collectContext`, `ripr.collectEvidenceContext`,

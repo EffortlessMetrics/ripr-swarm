@@ -5,5 +5,6 @@
   `workspace/diagnostic/refresh` with a workspace pull only and ignores that
   report for buffers it pulls by document, so the open file kept its first
   (often "not analyzed yet") state. Generic pull clients are now offered
-  document pull only and re-pull each open buffer on refresh; the ripr VS Code
-  extension keeps workspace pull (#1630).
+  document pull only and re-pull each open buffer on refresh, so they show
+  diagnostics for open files only; the ripr VS Code extension keeps workspace
+  pull (#1630).
