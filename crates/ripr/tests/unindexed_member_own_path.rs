@@ -145,6 +145,16 @@ fn a_member_reaching_its_own_file_through_path_keeps_draft_placement() -> Result
     // Ready indexes `tool` and already agreed.
     assert_credited("own #[path], ready", &finding(Mode::Ready, &own)?);
 
+    // An ordinary `cfg_attr` and a `std::path` import are not a path override.
+    let benign = [
+        (
+            "src/lib.rs",
+            "use std::path::PathBuf;\n#[cfg_attr(test, derive(Debug))]\nstruct Kept(PathBuf);\n#[path = \"../support.rs\"]\nmod support;\n",
+        ),
+        ("support.rs", SUPPORT),
+    ];
+    assert_credited("benign cfg_attr, draft", &finding(Mode::Draft, &benign)?);
+
     // A chain of own files, and a `build.rs` root, are still own files.
     let chain = [
         ("src/lib.rs", OWN_PATH),

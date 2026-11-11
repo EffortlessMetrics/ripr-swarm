@@ -2998,7 +2998,7 @@ fn own_path_literals(source: &str, followed: bool) -> Option<Vec<String>> {
     if includes
         || compact.contains("#![path")
         || compact.contains("r#path")
-        || (compact.contains("cfg_attr") && compact.contains("path"))
+        || cfg_attr_may_introduce_path(&compact)
     {
         return None;
     }
@@ -3015,6 +3015,38 @@ fn own_path_literals(source: &str, followed: bool) -> Option<Vec<String>> {
         }
     }
     (literals.len() == attributes).then_some(literals)
+}
+
+/// Whether a `cfg_attr(..)` in whitespace-stripped source lists `path = ..`
+/// among the attributes it applies. Only the `cfg_attr` argument list is read,
+/// so an unrelated `path` elsewhere in the file (`use std::path::PathBuf;`)
+/// does not count.
+fn cfg_attr_may_introduce_path(compact: &str) -> bool {
+    const NEEDLE: &str = "cfg_attr(";
+    let mut rest = compact;
+    while let Some(at) = rest.find(NEEDLE) {
+        let body = &rest[at + NEEDLE.len()..];
+        let mut depth = 1usize;
+        let mut end = body.len();
+        for (index, ch) in body.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = index;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if body[..end].contains(",path=") {
+            return true;
+        }
+        rest = body;
+    }
+    false
 }
 
 /// The existing file a `#[path = "literal"]` in `declaring` names, when it
