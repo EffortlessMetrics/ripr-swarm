@@ -282,9 +282,12 @@ where
             let nearest = nearest_manifest_dir(workspace_root, &absolute)
                 .map(|dir| lexical(&normalize(&dir)));
             let nearest_reaches = nearest.is_some_and(|dir| {
+                // An ancestor reaching first may have stopped the owner
+                // loop before the nearest package was walked.
                 walks
-                    .get_mut(&dir)
-                    .and_then(Option::as_mut)
+                    .entry(dir.clone())
+                    .or_insert_with(|| PackageWalk::new(workspace_root, &dir))
+                    .as_mut()
                     .is_some_and(|walk| {
                         walk.find(workspace_root, &targets) == Some(Origin::Production)
                     })

@@ -126,26 +126,26 @@ This changes the emitted stub only; classifier credit rules are unchanged.
 
 ### Repair start names the focused run command (#14320)
 
-The human `ripr repair` / `ripr agent repair --phase before` start prints
-`Run the new test: <command>` before the continue line when the recommended
-test's exact command is established, spelled like the stub run command. A file
-runs as `--test TARGET NAME` when the package's manifest or `tests/`
-discovery names its target and that name is a plain cargo target name
-(ASCII alphanumerics, `_`, `-`, not starting with `-`). Otherwise the
-file runs by name only when a target `cargo test` runs compiles it: a
-resolved module edge from a `[lib]` or `[[bin]]` root of its nearest package
-reaches it (`apply_module_graph_evidence` records it in
-`module_graph_reached`; a reach only from a test, bench or example root, or
-from an ancestor package across a nested manifest, does not count), and its
-source role is a production subject, test evidence or production-like test
-infrastructure. Not being an orphan is not enough: an incomplete walk (an
-unresolved `cfg_if!` or `#[path]` edge, an unreadable file, or the file bound)
-cannot place the file, so it gets no command rather than one that runs 0
-tests. For example, `src/tests/` declared from the library runs by name. The manifest path renders natively,
-so a literal `\` in a Unix checkout root is kept. Every other case gets no
-line: a file no resolved edge reaches, a bench, example or build script, a
-registered target ripr cannot name, a non-Rust file, a non-identifier test
-name, or a file outside any package. JSON output is unchanged.
+The human `ripr repair` / `ripr agent repair --phase before` start prints `Run
+the new test: <command>` before the continue line when the recommended test's
+exact command is established, spelled like the stub run command. A file runs
+as `--test TARGET NAME` when the package's manifest or `tests/` discovery
+names its target and that name is a plain cargo target name (ASCII
+alphanumerics, `_`, `-`, not starting with `-`). Otherwise the file runs by
+name only when a target `cargo test` runs compiles it: a resolved module edge
+from a `[lib]` or `[[bin]]` root of its nearest package reaches it
+(`apply_module_graph_evidence` records it in `module_graph_reached`; a reach
+only from a test, bench or example root, or from an ancestor package across a
+nested manifest, does not count), and its source role is a production subject,
+test evidence or production-like test infrastructure. Not being an orphan is
+not enough: an incomplete walk (an unresolved `cfg_if!` or `#[path]` edge, an
+unreadable file, or the file bound) cannot place the file, so it gets no
+command rather than one that runs 0 tests. For example, `src/tests/` declared
+from the library runs by name. The manifest path renders natively, so a
+literal `\` in a Unix checkout root is kept. Every other case gets no line: a
+file no resolved edge reaches, a bench, example or build script, a registered
+target ripr cannot name, a non-Rust file, a non-identifier test name, or a
+file outside any package. JSON output is unchanged.
 
 ## Required Evidence
 
