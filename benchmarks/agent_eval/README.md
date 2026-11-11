@@ -94,7 +94,7 @@ To add a scenario, append it there and rerun with `--write-baseline`. Good
 additions are changes agents get wrong today, noisy reports, and silent
 controls. Keep each crate dependency-free so the eval stays offline.
 
-## Baseline (debug build; `ripr` sources identical to main `2ab9f908`)
+## Baseline (debug build)
 
 Route totals are the `routes` rows at the top of `baseline.json`. What they show:
 

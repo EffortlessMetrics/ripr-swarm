@@ -318,15 +318,22 @@ fn printed_next_commands(text: &str) -> Vec<Vec<String>> {
 }
 
 /// Split a printed command into argv, keeping `'...'` and `"..."` quoted
-/// arguments (a scratch path with spaces) whole.
+/// arguments (a scratch path with spaces) whole and reading the POSIX `'\''`
+/// form of an embedded apostrophe. Other backslashes stay literal, so a
+/// Windows path is not mangled.
 fn split_command(text: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current: Option<String> = None;
     let mut quote = None;
-    for ch in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
         match (quote, ch) {
             (Some(open), _) if ch == open => quote = None,
             (Some(_), _) => current.get_or_insert_with(String::new).push(ch),
+            (None, '\\') if chars.peek() == Some(&'\'') => {
+                chars.next();
+                current.get_or_insert_with(String::new).push('\'');
+            }
             (None, '\'' | '"') => {
                 quote = Some(ch);
                 current.get_or_insert_with(String::new);
@@ -339,17 +346,39 @@ fn split_command(text: &str) -> Vec<String> {
     args
 }
 
-/// A baseline must carry scenario rows with routes, or every row would read
-/// as new and the compare would pass vacuously.
+/// A baseline must carry every field `compare` guards, or a row missing one
+/// would skip that guard and the compare would pass vacuously. Nulls are
+/// allowed only where a run legitimately leaves a value unmeasured.
 fn validate_baseline(baseline: &Value) -> Result<(), String> {
-    let scenarios = baseline["scenarios"]
+    let count = |value: &Value| value.is_u64();
+    // Present, and a bool or an unmeasured null.
+    let flag = |value: &Value| value.is_boolean() || value.is_null();
+    let route_ok = |route: &Value| {
+        route["route"]
+            .as_str()
+            .is_some_and(|name| ROUTES.contains(&name))
+            && route["answer_reached"].is_boolean()
+            && count(&route["failed_steps"])
+            && count(&route["total_tokens"])
+            && route
+                .get("tokens_to_answer")
+                .is_some_and(|tokens| count(tokens) || tokens.is_null())
+    };
+    let scenario_ok = |row: &Value| {
+        let checks = &row["loop"];
+        row["id"].is_string()
+            && row["routes"]
+                .as_array()
+                .is_some_and(|routes| !routes.is_empty() && routes.iter().all(route_ok))
+            && count(&checks["missed_gaps"])
+            && count(&checks["extra_gaps"])
+            && LOOP_FLAGS
+                .iter()
+                .all(|name| checks.get(*name).is_some_and(flag))
+    };
+    let valid = baseline["scenarios"]
         .as_array()
-        .filter(|rows| !rows.is_empty());
-    let valid = scenarios.is_some_and(|rows| {
-        rows.iter().all(|row| {
-            row["id"].is_string() && row["routes"].as_array().is_some_and(|r| !r.is_empty())
-        })
-    });
+        .is_some_and(|rows| !rows.is_empty() && rows.iter().all(scenario_ok));
     if baseline["schema_version"] == SCHEMA_VERSION && valid {
         Ok(())
     } else {
@@ -1489,12 +1518,43 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(refused(&["--write-baseline", "--skip-cargo"]));
         assert!(refused(&["--write-baseline", "--compare", "b.json"]));
         assert!(validate_baseline(&json!({"schema_version": SCHEMA_VERSION})).is_err());
-        let one =
-            json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [{}]}]});
-        assert_eq!(validate_baseline(&one), Ok(()));
+        let route = json!({"route": "mcp", "answer_reached": true, "failed_steps": 0, "total_tokens": 9, "tokens_to_answer": null});
+        let checks = json!({"missed_gaps": 0, "extra_gaps": 0, "silent_on_control": null, "weak_test_still_flagged": true,
+            "reference_test_closes_loop": true, "reference_key_valid": true, "weak_key_valid": null});
+        let full = json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [route], "loop": checks}]});
+        assert_eq!(validate_baseline(&full), Ok(()));
+        // A row missing a guarded field would skip that guard: refused.
+        for (path, field) in [
+            ("routes", "total_tokens"),
+            ("routes", "answer_reached"),
+            ("routes", "tokens_to_answer"),
+            ("loop", "missed_gaps"),
+            ("loop", "reference_test_closes_loop"),
+        ] {
+            let mut partial = full.clone();
+            let target = if path == "routes" {
+                &mut partial["scenarios"][0]["routes"][0]
+            } else {
+                &mut partial["scenarios"][0]["loop"]
+            };
+            if let Some(map) = target.as_object_mut() {
+                map.remove(field);
+            }
+            assert!(validate_baseline(&partial).is_err(), "{field}");
+        }
+        let names_only = json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [{"route": "cli-agent-loop"}]}]});
+        assert!(validate_baseline(&names_only).is_err());
+        let committed: Value =
+            serde_json::from_str(include_str!("../../../benchmarks/agent_eval/baseline.json"))
+                .unwrap_or_default();
+        assert_eq!(validate_baseline(&committed), Ok(()));
         assert_eq!(
             split_command("explain --root '/tmp/a b' --at \"x y\" z"),
             strings(&["explain", "--root", "/tmp/a b", "--at", "x y", "z"])
+        );
+        assert_eq!(
+            split_command("explain --root '/tmp/it'\\''s dir' C:\\x\\y"),
+            strings(&["explain", "--root", "/tmp/it's dir", "C:\\x\\y"])
         );
         let options = parse_options(&strings(&[
             "--scenario",
