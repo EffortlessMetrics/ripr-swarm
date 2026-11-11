@@ -176,6 +176,7 @@ mod tests {
             include_unchanged_tests: false,
             languages,
             perl_facts_used: false,
+            counted_provenance: None,
         });
         Ok(output)
     }

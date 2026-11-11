@@ -4,17 +4,21 @@ use crate::config::RiprConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 const FIELD: &str = "counted_finding_dispositions";
 const BASIS: &str = "complete_raw_findings_before_consumer_filters";
+const MAX_CONTRACT_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Binding {
     producer_version: String,
     producer_commit: String,
+    producer_identity: String,
+    cargo_input_identity: String,
+    rust_sources: BTreeMap<String, String>,
     head_commit: String,
     base_commit: String,
     diff_base_commit: String,
@@ -70,11 +74,156 @@ fn build_commit() -> Option<&'static str> {
     .then_some(commit)
 }
 
+fn git_budget() -> std::time::Duration {
+    crate::analysis::cancellation::remaining_budget()
+        .map_or(std::time::Duration::from_secs(5), |remaining| {
+            remaining.min(std::time::Duration::from_secs(5))
+        })
+}
+
 fn git(root: &Path, args: &[&str]) -> Option<String> {
-    crate::git::run_git(root, args).ok()
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        git_budget(),
+        MAX_CONTRACT_INPUT_BYTES as usize,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|s| s.trim_end_matches('\n').to_string())
+}
+
+fn bound_workspace_inputs(root: &Path) -> Option<()> {
+    let top = git(root, &["rev-parse", "--show-toplevel"])?;
+    if root.canonicalize().ok()? != Path::new(&top).canonicalize().ok()? {
+        return None;
+    }
+    let manifest_path = root.join("Cargo.toml");
+    if !std::fs::symlink_metadata(&manifest_path)
+        .ok()?
+        .file_type()
+        .is_file()
+    {
+        return None;
+    }
+    let manifest: toml::Value = toml::from_str(
+        &crate::bounded_input::read_to_string_with_limit(&manifest_path, MAX_CONTRACT_INPUT_BYTES)
+            .ok()?,
+    )
+    .ok()?;
+    if manifest
+        .get("package")
+        .and_then(|p| p.get("workspace"))
+        .is_some()
+    {
+        return None;
+    }
+    if manifest.get("workspace").is_none()
+        && root
+            .canonicalize()
+            .ok()?
+            .ancestors()
+            .skip(1)
+            .any(|parent| parent.join("Cargo.toml").exists())
+    {
+        return None;
+    }
+    if let Some(workspace) = manifest.get("workspace") {
+        for field in ["members", "default-members", "exclude"] {
+            if let Some(members) = workspace.get(field) {
+                for member in members.as_array()? {
+                    if Path::new(member.as_str()?).components().any(|component| {
+                        !matches!(
+                            component,
+                            std::path::Component::Normal(_) | std::path::Component::CurDir
+                        )
+                    }) {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    // Git status does not expose assume-unchanged/skip-worktree modifications.
+    // Refuse those index modes, rather than assuming their files match HEAD.
+    let tracked = git(root, &["ls-files", "-v", "-z"])?;
+    if tracked
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .any(|s| !s.starts_with("H "))
+    {
+        return None;
+    }
+    // Gitlinks and symlinks can hide mutable inputs beyond this commit.
+    let index = git(root, &["ls-files", "--stage", "-z"])?;
+    if index
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .any(|s| !s.starts_with("100644 ") && !s.starts_with("100755 "))
+    {
+        return None;
+    }
+    // Auxiliary module reads can use arbitrary extensions. Refuse every
+    // ignored file outside the root Cargo target directory. The producer's
+    // existing input Boundary separately refuses reading that directory.
+    let ignored = git(
+        root,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    for path in ignored.split('\0').filter(|s| !s.is_empty()) {
+        if !path.starts_with("target/") {
+            return None;
+        }
+    }
+    Some(())
 }
 
 fn current_subject(root: &Path, base: &str, head: &str, binding: &Binding) -> Option<()> {
+    bound_workspace_inputs(root)?;
+    if crate::analysis::cargo_input_identity(root).as_ref() != Some(&binding.cargo_input_identity)
+        || binding.rust_sources.is_empty()
+        || binding.rust_sources.len() > 4096
+    {
+        return None;
+    }
+    let canonical_root = root.canonicalize().ok()?;
+    let mut remaining = 256 * 1024 * 1024_u64;
+    for (relative, expected) in &binding.rust_sources {
+        crate::analysis::cancellation::checkpoint().ok()?;
+        if relative.contains('\\')
+            || !relative.ends_with(".rs")
+            || Path::new(relative)
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        let path = root.join(relative);
+        if !std::fs::symlink_metadata(&path).ok()?.file_type().is_file() {
+            return None;
+        }
+        let path = path.canonicalize().ok()?;
+        if !path.starts_with(&canonical_root) {
+            return None;
+        }
+        let bytes =
+            crate::bounded_input::read_with_limit(&path, remaining.min(MAX_CONTRACT_INPUT_BYTES))
+                .ok()?;
+        remaining = remaining.checked_sub(u64::try_from(bytes.len()).ok()?)?;
+        if digest(&bytes) != *expected {
+            return None;
+        }
+    }
     if !git(root, &["status", "--porcelain", "--untracked-files=normal"])?.is_empty()
         || git(
             root,
@@ -87,6 +236,17 @@ fn current_subject(root: &Path, base: &str, head: &str, binding: &Binding) -> Op
         )? != binding.base_commit
         || git(root, &["merge-base", base, head])? != binding.diff_base_commit
     {
+        return None;
+    }
+    let diff = crate::analysis::load_diff_range_with_deadline_and_git_stdout_limit_core(
+        root,
+        &binding.base_commit,
+        &binding.head_commit,
+        Some(git_budget()),
+        Some(MAX_CONTRACT_INPUT_BYTES as usize),
+    )
+    .ok()?;
+    if digest(diff.as_bytes()) != binding.diff_sha256 {
         return None;
     }
     Some(())
@@ -102,7 +262,7 @@ fn dispositions(findings: &Value) -> Option<Vec<Disposition>> {
         .iter()
         .map(|finding| {
             let id = finding.get("id")?.as_str()?;
-            if id.is_empty()
+            if id.trim().is_empty()
                 || !seen.insert(id)
                 || finding.get("suppressed").is_some()
                 || finding.get("withheld_by").is_some()
@@ -182,9 +342,12 @@ pub(crate) fn append_check(
     config: &RiprConfig,
     bounded: bool,
 ) {
-    if let Some(contract) = produce(json_text, output, config, bounded) {
-        if let Some(end) = json_text.rfind('}') {
-            json_text.insert_str(end, &format!(",\n  \"{FIELD}\": {}\n", json!(contract)));
+    if let Some(contract) = produce(json_text, output, config, bounded)
+        && let Some(end) = json_text.rfind('}')
+    {
+        let addition = format!(",\n  \"{FIELD}\": {}\n", json!(contract));
+        if json_text.len().saturating_add(addition.len()) <= MAX_CONTRACT_INPUT_BYTES as usize {
+            json_text.insert_str(end, &addition);
         }
     }
 }
@@ -195,8 +358,12 @@ fn produce(
     config: &RiprConfig,
     bounded: bool,
 ) -> Option<Contract> {
+    if text.len() > MAX_CONTRACT_INPUT_BYTES as usize {
+        return None;
+    }
     let outcome = output.analysis_outcome.as_ref()?;
     let inputs = outcome.check_findings_inputs.as_ref()?;
+    let provenance = inputs.counted_provenance.as_ref()?;
     let revisions = output.analyzed_revisions.as_ref()?;
     if bounded
         || !outcome.kind.is_complete()
@@ -219,6 +386,9 @@ fn produce(
     let binding = Binding {
         producer_version: env!("CARGO_PKG_VERSION").to_string(),
         producer_commit: build_commit()?.to_string(),
+        producer_identity: crate::build_identity::cache_identity().to_string(),
+        cargo_input_identity: provenance.cargo_input_identity.clone(),
+        rust_sources: provenance.rust_sources.clone(),
         head_commit: revisions.head_commit.clone()?,
         base_commit: revisions.base_commit.clone()?,
         diff_base_commit: revisions
@@ -283,6 +453,9 @@ fn validate(document: &Value, expected: &Binding) -> Option<Contract> {
         || document.get("owner_opt_outs").is_some()
         || document.get("run_limitations").is_some()
         || document
+            .get("document_complete")
+            .is_some_and(|v| v != &json!(true))
+        || document
             .pointer("/summary/conflicting_expressions")
             .is_some_and(|v| v != &json!(0))
         || document.pointer("/summary/findings")?.as_u64()?
@@ -321,8 +494,11 @@ pub(crate) fn attach_review(
 ) -> Result<String, String> {
     let mut review: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let verified = (|| {
-        let check: Value =
-            serde_json::from_str(&crate::bounded_input::read_to_string(check_path?).ok()?).ok()?;
+        let check: Value = serde_json::from_str(
+            &crate::bounded_input::read_to_string_with_limit(check_path?, MAX_CONTRACT_INPUT_BYTES)
+                .ok()?,
+        )
+        .ok()?;
         if check.get("root") != Some(&json!(crate::output::outcome::display_path(context.root)))
             || check.get("base") != Some(&json!(context.base))
         {
@@ -332,6 +508,8 @@ pub(crate) fn attach_review(
         let mut expected = contract.analysis_binding.clone();
         expected.producer_version = env!("CARGO_PKG_VERSION").to_string();
         expected.producer_commit = build_commit()?.to_string();
+        expected.producer_identity = crate::build_identity::cache_identity().to_string();
+        expected.cargo_input_identity = crate::analysis::cargo_input_identity(context.root)?;
         expected.diff_sha256 = digest(diff.as_bytes());
         expected.analysis_config_identity =
             crate::config::check_artifact_config_identity_hash(context.config);

@@ -23,6 +23,24 @@ pub(crate) struct ConsumedRustSources {
 }
 
 impl ConsumedRustSources {
+    /// Bounded export of actual producer observations for finding-origin
+    /// provenance. Missing/conflicting observations never become later reads.
+    pub(crate) fn complete_manifest(&self) -> Option<BTreeMap<String, String>> {
+        if self.paths.is_empty() || self.paths.len() > 4096 {
+            return None;
+        }
+        self.paths
+            .keys()
+            .map(|path| {
+                let digest = self.digest(path)?;
+                Some((
+                    path.to_str()?.replace('\\', "/"),
+                    format!("sha256:{digest}"),
+                ))
+            })
+            .collect()
+    }
+
     /// True when this carrier recorded no Rust source observations (for example
     /// the diff-scoped no-impact fast path, which reads no Rust content).
     pub(crate) fn is_empty(&self) -> bool {

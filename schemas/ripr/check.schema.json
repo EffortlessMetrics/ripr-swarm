@@ -38,6 +38,9 @@
                   "type": "string",
                   "minLength": 1
                 },
+                "cargo_input_identity": {"type":"string","minLength":1},
+                "rust_sources": {"type":"object","minProperties":1,"maxProperties":4096,"additionalProperties":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},
+                "producer_identity": {"type": "string", "minLength": 1},
                 "analysis_config_identity": {
                   "type": "string",
                   "minLength": 1
@@ -81,6 +84,9 @@
               },
               "required": [
                 "producer_version",
+              "producer_identity",
+              "cargo_input_identity",
+              "rust_sources",
                 "analysis_config_identity",
                 "mode",
                 "producer_commit",

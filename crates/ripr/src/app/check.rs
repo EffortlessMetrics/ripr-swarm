@@ -372,6 +372,8 @@ fn check_with_progress_and_origins_run(
     // analysis or an empty diff.
     super::analysis_subject::validate_input_subject(&input).map_err(|error| error.to_string())?;
     crate::atomic_file::ensure_default_output_contained(&input.root)?;
+    let counted_cargo_inputs = crate::analysis::cargo_input_identity(&input.root);
+    let counted_boundary = crate::analysis::input_boundary::Boundary::new(&input.root).ok();
     // Managed producer mode (Campaign 31 Phase D, #1407; architecture
     // corrected post perl-lsp-swarm #3294): when a Perl facts exporter is
     // configured (`producer = "perl-ripr-facts"` or `producer = "perllsp"`
@@ -509,6 +511,15 @@ fn check_with_progress_and_origins_run(
             include_unchanged_tests: input.include_unchanged_tests,
             languages: languages.clone(),
             perl_facts_used: input.perl_facts_path.is_some(),
+            counted_provenance: counted_cargo_inputs.as_ref().and_then(|identity| {
+                counted_boundary.as_ref()?.verify().ok()?;
+                (Some(identity.clone()) == crate::analysis::cargo_input_identity(&input.root))
+                    .then_some(())?;
+                Some(crate::analysis_outcome::CountedFindingProvenance {
+                    cargo_input_identity: identity.clone(),
+                    rust_sources: analysis.rust_consumed_sources.complete_manifest()?,
+                })
+            }),
         });
     }
 

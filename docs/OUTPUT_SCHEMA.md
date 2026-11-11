@@ -10496,13 +10496,31 @@ limits or unknown actionability are `unjoinable`; non-current source is
 
 The binding names the evaluated head commit, requested base commit, actual
 merge-base diff origin, SHA-256 of exact diff bytes, clean exact producer build
-and package version, finding-affecting configuration identity, separate
+and package version, semantic build identity including compiled features,
+finding-affecting configuration identity, separate
 count-policy identity, mode, selected languages and unchanged-test scope.
+It also carries Cargo configuration/environment identity captured before the
+analysis and rechecked afterward, and `rust_sources`: SHA-256 commitments to
+raw Rust bytes actually consumed by that producer. Current reads verify those
+commitments; they never create a missing producer observation. Unavailable or
+conflicting observations refuse. This initial route admits at most 4,096
+source commitments, 4 MiB per source and 256 MiB total verification reads.
 The count-policy digest includes effective severity and overrides using a
 representation tied to that exact producer build. Initially only complete,
 committed, clean-worktree Rust runs with unchanged tests included qualify.
 Dirty/unknown builds, unbound Perl facts, suppression/owner opt-outs, partial
 analysis, conflicting expressions and capped findings grant no positive basis.
+Ignored files outside the root Cargo target directory and assume-unchanged or
+skip-worktree index modes refuse, because Git-clean status alone does not bind
+analyzed inputs. The producer's run-scoped input boundary must also verify that
+module reads stayed inside the root and outside Git metadata and Cargo targets.
+The root must be the Git top level with a regular Cargo manifest; tracked
+symlinks and gitlinks refuse. External workspace selection, ancestor workspace
+selection without a root workspace, and escaping workspace member paths refuse.
+Source verification admits regular files only.
+Optional contract construction and consumption are bounded to 4 MiB of check
+JSON; larger reports grant no positive basis. Git identity probes observe the
+active cancellation budget and a five-second per-probe ceiling.
 Review checks live root/base/head and configuration, verifies the complete raw
 manifest digest, reconstructs the same finding-origin dispositions, and
 reconciles each class total. Missing/unsupported/malformed contracts produce

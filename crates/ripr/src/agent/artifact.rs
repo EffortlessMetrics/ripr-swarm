@@ -5507,6 +5507,7 @@ mod tests {
                         include_unchanged_tests: true,
                         languages: vec![crate::domain::LanguageId::Rust],
                         perl_facts_used: false,
+                        counted_provenance: None,
                     },
                 )
             };
@@ -5548,6 +5549,7 @@ mod tests {
                 include_unchanged_tests: true,
                 languages: vec![LanguageId::Rust],
                 perl_facts_used: false,
+                counted_provenance: None,
             };
             let identity = |inputs: &CheckFindingsInputs| {
                 RepoExposureArtifactContext::for_check_findings(

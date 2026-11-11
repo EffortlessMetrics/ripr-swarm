@@ -515,6 +515,13 @@ pub(crate) struct CheckFindingsInputs {
     pub(crate) include_unchanged_tests: bool,
     pub(crate) languages: Vec<crate::domain::LanguageId>,
     pub(crate) perl_facts_used: bool,
+    pub(crate) counted_provenance: Option<CountedFindingProvenance>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CountedFindingProvenance {
+    pub(crate) cargo_input_identity: String,
+    pub(crate) rust_sources: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]

@@ -4,6 +4,9 @@ fn fixture() -> Result<(Value, Binding), String> {
     let binding = Binding {
         producer_version: "test".into(),
         producer_commit: "a".repeat(40),
+        producer_identity: "test+languages:rust=1,typescript=0,python=0,perl=0".into(),
+        cargo_input_identity: "test-cargo".into(),
+        rust_sources: BTreeMap::from([("lib.rs".into(), digest(b"test bytes"))]),
         head_commit: "b".repeat(40),
         base_commit: "c".repeat(40),
         diff_base_commit: "c".repeat(40),
@@ -71,6 +74,14 @@ fn changed_binding_or_incomplete_basis_never_receives_credit() -> Result<(), Str
     let (document, binding) = fixture()?;
     for (pointer, replacement) in [
         ("/counted_finding_dispositions/schema_version", json!(2)),
+        (
+            "/counted_finding_dispositions/analysis_binding/cargo_input_identity",
+            json!("different-cargo"),
+        ),
+        (
+            "/counted_finding_dispositions/analysis_binding/producer_identity",
+            json!("different-features"),
+        ),
         (
             "/counted_finding_dispositions/analysis_binding/head_commit",
             json!("stale"),
@@ -168,6 +179,145 @@ fn suppression_duplicate_and_conflicting_raw_rows_fail_closed() -> Result<(), St
     assert_eq!(
         dispositions(&outside).ok_or("outside rows")?[0].status,
         "outside_basis"
+    );
+    Ok(())
+}
+
+#[test]
+fn ignored_test_mutation_invalidates_an_otherwise_clean_git_subject() -> Result<(), String> {
+    use crate::testing::fixture_git::{fixture_git_ok, fixture_git_stdout, remove_fixture_tree};
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let parent = std::env::temp_dir();
+    std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+    let root = parent.join(format!(
+        "ripr-counted-inputs-{}-{stamp}",
+        std::process::id()
+    ));
+    // Exclusive creation establishes this test's ownership. Failure retains
+    // the fixture for diagnosis; only this successfully created tree is removed.
+    std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join(".gitignore"),
+        "/target/\n/ignored-tests/\n/.cargo/\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib.rs"), "pub fn value() -> bool { true }\n")
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname=\"counted_fixture\"\nversion=\"0.1.0\"\n[workspace]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    fixture_git_ok(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR fixture",
+            "-c",
+            "user.email=ripr-fixture@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )?;
+    let head = fixture_git_stdout(&root, &["rev-parse", "HEAD"])?;
+    let (_, mut binding) = fixture()?;
+    binding.head_commit = head.trim().to_string();
+    binding.base_commit = binding.head_commit.clone();
+    binding.diff_base_commit = binding.head_commit.clone();
+    binding.diff_sha256 = digest(b"");
+    binding.cargo_input_identity =
+        crate::analysis::cargo_input_identity(&root).ok_or("Cargo identity")?;
+    binding.rust_sources = BTreeMap::from([(
+        "lib.rs".into(),
+        digest(b"pub fn value() -> bool { true }\n"),
+    )]);
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_some());
+    std::fs::create_dir(root.join(".cargo")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join(".cargo/config.toml"), "[build]\njobs = 2\n")
+        .map_err(|e| e.to_string())?;
+    assert!(bound_workspace_inputs(&root).is_none());
+    assert_ne!(
+        crate::analysis::cargo_input_identity(&root).as_ref(),
+        Some(&binding.cargo_input_identity)
+    );
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_none());
+    std::fs::remove_file(root.join(".cargo/config.toml")).map_err(|e| e.to_string())?;
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_some());
+    std::fs::create_dir(root.join("target")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("target/generated.rs"), "ignored build state")
+        .map_err(|e| e.to_string())?;
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_some());
+    std::fs::create_dir(root.join("ignored-tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("ignored-tests/observer.rs"),
+        "#[test] fn observes() { assert!(true); }\n",
+    )
+    .map_err(|e| e.to_string())?;
+    assert!(
+        fixture_git_stdout(&root, &["status", "--porcelain"])?
+            .trim()
+            .is_empty()
+    );
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_none());
+    std::fs::remove_file(root.join("ignored-tests/observer.rs")).map_err(|e| e.to_string())?;
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_some());
+    std::fs::write(
+        root.join("ignored-tests/fragment.inc"),
+        "pub fn auxiliary() {}",
+    )
+    .map_err(|e| e.to_string())?;
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_none());
+    std::fs::remove_file(root.join("ignored-tests/fragment.inc")).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["update-index", "--assume-unchanged", "lib.rs"])?;
+    assert!(current_subject(&root, "HEAD", "HEAD", &binding).is_none());
+    fixture_git_ok(&root, &["update-index", "--no-assume-unchanged", "lib.rs"])?;
+    assert!(bound_workspace_inputs(&root).is_some());
+    fixture_git_ok(
+        &root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},nested", binding.head_commit),
+        ],
+    )?;
+    assert!(bound_workspace_inputs(&root).is_none());
+    remove_fixture_tree(&root)
+}
+
+#[test]
+fn consumed_source_manifest_requires_actual_complete_observations() {
+    let mut source = crate::analysis::consumed_source::ConsumedRustSources::default();
+    assert!(source.complete_manifest().is_none());
+    source.record(Path::new("src/lib.rs"), Some(b"first"));
+    assert_eq!(
+        source.complete_manifest(),
+        Some(BTreeMap::from([("src/lib.rs".into(), digest(b"first"))]))
+    );
+    source.record(Path::new("src/lib.rs"), Some(b"other"));
+    assert!(source.complete_manifest().is_none());
+    let mut missing = crate::analysis::consumed_source::ConsumedRustSources::default();
+    missing.record(Path::new("src/lib.rs"), None);
+    assert!(missing.complete_manifest().is_none());
+}
+
+#[test]
+fn identity_git_probes_obey_the_active_deadline() -> Result<(), String> {
+    let root = crate::output::test_support::repo_root()?;
+    assert!(git(&root, &["--version"]).is_some());
+    let token = crate::analysis::cancellation::AnalysisCancellationToken::with_budget(
+        std::time::Instant::now(),
+        std::time::Duration::ZERO,
+        std::sync::Arc::new(std::time::Instant::now),
+    );
+    assert!(
+        crate::analysis::cancellation::with_token(&token, || git(&root, &["--version"])).is_none()
     );
     Ok(())
 }
