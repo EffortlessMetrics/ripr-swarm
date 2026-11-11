@@ -1171,7 +1171,8 @@ fn added_string_arm_input(
 /// Whether nothing in the owner before `chain` can take a call away from it
 /// (#10856 for this reading): the chain occurs once in the owner's text, and
 /// the body before it holds no `if`, `match`, loop, `return`, `break`,
-/// `continue`, `?`, match arm, closure, other short-circuit, macro or call.
+/// `continue`, `?`, match arm, closure, other short-circuit, macro, call,
+/// index, division or remainder, and the chain ends its expression.
 /// An early return on another parameter (`if strict { return false; }`)
 /// would keep a test that passes the new literal from ever evaluating the
 /// chain. Strings and
@@ -1195,7 +1196,18 @@ fn chain_is_first_decision(function: &str, chain: &str) -> bool {
     // `std::process::exit(1)`) can diverge without a keyword, so they
     // decline too; wrapping the chain in a call (`Some(...)`) declines with
     // them.
-    if head.contains(['?', '|', '!', '(']) || head.contains("&&") || head.contains("=>") {
+    // `[`, `/` and `%` (indexing, division, remainder) can panic first.
+    if head.contains(['?', '|', '!', '(', '[', '/', '%'])
+        || head.contains("&&")
+        || head.contains("=>")
+    {
+        return false;
+    }
+    // The chain must also end its expression: a continuation such as a
+    // following `&& strict` line binds tighter than the appended `||` and
+    // could keep the new arm from deciding the result.
+    let tail = masked[at + masked_chain.len()..].trim_start();
+    if !tail.starts_with([',', ';', '}']) {
         return false;
     }
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -2046,19 +2058,28 @@ mod tests {
             added_string_arm_evidence(two, before, after, &["mode = \"--verbose\""], false);
         assert_ne!(elsewhere.state, StageState::Yes, "{}", elsewhere.summary);
         // A rebinding before the comparison changes what is compared.
-        let shadowed = "pub fn pick(flag: &str) -> bool {\n    let flag = flag.trim();\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
+        // The rebinding is paren-free so only the rebinding guard declines it.
+        let shadowed = "pub fn pick(flag: &str, other: &str) -> bool {\n    let flag = other;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n";
         let rebound =
             added_string_arm_evidence(shadowed, before, after, &["flag = \"--verbose\""], false);
         assert_ne!(rebound.state, StageState::Yes, "{}", rebound.summary);
+        // A continuation after the changed line (`&& strict`) binds tighter
+        // than the appended arm, so the chain does not end the expression.
+        let continued = "pub fn pick(flag: &str, strict: bool) -> bool {\n    flag == \"-v\" || flag == \"--verbose\"\n        && strict\n}\n";
+        let tail =
+            added_string_arm_evidence(continued, before, after, &["flag = \"--verbose\""], false);
+        assert_ne!(tail.state, StageState::Yes, "{}", tail.summary);
         // An early return on another parameter can keep the input away
         // from the chain, and so can an earlier `?`, `match` arm, panicking
-        // macro or diverging call.
+        // macro, diverging call, index or division.
         for diverted in [
             "pub fn pick(flag: &str, strict: bool) -> bool {\n    if strict { return false; }\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
             "pub fn pick(flag: &str, gate: Option<()>) -> Option<bool> {\n    gate?;\n    Some(flag == \"-v\" || flag == \"--verbose\")\n}\n",
             "pub fn pick(flag: &str, mode: u8) -> bool {\n    match mode { 0 => false, _ => flag == \"-v\" || flag == \"--verbose\" }\n}\n",
             "pub fn pick(flag: &str, strict: bool) -> bool {\n    assert!(!strict);\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
             "pub fn pick(flag: &str, strict: bool) -> bool {\n    std::process::exit(i32::from(strict));\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, at: usize) -> bool {\n    let _ = [true][at];\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, by: u8) -> bool {\n    let _ = 1 / by;\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
         ] {
             let evidence = added_string_arm_evidence(
                 diverted,
