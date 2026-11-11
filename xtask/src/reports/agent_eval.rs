@@ -999,7 +999,14 @@ fn write_trial_score(dir: &Path) -> Result<(), String> {
         score["keyed_gaps"],
         normalize_path(&path)
     );
-    Ok(())
+    if score["complete"] == true {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent-eval trial-score: incomplete, scored as zero caught: {}",
+            score["problems"]
+        ))
+    }
 }
 
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {

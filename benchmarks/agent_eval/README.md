@@ -57,9 +57,21 @@ cargo xtask agent-eval trial-score <fresh-dir>   # judges what it left behind
 `trial-score` does not ask ripr. For every keyed gap it puts that one changed
 line back to its base text and runs `cargo test`. The gap counts as caught
 only when the suite passes on the changed code, fails with the line reverted,
-and `src/lib.rs` was left as committed. Controls: a fresh setup scores 0/6,
-and the reference tests score 6/6. Record each arm's tokens and tool calls
-next to its score. Use a fresh directory per arm and per run.
+and `src/lib.rs` was left as committed. A run that does not compile or
+report a test result (for example a revert that breaks the build, or a
+timeout) is recorded as not established and never counts as a catch. A
+missing repository or scoring error stays in the denominator as zero caught
+and makes the command exit nonzero. `src/lib.rs` is restored to what the
+agent left on every path. Controls: a fresh setup scores 0/6, and the
+reference tests score 6/6.
+
+Limits: agents must put tests under `tests/` (a `#[cfg(test)]` module in
+`src/lib.rs` counts as a production edit). The scorer does not check
+`Cargo.toml`, `build.rs` or edits to `tests/existing.rs`, and a test that
+asserts the source text itself (`include_str!`) would count as a catch, so
+read the agent's tests before trusting a surprising score. Record each
+arm's tokens and tool calls next to its score. Use a fresh directory per arm
+and per run.
 
 ### First pilot (2026-11-11, one run per cell, Haiku 5.5, debug ripr at main `2ab9f908`)
 
@@ -117,7 +129,8 @@ human legend, cannot leak from one route into the next.
 - **regression** (`--compare`): an answer no longer reached, total or
   to-answer tokens up more than 10% plus 20 tokens, more failed steps (a
   nonzero exit, a JSON-RPC error or an MCP `isError` result), more missed or
-  extra gaps, a loop check that was yes and is now NO or missing, or (on a
+  extra gaps, a loop check that was yes and is now NO or missing (except the
+  cargo-only key checks under `--skip-cargo`, which are unmeasured), or (on a
   full run) a baseline scenario or route that no longer runs. A check that is
   already NO in the baseline is not guarded; fixing it shows as a note, and
   the fixing PR rebaselines so it stays fixed.
