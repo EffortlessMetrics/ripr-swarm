@@ -3464,8 +3464,8 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     Ok(())
 }
 
-/// The CI summary's PR review summary and Recommended next test blocks,
-/// collapsed full reports included, print commands a reader copies on
+/// The CI summary's PR review summary and Recommended next test blocks
+/// print commands a reader copies on
 /// another machine. When `ripr agent start` bound them to the runner's
 /// absolute checkout (#3999), the summary names the repository root `.`
 /// instead, like the Agent review packet block; a sibling path that only

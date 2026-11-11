@@ -327,6 +327,19 @@ fn complete_artifacts_render_every_section_in_order() -> TestResult {
     }
     assert!(!summary.contains("@RIPR_"), "unsubstituted placeholder");
     assert!(summary.ends_with("- No runtime mutation execution is performed by this workflow.\n"));
+    // #14301: the comment publish plan is the one report still inlined, in
+    // its own fold; every other full report is only named.
+    assert!(
+        summary.contains(
+            "<details><summary>Full report: target/ripr/review/comment-publish-plan.md</summary>\n\n# Plan\n"
+        ),
+        "{summary}"
+    );
+    assert_eq!(
+        summary.matches("<details><summary>Full report:").count(),
+        1,
+        "{summary}"
+    );
     Ok(())
 }
 
