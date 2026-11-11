@@ -318,6 +318,15 @@ pub(crate) fn build_gate_decision_report(
     } else {
         None
     };
+    // #14082: a changed file the parser declined yields no seams, so zero
+    // candidates from it is not a clean result. The warning keeps the
+    // top-level status off `pass` and reaches the Markdown warnings section.
+    if let Some(warning) = analysis_scope
+        .as_ref()
+        .and_then(parser_declined_scope_warning)
+    {
+        warnings.push(warning);
+    }
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
@@ -1494,6 +1503,36 @@ fn compute_new_unsuppressed(
         count: count as u64,
         reason: causal_delta.map(CausalDeltaAuthority::disclosure),
     }
+}
+
+/// The gate warning for an analysis scope that discloses parser-declined
+/// files (#9598): nesting budget, parse error or non-UTF-8 sent them to the
+/// lexical fallback, which extracts no seams. `None` when the key is absent
+/// or an empty list; a malformed value warns too, because coverage of the
+/// changed files is then not established.
+fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
+    let files = match scope.get("parser_declined_files")? {
+        Value::Array(items) if items.is_empty() => return None,
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().map(|file| format!("`{file}`")))
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    Some(match files {
+        Some(files) => format!(
+            "analysis_scope lists parser_declined_files (not parsed: nesting budget, parse \
+             error or non-UTF-8): {}; no seams were extracted from them, so the absence of \
+             a gate candidate there is not evidence that their changes are tested; fix each \
+             file so it parses, then rerun",
+            files.join(", ")
+        ),
+        None => "analysis_scope has a malformed parser_declined_files, so which changed \
+                 files were parsed is not established and the absence of a gate candidate \
+                 is not evidence that the changes are tested; regenerate the gate input, \
+                 then rerun"
+            .to_string(),
+    })
 }
 
 fn top_level_status(

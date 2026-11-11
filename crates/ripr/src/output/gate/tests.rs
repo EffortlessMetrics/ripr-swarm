@@ -5846,6 +5846,17 @@ fn e2e_gate_json_with_files(
     project_lib_source: Option<&str>,
     extra_files: &[(&str, &str)],
 ) -> Result<String, String> {
+    let report =
+        e2e_gate_report_with_files(pr_guidance, gap_ledger, project_lib_source, extra_files)?;
+    render_gate_decision_json(&report)
+}
+
+fn e2e_gate_report_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<GateDecisionReport, String> {
     let dir = if project_lib_source.is_some() {
         e2e_fixed_root()?
     } else {
@@ -5883,9 +5894,8 @@ fn e2e_gate_json_with_files(
         acknowledgements: None,
     };
     let report = build_gate_decision_report(&input)?;
-    let gate_json = render_gate_decision_json(&report)?;
     ignore_remove_dir_all(dir);
-    Ok(gate_json)
+    Ok(report)
 }
 
 fn e2e_delta_and_update_with(
@@ -6287,6 +6297,102 @@ fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
     );
     let clean = e2e_real_review_render("pub fn unrelated() {}\n", true)?;
     assert!(!clean.contains("parser_declined_files"), "{clean}");
+    Ok(())
+}
+
+/// #14082: a changed file the parser declined yields no gate candidate, and
+/// that absence must not read as a clean `pass`. Real producer and real gate.
+#[test]
+fn e2e_real_parser_declined_file_never_reads_as_pass() -> Result<(), String> {
+    // Control: the file parses and holds no seam, so `pass` is earned and
+    // nothing is disclosed.
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let clean: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&clean_doc), None)?).map_err(|e| e.to_string())?;
+    assert_eq!(clean["status"], "pass", "{clean}");
+    assert_eq!(clean["warnings"], json!([]), "{clean}");
+
+    // Nesting past the parse budget: lexical fallback, no seams, even for the
+    // `>= 10` boundary that the shallow file alone does produce a candidate for.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let shallow_gate: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?)
+            .map_err(|e| e.to_string())?;
+    assert!(
+        shallow_gate["summary"]["evaluated"].as_u64() >= Some(1),
+        "{shallow_gate}"
+    );
+    let declined_doc = e2e_real_review_doc(&format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    ))?;
+    let report = e2e_gate_report_with_files(Some(&declined_doc), None, None, &[])?;
+    let declined: Value =
+        serde_json::from_str(&render_gate_decision_json(&report)?).map_err(|e| e.to_string())?;
+    assert_eq!(
+        declined["analysis_scope"]["parser_declined_files"],
+        json!(["src/lib.rs"]),
+        "{declined}"
+    );
+    assert_eq!(declined["summary"]["evaluated"], 0, "{declined}");
+    assert_eq!(declined["status"], "advisory", "{declined}");
+    let warnings = declined["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1, "{declined}");
+    let warning = warnings[0].as_str().unwrap_or_default();
+    assert!(
+        warning.contains("parser_declined_files") && warning.contains("`src/lib.rs`"),
+        "{warning}"
+    );
+    let markdown = render_gate_decision_markdown(&report);
+    assert!(markdown.contains("Decision: advisory"), "{markdown}");
+    assert!(
+        markdown.contains("## Warnings") && markdown.contains("src/lib.rs"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+/// #14082: the warning follows the disclosed list only. Empty or absent stays
+/// silent, a malformed value warns, and a declined sibling leaves the parsed
+/// file's decisions as they were.
+#[test]
+fn parser_declined_scope_warning_follows_the_disclosed_list() -> Result<(), String> {
+    let with_declined = |doc: &str, value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["parser_declined_files"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let empty = with_declined(&clean_doc, json!([]))?;
+    assert_eq!(empty["status"], "pass", "{empty}");
+    assert_eq!(empty["warnings"], json!([]), "{empty}");
+
+    for malformed in [json!("src/lib.rs"), json!([7]), json!({"a": 1})] {
+        let gate = with_declined(&clean_doc, malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed parser_declined_files")),
+            "{gate}"
+        );
+    }
+
+    let shallow_doc = e2e_real_review_doc("pub fn early(n: i32) -> bool { n >= 10 }\n")?;
+    let plain: Value = serde_json::from_str(&e2e_gate_json(Some(&shallow_doc), None)?)
+        .map_err(|e| e.to_string())?;
+    let sibling = with_declined(&shallow_doc, json!(["src/other.rs", "src/more.rs"]))?;
+    assert!(plain["summary"]["evaluated"].as_u64() >= Some(1), "{plain}");
+    assert_eq!(sibling["decisions"], plain["decisions"]);
+    assert_eq!(sibling["summary"], plain["summary"]);
+    assert!(
+        sibling["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("`src/other.rs`, `src/more.rs`")),
+        "{sibling}"
+    );
     Ok(())
 }
 

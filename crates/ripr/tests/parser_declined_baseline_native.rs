@@ -145,6 +145,10 @@ fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
     fixture_git_ok(&root, &["add", "src/lib.rs"])?;
     fixture_git_ok(&root, &["commit", "-qm", "fixed"])?;
     review_and_gate(&root, &base, "fixed")?;
+    // #14082 control: every changed file parsed and nothing was found.
+    let fixed_gate = read(&root, "fixed-gate.json")?;
+    assert_eq!(fixed_gate["status"], "pass", "{fixed_gate}");
+    assert_eq!(fixed_gate["warnings"], serde_json::json!([]));
     run(
         &root,
         &[
@@ -195,6 +199,24 @@ fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
     fixture_git_ok(&root, &["add", "src/lib.rs"])?;
     fixture_git_ok(&root, &["commit", "-qm", "declined"])?;
     review_and_gate(&root, &base, "declined")?;
+    // #14082: nothing evaluated because the file was not parsed is not `pass`.
+    let declined_gate = read(&root, "declined-gate.json")?;
+    assert_eq!(declined_gate["summary"]["evaluated"], 0, "{declined_gate}");
+    assert_eq!(declined_gate["status"], "advisory", "{declined_gate}");
+    assert!(
+        declined_gate["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("parser_declined_files") && w.contains("`src/lib.rs`")),
+        "{declined_gate}"
+    );
+    let declined_markdown =
+        std::fs::read_to_string(root.join("declined-gate.md")).map_err(|e| e.to_string())?;
+    assert!(
+        declined_markdown.contains("Decision: advisory")
+            && declined_markdown.contains("## Warnings")
+            && declined_markdown.contains("src/lib.rs"),
+        "{declined_markdown}"
+    );
     run(
         &root,
         &[

@@ -11736,7 +11736,10 @@ Field contract:
   extracts no seams) are excluded from it and listed in the optional
   `parser_declined_files` (present only when non-empty; the review-comments
   Markdown summary also lists them as a `limitation: parser_declined_files`
-  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
+  line, omitted when empty, #9734). A non-empty or malformed
+  `parser_declined_files` also adds one entry to the gate decision's
+  `warnings` naming the files, so the top-level `status` is never `pass` for
+  a decision whose changed files were not all parsed (#14082). A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
