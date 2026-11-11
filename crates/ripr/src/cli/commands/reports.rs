@@ -154,8 +154,8 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
 }
 
 /// The refusal for a readable `reports gap-ledger` source that is not a valid
-/// input of its kind: the flag and path, the parse cause, that nothing was
-/// written, and the command that produces a valid input (#14311).
+/// input of its kind: the flag and path, the parse cause, that the ledger was
+/// written as `blocked`, and the command that produces a valid input (#14311).
 fn gap_ledger_source_refusal(source: &GapDecisionLedgerSource, root: &str, cause: &str) -> String {
     let root = crate::agent::loop_commands::shell_arg(root);
     let (flag, expected, producer) = match source {

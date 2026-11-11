@@ -167,11 +167,13 @@ reached the caller.
   `ripr policy readiness` with a supplied input that is missing, unreadable,
   not a JSON object, or empty, a baseline delta, waiver aging, suppression
   health or previous readiness input whose `kind` names another report, or a
-  gate decision without `status` and `summary`, exit `2` and name the flag,
-  path and cause on stderr. Calibration and repo-config inputs get only the
-  object and non-empty checks. The `blocked` ledger or `config_error` readiness report is
-  still written first, so it replaces an earlier report at `--out` instead of
-  leaving a stale one for a later step to read (#14311).
+  gate decision without `status` and `summary`, exit `2` and name the input
+  (the flag for gap-ledger, the input label such as `gate_decision` for
+  readiness), path and cause on stderr. Calibration and repo-config inputs
+  get only the object and non-empty checks. The `blocked` ledger or
+  `config_error` readiness report is still written first, so it replaces an
+  earlier report at `--out` instead of leaving a stale one for a later step
+  to read (#14311).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
