@@ -6,11 +6,17 @@
 
 use std::process::Command;
 
-fn catalog() -> Result<serde_json::Value, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["help", "--json"])
+/// Run the real binary with no stdin, so a command that reads it sees EOF.
+fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(args)
+        .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|error| format!("failed to run ripr help --json: {error}"))?;
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+fn catalog() -> Result<serde_json::Value, String> {
+    let output = run_ripr(&["help", "--json"])?;
     if !output.status.success() {
         return Err(format!("help --json failed: {:?}", output.status));
     }
@@ -200,6 +206,10 @@ fn every_flag_an_own_body_row_lists_is_accepted_by_the_parser() -> Result<(), St
     // `check --all` is the help modifier (`ripr check --help --all`), listed
     // among check's options but meaningful only next to `--help`.
     const HELP_ONLY: &[(&str, &str)] = &[("check", "--all")];
+    // Listed in the help body as rejected, with the reason.
+    const DOCUMENTED_AS_REJECTED: &[(&str, &str)] =
+        &[("feedback record", "--file"), ("feedback record", "--line")];
+    const DUMMY: &str = "zzdummy";
     let document = catalog()?;
     let commands = document["commands"].as_array().ok_or("commands missing")?;
     let mut probed = 0;
@@ -212,26 +222,32 @@ fn every_flag_an_own_body_row_lists_is_accepted_by_the_parser() -> Result<(), St
         let path = row["path"].as_str().ok_or("path missing")?;
         for flag in row["flags"].as_array().ok_or("flags missing")? {
             let name = flag["name"].as_str().ok_or("flag name missing")?;
-            if HELP_ONLY.contains(&(path, name)) {
+            if HELP_ONLY.contains(&(path, name)) || DOCUMENTED_AS_REJECTED.contains(&(path, name)) {
                 continue;
             }
             let mut args: Vec<&str> = path.split(' ').collect();
             args.push(name);
             if flag["takes_value"] == true {
-                args.push(flag["values"][0].as_str().unwrap_or("zzdummy"));
+                args.push(flag["values"][0].as_str().unwrap_or(DUMMY));
             }
             args.push(SENTINEL);
-            let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-                .args(&args)
-                .stdin(std::process::Stdio::null())
-                .output()
-                .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
+            let output = run_ripr(&args)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains(&format!("unknown {path} argument {name:?}")) {
                 rejected.push(format!("ripr {}: {}", args.join(" "), stderr.trim()));
             }
             if stderr.contains(&format!("unknown {path} argument {SENTINEL:?}")) {
                 reached_sentinel += 1;
+            } else if !(output.status.success()
+                || stderr.contains(&format!("{DUMMY:?}"))
+                || stderr.contains(name))
+            {
+                // A probe that stops before the sentinel must show the flag
+                // was read: the run succeeded (`--help`, `--version`), or the
+                // refusal is about the flag's value, quoting the dummy or
+                // naming the flag. A refusal that mentions neither did not
+                // come from reading this flag.
+                rejected.push(format!("ripr {}: {}", args.join(" "), stderr.trim()));
             }
             probed += 1;
         }
@@ -243,11 +259,12 @@ fn every_flag_an_own_body_row_lists_is_accepted_by_the_parser() -> Result<(), St
     );
     // Guards the stimulus, not the surface: a short count means the probe
     // stopped reaching the parsers. Some flags end the run before the
-    // sentinel is read (`--help`, an eagerly validated value), so the
-    // sentinel floor sits below the probe floor.
+    // sentinel is read (`--help`, an eagerly validated value); each of
+    // those is checked above, so the sentinel floor sits below the probe
+    // floor.
     assert!(probed >= 300, "only {probed} documented flags were probed");
     assert!(
-        reached_sentinel >= 200,
+        reached_sentinel >= 250,
         "only {reached_sentinel} of {probed} probes were refused at the sentinel"
     );
     Ok(())
