@@ -14177,6 +14177,33 @@ fn exact_ok_assertion_is_not_published_as_an_oracle_on_the_failure_seam() -> Res
     Ok(())
 }
 
+/// #12757: with only success-payload assertions, the failure seam's
+/// discriminate stage agrees with the related-test record: no oracle reaches
+/// the `Err(..)` arm, so the stage is `No` rather than `Weak`, while the
+/// success seam stays `Yes`.
+#[test]
+fn success_only_assertions_leave_the_failure_seam_undiscriminated() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn exact_odd() { assert_eq!(parse_pinned(1).unwrap(), 1); }\n    \
+         #[test] fn ok_wrapper_odd() { assert_eq!(parse_pinned(3), Ok(3)); }\n    \
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let stage = |expression: &str| -> Result<StageState, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index).discriminate.state)
+    };
+    assert_eq!(stage("Err(Fault::Even)")?, StageState::No, "failure arm");
+    assert_eq!(stage("Ok(n)")?, StageState::Yes, "success arm");
+    Ok(())
+}
+
 /// #12836: on an `error_variant` seam, an exact error-variant pin that names a
 /// sibling variant is not a discriminator for this seam. The classify stage
 /// already grades it weak (`kind-match false`); the related-test record must

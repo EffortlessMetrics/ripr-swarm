@@ -4551,10 +4551,12 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            // The same two gates `best_oracle` applies, so this stage and the
-            // related-test record cannot disagree about one assertion (#12733).
+            // The same gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733,
+            // #12757).
             if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
                 || !error_pin_can_see_return_value(seam, oracle)
+                || !success_payload_assertion_can_see_return_arm(seam, oracle)
             {
                 continue;
             }
