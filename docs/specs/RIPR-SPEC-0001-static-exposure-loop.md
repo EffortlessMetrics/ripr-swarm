@@ -742,7 +742,9 @@ side (#8389). The openers are exactly the single-line forms already skipped, so
 a visibility-qualified re-export (`pub(crate) use`) keeps its probes on every
 line. The closing line counts only when nothing follows the `;`, and a
 declaration that never closes, closes outside its braces, or holds a character
-no `use` tree can hold marks nothing.
+no `use` tree can hold marks nothing. Import-shaped tokens inside a
+token-observing macro such as `stringify!` are that macro's data and keep
+their probes.
 
 Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and

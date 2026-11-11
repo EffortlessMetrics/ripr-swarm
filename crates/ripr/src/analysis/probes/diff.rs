@@ -1357,9 +1357,10 @@ fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usiz
 /// comment/string-masked text. Fail closed: the closing line counts only when
 /// nothing but whitespace follows the `;`, and a declaration that never
 /// closes, closes outside its braces, or holds a character no `use` tree can
-/// hold marks nothing. A declaration that opens on the line where the
-/// previous one closed (`}; use b::{`) is not an opener, so its entries keep
-/// their probes.
+/// hold marks nothing, and neither does a line inside a token-observing
+/// macro invocation ([`token_macro_lines`]). A declaration that opens on the
+/// line where the previous one closed (`}; use b::{`) is not an opener, so its
+/// entries keep their probes.
 fn use_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let mut out = std::collections::BTreeSet::new();
     // Cheap reject: most files hold no wrapped import.
@@ -1414,6 +1415,13 @@ fn use_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
             out.extend(at + 2..=last + 1);
         }
         at = end + 1;
+    }
+    // A token-observing macro (`stringify!`, `assert!`, ..) turns its
+    // arguments into data, so import-shaped tokens inside one are not an
+    // import and keep their probes.
+    if !out.is_empty() {
+        let observed = token_macro_lines(source);
+        out.retain(|line| !observed.contains(line));
     }
     out
 }
@@ -3126,6 +3134,11 @@ mod tests {
         assert!(lines("use a::{\n    B,\n    C\n").is_empty());
         assert!(lines("use a::\n    B }\n;\n").is_empty());
         assert!(lines("use a::{\n    B = c(1),\n};\n").is_empty());
+        // Import-shaped tokens inside a token-observing macro are its data.
+        assert!(
+            lines("fn f() -> &'static str {\n    stringify!({\n        use a::{\n            B,\n        };\n    })\n}\n")
+                .is_empty()
+        );
         // Only `use` and `pub use` as the first token of a line open a span.
         assert!(lines("pub(crate) use a::{\n    B,\n};\n").is_empty());
         assert!(lines("let v = x; use a::{\n    B,\n};\n").is_empty());
