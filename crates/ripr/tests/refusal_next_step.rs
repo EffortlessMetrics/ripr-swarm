@@ -522,6 +522,11 @@ const LIVE_CASES: &[Case] = &[
         reason: "`git diff --cached | ripr check --diff -`",
     },
     Case {
+        args: &["check", "--cached"],
+        exit: 2,
+        reason: "source is still read from the working tree",
+    },
+    Case {
         args: &["gate", "evaluate"],
         exit: 2,
         reason: "requires at least one",

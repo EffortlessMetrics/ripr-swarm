@@ -62,8 +62,9 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
     if command == "check" && matches!(arg, "--staged" | "--cached") {
         return format!(
             "unknown {command} argument {arg:?}. `ripr check` already reads staged and \
-             unstaged changes together; for only the staged changes run \
-             `git diff --cached | ripr check --diff -`. Run `{pointer}`."
+             unstaged changes together; to limit findings to the staged lines run \
+             `git diff --cached | ripr check --diff -` (source is still read from the \
+             working tree). Run `{pointer}`."
         );
     }
     match closest_flag(command, arg) {
