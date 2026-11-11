@@ -1,0 +1,2 @@
+tools/repo-policy/tests/workflow_contracts/inventory_contract.rs|Command::new|1|workflow-inventory-proof|#12914: read this selected test executable's native --list output to conserve frozen baseline logical test identities; no compiler, network or production spawn.
+tools/repo-policy/tests/workflow_contracts/inventory_contract.rs|use std::process::Command|1|workflow-inventory-proof|#12914: import for the same native test-inventory conservation proof.

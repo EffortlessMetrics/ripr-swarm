@@ -4,8 +4,8 @@
 //! main-push qualification, replace this temporary contract with the reviewed
 //! selected-route lifecycle proof; do not retain full qualification just to warm
 //! a cache. The archive-boundary contract (#7685) remains independent.
-const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
-const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+const CALLER: &str = include_str!("../../../../.github/workflows/routed-rust.yml");
+const PRODUCER: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     let marker = format!("{}{name}:", " ".repeat(indent));
