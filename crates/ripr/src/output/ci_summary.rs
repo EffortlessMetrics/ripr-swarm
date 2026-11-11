@@ -1659,8 +1659,18 @@ impl Summary {
     fn sarif_and_badges(&mut self, upload_sarif: bool) {
         self.line("### SARIF and badge status");
         if upload_sarif {
-            self.generated("- Diff SARIF", "target/ripr/reports/ripr-findings.sarif");
-            self.generated("- Repo seam SARIF", "target/ripr/reports/ripr-seams.sarif");
+            // Each SARIF renders for one event kind only (#14300), so its
+            // absence on the other kind is expected, not a fault.
+            self.generated_or(
+                "- Diff SARIF",
+                "target/ripr/reports/ripr-findings.sarif",
+                "not generated (pull request runs only)",
+            );
+            self.generated_or(
+                "- Repo seam SARIF",
+                "target/ripr/reports/ripr-seams.sarif",
+                "not generated (manual runs only; on a pull request the diff SARIF covers the changed lines)",
+            );
         } else {
             self.line("- SARIF upload: disabled by `RIPR_UPLOAD_SARIF`");
         }
@@ -1670,6 +1680,15 @@ impl Summary {
             "target/ripr/reports/repo-ripr-badge-shields.json",
         );
         self.blank();
+    }
+
+    fn generated_or(&mut self, label: &str, path: &str, absent: &str) {
+        let state = if self.is_file(path) {
+            "generated"
+        } else {
+            absent
+        };
+        self.line(&format!("{label}: {state}"));
     }
 
     fn generated(&mut self, label: &str, path: &str) {
