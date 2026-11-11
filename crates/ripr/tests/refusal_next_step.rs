@@ -12,6 +12,9 @@
 //!    fragment entry whose message now has a cue (or was deleted) also fails, so
 //!    fixing a message means deleting its line. This is a presence floor, not a
 //!    judgment that the cue is the right one; the live half and review own that.
+//!    The scan covers all production code in a file (each `#[cfg(test)]` item
+//!    is skipped, not everything after the first one) and reads a message from
+//!    inside its own call, so it cannot borrow a neighbour's cue (#14163).
 //! 2. **Live floor.** A table of real bad invocations of the built binary. Each
 //!    must exit with its documented code, print on stderr, and carry the cue.
 //!
@@ -217,46 +220,233 @@ fn has_reason_cue(text: &str) -> bool {
     REASON_CUES.iter().any(|cue| text.contains(cue))
 }
 
-/// String literals starting at `start`, stopping at the first `;` outside a
-/// string or after `window` bytes.
+/// Length in bytes of a `'x'` or `'\x'` char literal at `at`, or 0 when the
+/// quote there opens a lifetime instead.
+fn char_literal_len(bytes: &[u8], at: usize) -> usize {
+    if bytes.get(at) != Some(&b'\'') {
+        return 0;
+    }
+    if bytes.get(at + 1) == Some(&b'\\') {
+        // `'\n'`, `'\''`, `'\u{1f}'`: closes at the next quote after the escape.
+        let mut end = at + 3;
+        while end < bytes.len() && end < at + 12 {
+            if bytes[end] == b'\'' {
+                return end + 1 - at;
+            }
+            end += 1;
+        }
+        return 0;
+    }
+    // One char then the closing quote. Only a non-ASCII char is wider than a
+    // byte, so `<'a,'b>` is two lifetimes, not a char literal.
+    let widths = match bytes.get(at + 1) {
+        Some(first) if !first.is_ascii() => 2..=4,
+        _ => 1..=1,
+    };
+    for width in widths {
+        if bytes.get(at + 1 + width) == Some(&b'\'') {
+            return width + 2;
+        }
+    }
+    0
+}
+
+/// End (exclusive) of the string literal whose opening `"` is at `at`. `hashes`
+/// is `Some(n)` for a raw string `r#..#"` with `n` hashes.
+fn string_end(bytes: &[u8], at: usize, hashes: Option<usize>) -> usize {
+    let mut i = at + 1;
+    while i < bytes.len() {
+        match hashes {
+            None => {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    return i + 1;
+                }
+            }
+            Some(count) => {
+                if bytes[i] == b'"'
+                    && bytes.len() >= i + 1 + count
+                    && bytes[i + 1..i + 1 + count].iter().all(|b| *b == b'#')
+                {
+                    return i + 1 + count;
+                }
+            }
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// When a raw string opens at `at` (`r"`, `r#"`, `br##"`), its hash count and
+/// the offset of its opening quote.
+fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    if bytes.get(at) != Some(&b'r') {
+        return None;
+    }
+    if at > 0
+        && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_')
+        && bytes[at - 1] != b'b'
+    {
+        return None;
+    }
+    let mut i = at + 1;
+    while bytes.get(i) == Some(&b'#') {
+        i += 1;
+    }
+    (bytes.get(i) == Some(&b'"')).then_some((i - at - 1, i))
+}
+
+/// One step of a lexical walk over Rust source: what sits at `at`, and where
+/// the walk continues. Strings, chars and comments are skipped as units so a
+/// brace, paren or quote inside them is never counted as code.
+enum Lexeme {
+    /// A string literal; the range is its content without the quotes.
+    Str(usize, usize),
+    /// A comment or char literal.
+    Skip,
+    /// One byte of code.
+    Code(u8),
+}
+
+fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
+    let byte = bytes[at];
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'/') {
+        let mut end = at;
+        while end < bytes.len() && bytes[end] != b'\n' {
+            end += 1;
+        }
+        return (Lexeme::Skip, end);
+    }
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'*') {
+        let mut end = at + 2;
+        while end + 1 < bytes.len() && !(bytes[end] == b'*' && bytes[end + 1] == b'/') {
+            end += 1;
+        }
+        return (Lexeme::Skip, (end + 2).min(bytes.len()));
+    }
+    if let Some((hashes, quote)) = raw_string_open(bytes, at) {
+        let end = string_end(bytes, quote, Some(hashes));
+        return (
+            Lexeme::Str(quote + 1, end.saturating_sub(1 + hashes).max(quote + 1)),
+            end,
+        );
+    }
+    if byte == b'"' {
+        let end = string_end(bytes, at, None);
+        return (Lexeme::Str(at + 1, end.saturating_sub(1).max(at + 1)), end);
+    }
+    let char_len = char_literal_len(bytes, at);
+    if char_len > 0 {
+        return (Lexeme::Skip, at + char_len);
+    }
+    (Lexeme::Code(byte), at + 1)
+}
+
+/// The string literals inside the call whose opening paren ends just before
+/// `start`, joined with spaces. The walk stops at the matching close paren, so
+/// a message in expression position (`Err("..".to_string())` as a match arm or
+/// tail expression) is judged on its own text and cannot borrow a cue from the
+/// next statement. `window` bounds a call that never closes.
 fn literals_from(source: &str, start: usize, window: usize) -> String {
     let bytes = source.as_bytes();
     let end = (start + window).min(bytes.len());
     let mut out = String::new();
+    let mut depth = 1usize;
     let mut at = start;
-    let mut in_string = false;
-    let mut current = String::new();
     while at < end {
-        let byte = bytes[at];
-        if in_string {
-            if byte == b'\\' && at + 1 < end {
-                current.push('\\');
-                current.push(bytes[at + 1] as char);
-                at += 2;
-                continue;
-            }
-            if byte == b'"' {
-                in_string = false;
+        let (lexeme, next) = lex_at(bytes, at);
+        match lexeme {
+            Lexeme::Str(from, to) => {
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                out.push_str(&current);
-                current.clear();
-            } else {
-                // Keep UTF-8 intact: push the char starting here.
-                if let Some(ch) = source[at..].chars().next() {
-                    current.push(ch);
-                    at += ch.len_utf8();
-                    continue;
+                out.push_str(&String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]));
+            }
+            Lexeme::Skip => {}
+            Lexeme::Code(b'(') => depth += 1,
+            Lexeme::Code(b')') => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
                 }
             }
-        } else if byte == b'"' {
-            in_string = true;
-        } else if byte == b';' {
+            Lexeme::Code(_) => {}
+        }
+        at = next;
+    }
+    out
+}
+
+/// For each byte of `source`, whether it is code (not inside a string, char
+/// literal or comment).
+fn code_positions(source: &str) -> Vec<bool> {
+    let bytes = source.as_bytes();
+    let mut in_code = vec![false; bytes.len()];
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        if matches!(lexeme, Lexeme::Code(_)) {
+            in_code[at] = true;
+        }
+        at = next;
+    }
+    in_code
+}
+
+/// `source` with every `#[cfg(test)]` item blanked out: a `mod tests { .. }`
+/// block, a test-only function, or a test-only `use ..;`. Production code
+/// after such an item stays visible. Cutting the file at the first
+/// `#[cfg(test)]` instead hid everything below a test-only import near the top
+/// of a file (#14163).
+fn without_test_items(source: &str) -> String {
+    const MARKER: &str = "#[cfg(test)]";
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        if !matches!(lexeme, Lexeme::Code(b'#')) || !source[at..].starts_with(MARKER) {
+            at = next;
+            continue;
+        }
+        // Walk to the end of the item: the first `;` at depth 0, or the close
+        // of the first `{ .. }` block.
+        let mut depth = 0usize;
+        let mut end = at + MARKER.len();
+        let mut closed = false;
+        while end < bytes.len() {
+            let (lexeme, next) = lex_at(bytes, end);
+            end = next;
+            match lexeme {
+                Lexeme::Code(b'{') => depth += 1,
+                Lexeme::Code(b'}') => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        closed = true;
+                        break;
+                    }
+                }
+                Lexeme::Code(b';') if depth == 0 => {
+                    closed = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        out.push_str(&source[copied..at]);
+        if !closed {
+            // An item that never closes: drop the rest, as the old cut did.
+            copied = bytes.len();
             break;
         }
-        at += 1;
+        copied = end;
+        at = end;
     }
+    out.push_str(&source[copied..]);
     out
 }
 
@@ -295,20 +485,24 @@ fn message_follows(trigger: &str, after: &str) -> bool {
 
 /// The `(file, key)` pairs whose message reads like an error but has no cue.
 fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
-    let body = match source.find("#[cfg(test)]") {
-        Some(at) => &source[..at],
-        None => source,
-    };
+    let production = without_test_items(source);
+    let body = production.as_str();
+    let in_code = code_positions(body);
     let mut keys = BTreeSet::new();
     for trigger in TRIGGERS {
         let mut from = 0;
         while let Some(found) = body[from..].find(trigger) {
             let at = from + found;
             from = at + trigger.len();
+            // `strip_prefix("Err(")` and a comment naming `map_err(` are text
+            // about a trigger, not a trigger.
+            if !in_code[at] {
+                continue;
+            }
             if !message_follows(trigger, &body[from..]) {
                 continue;
             }
-            let text = literals_from(body, from, 600);
+            let text = literals_from(body, from, 2000);
             if text.chars().count() < 12 {
                 continue;
             }
@@ -691,6 +885,94 @@ fn live_refusals_name_a_next_step() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+/// Keys reported for a synthetic source file, without the `file|` prefix.
+fn offender_messages(source: &str) -> Vec<String> {
+    offenders_in("x.rs", source)
+        .into_iter()
+        .map(|key| key.trim_start_matches("x.rs|").to_string())
+        .collect()
+}
+
+#[test]
+fn scan_sees_production_code_below_a_test_only_item() {
+    // #14163: the scan used to stop at the first `#[cfg(test)]`, so a
+    // test-only import near the top of a file hid every message below it.
+    let source = r#"
+#[cfg(test)]
+use crate::testing::helper;
+
+fn parse() -> Result<(), String> {
+    return Err("widget requires --size <n>".to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    fn brace_in_text() -> Result<(), String> {
+        let _open = '{';
+        let _text = "}} not the end of the module {";
+        Err("test-only message is not found".to_string())
+    }
+}
+
+fn after_tests() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec![
+            "gadget is not a directory".to_string(),
+            "widget requires --size <n>".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn scan_judges_an_expression_position_message_on_its_own_text() {
+    // #14163: reading on to the next `;` let a message with no next step
+    // borrow the cue of the statement after it.
+    let source = r#"
+fn pick(kind: u8) -> Result<u8, String> {
+    match kind {
+        0 => Err("first kind is not supported".to_string()),
+        1 => Err("second kind is not supported; pass `--kind 2`".to_string()),
+        other => Ok(other),
+    }
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["first kind is not supported".to_string()]
+    );
+}
+
+#[test]
+fn scan_ignores_a_trigger_named_inside_a_string_or_comment() {
+    let source = r#"
+fn strip(text: &str) -> Option<&str> {
+    // map_err("this comment is not found by the scan")
+    text.strip_prefix("Err(").map(|missing_value_text| "")
+}
+"#;
+    assert_eq!(offender_messages(source), Vec::<String>::new());
+}
+
+#[test]
+fn scan_keeps_a_cued_message_and_a_lifetime_does_not_open_a_char() {
+    let source = r#"
+fn load<'a,'b>(left: &'a str, right: &'b str) -> Result<&'a str, String> {
+    if left == right {
+        return Err(format!("{left} is not a directory; pass `--root <dir>`"));
+    }
+    Err(format!("{right} is not readable and no route is named"))
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["{right} is not readable and no route is named".to_string()]
+    );
 }
 
 #[test]

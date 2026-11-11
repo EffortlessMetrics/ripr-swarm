@@ -1,0 +1,26 @@
+crates/ripr/src/output/agent_seam_packets.rs|command_specs.{field} contains {} role, expected {}
+crates/ripr/src/output/agent_seam_packets.rs|command_specs.{field} is invalid: {error}
+crates/ripr/src/output/agent_seam_packets.rs|decode gap-bound packet failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|decode rendered agent packet envelope failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|decode repair start stdout failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|gap-bound packet envelope carries no packet
+crates/ripr/src/output/agent_seam_packets.rs|is not agent-packet eligible
+crates/ripr/src/output/agent_seam_packets.rs|is not agent-packet eligible: missing projection
+crates/ripr/src/output/agent_seam_packets.rs|is not agent-packet eligible: {}
+crates/ripr/src/output/agent_seam_packets.rs|render agent gap packet JSON failed: {err}
+crates/ripr/src/output/agent_seam_packets.rs|render agent gap queue JSON failed: {err}
+crates/ripr/src/output/agent_seam_packets.rs|render before-phase attempt stdout failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|render blocked agent gap queue JSON failed: {err}
+crates/ripr/src/output/agent_seam_packets.rs|render gap-bound packet JSON failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|render repair start stdout failed: {error}
+crates/ripr/src/output/agent_seam_packets.rs|rendered agent packet envelope does not carry the current agent-packet schema version {AGENT_SEAM_PACKET_SCHEM
+crates/ripr/src/output/agent_seam_packets.rs|rendered agent packet envelope is not a JSON object
+crates/ripr/src/output/agent_seam_packets.rs|repair start stdout is not a JSON object
+crates/ripr/src/output/agent_seam_packets.rs|requires a canonical gap id
+crates/ripr/src/output/agent_seam_packets.rs|requires a repair_route
+crates/ripr/src/output/agent_seam_packets.rs|requires a repairable gap or bounded inspection route
+crates/ripr/src/output/agent_seam_packets.rs|requires allowed_edit_surface
+crates/ripr/src/output/agent_seam_packets.rs|requires nonblank receipt_command
+crates/ripr/src/output/agent_seam_packets.rs|requires nonblank verification_commands
+crates/ripr/src/output/agent_seam_packets.rs|requires verification_commands
+crates/ripr/src/output/agent_seam_packets.rs|serialize discriminator guidance failed: {error}

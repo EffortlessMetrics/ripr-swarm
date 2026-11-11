@@ -1,0 +1,108 @@
+crates/ripr/src/app/repair_attempt/mod.rs|an after-phase refusal needs a non-empty reason
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize artifact {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize declared manifest root failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize expected attempt directory failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize manifest path failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize repair attempt root failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize repair packet failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize retained repair packet failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|canonicalize {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|create {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|current Unix timestamp does not fit u64: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode edit-cage baseline failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode focused receipt before acceptance failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode retained receipt failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|decode {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|edit-cage baseline root does not match selected repository
+crates/ripr/src/app/repair_attempt/mod.rs|expected exactly one repair in progress for gap `{seam_id}`: {detail}
+crates/ripr/src/app/repair_attempt/mod.rs|focused finish custody changed before terminal retention; refusing to retain
+crates/ripr/src/app/repair_attempt/mod.rs|focused finish custody changed or terminal evidence is already retained; refusing to restore
+crates/ripr/src/app/repair_attempt/mod.rs|focused finish custody is missing
+crates/ripr/src/app/repair_attempt/mod.rs|focused receipt evaluation custody changed; refusing to restore
+crates/ripr/src/app/repair_attempt/mod.rs|focused receipt evaluation has invalid evidence digests
+crates/ripr/src/app/repair_attempt/mod.rs|focused receipt evaluation has no committed successful outcome
+crates/ripr/src/app/repair_attempt/mod.rs|focused receipt recovery protocol is unsupported
+crates/ripr/src/app/repair_attempt/mod.rs|focused terminal retention custody changed; refusing to restore
+crates/ripr/src/app/repair_attempt/mod.rs|focused terminal retention custody does not match the attempt
+crates/ripr/src/app/repair_attempt/mod.rs|focused test result changed after validation; refusing to retain foreign bytes
+crates/ripr/src/app/repair_attempt/mod.rs|gap after retention requires the gap snapshot, receipt and verify roles, plus at most one focused test result
+crates/ripr/src/app/repair_attempt/mod.rs|git rev-parse --show-prefix output is not valid UTF-8
+crates/ripr/src/app/repair_attempt/mod.rs|git {} failed: {}
+crates/ripr/src/app/repair_attempt/mod.rs|lock {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|missing attempt
+crates/ripr/src/app/repair_attempt/mod.rs|open terminal artifact {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|open {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|prepared repair attempt identity does not match its root and seam
+crates/ripr/src/app/repair_attempt/mod.rs|publish {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read artifact {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read before commitment failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read repair attempt entry failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read terminal artifact {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|read {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|receipt evaluation evidence changed before retention; refusing foreign bytes
+crates/ripr/src/app/repair_attempt/mod.rs|repair after selection requires a non-empty seam ID
+crates/ripr/src/app/repair_attempt/mod.rs|repair after selection requires an attempt ID or seam ID
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt after-phase refusal has an empty reason
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt after-phase refusal history is inconsistent
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt artifact binding failed: {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt before commitment failed
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt delta binding version is not recognized
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt edit-cage baseline binding failed
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt edit-cage baseline unavailable: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt gap binding base_commit is not a 40-character lowercase hex commit id
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt is missing {role} artifact
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest contains an invalid artifact
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest contains an invalid terminal artifact
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest contains an unknown terminal artifact role
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest identity does not match its selector
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest is incomplete or malformed
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest not found for {} at {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest path has no parent
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest path is not bound to its identity
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest root does not match selected repository
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt packet binding failed
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt bound_gap does not equal the verify document's closure of gap `{seam_id}`
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires a concrete repository HEAD: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires a non-empty seam ID
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires at least one before-phase artifact
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt schema must be {REPAIR_ATTEMPT_SCHEMA_VERSION}, got {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt store schema must be {}, got {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt terminal artifact binding failed: {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt terminal artifact path is not a relative attempt path: {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt terminal artifact role `{}` is not a retained after-phase result
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt terminal receipt {} is not bound to this attempt's after verdict
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} carries no after verdict; only a finished attempt can be restored for a retry
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} is already awaiting_edit; no restore is needed
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} moved while its terminal after-phase refusal was recorded
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} must finish with its retained agent_packet artifact
+crates/ripr/src/app/repair_attempt/mod.rs|repair attempt {} {AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL}; a refusal is recorded only while the attempt is resu
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet allowed_edit_surface must be an array
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet contains no actionable packet
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet has no selected edit target
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet is missing allowed edit target
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet is missing allowed_edit_surface
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet is missing {name}
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet must contain exactly one packet for gap `{seam_id}`, found {}
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet recommended test `{file}` is not a test surface
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet seam does not match requested seam `{seam_id}`
+crates/ripr/src/app/repair_attempt/mod.rs|repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never
+crates/ripr/src/app/repair_attempt/mod.rs|repair receipt projection predecessor is invalid
+crates/ripr/src/app/repair_attempt/mod.rs|replace {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|retained focused result does not match the focused finish
+crates/ripr/src/app/repair_attempt/mod.rs|retained gap snapshot requires terminal role `{name}`
+crates/ripr/src/app/repair_attempt/mod.rs|run git {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize completed repair attempt failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize edit-cage baseline failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize repair attempt commitment failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize repair attempt manifest failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize repair attempt refusal failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize repair attempt terminal retention failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|serialize restored repair attempt failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|staged edit-cage baseline binding failed
+crates/ripr/src/app/repair_attempt/mod.rs|sync {} failed: {error}
+crates/ripr/src/app/repair_attempt/mod.rs|terminal evidence must include exactly the focused result committed with the finish
+crates/ripr/src/app/repair_attempt/mod.rs|terminal retention requires at least one after-phase artifact
+crates/ripr/src/app/repair_attempt/mod.rs|write {} failed: {error}
