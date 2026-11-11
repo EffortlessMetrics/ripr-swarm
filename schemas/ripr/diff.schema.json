@@ -256,6 +256,26 @@
       },
       "then": {
         "properties": {
+          "analysis_outcome": {
+            "properties": {
+              "analysis_complete": {
+                "const": true
+              },
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "no_scope",
+                      "no_changed_lines",
+                      "no_behavioral_candidates",
+                      "complete_no_findings",
+                      "complete_with_findings"
+                    ]
+                  }
+                }
+              }
+            }
+          },
           "runtime_status": {
             "properties": {
               "state": {
@@ -291,6 +311,17 @@
             "properties": {
               "analysis_complete": {
                 "const": false
+              },
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "partial_with_limitations",
+                      "unsupported_input",
+                      "analysis_failed"
+                    ]
+                  }
+                }
               }
             }
           },

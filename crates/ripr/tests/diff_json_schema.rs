@@ -248,7 +248,24 @@ fn published_diff_schema_rejects_documents_it_forbids() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&root);
     let report = report?;
     conforms(&report, &schema)?;
-    let cases: [(&str, Mutation); 12] = [
+    // The completeness mutations below edit `analysis_outcome` in place, so
+    // the base document must carry one or they would fail for another reason.
+    if report["analysis_outcome"]["analysis_complete"] != json!(true) {
+        return Err(format!(
+            "expected a complete typed outcome in the base document, got {}",
+            report["analysis_outcome"]
+        ));
+    }
+    let cases: [(&str, Mutation); 15] = [
+        ("complete run with an incomplete outcome flag", |doc| {
+            doc["analysis_outcome"]["analysis_complete"] = json!(false)
+        }),
+        ("complete run with an incomplete outcome kind", |doc| {
+            doc["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations")
+        }),
+        ("unlisted outcome kind", |doc| {
+            doc["analysis_outcome"]["outcome"]["kind"] = json!("clean")
+        }),
         ("unknown top-level field", |doc| {
             doc["verdict"] = json!("clean")
         }),

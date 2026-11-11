@@ -2077,7 +2077,10 @@ a published schema. The `ripr_diff` object below is
 states the agreement rules described below: `runtime_status.state`,
 `runtime_status.diff` and `receipt.outcome_hint` follow `run_status`, and an
 incomplete `run_status` requires an `analysis_outcome` whose
-`analysis_complete` is `false`. When the command cannot produce a report after
+`analysis_complete` is `false` and whose `outcome.kind` is one of the
+incomplete kinds. A complete `run_status` may omit `analysis_outcome`; when it
+carries one, `analysis_complete` is `true` and `outcome.kind` is one of the
+complete kinds. When the command cannot produce a report after
 argument parsing (an unresolvable base, no work tree, an unreadable config) it
 exits `2` and writes the refusal envelope,
 [`schemas/ripr/diff-refusal.schema.json`](../schemas/ripr/diff-refusal.schema.json):
