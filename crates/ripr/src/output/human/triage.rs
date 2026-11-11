@@ -855,16 +855,12 @@ pub(crate) fn render_human_triage(
 
 /// #4320: the `Hidden:` list names omitted findings so the reader can confirm
 /// coverage without a rerun, but the default surface stays bounded: beyond
-/// this window the list discloses the remainder instead of printing every
-/// identity.
+/// this many rows the list discloses the remainder instead of printing every
+/// identity. A row may stand for several findings (#14299).
 const HIDDEN_FINDINGS_LISTED: usize = 20;
 
-/// The omitted findings the `Hidden:` list names. Within the window every
-/// omitted finding is listed in the report's file and line order. Beyond it,
-/// the window keeps the findings the check-JSON findings budget would keep
-/// (candidate-current gap classes first, `exposed` and non-candidate evidence
-/// last), still printed in file and line order, so a large diff does not spend
-/// the list on the alphabetically first files while later gaps go unnamed.
+/// The omitted findings the `Hidden:` list's rows stand for, in report order.
+/// See [`hidden_rows`] for grouping and the row window (#14233, #14299).
 fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
     hidden_window_indices(omitted)
         .into_iter()
@@ -893,7 +889,9 @@ fn hidden_rows(omitted: &[&Finding]) -> Vec<Vec<usize>> {
     let mut row_of_key: std::collections::BTreeMap<HiddenRowKey, usize> =
         std::collections::BTreeMap::new();
     for (index, finding) in omitted.iter().enumerate() {
-        if offers_test_stub(finding) {
+        // An owner-less finding has no function to group by: unrelated
+        // probes across a file would read as one contiguous region.
+        if offers_test_stub(finding) || finding.probe.owner.is_none() {
             rows.push(vec![index]);
             continue;
         }

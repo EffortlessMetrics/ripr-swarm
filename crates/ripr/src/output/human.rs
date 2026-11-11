@@ -4125,7 +4125,7 @@ mod tests {
     }
 
     /// #4320: the `Hidden:` list is itself a bounded window — beyond the
-    /// `HIDDEN_FINDINGS_LISTED` cap it discloses the remainder instead of
+    /// `HIDDEN_FINDINGS_LISTED` row cap it discloses the remainder instead of
     /// printing every identity, keeping the default surface bounded.
     #[test]
     fn hidden_block_list_discloses_remainder_beyond_its_window() {
@@ -4280,6 +4280,46 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("more omitted finding(s)"), "{rendered}");
+    }
+
+    /// #14299: findings with no resolved owner never group, and a legacy
+    /// repeat row before a grouped row keeps its count and position.
+    #[test]
+    fn hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // Report (file, line) order: two owner-less at 3, owned 5 and 6,
+        // owner-less 8.
+        for (line, owned) in [(3, false), (3, false), (5, true), (6, true), (8, false)] {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{line}-{owned}");
+            finding.class = ExposureClass::Exposed;
+            if owned {
+                finding.probe.owner = Some(SymbolId("src/lib.rs::parse".to_string()));
+            }
+            finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 3, "{rendered}");
+        assert!(rows[0].starts_with("    - src/lib.rs:3 ("), "{rendered}");
+        assert!(rows[0].ends_with(" (x2)"), "{rendered}");
+        assert!(
+            rows[1].starts_with("    - src/lib.rs:5-6 (")
+                && rows[1].contains("; 2 changed behaviors in `parse`; kind: predicate; "),
+            "{rendered}"
+        );
+        assert!(rows[2].starts_with("    - src/lib.rs:8 ("), "{rendered}");
+        assert!(!rows[2].contains(" (x"), "{rendered}");
     }
 
     /// #14299: the window bounds rows, and a grouped row is chosen by its best

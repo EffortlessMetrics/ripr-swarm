@@ -11161,6 +11161,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::hidden_block_groups_same_owner_class_and_reason_into_one_row",
   "crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings",
   "crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each",
+  "crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows",
   "crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family",
   "crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub",

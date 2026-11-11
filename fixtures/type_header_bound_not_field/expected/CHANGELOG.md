@@ -216,15 +216,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — type_header_bound_not_field (18)
-
-Reason:
-RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
-
-Command:
-`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

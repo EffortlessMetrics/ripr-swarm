@@ -510,15 +510,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — enum_variant_declaration_not_call (42)
-
-Reason:
-RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
-
-Command:
-`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

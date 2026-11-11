@@ -174,11 +174,12 @@ remainder that does not exist:
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.
-- Byte-identical consecutive hidden rows (same location, class, kind, reason
-  and any stub sub-block) collapse into one bullet ending ` (xN)`, where `N`
-  is the number of findings it stands for. The count line, the twenty-finding
-  listing cap and the `… and N more` continuation keep counting findings, not
-  bullets, so no finding disappears from the totals (#8389).
+- Byte-identical hidden rows (same location, class, kind, reason and any
+  stub sub-block) collapse into one bullet ending ` (xN)`, where `N` is the
+  number of findings it stands for (#8389), and same-owner rows group as
+  described below (#14299). The count line and the `… and N more`
+  continuation keep counting findings, not bullets, so no finding disappears
+  from the totals; the twenty-row listing cap counts rows.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -193,7 +194,7 @@ unrooted relative paths retain the shared renderer's fallback spelling and
 encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
 
-When the hidden identity list exceeds its 20-finding window, its remainder
+When the hidden identity list exceeds its 20-row window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
@@ -203,15 +204,16 @@ file-order prefix, and its `limited_findings_bound` message names the dropped
 counts per class and file (#10093).
 
 The hidden identity list chooses its 20 rows by that same priority order when
-more than 20 findings are omitted, so a gap in a late-sorting file is named
+the omitted findings need more than 20 rows, so a gap in a late-sorting file is named
 ahead of an already-noticed finding in an early one. The chosen rows still
 print in report (file, line) order, the hidden test-stub rows use the same
 window, and the remainder line counts the findings outside the window by
 class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
-is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
-findings every one is listed and the output is unchanged (#14233).
+is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer rows
+every row is listed (#14233).
 
 Omitted findings that share file, owner, class, currentness label and reason
+(findings with no resolved owner never group)
 print as one row that names the line span, the count, the owner and the
 kinds, for example:
 
@@ -1151,6 +1153,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_groups_same_owner_class_and_reason_into_one_row`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
