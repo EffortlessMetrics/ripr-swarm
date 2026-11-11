@@ -97,6 +97,10 @@ The SARIF layer should:
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
+  `ripr check --format github` folds the same groups (class, file and line
+  among the annotated findings) into one annotation that keeps the same
+  finding and ends its message with `Also covers N more probe(s) of this
+  change on this line.`; a printed denominator notice counts them (#14302).
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the leading results in both diff-scoped and repo-scoped runs, always
