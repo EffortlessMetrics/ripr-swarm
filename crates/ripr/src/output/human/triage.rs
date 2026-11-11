@@ -977,10 +977,13 @@ fn predicate_test_shape(expression: &str) -> PredicateTestShape {
 /// literal blanks to the end, which only removes operators and so fails
 /// toward the condition wording only when no operator sits outside it.
 fn without_quoted_text(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut escaped = false;
-    for character in text.chars() {
+    let mut index = 0;
+    while let Some(&character) = characters.get(index) {
+        index += 1;
         match quote {
             Some(open) => {
                 if escaped {
@@ -995,6 +998,24 @@ fn without_quoted_text(text: &str) -> String {
                 out.push(' ');
             }
             None => {
+                // A Rust or Python character literal (`'"'`, `'\''`, `'<'`)
+                // is blanked whole, so its quote never opens a string. A
+                // lifetime (`'a`) has no closing quote within reach.
+                if character == '\'' {
+                    let rest = characters.get(index..).unwrap_or_default();
+                    let len = match rest {
+                        ['\\', _, '\'', ..] => Some(3),
+                        [_, '\'', ..] => Some(2),
+                        _ => None,
+                    };
+                    if let Some(len) = len {
+                        out.push('\'');
+                        out.extend(std::iter::repeat_n(' ', len - 1));
+                        out.push('\'');
+                        index += len;
+                        continue;
+                    }
+                }
                 if character == '"' || character == '`' {
                     quote = Some(character);
                 }
@@ -2523,6 +2544,8 @@ mod tests {
                 "just below",
             ),
             ("tag !== `<br>`", "compared values differ", "just below"),
+            ("if '\"' == ch", "compared values are equal", "just below"),
+            ("c != '<'", "compared values differ", "just below"),
             // A mixed predicate keeps the limit wording.
             ("a == b && c < d", "just below", "compared values"),
             // A generic argument keeps the boundary wording (fail toward it).
