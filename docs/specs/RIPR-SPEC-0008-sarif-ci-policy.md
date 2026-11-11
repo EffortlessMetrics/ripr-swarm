@@ -99,8 +99,11 @@ The SARIF layer should:
   Different classes never fold: a weaker class does not hide a stronger one.
   `ripr check --format github` folds the same groups (class, file and line
   among the annotated findings) into one annotation that keeps the same
-  finding and ends its message with `Also covers N more probe(s) of this
-  change on this line.`; a printed denominator notice counts them (#14302).
+  finding and adds `Also covers N more probe(s) of this change on this
+  line.` ahead of its canonical gap id. Only findings that share a canonical
+  gap fold, and a finding with its own repair card or preview actionability
+  keeps its own annotation, so a fold drops no guidance. A printed
+  denominator notice counts the folded findings (#14302).
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the leading results in both diff-scoped and repo-scoped runs, always

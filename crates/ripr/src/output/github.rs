@@ -649,7 +649,9 @@ enum SameLine {
 /// SARIF renderer folds (#11219): two probes of one class on one line (for
 /// example the `predicate` and `return_value` probes of `a.len() == 0`) are
 /// one edit to the reviewer, yet each used to print its own annotation and
-/// spend GitHub's per-step display budget. Only annotated findings group:
+/// spend GitHub's per-step display budget. Findings group only when they
+/// share a canonical gap and none carries its own repair card or preview
+/// actionability, so the folded ones lose no guidance. Only annotated findings group:
 /// suppressed, withheld and not-current findings keep their own counts. The
 /// kept finding is the one SARIF keeps (its fingerprint order, so a
 /// reorder never changes it); unlocated (line 0) findings never fold.
@@ -658,7 +660,7 @@ fn same_line_folds<'a>(
     suppressed_ids: &std::collections::BTreeSet<&str>,
     withheld_ids: &std::collections::BTreeSet<&str>,
 ) -> std::collections::BTreeMap<&'a str, SameLine> {
-    type Key<'k> = (&'k str, &'k std::path::Path, usize);
+    type Key<'k> = (&'k str, &'k std::path::Path, usize, Option<&'k str>);
     let mut groups = std::collections::BTreeMap::<Key<'a>, Vec<&'a Finding>>::new();
     for finding in &output.findings {
         let line = finding.probe.location.line;
@@ -666,6 +668,7 @@ fn same_line_folds<'a>(
             || suppressed_ids.contains(finding.id.as_str())
             || withheld_ids.contains(finding.id.as_str())
             || !finding.is_candidate_actionable()
+            || carries_own_guidance(finding)
         {
             continue;
         }
@@ -674,6 +677,7 @@ fn same_line_folds<'a>(
                 finding.class.as_str(),
                 finding.probe.location.file.as_path(),
                 line,
+                finding.canonical_gap.as_ref().map(|gap| gap.id.as_str()),
             ))
             .or_default()
             .push(finding);
@@ -704,6 +708,18 @@ fn same_line_folds<'a>(
         }
     }
     roles
+}
+
+/// Whether a finding's annotation carries guidance of its own beyond its
+/// class and location: a preview actionability state or a language repair
+/// card. Folding such a finding would drop that guidance, so it keeps its own
+/// annotation; findings fold only into a peer with the same canonical gap.
+fn carries_own_guidance(finding: &Finding) -> bool {
+    preview_actionability_for(finding).is_some()
+        || python_repair_card(finding).is_some()
+        || python_no_action_annotation(finding).is_some()
+        || typescript_preview_card(finding).is_some()
+        || perl_preview_card(finding).is_some()
 }
 
 /// Denominator for findings the annotation stream deliberately omits (#4393).
@@ -2464,7 +2480,8 @@ mod tests {
         let mut output = output_with_unknown_finding();
         let base = output.findings[0].clone();
         let unknown = ExposureClass::StaticUnknown;
-        let mut base_side = with_probe(&base, "probe:z:base", 20, unknown.clone());
+        // On the folded line, so a base-side finding neither keeps nor folds.
+        let mut base_side = with_probe(&base, "probe:0:base", 13, unknown.clone());
         base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
         output.findings = vec![
             with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
@@ -2478,6 +2495,42 @@ mod tests {
             ),
             "{rendered}"
         );
+    }
+
+    /// #14302 review: a fold must not drop another finding's own guidance.
+    /// Same-line peers with different canonical gaps keep separate
+    /// annotations, each naming its own gap id.
+    #[test]
+    fn same_line_findings_with_different_canonical_gaps_do_not_fold() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let gap = |id: &str| crate::domain::FindingCanonicalGap {
+            id: id.to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        };
+        let mut first = with_probe(&base, "probe:a:predicate", 13, unknown.clone());
+        first.canonical_gap = Some(gap("gap:rust:first"));
+        let mut second = with_probe(&base, "probe:b:return_value", 13, unknown);
+        second.canonical_gap = Some(gap("gap:rust:second"));
+        output.findings = vec![first, second];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 2, "{rendered}");
+        assert!(
+            rendered.contains("Canonical gap: gap:rust:first"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Canonical gap: gap:rust:second"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Also covers"), "{rendered}");
     }
 
     fn output_with_unknown_finding() -> CheckOutput {
