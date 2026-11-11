@@ -705,5 +705,70 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         &check_reviews_with_pull(&none, &serde_json::json!([1]), &head, "malformed")?,
         false,
         "malformed pull object",
+    )?;
+    // A competing state field in the description makes it ambiguous, quoted, listed,
+    // emphasised or fenced; the template's prose use of the word stays inert.
+    let competing = [
+        (format!("{line}\ndisposition: REPAIR_REQUIRED"), false),
+        (
+            format!("{line}\n- **Disposition:** REVIEW_INCOMPLETE"),
+            false,
+        ),
+        (format!("{line}\n> disposition: REVIEW_READY"), false),
+        (
+            format!("{line}\n```\ndisposition: REPAIR_REQUIRED\n```"),
+            false,
+        ),
+        (
+            format!("{line}\nLosing candidate disposition (when decided): none"),
+            true,
+        ),
+    ];
+    for (index, (body, admit)) in competing.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("MEMBER", "o/r", &head, body),
+                &head,
+                &format!("competing-{index}"),
+            )?,
+            *admit,
+            body,
+        )?;
+    }
+    // A reviewer's negative statement outlives their own later neutral reply (a thread
+    // reply creates one); only their own later ready statement replaces it, and a
+    // negative statement on an earlier head never applied to this head.
+    let at = |second: u8| format!("2026-10-15T01:00:0{second}Z");
+    let negative_then_reply = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let negative_then_ready = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+        review("r", "COMMENTED", &head, &at(3), "REVIEW_READY"),
+        review("r", "COMMENTED", &head, &at(4), ""),
+    ]);
+    let earlier_head_negative = serde_json::json!([
+        review("r", "COMMENTED", &other, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let ready_pull = pull_object("MEMBER", "o/r", &head, &line);
+    for (name, reviews, admit) in [
+        ("negative then neutral reply", &negative_then_reply, false),
+        ("negative, reply, ready, reply", &negative_then_ready, true),
+        ("negative on an earlier head", &earlier_head_negative, true),
+    ] {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, &ready_pull, &head, name)?,
+            admit,
+            name,
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&negative_then_reply, &head)?,
+        false,
+        "negative then neutral reply without a description line",
     )
 }

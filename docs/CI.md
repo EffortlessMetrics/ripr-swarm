@@ -125,7 +125,10 @@ request whose author association is OWNER, MEMBER or COLLABORATOR, the same acco
 that could already self-attest with a COMMENT review. It is another carrier for the
 same statement, not another authority: a `CHANGES_REQUESTED` review or a trusted
 reviewer's current negative review still refuses, and removing the line withdraws
-the attestation before the Result job's recheck. Record what the review inspected
+the attestation before the Result job's recheck. A description that also carries a
+`disposition:` line attests nothing, and a trusted reviewer's negative current-head
+review keeps refusing after that reviewer's own neutral thread replies, until they
+post a ready review themselves. Record what the review inspected
 in the description or a later comment; the line itself carries no prose. Prefer
 the native review when it can be posted, since its commit binding is set by GitHub.
 

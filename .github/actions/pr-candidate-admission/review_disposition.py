@@ -102,6 +102,10 @@ TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # value must be exactly the positive form; an empty value is the unfilled template.
 BODY_FIELD = re.compile(r"^source review:[ \t]*(?P<value>.*?)[ \t]*$", re.IGNORECASE)
 BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0-9a-f]{40})$")
+# A second, competing state field in the description. The review-body form is a
+# ``disposition:`` line, so a description that carries one (whatever its value, and
+# however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
+BODY_COMPETING_FIELD = re.compile(r"^[ \t>*\-+_`#~]*disposition[ \t*_`]*:", re.IGNORECASE)
 
 
 def normalize_body(body: str) -> str:
@@ -226,6 +230,8 @@ def body_attests_head(body: str, head: str) -> bool:
     visible, fenced = parts
     if any(BODY_FIELD.match(line.strip()) for line in fenced):
         return False
+    if any(BODY_COMPETING_FIELD.match(line) for line in (*visible, *fenced)):
+        return False
     values = []
     for line in visible:
         match = BODY_FIELD.match(line)
@@ -321,7 +327,24 @@ def reviews_allow_source_attestation(
         return False
     if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
         return True
-    # Every refusal above already applied; the description is only another carrier.
+    # The description is only another carrier, so it must not be easier to satisfy
+    # than a ready review from the same people. A thread reply creates a neutral
+    # COMMENTED review that replaces its author's earlier one in the latest-per-login
+    # view above; here each trusted reviewer's latest current-head statement that
+    # says anything (ready or negative) decides, and a negative one refuses.
+    stated = [
+        r
+        for r in reviews
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+        and (
+            comment_body_ready(str(r.get("body") or ""))
+            or comment_body_negative(str(r.get("body") or ""))
+        )
+    ]
+    if any(comment_body_negative(str(r.get("body") or "")) for r in _latest_by_login(stated)):
+        return False
     return pull_allows_source_attestation(pull, head=head)
 
 
@@ -542,6 +565,11 @@ def self_test() -> None:
         (f"<!-- {line} -->", False),
         (f"<!-- unclosed\n{line}", False),
         (f"Prior source review: REVIEW_READY {head}", False),
+        (f"{line}\ndisposition: REPAIR_REQUIRED", False),  # competing state field
+        (f"{line}\n- **Disposition:** REVIEW_INCOMPLETE", False),
+        (f"{line}\n> disposition: REVIEW_READY", False),  # ambiguous even when positive
+        (f"{line}\n```\ndisposition: REPAIR_REQUIRED\n```", False),
+        (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),
     ]
     for body, expected in body_cases:
@@ -598,6 +626,32 @@ def self_test() -> None:
         [review(state="COMMENTED", commit_id=other, body="REVIEW_READY")],
         head=head,
         pull=pull(body="Source review:"),
+    )
+    # A reviewer's negative statement outlives their own later neutral reply: the
+    # description cannot stand in for the retraction they never made.
+    stamp = lambda n: f"2026-10-15T01:00:0{n}Z"
+    negative_then_reply = [
+        review(id=1, state="COMMENTED", commit_id=head, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+        review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+    ]
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head, pull=pull())
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head)
+    # The same reviewer replacing it with a ready statement lifts it; a negative one on
+    # an earlier head never applied to this head.
+    assert reviews_allow_source_attestation(
+        negative_then_reply
+        + [review(id=3, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp(3))]
+        + [review(id=4, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(4))],
+        head=head,
+        pull=pull(),
+    )
+    assert reviews_allow_source_attestation(
+        [
+            review(id=1, state="COMMENTED", commit_id=other, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+            review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+        ],
+        head=head,
+        pull=pull(),
     )
 
     for bad_page in ('{"message": "Bad credentials"}', '[1]', '[{"a":1}] {"b":2}'):
