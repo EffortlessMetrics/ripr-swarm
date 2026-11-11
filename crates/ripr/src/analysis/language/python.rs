@@ -387,6 +387,7 @@ mod loop_walk;
 mod may_reach;
 mod message_pin;
 mod module_value;
+mod range_activation;
 mod test_local_literal;
 mod type_guard;
 mod wrapped_call;
@@ -2129,13 +2130,27 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges) = old_source
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
                 .as_deref()
                 .map(|source| {
                     let old_facts = extract_source_facts(&changed.path, source);
                     (
                         old_facts.docstring_line_ranges,
                         old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let compound_loop_owners = workspace_read
+                .sources
+                .get(&changed.path)
+                .map(|source| {
+                    range_activation::compound_loop_owners(
+                        changed,
+                        source,
+                        &all_owners,
+                        old_source.as_deref(),
+                        &old_owners,
                     )
                 })
                 .unwrap_or_default();
@@ -2268,6 +2283,12 @@ impl PythonAdapter {
                     ),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
+                    compound_loop_edit: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| compound_loop_owners.contains(&owner.symbol_id())),
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2317,6 +2338,7 @@ impl PythonAdapter {
                     .get(&changed.path)
                     .map(String::as_str),
                 &all_owners,
+                &compound_loop_owners,
                 &all_tests,
                 &findings,
                 &mut value_origins,
@@ -2599,6 +2621,8 @@ mod tests;
 
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod range_activation_tests;
 #[cfg(test)]
 mod unemitted_stage_unknown_tests;
 #[cfg(test)]

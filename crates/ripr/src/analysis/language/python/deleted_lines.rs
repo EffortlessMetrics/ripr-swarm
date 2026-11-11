@@ -71,6 +71,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
     old_side: &OldSideRanges<'_>,
     new_source: NewSource<'_>,
     owners: &[PythonOwner],
+    compound_loop_owners: &super::range_activation::CompoundLoopOwners,
     tests: &'a [PythonTest],
     findings: &[Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
@@ -143,7 +144,10 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             None,
             owners,
             tests,
-            PythonNoBehaviorContext::default(),
+            PythonNoBehaviorContext {
+                compound_loop_edit: compound_loop_owners.contains(&owner.symbol_id()),
+                ..Default::default()
+            },
             // A deleted line is base-side evidence: the new-side guarded-arm
             // gate (#7392) stays off here; its old-side reading rides in
             // `site.old_guard` (#11889).
