@@ -1421,7 +1421,7 @@ impl WorkspaceSession {
         let mut desired_input = json!({
             "kind": "workspace_diff",
             "base": "default_branch",
-            "mode": "draft",
+            "mode": profile.mode,
             "scope": "diff",
         });
         if let Some(base) = &self.desired_base {
@@ -1982,8 +1982,14 @@ impl SessionProfile {
                     Some(identity) => SessionConfigPosture::Loaded { identity },
                     None => SessionConfigPosture::BuiltInDefaults,
                 };
+                // The effective mode the refresh runs, through the same
+                // `[analysis] mode` the check input applies (#14347).
+                let mode = config
+                    .analysis()
+                    .mode()
+                    .map_or(crate::app::Mode::Draft.as_str(), |mode| mode.as_str());
                 Self {
-                    mode: "draft",
+                    mode,
                     languages,
                     posture,
                 }
@@ -2079,12 +2085,20 @@ pub(crate) fn run_check(
                 ),
             )
         })?;
-        let input = crate::app::CheckInput {
+        let mut input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
             git_timeout: Some(crate::app::default_cli_git_timeout()),
             ..Default::default()
         };
+        // The repo's `[analysis]` table (mode, include_unchanged_tests) goes
+        // through the same owner `ripr check` and the LSP use (#14347). A
+        // refresh takes no per-call mode, so nothing here is explicit.
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }

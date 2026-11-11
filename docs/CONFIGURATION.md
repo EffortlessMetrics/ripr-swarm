@@ -1130,8 +1130,8 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
-| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. MCP `ripr_refresh` uses it too, since it takes no mode argument. |
+| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. Applies to `ripr check`, the LSP and MCP `ripr_refresh` alike. |
 | `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
 | `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
 
