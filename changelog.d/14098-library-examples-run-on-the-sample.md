@@ -4,4 +4,4 @@
   analysis in under a second instead of an incomplete one after scanning the
   whole crate, and report the changed `validate_currency` line as 22 rather
   than 21. `check_diff` also shows the same findings after the tests pin the
-  threshold and the exact error. A test now runs all three (#14098).
+  threshold and the exact error. Tests now run all three (#14098).
