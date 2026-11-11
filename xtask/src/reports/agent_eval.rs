@@ -30,7 +30,6 @@
 //! verdict moved as expected, not that a test catches a runtime fault.
 
 mod scenarios;
-mod trial;
 
 use crate::normalize_path;
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
@@ -42,7 +41,7 @@ use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-agent-eval-v1";
 const BASELINE_PATH: &str = "benchmarks/agent_eval/baseline.json";
-const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo] | agent-eval trial-setup <dir> | agent-eval trial-score <dir>";
+const USAGE: &str = "usage: cargo xtask agent-eval [--ripr <binary>] [--scenario <id>]... [--compare <baseline.json>] [--write-baseline] [--skip-cargo]";
 /// A route regresses when its tokens grow by more than `then / 10` (10%)
 /// plus `REGRESSION_SLACK_TOKENS` over the baseline.
 const REGRESSION_DIVISOR: u64 = 10;
@@ -108,6 +107,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     if options.write_baseline && options.skip_cargo {
         // A baseline without the cargo key checks would leave them unguarded.
         return Err("--write-baseline needs the cargo key checks; drop --skip-cargo".to_string());
+    }
+    if options.write_baseline && options.compare.is_some() {
+        // A failed compare must never replace the baseline it failed against.
+        return Err("--write-baseline replaces the baseline; drop --compare".to_string());
     }
     Ok(options)
 }
@@ -310,8 +313,50 @@ fn find_args() -> Vec<String> {
 fn printed_next_commands(text: &str) -> Vec<Vec<String>> {
     text.lines()
         .filter_map(|line| line.strip_prefix("next=ripr "))
-        .map(|rest| rest.split_whitespace().map(str::to_string).collect())
+        .map(split_command)
         .collect()
+}
+
+/// Split a printed command into argv, keeping `'...'` and `"..."` quoted
+/// arguments (a scratch path with spaces) whole.
+fn split_command(text: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current: Option<String> = None;
+    let mut quote = None;
+    for ch in text.chars() {
+        match (quote, ch) {
+            (Some(open), _) if ch == open => quote = None,
+            (Some(_), _) => current.get_or_insert_with(String::new).push(ch),
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                current.get_or_insert_with(String::new);
+            }
+            (None, _) if ch.is_whitespace() => args.extend(current.take()),
+            (None, _) => current.get_or_insert_with(String::new).push(ch),
+        }
+    }
+    args.extend(current);
+    args
+}
+
+/// A baseline must carry scenario rows with routes, or every row would read
+/// as new and the compare would pass vacuously.
+fn validate_baseline(baseline: &Value) -> Result<(), String> {
+    let scenarios = baseline["scenarios"]
+        .as_array()
+        .filter(|rows| !rows.is_empty());
+    let valid = scenarios.is_some_and(|rows| {
+        rows.iter().all(|row| {
+            row["id"].is_string() && row["routes"].as_array().is_some_and(|r| !r.is_empty())
+        })
+    });
+    if baseline["schema_version"] == SCHEMA_VERSION && valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "is not a complete {SCHEMA_VERSION} baseline; rerun with --write-baseline"
+        ))
+    }
 }
 
 /// The `init --agents` loop: FIND, then follow each printed `next=` command
@@ -608,6 +653,35 @@ fn verify_complete(agent_report: &str) -> bool {
         .any(|line| line.starts_with("verify=complete"))
 }
 
+/// What one `cargo test` run established.
+#[derive(Debug, PartialEq)]
+enum Suite {
+    Pass,
+    /// The tests compiled, ran, and at least one failed.
+    TestFailed,
+    /// Ran but gave no test result (for example a compile error): no
+    /// evidence either way.
+    NotEstablished(String),
+    /// The run itself could not be measured (cargo missing, timeout, a
+    /// signal, an output budget).
+    InstrumentError(String),
+}
+
+/// Classify a finished `cargo test` run. Only a run that compiled and
+/// reported a failing test counts as a failure; a revert that stops the
+/// crate compiling must not credit the agent's tests.
+fn classify_suite(exit: Option<i32>, output: &str) -> Suite {
+    let compile_error = output.contains("could not compile") || output.contains("error[E");
+    match exit {
+        Some(0) if !compile_error => Suite::Pass,
+        Some(101) if !compile_error && output.contains("test result: FAILED") => Suite::TestFailed,
+        None => Suite::InstrumentError("cargo test ended without an exit code".to_string()),
+        Some(code) => {
+            Suite::NotEstablished(format!("cargo test exit {code} without a test result"))
+        }
+    }
+}
+
 /// Run one test target. A run that did not compile or report a test result
 /// is an instrument failure and comes back as `Err`, so it is never read as
 /// the key holding or failing.
@@ -621,10 +695,10 @@ fn cargo_test(root: &Path, target_dir: &Path, test: &str) -> Result<bool, String
         &[("CARGO_TARGET_DIR", target.as_str())],
     )?;
     let text = format!("{}\n{}", output.stdout, output.stderr);
-    match trial::classify_suite(output.exit, &text) {
-        trial::Suite::Pass => Ok(true),
-        trial::Suite::TestFailed => Ok(false),
-        trial::Suite::NotEstablished(reason) | trial::Suite::InstrumentError(reason) => {
+    match classify_suite(output.exit, &text) {
+        Suite::Pass => Ok(true),
+        Suite::TestFailed => Ok(false),
+        Suite::NotEstablished(reason) | Suite::InstrumentError(reason) => {
             Err(format!("cargo test --test {test}: {reason}"))
         }
     }
@@ -687,7 +761,12 @@ fn usefulness(
         "gaps_header": header,
         // Silence counts only from a report that ran and said `gaps=0`.
         "silent_on_control": if scenario.gaps.is_empty() {
-            Some(find.exit == Some(0) && header == Some(0) && reported.is_empty())
+            Some(
+                find.exit == Some(0)
+                    && header == Some(0)
+                    && reported.is_empty()
+                    && !find.stdout.lines().any(|line| line.starts_with("stop=")),
+            )
         } else {
             None
         },
@@ -703,7 +782,9 @@ fn usefulness(
         let after = capture(ripr, &find_args(), &workspace.root, None, &[])?;
         let still = reported_gap_lines(&after.stdout);
         result["weak_test_still_flagged"] = json!(
-            expected.iter().all(|line| still.contains(line)) && !verify_complete(&after.stdout)
+            after.exit == Some(0)
+                && expected.iter().all(|line| still.contains(line))
+                && !verify_complete(&after.stdout)
         );
         if !skip_cargo {
             let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_weak");
@@ -724,7 +805,9 @@ fn usefulness(
         let after = capture(ripr, &find_args(), &workspace.root, None, &[])?;
         let still = reported_gap_lines(&after.stdout);
         result["reference_test_closes_loop"] = json!(
-            verify_complete(&after.stdout) && expected.iter().all(|line| !still.contains(line))
+            after.exit == Some(0)
+                && verify_complete(&after.stdout)
+                && expected.iter().all(|line| !still.contains(line))
         );
         if !skip_cargo {
             let outcome = cargo_key(&workspace.root, &target_dir, scenario, "eval_reference");
@@ -947,6 +1030,43 @@ fn cargo_flag(checks: &Value, name: &str) -> &'static str {
     }
 }
 
+/// Pretty JSON with every object or array of scalars on one line, so one
+/// step or route total is one line of the baseline diff.
+fn render_json(value: &Value, depth: usize) -> Result<String, String> {
+    let scalar = |item: &Value| !item.is_object() && !item.is_array();
+    let inline = match value {
+        Value::Object(map) => map.values().all(scalar),
+        Value::Array(items) => items.iter().all(scalar),
+        _ => true,
+    };
+    if inline {
+        return serde_json::to_string(value)
+            .map_err(|err| format!("failed to render report: {err}"));
+    }
+    let pad = "  ".repeat(depth + 1);
+    let mut parts = Vec::new();
+    if let Value::Object(map) = value {
+        for (key, item) in map {
+            let key = serde_json::to_string(key).map_err(|err| err.to_string())?;
+            parts.push(format!("{pad}{key}: {}", render_json(item, depth + 1)?));
+        }
+    } else if let Value::Array(items) = value {
+        for item in items {
+            parts.push(format!("{pad}{}", render_json(item, depth + 1)?));
+        }
+    }
+    let (open, close) = if value.is_object() {
+        ('{', '}')
+    } else {
+        ('[', ']')
+    };
+    Ok(format!(
+        "{open}\n{}\n{}{close}",
+        parts.join(",\n"),
+        "  ".repeat(depth)
+    ))
+}
+
 /// Every scenario whose cargo key checks could not run.
 fn instrument_failures(report: &Value) -> Vec<String> {
     report["scenarios"]
@@ -1054,46 +1174,10 @@ fn render_markdown(report: &Value, comparison: Option<&(Vec<String>, Vec<String>
     out
 }
 
-fn trial_dir(args: &[String]) -> Result<PathBuf, String> {
-    match args {
-        [_, dir] => Ok(PathBuf::from(dir)),
-        _ => Err(format!("{} needs exactly one <dir>\n{USAGE}", args[0])),
-    }
-}
-
-fn write_trial_score(dir: &Path) -> Result<(), String> {
-    let score = trial::trial_score(dir)?;
-    let report_dir = crate::reports_dir();
-    let path = report_dir.join("agent-eval-trial-score.json");
-    let pretty = serde_json::to_string_pretty(&score)
-        .map_err(|err| format!("failed to render trial score: {err}"))?;
-    write_file(&path, &format!("{pretty}\n"))?;
-    println!("{pretty}");
-    println!(
-        "agent-eval trial-score: {}/{} keyed gaps caught; wrote {}",
-        score["caught"],
-        score["keyed_gaps"],
-        normalize_path(&path)
-    );
-    if score["complete"] == true {
-        Ok(())
-    } else {
-        Err(format!(
-            "agent-eval trial-score: incomplete, scored as zero caught: {}",
-            score["problems"]
-        ))
-    }
-}
-
 pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
-    }
-    match args.first().map(String::as_str) {
-        Some("trial-setup") => return trial::trial_setup(&trial_dir(args)?),
-        Some("trial-score") => return write_trial_score(&trial_dir(args)?),
-        _ => {}
     }
     let options = parse_options(args)?;
     let ripr = match &options.ripr {
@@ -1120,12 +1204,8 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
                 .map_err(|err| format!("failed to read baseline {}: {err}", path.display()))?;
             let baseline: Value = serde_json::from_str(&body)
                 .map_err(|err| format!("baseline {} is not JSON: {err}", path.display()))?;
-            if baseline["schema_version"] != SCHEMA_VERSION {
-                return Err(format!(
-                    "baseline {} is not {SCHEMA_VERSION}; rerun with --write-baseline",
-                    path.display()
-                ));
-            }
+            validate_baseline(&baseline)
+                .map_err(|error| format!("baseline {} {error}", path.display()))?;
             Some(compare(&report, &baseline, options.scenarios.is_empty()))
         }
         None => None,
@@ -1133,8 +1213,7 @@ pub(crate) fn agent_eval(args: &[String]) -> Result<(), String> {
     let report_dir = crate::reports_dir();
     fs::create_dir_all(&report_dir)
         .map_err(|err| format!("failed to create {}: {err}", report_dir.display()))?;
-    let pretty = serde_json::to_string_pretty(&report)
-        .map_err(|err| format!("failed to render report: {err}"))?;
+    let pretty = render_json(&report, 0)?;
     let json_path = report_dir.join("agent-eval.json");
     let markdown_path = report_dir.join("agent-eval.md");
     write_file(&json_path, &format!("{pretty}\n"))?;
@@ -1342,6 +1421,14 @@ verify=refused|outcome=complete_with_findings\n";
         assert!(instrument_failures(&skipped).is_empty());
         let checks = &broken["scenarios"][0]["loop"];
         assert_eq!(cargo_flag(checks, "reference_key_valid"), "not established");
+        let rendered = render_json(&json!({"a": [{"b": 1}, {"c": [2]}], "d": {"e": "f"}}), 0);
+        assert_eq!(
+            rendered,
+            Ok("{\n  \"a\": [\n    {\"b\":1},\n    {\n      \"c\": [2]\n    }\n  ],\n  \"d\": {\"e\":\"f\"}\n}".to_string())
+        );
+        let reparsed: Value =
+            serde_json::from_str(&rendered.unwrap_or_default()).unwrap_or_default();
+        assert_eq!(reparsed["a"][1]["c"][0], 2);
         let markdown = render_markdown(&broken, None);
         assert!(markdown.ends_with(
             "\n- INSTRUMENT FAILURE s: cargo key check not established: no toolchain\n"
@@ -1397,11 +1484,43 @@ verify=refused|outcome=complete_with_findings\n";
             "--write-baseline"
         ]));
         assert!(refused(&["--write-baseline", "--skip-cargo"]));
+        assert!(refused(&["--write-baseline", "--compare", "b.json"]));
+        assert!(validate_baseline(&json!({"schema_version": SCHEMA_VERSION})).is_err());
+        let one =
+            json!({"schema_version": SCHEMA_VERSION, "scenarios": [{"id": "s", "routes": [{}]}]});
+        assert_eq!(validate_baseline(&one), Ok(()));
+        assert_eq!(
+            split_command("explain --root '/tmp/a b' --at \"x y\" z"),
+            strings(&["explain", "--root", "/tmp/a b", "--at", "x y", "z"])
+        );
         let options = parse_options(&strings(&[
             "--scenario",
             "boundary_threshold",
             "--skip-cargo",
         ]));
         assert!(options.is_ok_and(|options| options.skip_cargo && options.scenarios.len() == 1));
+    }
+
+    #[test]
+    fn only_a_compiled_failing_run_counts_as_a_failure() {
+        assert_eq!(classify_suite(Some(0), "test result: ok."), Suite::Pass);
+        assert_eq!(
+            classify_suite(Some(101), "test result: FAILED. 0 passed; 1 failed"),
+            Suite::TestFailed
+        );
+        // A revert that breaks compilation exits 101 too; it is no catch.
+        let compile = "error[E0308]: mismatched types\nerror: could not compile `shop`";
+        assert!(matches!(
+            classify_suite(Some(101), compile),
+            Suite::NotEstablished(_)
+        ));
+        assert!(matches!(
+            classify_suite(None, ""),
+            Suite::InstrumentError(_)
+        ));
+        assert!(matches!(
+            classify_suite(Some(101), ""),
+            Suite::NotEstablished(_)
+        ));
     }
 }
