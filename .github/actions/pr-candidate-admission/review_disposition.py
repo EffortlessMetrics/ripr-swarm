@@ -142,7 +142,7 @@ REFUTATION_AFTER = re.compile(
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
     r"|(?:that|this)[ \t]+(?:claim|statement|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
-    r"|the[ \t]+above\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"|the[ \t]+(?:above|statement|claim|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
     r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)"
     r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case|accurate|right)|false|untrue|a[ \t]+lie)\b"
@@ -593,6 +593,8 @@ def self_test() -> None:
         ("REVIEW_READY\nNo changes are needed. That claim is false.", False),
         ("REVIEW_READY\nNo changes are needed. The above is false.", False),
         ("REVIEW_READY\nNo changes are needed. That assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. This claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The statement is false.", False),
         ("REVIEW_READY\nNo changes are needed. This statement is untrue.", False),
         ("REVIEW_READY\nNo changes are needed. All green.", True),
         # #14355: ordinary prose with a cue word is not a refutation.

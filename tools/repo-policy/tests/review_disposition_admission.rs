@@ -307,7 +307,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-11T11:00:28Z";
-    let cases: [(&str, bool); 61] = [
+    let cases: [(&str, bool); 63] = [
         // The strip-exercising control: this admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", true),
         (
@@ -419,6 +419,14 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
         ),
         (
             "REVIEW_READY\nNo changes are needed. That assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The statement is false.",
             false,
         ),
         (
