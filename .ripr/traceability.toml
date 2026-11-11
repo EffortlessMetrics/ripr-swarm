@@ -1868,6 +1868,9 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp",
+  "crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind",
+  "crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded",
   "crates/ripr/src/edit_cage/mod.rs::tests::eol_only_flip_of_a_forbidden_file_is_not_an_edit",
   "crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit",
   "crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them",

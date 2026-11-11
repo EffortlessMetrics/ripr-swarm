@@ -27,7 +27,7 @@ use crate::domain::{
     NextActionDiffSource, NextActionInput, NextActionProducer, current_command_platform,
     select_canonical_next_action,
 };
-use crate::output::agent_receipt::AgentReceiptReading;
+use crate::output::agent_receipt::{AgentReceiptReading, ReportedTestRun};
 use crate::output::markdown::{
     PowershellForm, agent_status_shell_disclosure, command_shell_disclosure, powershell_form,
 };
@@ -579,10 +579,13 @@ fn attempt_receipt(
         return AgentStatusAttemptReceipt::NotApplicable;
     };
     match load_attempt_terminal_receipt(root, manifest) {
-        AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
-            path,
-            reading: AgentReceiptReading::from_value(&value),
-        },
+        AttemptTerminalReceipt::Issued { path, value } => {
+            // #14079: the retained caller-reported run rides the reading of
+            // the receipt issued for this same attempt, never another's.
+            let mut reading = AgentReceiptReading::from_value(&value);
+            reading.reported_test_run = crate::app::repair_attempt::retained_focused_run(manifest);
+            AgentStatusAttemptReceipt::Issued { path, reading }
+        }
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
         }
@@ -2598,10 +2601,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None => rendered.push_str("Seam: unknown\n"),
     }
     if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!(
-            "Test run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("{}\n", test_run_line(reading)));
     }
 
     if !nothing_started {
@@ -2783,6 +2783,9 @@ fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
 /// test is kept. It speaks for the receipt only; a separate verification
 /// receipt (the trust-bound `--phase verify` route) is not read here.
 fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
+    if let Some(run) = &reading.reported_test_run {
+        return reported_test_run_next_step(run);
+    }
     let target = reading
         .test_changed
         .as_deref()
@@ -2795,12 +2798,58 @@ fn test_not_run_next_step(reading: &AgentReceiptReading) -> String {
     )
 }
 
+/// The counts of a caller-reported run, in the words the finish printed.
+pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
+    format!(
+        "{} test(s) ran in `{}` ({} passed, {} failed)",
+        run.ran, run.file, run.passed, run.failed
+    )
+}
+
+/// What a caller-reported run leaves to do (#14079). A reported failure is
+/// named: static movement `improved` never turns a failing test into a pass.
+pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
+    if run.failed > 0 {
+        "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.".to_string()
+    } else {
+        "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.".to_string()
+    }
+}
+
+/// The status line for the test-run axis of an issued receipt: the caller's
+/// reported run when the attempt retained one, otherwise that none is
+/// recorded. Both say ripr ran nothing.
+fn test_run_line(reading: &AgentReceiptReading) -> String {
+    match &reading.reported_test_run {
+        Some(run) => format!(
+            "Test run: reported by the caller, not run by ripr: {}. {}",
+            reported_test_run_counts(run),
+            reported_test_run_next_step(run)
+        ),
+        None => format!(
+            "Test run: none recorded. {}",
+            test_not_run_next_step(reading)
+        ),
+    }
+}
+
 fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
-    serde_json::json!({
-        "status": "not_recorded",
-        "test_changed": reading.test_changed,
-        "next_step": test_not_run_next_step(reading)
-    })
+    match &reading.reported_test_run {
+        Some(run) => serde_json::json!({
+            "status": "caller_reported",
+            "test_changed": reading.test_changed,
+            "file": run.file,
+            "ran": run.ran,
+            "passed": run.passed,
+            "failed": run.failed,
+            "next_step": reported_test_run_next_step(run)
+        }),
+        None => serde_json::json!({
+            "status": "not_recorded",
+            "test_changed": reading.test_changed,
+            "next_step": test_not_run_next_step(reading)
+        }),
+    }
 }
 
 fn agent_status_command_json(command: &AgentStatusCommand) -> Value {
@@ -3775,10 +3824,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
     }
 
     if let Some(reading) = &report.test_run {
-        rendered.push_str(&format!(
-            "\nTest run: none recorded. {}\n",
-            test_not_run_next_step(reading)
-        ));
+        rendered.push_str(&format!("\n{}\n", test_run_line(reading)));
     }
 
     rendered.push_str("\n## Claim Boundary\n\n");
@@ -7933,6 +7979,7 @@ mod tests {
             analysis_outcome_error: None,
             verification_status: None,
             test_changed: None,
+            reported_test_run: None,
         }
     }
 

@@ -15946,7 +15946,15 @@ Field contract:
   command and keep it only if it passes. `status: "complete"` never means the test passed:
   static movement `improved` survives a failing test, so a consumer that needs
   a test result runs the test itself. The Markdown form prints the same as a
-  `Test run: none recorded.` line under `Seam:`.
+  `Test run: none recorded.` line under `Seam:`. When that attempt retained a
+  caller-reported focused result (`--phase after --test-result`, #14079),
+  `status` is `"caller_reported"` and the object adds `file`, `ran`, `passed`
+  and `failed` from the retained record; `next_step` names a reported failure,
+  and otherwise says that ripr checked the result's binding and did not run or
+  observe the tests. The Markdown line then starts `Test run: reported by the
+  caller, not run by ripr:`. The receipt's `verification.status` stays
+  `verification_not_run` either way: the counts are the caller's claim, on a
+  separate axis from the static movement.
 - `next_command` - selected in the order RIPR-SPEC-0011 documents (#3906): the
   one current awaiting repair attempt's recorded after command
   (`repair_attempt_after`; when that attempt recorded a refused after phase,

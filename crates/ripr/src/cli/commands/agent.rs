@@ -3728,7 +3728,13 @@ fn run_agent_repair_phase(
             })?;
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
             let mut summary_lines = gap_lines;
-            summary_lines.extend(repair_after_summary_lines(&receipt_path));
+            // #14079: a finish that recorded the caller's focused result
+            // reports it on the test-run line, not "none recorded".
+            let reported_run = focused_run.as_ref().map(|run| run.record.reported());
+            summary_lines.extend(repair_after_summary_lines(
+                &receipt_path,
+                reported_run.as_ref(),
+            ));
             // The movement summary goes to stdout when stdout is the human
             // channel, and to stderr as narration beside the `--json`
             // document; never both, so a terminal shows it once.
@@ -3910,9 +3916,12 @@ fn publish_agent_snapshot(
 /// Narration for the repair after phase: the receipt's summary, or a line
 /// naming the receipt that could not be read so the gap is visible rather
 /// than silently empty.
-fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
+fn repair_after_summary_lines(
+    receipt_path: &Path,
+    reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+) -> Vec<String> {
     match std::fs::read_to_string(receipt_path) {
-        Ok(receipt) => repair_receipt_summary_lines(&receipt),
+        Ok(receipt) => repair_receipt_summary_lines(&receipt, reported_run),
         Err(error) => vec![format!(
             "could not read {} to summarize the result: {error}",
             crate::output::path::human_path(receipt_path)
@@ -4958,7 +4967,10 @@ fn short_head(head: &str) -> &str {
 /// that owns it. The JSON streams on stdout carry the full evidence; this
 /// names the movement so a person does not have to parse them. A receipt
 /// missing these fields yields no summary rather than a guessed one.
-fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
+fn repair_receipt_summary_lines(
+    receipt: &str,
+    reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(receipt) else {
         return Vec::new();
     };
@@ -4989,7 +5001,18 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
     }
     // Static movement is not a test result: a failing focused test still
     // reads `improved`. Say so before the next step, not only inside it.
-    if text("/verification/status") == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN) {
+    // #14079: a focused result the caller reported and this finish recorded
+    // is named with its counts (a reported failure included), never as "none
+    // recorded". Either way ripr ran nothing.
+    if let Some(run) = reported_run {
+        lines.push(format!(
+            "test run: reported by the caller, not run by ripr: {}. {}",
+            crate::app::agent_status::reported_test_run_counts(run),
+            crate::app::agent_status::reported_test_run_next_step(run)
+        ));
+    } else if text("/verification/status")
+        == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN)
+    {
         lines.push(
             "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
                 .to_string(),
@@ -6595,7 +6618,7 @@ mod repair_summary_tests {
         let missing = std::env::temp_dir()
             .join(format!("ripr-missing-receipt-{}", std::process::id()))
             .join("agent-receipt.json");
-        let lines = repair_after_summary_lines(&missing);
+        let lines = repair_after_summary_lines(&missing, None);
         assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
         // Diagnostics print through human_path: `/` separators on Windows,
         // the native spelling on Unix.
@@ -6622,11 +6645,53 @@ mod repair_summary_tests {
             "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt),
+            repair_receipt_summary_lines(receipt, None),
             vec![
                 "result for gap `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
                 "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
             ]
+        );
+    }
+
+    /// #14079: a recorded caller-reported run replaces "none recorded" with
+    /// its counts; a reported failure is named and is never a pass. Without
+    /// one, a `verification_not_run` receipt keeps the "none recorded" line.
+    #[test]
+    fn repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded() {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let receipt = r#"{
+            "seam": {"seam_id": "s"},
+            "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
+            "verification": {"status": "verification_not_run"}
+        }"#;
+        let run = |passed, failed| ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: passed + failed,
+            passed,
+            failed,
+        };
+        let line = |run: Option<&ReportedTestRun>| {
+            repair_receipt_summary_lines(receipt, run)
+                .into_iter()
+                .find(|line| line.starts_with("test run: "))
+        };
+        assert_eq!(
+            line(None).as_deref(),
+            Some(
+                "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
+            )
+        );
+        assert_eq!(
+            line(Some(&run(1, 0))).as_deref(),
+            Some(
+                "test run: reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (1 passed, 0 failed). ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence."
+            )
+        );
+        assert_eq!(
+            line(Some(&run(0, 1))).as_deref(),
+            Some(
+                "test run: reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test."
+            )
         );
     }
 
@@ -6637,7 +6702,7 @@ mod repair_summary_tests {
             "provenance": {"before_class": "weakly_gripped", "after_class": "weakly_gripped", "movement": "unchanged"}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt),
+            repair_receipt_summary_lines(receipt, None),
             vec![
                 "result for gap `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
                     .to_string()
@@ -6657,7 +6722,7 @@ mod repair_summary_tests {
             r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
         );
         assert_eq!(
-            repair_receipt_summary_lines(&invalid),
+            repair_receipt_summary_lines(&invalid, None),
             vec![result.clone(), format!("next: {step}")]
         );
         // Without a status nothing vouches for the receipt, so its
@@ -6665,13 +6730,13 @@ mod repair_summary_tests {
         let unstated = format!(
             r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}}}}}"#
         );
-        assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
+        assert_eq!(repair_receipt_summary_lines(&unstated, None), vec![result]);
     }
 
     #[test]
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
-        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#).is_empty());
-        assert!(repair_receipt_summary_lines("not json").is_empty());
+        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#, None).is_empty());
+        assert!(repair_receipt_summary_lines("not json", None).is_empty());
     }
 
     fn temp_root(label: &str) -> Result<std::path::PathBuf, String> {
