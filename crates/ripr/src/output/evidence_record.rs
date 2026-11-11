@@ -4318,6 +4318,47 @@ mod tests {
     }
 
     #[test]
+    fn evidence_record_maps_a_producer_typed_reach_limit_to_opaque_static_evidence() {
+        // RIPR-SPEC-0236 examples 21 and 22 as the reach producer emits them
+        // (#5492): the producer-owned limit decides the category, so a test,
+        // entry or type name quoted in the summary cannot. The two tests above
+        // keep the untyped summaries on the substring classifier.
+        for (summary, limit) in [
+            (
+                "Reach unresolved (rust_integration_public_api_path_unresolved): `snapshot_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_integration_public_api_path_unresolved): `mock_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_transitive_reach_unresolved): `checks_out` (src/lib.rs:9) calls `generated_route`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustTransitiveReachUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_trait_dispatch_unresolved): `fmt` is a trait method of `MockSnapshot`, which operators, formatting and generic calls run without naming it; test `renders` (tests/render.rs:2) uses `MockSnapshot`. ripr does not trace trait dispatch, so no gap is reported",
+                StaticLimitKind::RustTraitDispatchUnresolved,
+            ),
+        ] {
+            let mut entry = example_23_macro_witness_classified(summary);
+            entry.evidence.unresolved_reach_limit = Some(limit);
+            let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+
+            assert_eq!(
+                reach_limitation(&json).and_then(|item| item["category"].as_str()),
+                Some("opaque_static_evidence"),
+                "{summary}"
+            );
+            assert_eq!(
+                reach_limitation(&json).and_then(|item| item["repair_route"].as_str()),
+                Some("analysis/static-limitation-taxonomy"),
+                "{summary}"
+            );
+        }
+    }
+
+    #[test]
     fn rust_macro_reach_limitation_reason_requires_the_typed_limit_kind_token() {
         assert!(rust_macro_reach_limitation_reason(
             EXAMPLE_23_MACRO_WITNESS_SUMMARY

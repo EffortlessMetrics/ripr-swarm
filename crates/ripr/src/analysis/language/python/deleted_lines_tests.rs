@@ -36,6 +36,26 @@ fn analyze_with_test(
     added: &[usize],
     removed: Vec<ChangedLine>,
 ) -> Result<Vec<Finding>, String> {
+    analyze_with_tests(
+        label,
+        source,
+        &[("tests/test_cart.py", test_source)],
+        &[],
+        added,
+        removed,
+    )
+}
+
+/// [`analyze_with_test`] with several test files, `changed_tests` of which
+/// the diff also edits (one added line each).
+fn analyze_with_tests(
+    label: &str,
+    source: &str,
+    tests: &[(&str, &str)],
+    changed_tests: &[&str],
+    added: &[usize],
+    removed: Vec<ChangedLine>,
+) -> Result<Vec<Finding>, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| format!("system time: {err}"))?
@@ -44,7 +64,7 @@ fn analyze_with_test(
         "ripr-python-deleted-lines-{label}-{}-{nanos}",
         std::process::id()
     ));
-    for (path, contents) in [("src/cart.py", source), ("tests/test_cart.py", test_source)] {
+    for (path, contents) in std::iter::once(&("src/cart.py", source)).chain(tests) {
         let file = root.join(path);
         if let Some(parent) = file.parent() {
             std::fs::create_dir_all(parent)
@@ -77,15 +97,31 @@ fn analyze_with_test(
             .ok_or_else(|| format!("fixture has no line {number}"))?;
         added_lines.push(line(*number, *number, text));
     }
-    let changed_files = vec![ChangedFile {
+    let mut changed_files = vec![ChangedFile {
         path: PathBuf::from("src/cart.py"),
         added_lines,
         removed_lines: removed,
     }];
+    for path in changed_tests {
+        let text = tests
+            .iter()
+            .find(|(name, _)| name == path)
+            .and_then(|(_, contents)| contents.lines().last())
+            .ok_or_else(|| format!("no test fixture {path}"))?;
+        changed_files.push(ChangedFile {
+            path: PathBuf::from(path),
+            added_lines: vec![line(1, 1, text)],
+            removed_lines: Vec::new(),
+        });
+    }
     let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
-    assert_eq!(result.changed_files, 1, "the changed file must be analyzed");
+    assert_eq!(
+        result.changed_files,
+        1 + changed_tests.len(),
+        "the changed files must be analyzed"
+    );
     Ok(result.findings)
 }
 
@@ -1403,4 +1439,102 @@ fn deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorator
         line(4, 3, "        total = 2"),
     ];
     assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(4));
+}
+
+const CLAMP_SRC: &str =
+    "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+
+fn stamps(finding: &Finding) -> Vec<&str> {
+    finding
+        .evidence
+        .iter()
+        .filter_map(|entry| entry.strip_prefix(crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX))
+        .collect()
+}
+
+/// #14027 production path: a pure deletion whose related test files include
+/// an untouched first row and an edited later one stamps the edited row, and
+/// the shared headline names it.
+#[test]
+fn deleted_line_finding_stamps_the_changed_related_test_and_leads_the_headline()
+-> Result<(), String> {
+    let test_a = "from src.cart import capped_total\n\n\ndef test_a():\n    assert capped_total([80, 50]) == 130\n";
+    let test_z = "from src.cart import capped_total\n\n\ndef test_z():\n    assert capped_total([80, 50]) == 130\n";
+    let findings = analyze_with_tests(
+        "stamp-headline",
+        CLAMP_SRC,
+        &[("tests/test_a.py", test_a), ("tests/test_z.py", test_z)],
+        &["tests/test_z.py"],
+        &[],
+        vec![line(6, 6, "    total = min(total, CAP)")],
+    )?;
+    let deleted = findings
+        .iter()
+        .find(|finding| finding.source_currentness != SourceCurrentness::CandidateCurrent)
+        .ok_or_else(|| format!("no deleted-line finding: {findings:?}"))?;
+    assert_eq!(
+        deleted.related_tests.first().map(|row| row.file.clone()),
+        Some(PathBuf::from("tests/test_a.py")),
+        "untouched file sorts first: {deleted:?}"
+    );
+    assert_eq!(stamps(deleted).len(), 1, "{deleted:?}");
+    assert!(
+        stamps(deleted)[0].starts_with("tests/test_z.py:"),
+        "{deleted:?}"
+    );
+    assert_eq!(
+        crate::domain::python_headline_related_test(deleted).map(|row| row.file.clone()),
+        Some(PathBuf::from("tests/test_z.py"))
+    );
+    Ok(())
+}
+
+/// #14027 stamping unit: nothing when row 0 is already changed or nothing
+/// matches; only exact-file rows are stamped.
+#[test]
+fn stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row() -> Result<(), String> {
+    let findings = analyze(
+        "stamp-unit",
+        CLAMP_SRC,
+        &[],
+        vec![line(6, 6, "    total = min(total, CAP)")],
+    )?;
+    let mut base = findings
+        .into_iter()
+        .find(|finding| !finding.related_tests.is_empty())
+        .ok_or_else(|| "no finding with a related row".to_string())?;
+    base.evidence.clear();
+    let template = base.related_tests[0].clone();
+    let row = |file: &str, line: usize| {
+        let mut row = template.clone();
+        row.file = PathBuf::from(file);
+        row.line = line;
+        row
+    };
+    base.related_tests = vec![
+        row("tests/a.py", 1),
+        row("tests/b.py", 2),
+        row("tests/bb.py", 3),
+    ];
+    let changed = |files: &[&str]| files.iter().map(PathBuf::from).collect::<BTreeSet<_>>();
+
+    let mut exact = base.clone();
+    stamp_related_tests_changed_in_diff(&mut exact, &changed(&["tests/b.py"]));
+    assert_eq!(stamps(&exact), vec!["tests/b.py:2"], "exact match only");
+
+    let mut first_changed = base.clone();
+    stamp_related_tests_changed_in_diff(
+        &mut first_changed,
+        &changed(&["tests/a.py", "tests/b.py"]),
+    );
+    assert!(stamps(&first_changed).is_empty(), "row 0 already changed");
+
+    let mut none = base.clone();
+    stamp_related_tests_changed_in_diff(&mut none, &changed(&["tests/c.py"]));
+    assert!(stamps(&none).is_empty(), "no related row changed");
+
+    let mut empty = base;
+    stamp_related_tests_changed_in_diff(&mut empty, &BTreeSet::new());
+    assert!(stamps(&empty).is_empty(), "no changed files");
+    Ok(())
 }

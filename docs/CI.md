@@ -720,8 +720,8 @@ normalization behavior surfaced only on a maintainer's local run.
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
 
-- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
-  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+- **What runs.** `cargo xtask kani`, which runs `cargo kani` once per owning package (`ripr`
+  and `ripr-contract`) over discovered `#[kani::proof]` harnesses (harnesses live in `#[cfg(kani)]` modules next to the
   code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
   harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
@@ -736,10 +736,11 @@ check and does not run on ordinary pushes or PR updates.
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
 - **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
-  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
-  workflow (same guard shape as the merge-ready label flow; re-apply
-  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
-  run takes minutes and several GB of memory.
+  pull request that touches `crates/ripr/src/**`, `crates/ripr-contract/src/**`,
+  `xtask/src/kani_lane.rs` or the workflow (same guard shape as the merge-ready
+  label flow; re-apply `merge-ready` for a later head). Kani runs once per owning
+  package (`ripr`, then `ripr-contract`) under one whole-run deadline and compiles
+  each whole library, so a run takes minutes and several GB of memory.
 
 ### Advisory Printed-Command Paste Lane
 
@@ -1456,11 +1457,27 @@ per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and
 closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
+detection latency is roughly forty minutes (interval plus probe).
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Main's push gates do finish, because their
+concurrency supersedes only queued runs, so about one run per gate completes
+each hour. Each fire therefore also reads the latest completed, non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Gate-level detection latency is the gate
+cadence plus up to thirty minutes. The
 `xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
 shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 

@@ -132,6 +132,14 @@ pub(super) fn publish_classified_generation(
     {
         return Ok(oversized_skip_status(index, encoded_bytes, byte_ceiling));
     }
+    // A read-only caller (#13945) must not take the publication lock, create
+    // generation directories, or sweep and park entries.
+    if crate::atomic_file::cache_mutation_suppressed(&cache.dir) {
+        return Ok(CacheStoreStatus {
+            label: CACHE_READ_ONLY_LABEL.to_string(),
+            advisory: None,
+        });
+    }
     // One writer per key from the first mutation through cleanup, so the
     // stat-then-remove and rollback-restore windows cannot interleave.
     let _publication_lock = match acquire_publication_lock(cache, key)? {
@@ -164,6 +172,7 @@ pub(super) fn publish_classified_generation(
     }
 }
 
+const CACHE_READ_ONLY_LABEL: &str = "skipped_cache_read_only";
 const PUBLICATION_BUSY_LABEL: &str = "skipped_publication_busy";
 const PUBLICATION_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 const PUBLICATION_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(20);

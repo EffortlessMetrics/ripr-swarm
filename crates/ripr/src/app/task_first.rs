@@ -2130,6 +2130,8 @@ impl RepairStartRefusal {
 pub(crate) struct RepairStartGate {
     root: std::path::PathBuf,
     state: std::cell::OnceCell<GateState>,
+    /// Build the inventory without mutating the seam cache (#13945).
+    cache_read_only: bool,
     /// Unit-test builds only: seam ids admitted regardless of the inventory.
     #[cfg(test)]
     admitted: Vec<String>,
@@ -2157,9 +2159,20 @@ impl RepairStartGate {
         Self {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
+            cache_read_only: false,
             #[cfg(test)]
             admitted: Vec::new(),
         }
+    }
+
+    /// The gate a read-only command uses: its inventory is computed without
+    /// writing, pruning or sweeping anything under the seam cache. `ripr agent
+    /// status` is read-only with respect to repair-attempt custody, and an
+    /// attempt's bound verdict may list `target/ripr/cache` files that an
+    /// ordinary inventory would rewrite or prune (#13945).
+    pub(crate) fn read_only(mut self) -> Self {
+        self.cache_read_only = true;
+        self
     }
 
     /// The gate every production caller uses.
@@ -2220,7 +2233,9 @@ impl RepairStartGate {
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         check_state(&self.root, state, seam_id)
     }
 
@@ -2251,7 +2266,9 @@ impl RepairStartGate {
         if matches!(self.state.get(), Some(GateState::Open)) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         let GateState::Loaded { classified, .. } = state else {
             return None;
         };
@@ -2268,7 +2285,12 @@ impl RepairStartGate {
     }
 }
 
-fn load_gate_state(root: &Path) -> GateState {
+fn load_gate_state(root: &Path, cache_read_only: bool) -> GateState {
+    let _suppressed = cache_read_only.then(|| {
+        crate::atomic_file::CacheMutationSuppressed::under(
+            &crate::analysis::seam_cache::cache_base_dir(root),
+        )
+    });
     let config = match load_for_root(root) {
         Ok(config) => config,
         Err(error) => {
@@ -2681,49 +2703,16 @@ fn uncommitted_production_files(
     dirty_paths_outside_surface(root, &policy)
 }
 
-/// The dirty tracked paths the start's own premise check refuses, respelled
-/// relative to `root`.
+/// The dirty tracked paths the start's own premise check refuses. The check
+/// already spells them relative to `root` (paths outside it as `../x`), which
+/// is where the user runs the printed `git commit` (#10698, #13947).
 fn dirty_paths_outside_surface(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
 ) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
-    let violations =
-        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-            .map_err(|e| e.to_string())?;
-    let prefix = repo_prefix(root)?;
-    Ok(violations
-        .iter()
-        .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect())
-}
-
-/// `git rev-parse --show-prefix`: the analyzed root's path inside its
-/// repository (empty at the top, otherwise `dir/sub/`).
-fn repo_prefix(root: &Path) -> Result<String, String> {
-    crate::git::run_git_output_with_deadline_and_limit(
-        root,
-        &["rev-parse", "--show-prefix"],
-        std::time::Duration::from_secs(10),
-        64 * 1024,
-    )
-    .ok()
-    .filter(|output| output.status.success())
-    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    .ok_or_else(|| "could not resolve repository prefix".to_string())
-}
-
-/// A repository-root-relative path respelled relative to the analyzed root,
-/// which is where the user runs the printed `git commit`.
-fn relative_to_cwd_root(path: &str, prefix: &str) -> String {
-    if prefix.is_empty() {
-        return path.to_string();
-    }
-    if let Some(rest) = path.strip_prefix(prefix) {
-        return rest.to_string();
-    }
-    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
-    format!("{}{path}", "../".repeat(depth))
+    crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+        .map_err(|e| e.to_string())
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -4213,7 +4202,7 @@ pub(crate) mod tests {
         let (classified, _) = inventory_for_repair(&control_root, &control_config)?;
         assert!(!classified.is_empty(), "fixture must classify seams");
         assert!(matches!(
-            load_gate_state(&control_root),
+            load_gate_state(&control_root, false),
             GateState::Loaded { .. }
         ));
 
@@ -4240,7 +4229,7 @@ pub(crate) mod tests {
             };
             assert!(start.contains("producer_failure"), "{start}");
 
-            match load_gate_state(&root) {
+            match load_gate_state(&root, false) {
                 GateState::Unavailable(why) => assert!(why.contains("producer_failure"), "{why}"),
                 _ => return Err(format!("point {point}: the gate must be unavailable")),
             }
@@ -4261,6 +4250,105 @@ pub(crate) mod tests {
                 "point {point}: the selector must be undecided, not a clean miss"
             );
         }
+        Ok(())
+    }
+
+    /// #13945: the status gate's inventory must not rewrite, prune or add any
+    /// seam-cache file, because a repair attempt's bound verdict can list those
+    /// files. The same inventory with the default gate does write them, so the
+    /// unchanged snapshot is attributable to the read-only gate.
+    #[test]
+    fn read_only_gate_inventory_leaves_the_seam_cache_untouched() -> Result<(), String> {
+        fn snapshot(
+            dir: &Path,
+            out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) -> Result<(), String> {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return Ok(());
+            };
+            for entry in entries {
+                let path = entry.map_err(|error| error.to_string())?.path();
+                if path.is_dir() {
+                    snapshot(&path, out)?;
+                } else {
+                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                    out.insert(path, bytes);
+                }
+            }
+            Ok(())
+        }
+        let cache_files = |root: &Path| -> Result<_, String> {
+            let mut files = std::collections::BTreeMap::new();
+            snapshot(
+                &crate::analysis::seam_cache::cache_base_dir(root),
+                &mut files,
+            )?;
+            Ok(files)
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ripr-readonly-gate-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let lib = root.join("src/lib.rs");
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        // Cold cache: the read-only gate still loads the inventory and writes
+        // nothing.
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert!(
+            cache_files(&root)?.is_empty(),
+            "a read-only gate must not create cache files"
+        );
+
+        // Discriminating control: the default gate populates the cache.
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        let warm = cache_files(&root)?;
+        assert!(!warm.is_empty(), "the default gate must populate the cache");
+
+        // New source bytes miss every cache key. The read-only gate leaves the
+        // warm snapshot byte-identical; the default gate then changes it.
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount > threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert_eq!(
+            cache_files(&root)?,
+            warm,
+            "read-only gate mutated the cache"
+        );
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        assert_ne!(
+            cache_files(&root)?,
+            warm,
+            "the default gate must record the changed source"
+        );
         Ok(())
     }
 
@@ -4335,7 +4423,7 @@ pub(crate) mod tests {
         assert_eq!(classified.len(), plain.total);
 
         // Agent-status gate: same answer, not withheld as truncated.
-        let gate = load_gate_state(&root);
+        let gate = load_gate_state(&root, false);
         assert!(
             matches!(
                 gate,
@@ -6874,14 +6962,63 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// #10698: the commit hint is spelled relative to the analyzed root, which
-    /// may be a subdirectory of the repository.
+    /// #10698, #13947: the commit hint is spelled relative to the analyzed
+    /// root exactly once, even when the root is a subdirectory of the
+    /// repository.
     #[test]
-    fn commit_hint_paths_are_relative_to_the_analyzed_root() {
-        assert_eq!(relative_to_cwd_root("a.py", ""), "a.py");
-        assert_eq!(relative_to_cwd_root("svc/src/a.py", "svc/"), "src/a.py");
-        assert_eq!(relative_to_cwd_root("other/b.py", "svc/"), "../other/b.py");
-        assert_eq!(relative_to_cwd_root("b.py", "svc/deep/"), "../../b.py");
+    fn commit_hint_paths_are_relative_to_a_subdirectory_root() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-task-first-subdir-hint-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(repo.join("svc"))
+            .map_err(|error| format!("create {} failed: {error}", repo.display()))?;
+        let repo = repo
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", repo.display()))?;
+        let _guard = TempRootGuard { root: repo.clone() };
+        run_git(&repo, &["init"])?;
+        run_git(
+            &repo,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 1\n")
+                .map_err(|error| format!("write {file} failed: {error}"))?;
+        }
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 2\n")
+                .map_err(|error| format!("rewrite {file} failed: {error}"))?;
+        }
+
+        let packet = serde_json::json!({
+            "packets": [{
+                "seam_id": "gap-1",
+                "allowed_edit_surface": ["tests/test_pricing.py"],
+                "forbidden_files": ["pricing.py"],
+                "recommended_test": {"file": "tests/test_pricing.py", "name": "tests/test_pricing.py::t"}
+            }]
+        });
+        let policy =
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
+
+        let mut paths = dirty_paths_outside_surface(&repo.join("svc"), &policy)?;
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec!["../pricing.py".to_string(), "pricing.py".to_string()],
+            "the root's own file is spelled root-relative once and the repo-level namesake outside it as ../"
+        );
+        Ok(())
     }
 
     /// Implicit continue skips trust-bound awaiting attempts: the façade

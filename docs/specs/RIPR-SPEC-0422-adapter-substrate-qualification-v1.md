@@ -70,7 +70,7 @@ hybrid
   rejected by this rule (#13034).
 - A syntax-only layer cannot inherit compiler-resolved claim ceilings.
 - Packet producers cannot claim local compiler or syntax authority.
-- External helpers require an explicit syntax-only `required_fallback`: a non-empty value whose name begins `syntax_only` (case-insensitive). Any other value is rejected as an impossible claim ceiling (#13028).
+- External helpers require an explicit syntax-only `required_fallback`. An absent or blank value fails with `MissingField`. A present value must, after trimming and lowercasing, equal a registered syntax-only fallback (currently `syntax_only_in_process`); any other present value, including a `syntax_only` prefix such as `syntax_only_anything`, fails with `ImpossibleClaimCeiling` (#13028, #13605).
 - Generated parsers require build-script and generated-code packaging disposition.
 - Native libraries require explicit `platform_limits`.
 - Hybrid substrates require typed limitations; one receipt cannot promote
@@ -122,6 +122,9 @@ function itself does not validate; only validated receipts carry this guarantee.
    entries sharing a sort key: rejected with `DuplicateIdentity`.
 6. Two receipts whose dependencies differ only in list order are compatible for
    substrate sharing; differing dependency versions are not.
+7. An external helper with `required_fallback` absent or blank: `MissingField`;
+   `full_semantic` or `syntax_only_anything`: `ImpossibleClaimCeiling`;
+   `syntax_only_in_process` in any case or padding: accepted.
 
 ## Test Mapping
 

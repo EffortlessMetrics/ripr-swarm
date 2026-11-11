@@ -15,7 +15,7 @@ use crate::output::agent_seam_packets;
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.2";
 
 const WORKFLOW_DIR: &str = "target/ripr/workflow";
 
@@ -53,7 +53,7 @@ pub(crate) fn render_agent_brief_json(
         "top_seams": selection
             .top_seams
             .iter()
-            .map(|entry| top_seam_json(entry, root, mode, config, causal_projection.as_ref()))
+            .map(|entry| top_seam_json(entry, config, causal_projection.as_ref()))
             .collect::<Vec<_>>(),
         "next": {
             "inspect_packet": prepare_workflow_command(
@@ -62,6 +62,24 @@ pub(crate) fn render_agent_brief_json(
                     &command_root,
                     mode.as_str(),
                     WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
+                ),
+            ),
+            // #13673: the snapshot and verify commands are identical for every
+            // seam, so they are stated once here instead of per top seam.
+            "before_snapshot_command": prepare_workflow_command(
+                &command_root,
+                check_repo_exposure_command(
+                    &command_root,
+                    mode.as_str(),
+                    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+                ),
+            ),
+            "after_snapshot_command": prepare_workflow_command(
+                &command_root,
+                check_repo_exposure_command(
+                    &command_root,
+                    mode.as_str(),
+                    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                 ),
             ),
             "verify_after_edit": agent_verify_command(
@@ -107,8 +125,6 @@ fn working_set_json(working_set: &AgentBriefResolvedWorkingSet) -> Value {
 
 fn top_seam_json(
     selected: &AgentBriefSelectedSeam<'_>,
-    root: &Path,
-    mode: &Mode,
     config: &RiprConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Value {
@@ -176,7 +192,7 @@ fn top_seam_json(
             "format": "agent-seam-packets-json",
             "seam_id": seam.id().as_str(),
         },
-        "verification": verification_json(root, mode, &recommended.name),
+        "verification": verification_json(&recommended.name),
     });
     if let Some(projection) = causal_projection
         && let Some(delta) = projection.delta_for(
@@ -191,26 +207,8 @@ fn top_seam_json(
     value
 }
 
-fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value {
-    // Same root rule as `render_agent_brief_json` (#8995): the root keeps its
-    // literal characters before `bound_root`, so a pasted snapshot or verify
-    // command names this checkout.
-    let root = bound_root(&root_path_display(root));
+fn verification_json(recommended_name: &str) -> Value {
     json!({
-        "before_snapshot_command": prepare_workflow_command(
-            &root,
-            check_repo_exposure_command(&root, mode.as_str(), WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
-        ),
-        "after_snapshot_command": prepare_workflow_command(
-            &root,
-            check_repo_exposure_command(&root, mode.as_str(), WORKFLOW_AFTER_SNAPSHOT_ARTIFACT),
-        ),
-        "verify_command": agent_verify_command(
-            &root,
-            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-            None,
-        ),
         // #7391: a `not_applicable` repair target names no test, so a
         // literal `cargo test not_applicable` command would silently
         // select zero tests (exit 0) and read as success. Only a real
@@ -375,13 +373,13 @@ mod tests {
             "discount_threshold (equality boundary)"
         );
         assert!(
-            value["top_seams"][0]["verification"]["after_snapshot_command"]
+            value["next"]["after_snapshot_command"]
                 .as_str()
                 .is_some_and(|command| command.contains("--format repo-exposure-json"))
         );
         // A fresh checkout has no target/ripr/workflow, so the first write
         // must create the directory its redirect targets.
-        let before = value["top_seams"][0]["verification"]["before_snapshot_command"]
+        let before = value["next"]["before_snapshot_command"]
             .as_str()
             .ok_or("before_snapshot_command is missing or not a string")?;
         let (prepare, check) = before
@@ -445,9 +443,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn agent_brief_seam_verification_preserves_literal_backslash_unix_root() -> Result<(), String> {
+    fn agent_brief_next_snapshot_commands_preserve_literal_backslash_unix_root()
+    -> Result<(), String> {
         let value = literal_backslash_brief()?;
-        let verification = &value["top_seams"][0]["verification"];
+        let verification = &value["next"];
         assert_eq!(
             verification["before_snapshot_command"],
             r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/before.repo-exposure.json'"
@@ -457,7 +456,7 @@ mod tests {
             r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/after.repo-exposure.json'"
         );
         assert_eq!(
-            verification["verify_command"],
+            verification["verify_after_edit"],
             r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
         );
         Ok(())
@@ -535,18 +534,14 @@ mod tests {
         // #7391: `cargo test not_applicable` matches zero tests and exits 0,
         // so a not-applicable repair target must serialize a null suggested
         // command instead of a literal filter that silently selects nothing.
-        let value = verification_json(Path::new("."), &Mode::Draft, "not_applicable");
+        let value = verification_json("not_applicable");
         if !value["suggested_test_command"].is_null() {
             return Err(format!(
                 "not_applicable target leaked a suggested command: {}",
                 value["suggested_test_command"]
             ));
         }
-        let concrete = verification_json(
-            Path::new("."),
-            &Mode::Draft,
-            "parse_port_exact_error_variant",
-        );
+        let concrete = verification_json("parse_port_exact_error_variant");
         let command = concrete["suggested_test_command"]
             .as_str()
             .ok_or("concrete target must keep a suggested command")?;
@@ -556,38 +551,15 @@ mod tests {
         Ok(())
     }
 
-    /// #8995: a Unix checkout whose path contains a literal backslash still
-    /// names the user's checkout in every pasted brief command; `display_path`
-    /// would have rewritten the backslash into a separator and the pasted
-    /// command would target a different directory. On Windows `\` is a
-    /// separator and the rendered root keeps stable `/` separators, exactly
-    /// as before.
+    /// #13673: per-seam verification carries no command a top-level `next`
+    /// field already states, so a many-seam brief does not repeat them.
     #[test]
-    fn agent_brief_verification_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
-        let value = verification_json(Path::new("/tmp/team\\repo"), &Mode::Draft, "not_applicable");
-        let before = value["before_snapshot_command"]
-            .as_str()
-            .ok_or("before_snapshot_command is missing or not a string")?;
-        let verify = value["verify_command"]
-            .as_str()
-            .ok_or("verify_command is missing or not a string")?;
-        if cfg!(unix) {
-            for command in [before, verify] {
-                if !command.contains("--root '/tmp/team\\repo'") {
-                    return Err(format!(
-                        "command must keep the literal backslash: {command}"
-                    ));
-                }
-            }
-        } else {
-            for command in [before, verify] {
-                if !command.contains("tmp/team/repo") {
-                    return Err(format!(
-                        "command must render stable separators on Windows: {command}"
-                    ));
-                }
-            }
-        }
-        Ok(())
+    fn seam_verification_carries_only_the_suggested_test_command() {
+        let value = verification_json("parse_port_exact_error_variant");
+        let keys: Vec<&String> = value
+            .as_object()
+            .map(|o| o.keys().collect())
+            .unwrap_or_default();
+        assert_eq!(keys, vec!["suggested_test_command"], "{value}");
     }
 }

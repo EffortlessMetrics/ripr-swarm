@@ -21,6 +21,8 @@ mod python_exception_variant;
 #[cfg(feature = "lang-python")]
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
+mod python_module_reader_packets;
+#[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
@@ -127,6 +129,8 @@ pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }

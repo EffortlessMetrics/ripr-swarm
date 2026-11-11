@@ -558,6 +558,13 @@ assertion than the strength-only pick surfaces
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
 
+The human `Related test` headline row is one shared display pick: among the
+rows with the first row's oracle strength, the first row whose test file the
+same diff changed leads, and otherwise the first row stays, so the headline
+names the test the change extended rather than an untouched same-strength
+file that sorts earlier (#14027). The pick moves no row, class or oracle
+strength.
+
 ### Family-relevant assertion selection (TypeScript)
 
 TypeScript classification already judges assertions one at a time through

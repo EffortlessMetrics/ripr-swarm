@@ -2500,10 +2500,7 @@ impl RustAdapter {
             },
             main_index_started.elapsed(),
         );
-        #[cfg(test)]
-        {
-            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
-        }
+        rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -10510,6 +10507,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod cfg_kani_module_tests;
 #[cfg(test)]
 mod classify_panic_tests;
 #[cfg(test)]

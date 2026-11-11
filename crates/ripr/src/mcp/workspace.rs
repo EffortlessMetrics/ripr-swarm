@@ -2635,6 +2635,8 @@ mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -3102,6 +3104,8 @@ mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -3184,6 +3188,8 @@ mod tests {
             owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))

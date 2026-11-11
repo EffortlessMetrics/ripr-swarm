@@ -172,8 +172,9 @@ This section completes RIPR-SPEC-0230 for a seam with no related test.
   `rust_transitive_reach_unresolved`. A macro witness whose macro is
   invoked in the test body names
   `rust_macro_wrapped_test_call_unresolved`; a macro further along the path
-  names `rust_macro_reach_unresolved`. Trait dispatch reads
-  `(trait dispatch)`. Owner unresolved reads `(owner unresolved)`.
+  names `rust_macro_reach_unresolved`. Trait dispatch names
+  `rust_trait_dispatch_unresolved` (#5492). Owner unresolved reads
+  `(owner unresolved)`.
 - R4. Witness cache. The per-run cache key for the transitive and macro
   answers is the owner's stable function id (`owner:{id}`), not the name alone
   or file plus name. The witness search is path-aware when same-package rivals

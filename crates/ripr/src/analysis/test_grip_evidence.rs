@@ -813,13 +813,15 @@ fn credited_related_tests<'a>(
     // (#12056, #12264).
     let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
         owner_reach.as_ref().is_some_and(|(_, reach)| {
-            let text = super::classifier::assertion_text_with_local_initializers(
-                context.index,
-                test,
-                &oracle.text,
-                owner,
-            );
-            reach.assertion_pins_other_function(owner, test, oracle, &text)
+            context.other_function_pin_decision(owner, test, oracle, || {
+                let text = super::classifier::assertion_text_with_local_initializers(
+                    context.index,
+                    test,
+                    &oracle.text,
+                    owner,
+                );
+                reach.assertion_pins_other_function(owner, test, oracle, &text)
+            })
         })
     };
     related
@@ -829,14 +831,22 @@ fn credited_related_tests<'a>(
             if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
+            {
+                // One decision per oracle: the text it reads is rebuilt from
+                // the whole test body, so ask once and drop by position
+                // rather than once to detect and again to retain.
+                let pins: Vec<bool> = test
                     .assertions
                     .iter()
-                    .any(|oracle| pins_other_function(owner, test, oracle))
-            {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !pins_other_function(owner, test, oracle));
+                    .map(|oracle| pins_other_function(owner, test, oracle))
+                    .collect();
+                if pins.contains(&true) {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !pins[position - 1]
+                    });
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -1220,6 +1230,9 @@ thread_local! {
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times credited-view owner reach was built on this thread (#12478).
     static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times an other-function pin decision was computed rather than read
+    /// from the context's memo on this thread (#14011).
+    static PIN_DECISIONS_COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -2823,6 +2836,28 @@ pub(crate) fn compact_evidence_for_seam(
     evidence
 }
 
+/// The producer-owned limit kind behind an `opaque` or `weak` reach stage
+/// (#5492). The kind is the reach producer's own answer for the owner, taken
+/// only when the stage summary carries that witness's summary: an `opaque`
+/// reach with another cause (a file outside every module tree, #7426) must not
+/// borrow a witness the stage never named. The summary token is the fallback
+/// when no producer witness exists.
+fn unresolved_reach_limit_for_owner(
+    reach_state: StageState,
+    owner_fn: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+    reach_summary: &str,
+) -> Option<StaticLimitKind> {
+    match reach_state {
+        StageState::Opaque | StageState::Weak => owner_fn
+            .and_then(|owner| reach_limit::unresolved_reach_evidence(owner, context))
+            .filter(|(summary, _kind)| reach_summary.contains(summary.as_str()))
+            .map(|(_summary, kind)| kind)
+            .or_else(|| reach_limit::summary_limit_kind(reach_summary)),
+        _ => None,
+    }
+}
+
 /// Reach evidence: does a related test call the seam's owner?
 ///
 /// Only relations that tie a test to running the owner count
@@ -2839,21 +2874,6 @@ pub(crate) fn compact_evidence_for_seam(
 /// it `weak` too.
 /// Either way the seam can no longer read `strongly_gripped`; the related
 /// tests stay listed as suggestions.
-fn unresolved_reach_limit_for_owner(
-    reach_state: StageState,
-    owner_fn: Option<&FunctionSummary>,
-    context: &CompactGripContext<'_>,
-    reach_summary: &str,
-) -> Option<StaticLimitKind> {
-    match reach_state {
-        StageState::Opaque | StageState::Weak => owner_fn
-            .and_then(|owner| reach_limit::unresolved_reach_evidence(owner, context))
-            .map(|(_summary, kind)| kind)
-            .or_else(|| reach_limit::summary_limit_kind(reach_summary)),
-        _ => None,
-    }
-}
-
 fn reach_evidence(
     seam: &RepoSeam,
     related: &[(&TestSummary, RelationReason)],
