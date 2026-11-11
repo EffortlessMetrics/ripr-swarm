@@ -4739,9 +4739,7 @@ pub(in crate::cli) fn before_phase_stdout(
         // #14320: name the exact native command for the suggested test, so
         // the developer does not have to work out the cargo target filter.
         if let Some(command) = &continuation.focused_test_command {
-            document.push_str(&format!(
-                "Run the new test: {command}  (use your test's name if it differs)\n"
-            ));
+            document.push_str(&format!("Run the new test: {command}\n"));
         }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
