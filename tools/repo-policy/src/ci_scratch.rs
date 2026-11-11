@@ -188,7 +188,7 @@ fn scratch_gc_violations(text: &str) -> Vec<String> {
     match (checkout, lease_step_line(text, "reclaim")) {
         (Some(first), Some(second)) if first < second => {}
         (_, None) => violations.push(format!(
-            "{SCRATCH_GC_PATH}: scheduled reclamation must use `{SCRATCH_LEASE_USES}` `mode: reclaim`, the same authority as rust-gates.yml (#3841)"
+            "{SCRATCH_GC_PATH}: the reclamation sweep must use `{SCRATCH_LEASE_USES}` `mode: reclaim`, the same authority as rust-gates.yml (#3841)"
         )),
         _ => violations.push(format!(
             "{SCRATCH_GC_PATH}: the lease action needs a checkout step before `mode: reclaim` (#3841)"
