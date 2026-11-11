@@ -781,3 +781,8 @@ reason = "xtask dx-scoreboard workload pairing rule; not an exposure-verdict exa
 id = "RIPR-SPEC-0437"
 scope = "out"
 reason = "VS Code managed-server download archive-inspection rule; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0438"
+scope = "out"
+reason = "CLI output-path safety rule (an --out naming a command input is refused); not an exposure-verdict example a corpus case labels"
