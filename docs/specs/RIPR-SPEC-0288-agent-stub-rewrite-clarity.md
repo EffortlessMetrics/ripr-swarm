@@ -124,6 +124,18 @@ keeps the binding, made once before `expected`, so an expected value derived
 from post-call state still reads that state after the call.
 This changes the emitted stub only; classifier credit rules are unchanged.
 
+### Repair start names the focused run command (#14320)
+
+The human `ripr repair` / `ripr agent repair --phase before` start prints
+`Run the new test: <command>` before the continue line when the recommended
+test's exact command is established, spelled like the stub run command. An
+integration file runs as `--test TARGET NAME` only when the package's own
+target layout names its target (a plain cargo target name); a file the
+package does not register under `tests/` gets no line; a non-Rust file, a
+non-identifier test name, or a file outside any package gets no line. A
+`src/tests/` file is an inline module and runs by name. JSON output is
+unchanged.
+
 ## Required Evidence
 
 - A second `--write` for the same seam leaves the file with exactly one
@@ -146,6 +158,9 @@ This changes the emitted stub only; classifier credit rules are unchanged.
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate`
 - `crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification`
+- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_names_the_target_or_refuses`
+- `crates/ripr/src/cli/commands/agent.rs::tests::human_stdout_names_the_focused_test_command_when_known`
+- `crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_repair_start_prints_one_next_command_inside_a_line_budget`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`
   (ordering pin; the grip warning wording it pins is the new reasoned
   form)
@@ -206,6 +221,8 @@ seams and is not included in agent results`.
   `stub_grip_omission_reason`, which names the real reason for
   `strongly_gripped` and defers to the packet/brief wording only for
   classes a user severity actually disables.
+- `crates/ripr/src/app/test_stub.rs` owns `focused_test_run_command`;
+  `crates/ripr/src/cli/commands/agent.rs` prints it in the repair start.
 - `crates/ripr/src/cli/help/agent.rs`, `docs/AGENT_WORKFLOWS.md`, and
   `docs/OUTPUT_SCHEMA.md` carry the user-visible contract text.
 
