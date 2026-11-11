@@ -52,7 +52,12 @@ key by key:
    setting overrides `ripr.toml`.
 
 **Diagnostics transport.** Push (`textDocument/publishDiagnostics`) unless the
-client advertises pull diagnostics (`textDocument.diagnostic`).
+client advertises pull diagnostics (`textDocument.diagnostic`). A pull client
+is offered document pull only (`workspaceDiagnostics: false`), so it re-pulls
+each open file when ripr sends `workspace/diagnostic/refresh` after a save or
+refresh. Workspace pull is offered only to the ripr VS Code extension
+(`experimental.riprEditor`) (#1630). The server still answers a
+`workspace/diagnostic` request from any client.
 
 **Commands.** `executeCommandProvider` lists `ripr.refresh`,
 `ripr.collectContext`, `ripr.collectEvidenceContext`,
@@ -166,16 +171,15 @@ vim.lsp.enable("ripr")
 any root, which would stop with `root_unavailable`. Refresh with the
 `exec_cmd` call in the recipe's step 4.
 
-Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
-its own; the recipe's
+Earlier ripr builds advertised workspace diagnostics to every pull client.
+Neovim 0.12 answers `workspace/diagnostic/refresh` with a workspace pull alone
+when the server offers one, and ignores that report for buffers it pulls by
+document, so a refreshed finding never reached the open buffer (the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
-records that run and the upstream fix. In one further check on 2026-10-31
-(Linux, Neovim v0.12.6, the snippet above, `ripr.refresh` through `exec_cmd`),
-the refreshed finding also did not appear within 60 seconds; after analysis had
-finished, one manual `textDocument/diagnostic` request made the `weakly_exposed`
-finding available. That check is recorded only on this page, and its transcript
-was not retained. On these releases, re-open the buffer or request document
-diagnostics after a refresh has finished analyzing.
+records those runs). ripr now offers generic clients document pull only, and
+Neovim re-pulls each open buffer on refresh (#1630). This was checked against
+Neovim v0.12.6's `runtime/lua/vim/lsp/diagnostic.lua` and a scripted client
+that follows its refresh logic, not yet in a Neovim binary.
 
 ## Zed
 

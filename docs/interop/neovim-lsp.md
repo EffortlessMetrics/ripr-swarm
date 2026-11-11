@@ -33,6 +33,13 @@ client version ignores workspace results for buffers using document pull and
 does not refresh those buffers in response to `workspace/diagnostic/refresh`.
 [Neovim's upstream fix](https://github.com/neovim/neovim/commit/653f2092ce5545da3a10743e95aae435d0e0c182)
 addresses this behavior; it was absent from the tested release runtime.
+**Server-side change (#1630).** Those runs were against a server that advertised
+`workspaceDiagnostics: true` to every pull client, which is what sends this
+client down its workspace-only refresh path. ripr now offers generic pull
+clients document pull only, so `workspace/diagnostic/refresh` makes Neovim
+re-pull each open buffer. A rerun of this recipe in a Neovim binary is still
+needed before the limit is retired.
+
 The rehearsal supplied `baseRef = "main"`, `checkMode = "draft"` and
 `seamDiagnostics = true` through standard `workspace/configuration`; it did not
 qualify the configuration defaults below.

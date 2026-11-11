@@ -75,15 +75,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeLensOptions, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType,
-    FileEvent, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, MarkedString,
-    NumberOrString, PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
-    WorkspaceFolder,
+    CodeLensOptions, Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
+    ExecuteCommandParams, FileChangeType, FileEvent, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, PartialResultParams,
+    Position, PositionEncodingKind, PreviousResultId, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkspaceDiagnosticParams, WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
@@ -8534,12 +8534,29 @@ async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), 
     let (pull_service, _pull_socket) =
         LspService::new(|client| Backend::new(client, pull_root.path().to_path_buf()));
     let pull_backend = pull_service.inner();
-    pull_backend
+    let pull_initialize = pull_backend
         .initialize(push_pull_parity_initialize_params(
             &pull_root, profile, true,
         )?)
         .await
         .map_err(|err| format!("{leg}: pull initialize failed: {err}"))?;
+    // #1630: workspace pull is offered only to the ripr editor client; a
+    // generic pull client gets document pull so a refresh re-pulls its
+    // open buffers.
+    let Some(DiagnosticServerCapabilities::Options(pull_options)) =
+        pull_initialize.capabilities.diagnostic_provider
+    else {
+        return Err(format!(
+            "{leg}: pull client got no static diagnostic provider"
+        ));
+    };
+    let expect_workspace_pull = !matches!(profile, PushPullParityProfile::Generic);
+    if pull_options.workspace_diagnostics != expect_workspace_pull {
+        return Err(format!(
+            "{leg}: workspaceDiagnostics was {}, expected {expect_workspace_pull}",
+            pull_options.workspace_diagnostics
+        ));
+    }
     let (pull_uri, line) = commit_push_pull_parity_fixture(pull_backend, &pull_root)?;
     let pull_report = pull_backend
         .diagnostic(DocumentDiagnosticParams {
