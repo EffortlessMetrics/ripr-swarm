@@ -453,15 +453,7 @@ fn cache_status(root: &Path, perl_cache_dir: Option<&Path>) -> output::doctor::D
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
     let size_bytes = dir_size_bytes(&cache_dir);
     let artifact_roots = analysis::ripr_artifact_roots(root, &cache_dir, perl_cache_dir);
-    // #9858: when nothing exists yet, ripr_artifact_ignore has nothing to
-    // probe and reports NoArtifacts; a non-Cargo project then gets no ignore
-    // guidance before its first write, so probe the would-be root anyway.
-    let artifact_ignore = match ripr_artifact_ignore(root, &artifact_roots) {
-        output::doctor::DoctorArtifactIgnore::NoArtifacts => {
-            preemptive_artifact_ignore(root, &artifact_roots)
-        }
-        verdict => verdict,
-    };
+    let artifact_ignore = artifact_ignore_verdict(root, &artifact_roots);
     output::doctor::DoctorCacheStatus {
         cache_dir: output::path::human_path(&cache_dir),
         relocated_by_env: relocated,
@@ -2879,11 +2871,38 @@ pub(crate) fn uncovered_artifact_roots(
         };
         match probe.status.code() {
             Some(0) => {}
+            Some(1) if self_ignored_contents(root, &pathspec)? => {}
             Some(1) => uncovered.push(pathspec),
             _ => return None,
         }
     }
     Some(uncovered)
+}
+
+/// Whether ignore rules inside an existing artifact root cover what ripr
+/// writes there. ripr's own `target/ripr/.gitignore` holds `*`, which git
+/// applies to the directory's contents, not to the directory name, so the
+/// plain root probe answers "not ignored" while `git status` stays clean.
+/// Probing a would-be entry asks the question that matters: would a file ripr
+/// writes under this root be committed by `git add -A`? `Some(false)` for a
+/// missing root (nothing inside it can carry a rule yet); `None` when git
+/// could not answer.
+fn self_ignored_contents(root: &Path, pathspec: &str) -> Option<bool> {
+    if !root.join(pathspec).is_dir() {
+        return Some(false);
+    }
+    let entry = format!("{pathspec}/ripr-artifact");
+    let probe = crate::git::run_git_output_with_deadline(
+        root,
+        &["check-ignore", "--no-index", "-q", "--", &entry],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()?;
+    match probe.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
 }
 
 /// #9858: on the first run in a non-Cargo project nothing exists under
@@ -2904,7 +2923,20 @@ fn preemptive_artifact_ignore(
     if root.join("Cargo.toml").is_file() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let Some(uncovered) = uncovered_artifact_roots(root, artifact_roots) else {
+    // The default `target/ripr` tree ignores itself the moment a command
+    // first writes there (`atomic_file::write_self_ignore_file`), so
+    // only a relocated in-repository writer base still needs a user rule.
+    let relocated: Vec<PathBuf> = artifact_roots
+        .iter()
+        .filter(|relative| {
+            analysis::artifact_root_pathspec(relative) != crate::atomic_file::DEFAULT_OUTPUT_ROOT
+        })
+        .cloned()
+        .collect();
+    if relocated.is_empty() {
+        return DoctorArtifactIgnore::NoArtifacts;
+    }
+    let Some(uncovered) = uncovered_artifact_roots(root, &relocated) else {
         return DoctorArtifactIgnore::NotChecked;
     };
     if uncovered.is_empty() {
@@ -2918,6 +2950,39 @@ fn preemptive_artifact_ignore(
             artifact_roots_display(&uncovered),
             artifact_gitignore_entries(&uncovered),
         ),
+    }
+}
+
+/// The one ignore verdict doctor and the first-`check` note share. Existing
+/// roots are judged by `ripr_artifact_ignore`. #9858: a root that does not
+/// exist yet has nothing to probe, so a non-Cargo project would get no
+/// guidance before its first write there; when the existing roots are covered
+/// (or there are none), the would-be roots are probed pre-emptively. The
+/// default `target/ripr` is not among them: it ignores itself on first write,
+/// so only a relocated in-repository base can still be warned about early.
+fn artifact_ignore_verdict(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactIgnore {
+    use output::doctor::DoctorArtifactIgnore;
+    let existing = ripr_artifact_ignore(root, artifact_roots);
+    if !matches!(
+        existing,
+        DoctorArtifactIgnore::NoArtifacts | DoctorArtifactIgnore::Ignored
+    ) {
+        return existing;
+    }
+    let missing: Vec<PathBuf> = artifact_roots
+        .iter()
+        .filter(|relative| !root.join(relative).is_dir())
+        .cloned()
+        .collect();
+    match preemptive_artifact_ignore(root, &missing) {
+        warning @ DoctorArtifactIgnore::Unignored { .. } => warning,
+        DoctorArtifactIgnore::Ignored if existing == DoctorArtifactIgnore::NoArtifacts => {
+            DoctorArtifactIgnore::Ignored
+        }
+        _ => existing,
     }
 }
 
@@ -2940,11 +3005,7 @@ pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
     use output::doctor::DoctorArtifactIgnore;
     let roots =
         analysis::ripr_artifact_roots(root, &analysis::seam_cache::cache_base_dir(root), None);
-    let verdict = match ripr_artifact_ignore(root, &roots) {
-        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
-        verdict => verdict,
-    };
-    match verdict {
+    match artifact_ignore_verdict(root, &roots) {
         DoctorArtifactIgnore::Unignored { warning } => Some(note_with_tracking_probe(
             warning,
             probe_artifact_tracking(root, &roots),
@@ -5585,7 +5646,8 @@ mod tests {
     }
 
     #[test]
-    fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
+    fn preemptive_artifact_ignore_needs_no_chore_for_the_self_ignoring_default_root()
+    -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
@@ -5609,21 +5671,27 @@ mod tests {
             ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::NoArtifacts
         );
-        // A non-Cargo project is warned before the first write, with the
-        // exact entry to add (#9858). The subject clause says ripr *will
-        // write*; the consequence and entry match the existing-artifact
-        // warning word for word.
-        match preemptive_artifact_ignore(&root, &default_artifact_roots(&root)) {
-            DoctorArtifactIgnore::Unignored { warning } => {
-                assert!(
-                    warning.contains("will write artifacts under target/ripr"),
-                    "{warning}"
-                );
-                assert!(warning.contains("/target/ripr/"), "{warning}");
-                assert!(warning.starts_with("~ "), "{warning}");
-            }
-            other => return Err(format!("expected Unignored, got {other:?}")),
-        }
+        // A non-Cargo project needs no ignore chore before the first write:
+        // the default `target/ripr` tree ignores itself when a command first
+        // writes there, so the pre-emptive arm reports nothing to cover. The
+        // relocated-base arm keeps the #9858 warning (tested below).
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // The guard alone creates nothing; the first write into the guarded
+        // tree gives it the self-ignore file, and the existing-artifact
+        // verdict then reads the tree as ignored even though no rule names
+        // `target/ripr` itself.
+        crate::atomic_file::ensure_report_output_contained(&root)?;
+        assert!(!root.join("target").exists());
+        crate::atomic_file::write(&root.join("target/ripr/reports/x.json"), b"{}", "test")?;
+        assert!(root.join("target/ripr/.gitignore").is_file());
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        std::fs::remove_dir_all(root.join("target")).map_err(|error| error.to_string())?;
         // A Cargo project keeps the historical first-run silence: Rust
         // behavior is unchanged.
         std::fs::write(
@@ -5635,12 +5703,23 @@ mod tests {
             preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::NoArtifacts
         );
-        // The covering entry silences the pre-emptive arm too.
+        // A relocated in-repository base is not self-ignoring, so the
+        // pre-emptive arm still warns for it, naming only that root.
         std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
-        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+        let relocated = analysis::ripr_artifact_roots(&root, &root.join(".ripr-cache"), None);
+        match preemptive_artifact_ignore(&root, &relocated) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(warning.contains("will write artifacts under"), "{warning}");
+                assert!(warning.contains("/.ripr-cache/"), "{warning}");
+                assert!(!warning.contains("/target/ripr/"), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
+        // A covering entry silences it.
+        std::fs::write(root.join(".gitignore"), "/.ripr-cache/\n")
             .map_err(|error| error.to_string())?;
         assert_eq!(
-            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            preemptive_artifact_ignore(&root, &relocated),
             DoctorArtifactIgnore::Ignored
         );
         let _ = std::fs::remove_dir_all(&root);

@@ -99,6 +99,30 @@ artifact disclosure names `/target/` too. Roots
 relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
 `Cargo.toml`, keep the literal-root rule above.
 
+### Self-ignoring default output tree
+
+Once a workspace output guard has proven `target/ripr` contained, ripr gives
+that tree a `target/ripr/.gitignore` containing `*`: immediately when the tree
+already exists, otherwise on the first atomic write that creates it. ripr's
+own default output therefore never appears in `git status` and needs no
+`.gitignore` edit from the user. The guard itself creates no directory, so a
+command that refuses after its guard leaves nothing behind. The file is
+created exclusively and never rewritten: a user's own `target/ripr/.gitignore`
+is kept as written. ripr never creates or edits the repository's own
+`.gitignore`. With an explicit `RIPR_CACHE_DIR`, which waives the cache
+guard's containment check, the tree is marked only after the check passes on
+its own.
+
+Because Git applies that rule to the tree's contents rather than to the
+`target/ripr` name, the artifact-ignore probe treats an existing root as
+covered when either the root itself or a would-be entry inside it is ignored.
+Before the first write, the default root needs no warning: doctor and the
+first-`check` note warn only for relocated in-repository roots. A Cargo
+project's whole-`target/` requirement above is unchanged, because the
+self-ignore file covers only `target/ripr`. `check` runs the guard before its
+first-run ignore note, so a tree an older ripr left unignored is judged as the
+run leaves it.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with

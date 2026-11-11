@@ -393,9 +393,9 @@ has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 under `src/` or `tests/`. Work from a Python repository on a branch with a
 change to inspect.
 
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -438,9 +438,9 @@ root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
