@@ -1,9 +1,11 @@
 name: Scratch GC
 
-# Scheduled reclamation of self-hosted CI scratch disk so recovery does not
-# depend on PR traffic (#1028). Mirrors the existing inline "Prepare scratch" step
-# in routed-rust.yml, but on a timer: idle build runners (exactly the ones that
-# would otherwise never get a PR-triggered cleanup) get swept regularly.
+# Reclamation of self-hosted CI scratch disk that does not depend on PR
+# traffic (#1028). Mirrors the existing inline "Prepare scratch" step in
+# routed-rust.yml. It was built to run on a timer so idle build runners (the
+# ones that would otherwise never get a PR-triggered cleanup) were swept
+# regularly; the timer is currently off and the sweep is manual, see `on:`
+# below. Idle runners therefore get no automatic sweep right now.
 #
 # Covers all three routed-rust runner pools (cx43, cpx42, cx53) — each runs the
 # same routed lanes with the same /mnt/ci-scratch layout and the same disk guard,

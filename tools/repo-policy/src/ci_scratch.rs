@@ -3,8 +3,8 @@
 //! Per-run trees under `/mnt/ci-scratch/{cargo-home,target,tmp}` are owned by
 //! a kernel `flock` lease that the job holds for its whole lifetime. The only
 //! reclamation authority is `.github/actions/ci-scratch-lease`, and both the
-//! inline `rust-gates.yml` reclaim and the scheduled `scratch-gc.yml` sweep
-//! must consume it. A top-level directory age is never evidence that a job is
+//! inline `rust-gates.yml` reclaim and the `scratch-gc.yml` sweep (manual
+//! dispatch while its timer is off, #4984) must consume it. A top-level directory age is never evidence that a job is
 //! inactive: nested writes do not refresh it, so the retired
 //! `find ... -mmin +30 -exec rm -rf` selector deleted live job trees.
 //!
