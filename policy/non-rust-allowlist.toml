@@ -353,6 +353,15 @@ classification = "config"
 reason = "Codecov configuration for coverage status checks and reporting."
 covered_by = []
 
+[[allow]]
+glob = ".pre-commit-hooks.yaml"
+kind = "pre_commit_hook_manifest"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Hook manifest the pre-commit framework reads from this repository root so consumers can reference the advisory ripr check by id."
+covered_by = []
+
 # ---------------------------------------------------------------------------
 # Repo metadata
 # ---------------------------------------------------------------------------
