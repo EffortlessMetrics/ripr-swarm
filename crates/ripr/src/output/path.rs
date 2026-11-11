@@ -285,17 +285,16 @@ pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
 }
 
 /// Whether writing `output` would replace the file a command reads from
-/// `input` (#14312). Lexically equal leaves always match; when both paths
-/// resolve on disk the canonical paths decide too, so an absolute spelling,
-/// a `dir/../` detour through a real directory, or a symlink to the input is
-/// caught. A destination that does not exist yet cannot be an existing input.
+/// `input` (#14312). When the input exists, filesystem identity decides: the
+/// canonical paths must match, so an absolute spelling or a symlink to the
+/// input is caught, and a `..` after a symlinked directory is not collapsed
+/// lexically into a false match. A destination that does not exist yet cannot
+/// be an existing input. Only when the input does not resolve (it is missing,
+/// and its read will fail anyway) does the lexical leaf comparison decide.
 pub(crate) fn output_replaces_input(output: &Path, input: &Path) -> bool {
-    if same_output_leaf(output, input) {
-        return true;
-    }
-    match (std::fs::canonicalize(output), std::fs::canonicalize(input)) {
-        (Ok(output), Ok(input)) => output == input,
-        _ => false,
+    match std::fs::canonicalize(input) {
+        Ok(input) => std::fs::canonicalize(output).is_ok_and(|output| output == input),
+        Err(_) => same_output_leaf(output, input),
     }
 }
 

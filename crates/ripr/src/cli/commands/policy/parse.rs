@@ -122,6 +122,9 @@ pub(crate) fn parse_policy_readiness_options(
         i += 1;
     }
 
+    // `--previous-readiness` naming `--out` is the rolling trend update: the
+    // previous report is read whole before the new one replaces it, like
+    // `baseline update` in place, so it is deliberately not guarded.
     super::super::refuse_output_naming_input(
         "policy readiness",
         &[("--out", &out), ("--out-md", &out_md)],
@@ -136,7 +139,6 @@ pub(crate) fn parse_policy_readiness_options(
             ("--waiver-aging", waiver_aging.as_deref()),
             ("--suppression-health", suppression_health.as_deref()),
             ("--repo-config", repo_config.as_deref()),
-            ("--previous-readiness", previous_readiness.as_deref()),
         ],
     )?;
     Ok(PolicyReadinessOptions {

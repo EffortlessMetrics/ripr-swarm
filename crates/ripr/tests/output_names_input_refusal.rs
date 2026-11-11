@@ -197,6 +197,101 @@ const CASES: &[Case] = &[
         out_path: "art/in.json",
         in_flag: "--gate-decision",
     },
+    Case {
+        args: &[
+            "first-action",
+            "--pr-guidance",
+            "art/in.json",
+            "--out-md",
+            "art/in.json",
+        ],
+        command: "first-action",
+        out_flag: "--out-md",
+        out_path: "art/in.json",
+        in_flag: "--pr-guidance",
+    },
+    Case {
+        args: &[
+            "assistant-loop",
+            "health",
+            "--proof",
+            "art/other.json",
+            "--proof",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ],
+        command: "assistant-loop health",
+        out_flag: "--out",
+        out_path: "art/in.json",
+        in_flag: "--proof",
+    },
+    Case {
+        args: &[
+            "pr-ledger",
+            "record",
+            "--pr-number",
+            "1",
+            "--base",
+            "a",
+            "--head",
+            "b",
+            "--gap-ledger",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ],
+        command: "pr-ledger record",
+        out_flag: "--out",
+        out_path: "art/in.json",
+        in_flag: "--gap-ledger",
+    },
+    Case {
+        args: &[
+            "coverage-grip",
+            "frontier",
+            "--ledger",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ],
+        command: "coverage-grip frontier",
+        out_flag: "--out",
+        out_path: "art/in.json",
+        in_flag: "--ledger",
+    },
+    Case {
+        args: &[
+            "baseline",
+            "create",
+            "--from",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ],
+        command: "baseline create",
+        out_flag: "--out",
+        out_path: "art/in.json",
+        in_flag: "--from",
+    },
+    // The manifest is read relative to `--root`, so `--root art --manifest
+    // in.json` reads art/in.json, the same file as `--out art/in.json`.
+    Case {
+        args: &[
+            "policy",
+            "suppression-health",
+            "--root",
+            "art",
+            "--manifest",
+            "in.json",
+            "--out",
+            "art/in.json",
+        ],
+        command: "policy suppression-health",
+        out_flag: "--out",
+        out_path: "art/in.json",
+        in_flag: "--manifest",
+    },
 ];
 
 fn expected_refusal(command: &str, out_flag: &str, out_path: &str, in_flag: &str) -> String {
@@ -253,9 +348,10 @@ fn output_naming_an_input_is_refused_before_writing() -> Result<(), String> {
 #[test]
 fn an_absolute_spelling_of_the_input_is_still_refused() -> Result<(), String> {
     let dir = scratch("absolute")?;
-    let absolute = fs::canonicalize(dir.join("art"))
-        .map_err(|error| format!("canonicalize: {error}"))?
-        .join("in.json");
+    // Not canonicalized: on Windows that would add a `\\?\` prefix the
+    // human renderer folds away. Both files exist, so canonical identity
+    // still decides the refusal.
+    let absolute = dir.join("art").join("in.json");
     let absolute_text = absolute.display().to_string();
     let output = run(
         &dir,
@@ -360,9 +456,126 @@ fn baseline_update_in_place_is_not_an_overwrite_refusal() -> Result<(), String> 
     }
     // The command itself still runs (and fails on the missing current
     // snapshot), proving parsing got past the guard.
-    if !stderr.contains("current") {
+    if !stderr.starts_with(
+        "ripr: read baseline update current gate-decision art/current.json failed: not found.",
+    ) {
         return Err(format!(
             "instrument check: expected the run to reach the --current read; stderr: {stderr}"
+        ));
+    }
+    Ok(())
+}
+
+/// Flows that never overwrite an input they still need are not refused:
+/// `baseline create --dry-run` never writes `--out`, and `policy readiness
+/// --previous-readiness` naming `--out` is the rolling trend update (the
+/// previous report is read whole before the new one replaces it).
+#[test]
+fn non_destructive_same_path_flows_are_not_refused() -> Result<(), String> {
+    let mut failures = Vec::new();
+    for args in [
+        &[
+            "baseline",
+            "create",
+            "--dry-run",
+            "--from",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ][..],
+        &[
+            "policy",
+            "readiness",
+            "--previous-readiness",
+            "art/in.json",
+            "--out",
+            "art/in.json",
+        ][..],
+    ] {
+        let dir = scratch("non-destructive")?;
+        let output = run(&dir, args)?;
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let _ = fs::remove_dir_all(&dir);
+        if stderr.contains("names the same file as") {
+            failures.push(format!("ripr {}: refused: {stderr}", args.join(" ")));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Filesystem identity, not lexical `..` collapse, decides (review of #14341):
+/// `alias -> physical/nested` makes `alias/../in.json` name
+/// `physical/in.json`, a different file from `in.json`, so the write goes
+/// ahead. A symlink that really points at the input is still refused (the
+/// control at the end).
+#[cfg(unix)]
+#[test]
+fn a_symlinked_parent_followed_by_dotdot_is_not_a_false_match() -> Result<(), String> {
+    let dir = scratch("symlink-dotdot")?;
+    fs::create_dir_all(dir.join("physical/nested"))
+        .map_err(|error| format!("create physical: {error}"))?;
+    fs::write(dir.join("physical/in.json"), "other\n")
+        .map_err(|error| format!("write physical input: {error}"))?;
+    fs::write(dir.join("in.json"), SENTINEL).map_err(|error| format!("write input: {error}"))?;
+    std::os::unix::fs::symlink("physical/nested", dir.join("alias"))
+        .map_err(|error| format!("symlink: {error}"))?;
+    let distinct = run(
+        &dir,
+        &[
+            "reports",
+            "gap-ledger",
+            "--records",
+            "in.json",
+            "--out",
+            "alias/../in.json",
+            "--out-md",
+            "ledger.md",
+        ],
+    )?;
+    let distinct_stderr = String::from_utf8_lossy(&distinct.stderr).to_string();
+    let input_after = fs::read_to_string(dir.join("in.json")).unwrap_or_default();
+    let physical_after = fs::read_to_string(dir.join("physical/in.json")).unwrap_or_default();
+    // Control: a symlink that really names the input is still refused.
+    std::os::unix::fs::symlink("../in.json", dir.join("physical/link.json"))
+        .map_err(|error| format!("symlink control: {error}"))?;
+    let alias = run(
+        &dir,
+        &[
+            "reports",
+            "gap-ledger",
+            "--records",
+            "in.json",
+            "--out",
+            "alias/../link.json",
+        ],
+    )?;
+    let alias_stderr = String::from_utf8_lossy(&alias.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+    if distinct.status.code() != Some(0) || distinct_stderr.contains("names the same file as") {
+        return Err(format!(
+            "distinct file behind a symlinked parent was refused: exit {:?}; {distinct_stderr}",
+            distinct.status.code()
+        ));
+    }
+    if input_after != SENTINEL || physical_after == "other\n" {
+        return Err(format!(
+            "write went to the wrong file: in.json={input_after:?} physical/in.json={physical_after:?}"
+        ));
+    }
+    let expected = expected_refusal(
+        "reports gap-ledger",
+        "--out",
+        "alias/../link.json",
+        "--records",
+    );
+    if alias.status.code() != Some(2) || alias_stderr != expected {
+        return Err(format!(
+            "true alias was not refused: exit {:?}; {alias_stderr}",
+            alias.status.code()
         ));
     }
     Ok(())

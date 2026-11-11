@@ -311,11 +311,14 @@ impl BaselineCreateParseState {
         } else {
             "--from"
         };
-        super::refuse_output_naming_input(
-            "baseline create",
-            &[("--out", &self.out)],
-            &[(from_flag, Some(&from))],
-        )?;
+        // `--dry-run` prints the baseline and never writes `--out`.
+        if !self.dry_run {
+            super::refuse_output_naming_input(
+                "baseline create",
+                &[("--out", &self.out)],
+                &[(from_flag, Some(&from))],
+            )?;
+        }
         Ok(BaselineCreateOptions {
             from,
             from_check: self.from_check,

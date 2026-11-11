@@ -7,4 +7,5 @@
   exit `2` and before writing anything, an `--out` or `--out-md` that names
   the same file as one of their inputs (also through an absolute spelling or a
   symlink). Before, the input was silently replaced. `baseline update --out`
-  naming `--baseline` is still the documented in-place update (#14312).
+  naming `--baseline` and `policy readiness --previous-readiness` naming
+  `--out` stay allowed as in-place updates (#14312).
