@@ -16,9 +16,14 @@ A PR lands in this order:
    See the [label-request procedure](#installed-label-request-procedure).
 3. Inspect the finished results and current findings on the exact head, resolve
    every review thread, and record the final `REVIEW_READY` judgment.
-4. Enqueue the PR: "Merge when ready" in the UI, or squash auto-merge through
-   the API. On a green PR this enters the queue at once; the timeline shows
-   `added_to_merge_queue`.
+4. Enqueue the PR, bound to the head that received the final judgment. Where
+   the call takes an expected head, pass it
+   (`gh pr merge <n> --squash --match-head-commit <H>`, or `expectedHeadOid` on
+   the GraphQL enqueue). Where it does not ("Merge when ready" in the UI, squash
+   auto-merge through the REST or MCP call), read the PR head immediately before
+   and after the call and compare both with `<H>`; a different head is
+   withdrawn as below and reviewed before another enqueue. On a green PR the
+   call enters the queue at once; the timeline shows `added_to_merge_queue`.
 5. The queue runs `routed-rust.yml` on `merge_group` for the queued commit (run
    title "Merge queue <sha>", branch `gh-readonly-queue/main/pr-<n>-<sha>`) and
    squashes the PR when that Result passes.
@@ -48,7 +53,10 @@ Operating facts, each observed on 2026-11-11:
 A material finding after enqueue means the entry must leave the queue before its
 run passes, or the PR lands. A disabled auto-merge readback is not containment.
 Remove the entry itself: "Remove from queue" on the PR, or convert the PR to
-Draft, which GitHub drops from the queue. Then read back
+Draft, which GitHub drops from the queue. If auto-merge is armed but the PR has
+not entered the queue yet (a requirement is still pending), there is no entry
+to remove: disable auto-merge and read back that it is off, or the PR queues
+itself later. After removing an entry, read back
 `removed_from_merge_queue` on the timeline and an open, unmerged PR. If the
 session cannot remove the entry or cannot confirm it, that is an
 integration-control blocker: say so on the PR at once and do not report the

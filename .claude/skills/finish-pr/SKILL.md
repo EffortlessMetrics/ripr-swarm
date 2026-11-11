@@ -50,7 +50,8 @@ PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
 separate evidence gap. After required proof and review, enqueue the PR in the
-merge queue and let GitHub enforce applicable requirements. Report
+merge queue, bound to the reviewed head as merge flow describes, and let GitHub
+enforce applicable requirements. Report
 a rejection without guessing its cause; never bypass enforcement or change settings.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists. Coordinate actual ownership and preserve unique work as described in `prepare-issue`.
@@ -122,10 +123,11 @@ acceptance actually satisfied by the landed result.
 
 A new material finding withdraws readiness even on an unchanged head. If the PR is
 queued or auto-merge is armed, contain it before resolving the blocking thread.
-Disabling auto-merge does not remove an existing queue entry: remove the entry
-itself (see [merge flow](../../../docs/MERGE_FLOW.md#withdrawing-a-queued-pr)) and
-read back `removed_from_merge_queue` and an open, unmerged PR. An unavailable or
-failed removal is an integration-control blocker; do not claim the merge is contained. After repair,
+Do both that apply (see [merge flow](../../../docs/MERGE_FLOW.md#withdrawing-a-queued-pr)):
+disable armed auto-merge and read back that it is off, so the PR cannot queue
+later; and, because that does not remove an existing queue entry, remove the entry
+itself and read back `removed_from_merge_queue`. Confirm an open, unmerged PR. An
+unavailable or failed step is an integration-control blocker; do not claim the merge is contained. After repair,
 affected proof and cumulative rereview must restore `REVIEW_READY` before the final merge judgment.
 Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
