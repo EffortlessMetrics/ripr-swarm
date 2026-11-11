@@ -705,6 +705,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             ));
         }
     }
+    // The partition lists come from the prepared binaries before the run. Taken after
+    // it, one shard spent four to six minutes in the listing on every run (#12915).
+    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
+        (Some(list), Some(test)) if list < test => {}
+        _ => findings.push("shards: the partition list must precede the test run".to_string()),
+    }
     if shards
         .lines()
         .filter(|line| line.trim() == "tool: nextest@0.9.149")
@@ -801,6 +808,22 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             )));
         }
     }
+}
+
+#[test]
+fn sharded_hosted_tests_list_the_partition_before_the_run() {
+    let expected = "shards: the partition list must precede the test run".to_string();
+    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    // Swap the two commands: the run then precedes the listing again.
+    let swapped = SHARDS
+        .replace(SHARDED_LIST_COMMAND, "\u{0}")
+        .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
+        .replace('\u{0}', SHARDED_TEST_COMMAND);
+    assert_ne!(swapped, SHARDS);
+    assert!(
+        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        "a listing after the run was not rejected"
+    );
 }
 
 #[test]

@@ -181,18 +181,22 @@ jobs:
             printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
             git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
           } > target/nextest/ci/run-context.txt
+          # The partition lists let `verify` prove the shards are a disjoint cover.
+          # Listing reuses the build step's binaries; shard 1 also lists the whole
+          # workspace. The lists are taken before the run, from the same binaries
+          # the run executes: taken after it, shard 4 spent 4.3 to 6.1 minutes here
+          # on every run (4 to 16 seconds on the other shards), with the cause
+          # hidden by the discarded stderr (#12915).
+          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          if [ "${{ matrix.shard }}" = 1 ]; then
+            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+          fi
           set +e
           cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4
           test_exit=$?
           set -e
           printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
           printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
-          # The partition lists let `verify` prove the shards are a disjoint cover.
-          # Listing reuses the build above; shard 1 also lists the whole workspace.
-          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
-          if [ "${{ matrix.shard }}" = 1 ]; then
-            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
-          fi
           if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
             echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"
             exit 1
