@@ -392,6 +392,8 @@ has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
 under `src/` or `tests/`. Work from a Python repository on a branch with a
 change to inspect.
+To try it first on a small project with a known gap, use the
+[Python starter example](../examples/python-bulk-discount/README.md).
 
 First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
 `agent repair` write reports under `target/ripr`, and ignoring it keeps
@@ -438,6 +440,8 @@ root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
+To try it first on a small project with a known gap, use the
+[TypeScript starter example](../examples/typescript-discount-threshold/README.md).
 First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
 `agent repair` write reports under `target/ripr`, and ignoring it keeps
 `git add -A` from committing them. Then run:

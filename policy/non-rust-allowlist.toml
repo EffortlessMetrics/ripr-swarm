@@ -784,6 +784,15 @@ reason = "Packaged sample workspace and diff are analyzed inputs."
 covered_by = ["cargo xtask check-fixture-contracts"]
 
 [[allow]]
+glob = "examples/**"
+kind = "starter_example"
+owner = "docs"
+surface = "docs"
+classification = "fixture"
+reason = "Starter example projects (Rust, Python, TypeScript) a new user runs ripr on; each carries analyzed source, a diff and a strengthened test file (#14151)."
+covered_by = ["cargo test -p ripr --test starter_examples"]
+
+[[allow]]
 glob = "fixtures/**"
 kind = "fixture_input"
 owner = "analysis-fixtures"
