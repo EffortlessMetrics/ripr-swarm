@@ -109,19 +109,17 @@ NEGATED_CHANGE = re.compile(
 )
 # Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
 NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
-# A recognized cue that refutes a negated change phrase, so it is not resolved
-# work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
-# sentence does not reach across the '.' or ';'. The same cue set is checked
-# after the phrase, but only when the remainder actually refutes it (see
-# REFUTATION_AFTER), so "Nothing is wrong." is not a refutation.
-REFUTATION_CUE = re.compile(
-    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case"
-    r"|isn't|is[ \t]+not|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say"
-    r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
+# #14355: strip only in an affirmative resolution position. The phrase must
+# start its sentence, or a short resolution framing must immediately precede it
+# ("resolved with ", "resolved, ", "fixed: "). Anything else leaves the phrase
+# in place, so an unlisted refutation ahead of it still refuses. The framing
+# verb must not itself be negated ("not resolved, ").
+RESOLUTION_VERB = re.compile(
+    r"\b(?:resolved|fixed|addressed|handled|closed|done)\b[^.;\n]{0,16}$",
     re.IGNORECASE,
 )
-REFUTES_NEGATION = re.compile(
-    REFUTATION_CUE.pattern + r"[^.;\n]*$",
+NEGATED_RESOLUTION = re.compile(
+    r"\b(?:not|never|isn't|is[ \t]+not|wasn't|was[ \t]+not)\b[^.;\n]{0,20}$",
     re.IGNORECASE,
 )
 # A refutation after the phrase counts only when the remainder starts with a
@@ -220,13 +218,30 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def in_resolution_position(before: str) -> bool:
+    """Whether the phrase sits in an affirmative resolution position.
+
+    #14355: the phrase starts its sentence, or a short resolution framing
+    immediately precedes it. Anything else is not resolved work, so an
+    unlisted refutation ahead of the phrase still refuses.
+    """
+    if not before.strip():
+        return True
+    if re.search(r"[.!;:]\s*$", before):
+        return True
+    match = RESOLUTION_VERB.search(before)
+    if match is None:
+        return False
+    return not NEGATED_RESOLUTION.search(before[: match.start()])
+
+
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
-    #14355: the phrase is stripped only when it ends a sentence, no preceding
-    cue refutes it, and the remainder of the line carries no refutation cue.
-    A refuted or followed-by-blocker phrase stays in place, so the blocker scan
-    still refuses it.
+    #14355: the phrase is stripped only when it ends a sentence, sits in an
+    affirmative resolution position, and the remainder of the line carries no
+    refutation cue. A refuted or followed-by-blocker phrase stays in place, so
+    the blocker scan still refuses it.
     """
 
     def replace(match: re.Match[str]) -> str:
@@ -234,7 +249,7 @@ def strip_negated_change(line: str) -> str:
         after = line[match.end() :]
         if (
             NEGATED_CHANGE_TAIL.match(after)
-            and not REFUTES_NEGATION.search(before)
+            and in_resolution_position(before)
             and not REFUTATION_AFTER.search(after)
         ):
             return " "
@@ -563,6 +578,22 @@ def self_test() -> None:
             "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
             True,
         ),
+        # #14355: an unlisted refutation ahead of the phrase is not resolved work.
+        ("REVIEW_READY\nIt's not accurate that no changes are needed.", False),
+        ("REVIEW_READY\nIt's not correct that no changes are needed.", False),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            False,
+        ),
+        ("REVIEW_READY\nI disagree that no changes are needed.", False),
+        ("REVIEW_READY\nI don't believe no changes are needed.", False),
+        ("REVIEW_READY\nI doubt no changes are needed.", False),
+        # Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            True,
+        ),
+        ("REVIEW_READY\nNo code change needed. Gemini isn't available.", True),
         # #14355: a refuted phrase is not resolved work.
         ("REVIEW_READY\nIt is not true that no changes are needed.", False),
         ("REVIEW_READY\nIt is false that no change is needed.", False),
