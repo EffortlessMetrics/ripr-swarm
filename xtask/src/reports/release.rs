@@ -242,7 +242,7 @@ fn package_upload_size_check_in(
     rehearsed: bool,
 ) -> ReleaseReadinessCheck {
     let id = "package-upload-size";
-    let command = "cargo xtask publish-dry-run && ls -l target/package/*.crate";
+    let command = "cargo xtask publish-dry-run";
     if !rehearsed {
         return readiness_check(
             id,
