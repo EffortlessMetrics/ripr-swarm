@@ -104,7 +104,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | --- | --- | --- |
 | `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
 | `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
-| `analysis.production_like_targets` | array of string | Cargo targets treated as production-like. |
+| `analysis.production_like_targets` | array of string | Repository-relative source file paths treated as production-like test infrastructure. |
 | `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. Every field is required; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`. |
 | `analysis.test_harnesses[].registration_id` | string |  |
 | `analysis.test_harnesses[].target` | string | Repository-relative path. |
@@ -143,7 +143,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
 | `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
 | `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
-| `profiles.bun_ub.test_roots` | array of string, required in `[profiles.bun_ub]` | Test-root globs. |
+| `profiles.bun_ub.test_roots` | non-empty array of unique strings, required in `[profiles.bun_ub]` | Test-root globs. |
 | `profiles.bun_ub.bridge_hints` | string, required in `[profiles.bun_ub]` | Repository-relative bridge hints file. |
 | `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
 | `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
@@ -1222,8 +1222,10 @@ oracles.snapshot_strength = "weak"
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
-and LSP Finding diagnostics. Valid values are `info`, `warning`, and `note`.
-Use suppressions for accepted debt; Finding severities cannot be `off`.
+SARIF finding result levels, the `severity` field of `ripr context` packets,
+`missed-txt` output, and LSP Finding diagnostics. Valid values are `info`,
+`warning`, and `note`. Use suppressions for accepted debt; Finding severities
+cannot be `off`.
 
 | Key | Default |
 | --- | --- |
@@ -1428,9 +1430,10 @@ enabled = ["rust", "typescript", "python"]
 ### `[profiles.bun_ub]`
 
 The Bun UB profile is an opt-in advisory profile for Bun stable-byte review.
-It records where TypeScript-family integration tests and Bun bridge hints live
-so operators can run the calibrated Blob / ArrayBuffer cross-language preview
-without changing Rust defaults.
+It records where TypeScript-family integration tests and Bun bridge hints live,
+for operators running the calibrated Blob / ArrayBuffer cross-language preview.
+Only `ripr doctor` reads it today: analysis does not consult these values, and
+the Bun bridge preview uses its own built-in test paths and bridge profile.
 
 ```toml
 [languages]
@@ -1446,8 +1449,8 @@ bridge_hints = "ripr.bun.bridge.toml"
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Names the TypeScript-family Bun integration tests to inspect. JavaScript test files are covered by the `typescript` adapter. |
-| `bridge_hints` | repo-relative path | none; required when the profile is present | Points to the opt-in Bun TS-to-Rust bridge-hint file. |
+| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Records the TypeScript-family Bun integration test globs; `ripr doctor` reports them. Analysis does not read this list. JavaScript test files are covered by the `typescript` adapter. |
+| `bridge_hints` | repo-relative path | none; required when the profile is present | Records the opt-in Bun TS-to-Rust bridge-hint file path; `ripr doctor` reports it. Analysis does not load this file. |
 
 This profile is read-only configuration. It does not enable TypeScript by
 itself, run `tsc`, start `tsserver`, execute Bun/Jest/Vitest, generate tests,
