@@ -9830,8 +9830,7 @@ fn check_ignore_flip_shim(allowed: u32) -> Result<(PathBuf, String), Box<dyn std
 
 #[cfg(all(unix, feature = "lang-typescript"))]
 #[test]
-fn gap_prewrite_refusal_preserves_a_foreign_writer()
--> Result<(), Box<dyn std::error::Error>> {
+fn gap_prewrite_refusal_preserves_a_foreign_writer() -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
     let real_git = String::from_utf8(run_command("sh", None, &["-c", "command -v git"])?.stdout)?;
     for prior_exists in [false, true] {
