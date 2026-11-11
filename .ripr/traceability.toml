@@ -11102,6 +11102,7 @@ tests = [
   "crates/ripr/src/output/human/agent_tests.rs::a_direct_owner_caller_is_named_ahead_of_a_same_file_neighbor",
   "crates/ripr/src/output/human/agent_tests.rs::rows_without_a_recorded_relation_still_pick_the_stronger_oracle",
   "crates/ripr/src/output/human/agent_tests.rs::a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller",
+  "crates/ripr/src/output/human/agent_tests.rs::identical_gap_rows_fold_into_one_and_any_difference_keeps_both",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command",
   "crates/ripr/tests/check_dead_end_routes.rs::async_gap_with_no_route_says_to_write_the_test_by_hand",

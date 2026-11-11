@@ -992,6 +992,61 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
     );
 }
 
+/// #14338: an `error_path` and a `return_value` probe on one changed line
+/// with the same class, expression, missing value, test and stages print as
+/// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any
+/// printed difference keeps both rows (fail closed), and the folded finding
+/// is never re-listed under `limits=` nor dropped from `verify=`.
+#[test]
+fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
+    let mut error_path = weak_gap("probe:error_path:a", 12);
+    error_path.probe.family = ProbeFamily::ErrorPath;
+    let mut return_value = weak_gap("probe:return_value:b", 12);
+    return_value.probe.family = ProbeFamily::ReturnValue;
+    let text = rendered(&output(vec![error_path.clone(), return_value.clone()]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        1,
+        "identical rows fold: {text}"
+    );
+    assert!(
+        text.contains(" findings=2 gaps=1 folded_gaps=1 "),
+        "header counts the row and the folded finding: {text}"
+    );
+    assert!(
+        text.contains("|id=probe:error_path:a\n"),
+        "the first finding in triage order keeps the row: {text}"
+    );
+    assert!(
+        !text.contains("limits="),
+        "a folded gap is still a gap, not a limit: {text}"
+    );
+    assert!(
+        text.contains("verify=refused|outcome=") && text.contains("|findings=2|exposed=0|"),
+        "verification still counts every finding: {text}"
+    );
+
+    // Same line, but a different missing value: two tests to write.
+    let mut other_missing = return_value.clone();
+    other_missing.activation.missing_discriminators[0].value = "pct == 49".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+    assert!(text.contains(" gaps=2 "), "{text}");
+    assert!(!text.contains("folded_gaps="), "{text}");
+
+    // Same row text on another line is a different edit.
+    let mut other_line = return_value.clone();
+    other_line.probe.location = SourceLocation::new("src/lib.rs", 13, 1);
+    let text = rendered(&output(vec![error_path.clone(), other_line]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Same row, different stage evidence: the stages row differs.
+    let mut other_stage = return_value;
+    other_stage.ripr.propagate = StageEvidence::new(StageState::Unknown, Confidence::Low, "p");
+    let text = rendered(&output(vec![error_path, other_stage]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+}
+
 #[test]
 fn rendering_is_deterministic_and_smaller_than_the_full_human_report() {
     let out = output(vec![weak_gap("probe:a", 2), weak_gap("probe:b", 5)]);
