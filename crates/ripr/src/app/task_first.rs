@@ -337,7 +337,45 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
+    // #14084: the before phase selects its seam through the agent brief, which
+    // withholds a gap-class seam whose evidence is unknown or opaque at a
+    // stage. The route readiness above does not read every stage, so without
+    // this the picker and `ripr check` offered a start the before phase then
+    // refused. The brief's own predicate decides; this only words it.
+    if super::agent_brief::agent_brief_withholds(entry, policy) {
+        return Some((RefusalKind::Other, evidence_limited_reason(entry)));
+    }
     proposal_start_refusal(entry, &eligibility.readiness)
+}
+
+/// The refusal for a gap-class seam the agent brief withholds because one of
+/// its evidence stages is unknown or opaque (#14084). It names the first such
+/// stage in plain words; wording only, the brief owns the decision.
+fn evidence_limited_reason(entry: &crate::analysis::ClassifiedSeam) -> String {
+    use crate::domain::StageState;
+    let evidence = &entry.evidence;
+    let unclear = [
+        (&evidence.reach, "whether a test runs this code"),
+        (
+            &evidence.activate,
+            "which test input makes this change take effect",
+        ),
+        (
+            &evidence.propagate,
+            "whether the changed value reaches a result a test can check",
+        ),
+        (&evidence.observe, "whether a test reads the changed result"),
+        (
+            &evidence.discriminate,
+            "whether an existing assertion would notice the change",
+        ),
+    ]
+    .into_iter()
+    .find(|(stage, _)| matches!(stage.state, StageState::Unknown | StageState::Opaque))
+    .map_or("what a test would have to check here", |(_, what)| what);
+    format!(
+        "ripr does not start an automatic repair here because it cannot tell from reading the code {unclear}; write the test by hand"
+    )
 }
 
 /// #12867 / #13203 A0: the start publishes an attempt and then renders the
@@ -5358,6 +5396,54 @@ pub(crate) mod tests {
             refused.reason
         );
         Ok(())
+    }
+
+    /// #14084: the gate words the first unknown or opaque stage of a seam the
+    /// agent brief withholds, and the brief's predicate (not this wording)
+    /// makes the decision.
+    #[test]
+    fn evidence_limited_reason_names_the_first_unclear_stage() {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let unclear = |state| StageEvidence::new(state, Confidence::Low, "test stage");
+
+        let clear = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        assert!(!crate::app::agent_brief::agent_brief_withholds(
+            &clear, policy
+        ));
+
+        let mut propagate = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        propagate.evidence.propagate = unclear(StageState::Unknown);
+        assert!(crate::app::agent_brief::agent_brief_withholds(
+            &propagate, policy
+        ));
+        assert_eq!(
+            evidence_limited_reason(&propagate),
+            "ripr does not start an automatic repair here because it cannot tell from reading the code whether the changed value reaches a result a test can check; write the test by hand"
+        );
+
+        // The earliest unclear stage is the one named.
+        let mut observe = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        observe.evidence.observe = unclear(StageState::Opaque);
+        observe.evidence.discriminate = unclear(StageState::Unknown);
+        assert!(
+            evidence_limited_reason(&observe).contains(
+                "it cannot tell from reading the code whether a test reads the changed result;"
+            ),
+            "{}",
+            evidence_limited_reason(&observe)
+        );
     }
 
     /// An opaque seam is still refused (class and eligibility unchanged), but

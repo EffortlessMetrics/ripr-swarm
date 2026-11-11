@@ -1054,6 +1054,13 @@ fn grouped_omission_warnings(
         .collect()
 }
 
+/// Whether the brief withholds this seam, and with it the before phase that
+/// selects through the brief (#14084). The repair start gate asks this so no
+/// surface offers a start the before phase refuses.
+pub(crate) fn agent_brief_withholds(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> bool {
+    AgentBriefOmission::for_entry(entry, policy).is_some()
+}
+
 fn agent_brief_omission_reason(
     entry: &ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
