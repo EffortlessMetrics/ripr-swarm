@@ -123,6 +123,10 @@ fn exception_policy_json(report: &ExceptionPolicyReport) -> Value {
     })
 }
 
+/// Shown when a visible-only report reads `advisory` with nothing recorded:
+/// the status token then describes the mode, not this run's findings (#7445).
+pub(super) const VISIBLE_ONLY_POSTURE_NOTE: &str = "Visible-only mode never blocks on findings, so a completed run reads `advisory` whatever it found. This run recorded no advisory, suppressed, acknowledged or blocking candidates and no warnings, so the status reflects the mode, not a finding. For an enforcing `pass` or `blocked` result, pass `--mode acknowledgeable`, `--mode baseline-check` or `--mode calibrated-gate`.";
+
 pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> String {
     let mut out = String::new();
     out.push_str("# RIPR Gate Decision\n\n");
@@ -132,6 +136,10 @@ pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> Stri
     out.push_str(&format!("Blocking: {}\n", report.summary.blocking));
     out.push_str(&format!("Acknowledged: {}\n", report.summary.acknowledged));
     out.push_str(&format!("Advisory: {}\n\n", report.summary.advisory));
+    if super::advisory_from_visible_only_posture_alone(report) {
+        out.push_str(VISIBLE_ONLY_POSTURE_NOTE);
+        out.push_str("\n\n");
+    }
 
     push_decision_section(&mut out, "Blocking", &report.decisions, "blocking");
     push_decision_section(&mut out, "Acknowledged", &report.decisions, "acknowledged");

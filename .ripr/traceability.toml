@@ -2444,6 +2444,8 @@ tests = [
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_missing_input_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_config_error_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning",
+  "crates/ripr/tests/gate_visible_only_warning.rs::clean_visible_only_report_stays_advisory_and_markdown_discloses_mode_posture",
+  "crates/ripr/tests/gate_visible_only_warning.rs::posture_note_is_withheld_for_enforcing_pass_and_for_recorded_findings",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
