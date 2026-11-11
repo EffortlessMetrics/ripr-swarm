@@ -285,9 +285,24 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     // `target/` path there names a file the downloaded archive lacks.
     let workspace_paths = summary
         .lines()
-        .filter(|line| line.contains("artifact") && line.contains("`target/"))
+        .filter(|line| line.to_lowercase().contains("artifact") && line.contains("`target/"))
         .collect::<Vec<_>>();
     assert!(workspace_paths.is_empty(), "{workspace_paths:#?}");
+    // Each file a line places in the `ripr-reports` artifact is named by its
+    // path there (`ripr/...` or `ci/...`), never a bare or workspace name.
+    let misnamed = summary
+        .lines()
+        .filter(|line| line.contains("the `ripr-reports` artifact"))
+        .flat_map(|line| line.split('`').skip(1).step_by(2))
+        .filter(|name| *name != "ripr-reports")
+        .filter(|name| !(name.starts_with("ripr/") || name.starts_with("ci/")))
+        .collect::<Vec<_>>();
+    assert!(misnamed.is_empty(), "{misnamed:#?}");
+    assert!(
+        summary.contains("- Pilot reports: `ripr/pilot/`")
+            && summary.contains("- CI labels and plan inputs: `ci/`"),
+        "{summary}"
+    );
     assert!(
         !summary.contains("<details><summary>Full report: "),
         "{summary}"

@@ -571,7 +571,7 @@ impl Summary {
         );
         self.status_row(&next, &format!("- Safe next action command: `{next}`"));
         self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
-        self.line("- Artifacts: `start-here.json`, `start-here.md` in the `ripr-reports` artifact");
+        self.line("- Artifacts: `ripr/reports/start-here.json`, `ripr/reports/start-here.md` in the `ripr-reports` artifact");
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
             self.blank();
