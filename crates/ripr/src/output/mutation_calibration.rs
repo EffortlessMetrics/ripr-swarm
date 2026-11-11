@@ -3963,13 +3963,13 @@ mod tests {
         assert_eq!(matched[0], "seam-a");
 
         // Unmatched table: pipes stay in their cell, HTML shows as text.
-        let unmatched = row_with("src/absent.rs:7")?;
+        let unmatched = row_with(command)?;
         assert_eq!(
             unmatched.len(),
             5,
             "unmatched row keeps five cells: {unmatched:?}"
         );
-        assert_eq!(unmatched[4], command);
+        assert_eq!(unmatched[0], "src/absent.rs:7");
         // The mention is shown but broken by a word joiner, so nobody is notified.
         assert_eq!(
             unmatched[1],
