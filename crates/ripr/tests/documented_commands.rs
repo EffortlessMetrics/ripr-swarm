@@ -376,7 +376,8 @@ fn documented_invocations_resolve_against_the_command_catalog() -> Result<(), St
     }
     assert!(
         tally.problems.is_empty(),
-        "documented commands the binary does not accept:\n{}",
+        "documented commands the binary does not accept (fix the doc, or list a \
+         span that is not an invocation in NOT_AN_INVOCATION):\n{}",
         tally.problems.join("\n")
     );
     // Guard against a vacuous pass: the scan must actually find and check
