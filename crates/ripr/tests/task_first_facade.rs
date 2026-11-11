@@ -3072,7 +3072,9 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
     ] {
         assert!(
             stderr.lines().any(|line| line
-                == format!("ripr: wrote {expected_display}/target/ripr/workflow/{file}")),
+                == format!(
+                    "ripr: wrote {expected_display}/target/ripr/repair-preparations/{id}/{file}"
+                )),
             "missing literal artifact path for {file}: {stderr}"
         );
     }

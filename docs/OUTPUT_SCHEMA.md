@@ -4903,14 +4903,15 @@ For a TypeScript or Python finding whose repair packet is complete,
 before` as the start line (RIPR-SPEC-0311, #9103; Python #10373). The command
 re-runs the diff-scoped check against `--base`, requires the same shared packet validator to accept the finding, and
 otherwise refuses with "the repair packet is not ready" and writes nothing.
-A refused start restores the shared workflow artifacts to the bytes they had
-before the invocation (removing only files it created). On
+A refused start preserves shared workflow inputs by preparing exclusively in
+`target/ripr/repair-preparations/<attempt-id>`. Failed preparation is retained
+for inspection rather than restored or deleted by pathname (#13452). On
 acceptance it writes `before.check-findings.json` (a `check-findings-json`
 artifact) and `gap-repair-packet.json` under the attempt's artifacts and a
 repair-attempt manifest whose `seam_id` is the canonical gap id and which
 carries one additive member, `gap_binding: { "base": "<base>",
 "base_commit": "<full commit>" }` (the spelling and the commit it resolved to).
-Seam attempts omit `gap_binding`, so their bytes are unchanged. The packet names
+Seam attempts continue to omit `gap_binding`. The packet names
 the gap as its `seam_id`; edits are caged to the packet's test file. The
 persisted `next_command` is the ordinary `--attempt <id> --phase after`.
 `agent repair --phase after` for a gap attempt re-runs the same producer against
@@ -17693,8 +17694,8 @@ Field contract:
   after phase consumes), `next_command` (the exact `ripr agent repair …
   --phase after` command to run after the focused test edit, including
   the authorization placeholder suffix for trust-bound attempts), and
-  `packet_path` (the root-resolved workflow packet path the document was
-  rendered from, ending in `target/ripr/workflow/agent-packet.json`).
+  `packet_path` (the root-resolved retained packet path recorded by the
+  attempt manifest, under that attempt's `artifacts/` directory).
   `baseline_ambiguous` is an additive member present only when `true`
   (#7204): the captured edit-cage baseline recorded `ambiguous: true`, so
   the after phase can refuse the attempt as `Incomparable` with an empty
@@ -21490,7 +21491,8 @@ Field contract:
 
 `ripr agent repair --phase prepare` retains a schema-`0.1`
 `python_repair_driver_binding` record (RIPR-SPEC-0176) under the attempt and
-projects it to `target/ripr/workflow/python-repair-trust-binding.json`.
+prepares it exclusively as `python-repair-trust-binding.json` beside that
+attempt's before snapshot, without replacing a shared workflow record.
 `--phase after` writes a separate
 `target/ripr/workflow/python-repair-driver-after.json` with the **same kind and
 schema version**, `phase: "apply"`, and an `apply` block: `patch_sha256`,

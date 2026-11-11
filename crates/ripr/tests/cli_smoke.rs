@@ -3,6 +3,10 @@
     reason = "CLI smoke test: unwrap on Command::output() and CARGO_MANIFEST_DIR's parent chain is the canonical fail-fast pattern for binary integration tests; receipted via policy/no-panic-allowlist.toml entries for crates/ripr/tests/cli_smoke.rs."
 )]
 
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/repair_workflow_ownership.rs"]
+mod repair_workflow_ownership;
+
 use sha2::{Digest, Sha256};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -9386,7 +9390,9 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     assert!(
         continuation["packet_path"]
             .as_str()
-            .is_some_and(|path| path.ends_with("target/ripr/workflow/agent-packet.json")),
+            .is_some_and(|path| path.ends_with(&format!(
+                "target/ripr/repair-attempts/{attempt_id}/artifacts/agent-packet.json"
+            ))),
         "continuation must name the packet path: {continuation}"
     );
     let before_stderr = String::from_utf8_lossy(&before.stderr);
@@ -9404,14 +9410,21 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "before phase must not re-issue the snapshot it already took:\n{before_stderr}"
     );
 
-    let before_snapshot = root.join("target/ripr/workflow/before.repo-exposure.json");
+    let before_snapshot = root.join(format!(
+        "target/ripr/repair-attempts/{attempt_id}/artifacts/before.repo-exposure.json"
+    ));
     assert!(before_snapshot.is_file());
-    let packet_path = root.join("target/ripr/workflow/agent-packet.json");
+    let packet_path = root.join(
+        continuation["packet_path"]
+            .as_str()
+            .ok_or("missing packet path")?,
+    );
     let packet: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&packet_path)?)?;
     assert_eq!(packet["packets_total"], 1);
     assert_eq!(packet["packets"][0]["seam_id"], "67fc764ba37d77bd");
 
     let after_snapshot = root.join("target/ripr/workflow/after.repo-exposure.json");
+    std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
     let stale_after = serde_json::json!({
         "stale_marker": "previous repair run",
         "source": std::fs::read_to_string(&before_snapshot)?,
@@ -9884,10 +9897,9 @@ fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
     Ok(())
 }
 
-/// #13452: the attempt-publication recheck runs after the shared workflow
-/// files were written, so a flip at that boundary is an operational failure
-/// that says the shared files may have changed, not a clean `not_started`
-/// refusal. The shim lets the early admission and the pre-write recheck pass
+/// #13452: the attempt-publication recheck runs after private preparation.
+/// Its operational failure names retained preparation without claiming shared
+/// files were replaced or returning a clean `not_started` refusal. The shim lets the early admission and the pre-write recheck pass
 /// and flips the third `check-ignore`.
 #[cfg(unix)]
 #[test]
@@ -9914,7 +9926,7 @@ fn agent_repair_late_ignore_flip_after_shared_writes_is_an_operational_failure()
         );
     }
     if stderr.contains("disposition=not_started")
-        || !stderr.contains("may already have been rewritten")
+        || !stderr.contains("preparation was retained and shared workflow inputs were not replaced")
     {
         return Err(
             format!("late flip must not claim a clean not-started refusal: {stderr}").into(),
@@ -10176,13 +10188,20 @@ fn agent_repair_default_stdout_is_a_summary_naming_root_resolved_files()
     assert_success(&before);
     let stdout = String::from_utf8_lossy(&before.stdout);
     assert!(!stdout.trim_start().starts_with('{'), "{stdout}");
-    let packet = root.join("target/ripr/workflow/agent-packet.json");
+    let (attempt_id, manifest) = sole_repair_attempt(&root)?;
+    let relative_packet = manifest["artifacts"]
+        .as_array()
+        .ok_or("missing artifacts")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_packet")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("missing retained packet")?;
+    let packet = root.join(relative_packet);
     assert!(
         stdout.contains(&printed_path(&packet)),
         "before summary must name the root-resolved packet:\n{stdout}"
     );
     assert!(stdout.contains("Next, after the test edit: "), "{stdout}");
-    let (attempt_id, _) = sole_repair_attempt(&root)?;
 
     add_boundary_test(&root)?;
     let after = run_command(
@@ -10416,7 +10435,9 @@ fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dy
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(stderr.contains("ripr:   before.err ("), "{stderr}");
     assert!(
-        stderr.contains("target/ripr/workflow/agent-packet.json"),
+        stderr.contains(&format!(
+            "target/ripr/repair-attempts/{attempt_id}/artifacts/agent-packet.json"
+        )),
         "{stderr}"
     );
     assert!(
@@ -36183,8 +36204,10 @@ fn agent_repair_after_cage_violation_prints_failure_envelope_and_withdraws_share
         "a refused after phase must not leave a fresh analysis outcome as a current loop artifact"
     );
     assert!(
-        root.join("target/ripr/workflow/before.repo-exposure.json")
-            .exists(),
+        root.join(format!(
+            "target/ripr/repair-attempts/{attempt_id}/artifacts/before.repo-exposure.json"
+        ))
+        .exists(),
         "the before phase's own artifact stays"
     );
     std::fs::remove_dir_all(root)?;

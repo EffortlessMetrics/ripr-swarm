@@ -17,6 +17,10 @@
 
 #![cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 
+#[cfg(all(unix, feature = "lang-typescript"))]
+#[path = "installed_python_typescript_journeys/repair_workflow_ownership.rs"]
+mod repair_workflow_ownership;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,7 +123,9 @@ fn ripr_output_env(
     args: &[&str],
     env: &[(&str, std::ffi::OsString)],
 ) -> Result<std::process::Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let binary = std::env::var("RIPR_13452_SUBJECT_BINARY")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_ripr").to_string());
+    Command::new(binary)
         .current_dir(launch)
         .args(args)
         .envs(env.iter().map(|(key, value)| (*key, value)))
@@ -1917,13 +1923,14 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     }
     no_leftovers("dirty production start", &dirty)?;
 
-    // A ready gap whose publication fails (the edit-cage baseline path is a
-    // directory) removes the snapshots it wrote.
-    let baseline_path = workflow_dir.join("attempt-baseline.json");
-    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    // An occupied preparation root refuses without changing shared files.
+    // Mid-preparation partial failure is exercised by repair_workflow_ownership.
+    let preparation_root = root.join("target/ripr/repair-preparations");
+    std::fs::create_dir_all(&workflow_dir).map_err(|error| error.to_string())?;
+    std::fs::write(&preparation_root, b"occupied").map_err(|error| error.to_string())?;
     let (blocked_ok, blocked) = ripr(&decoy, &gap_start_args)?;
-    std::fs::remove_dir_all(&baseline_path)
-        .map_err(|error| format!("unblock baseline: {error}"))?;
+    std::fs::remove_file(&preparation_root)
+        .map_err(|error| format!("unblock preparation: {error}"))?;
     expect_exit(blocked_ok, false, "blocked publication")?;
     no_leftovers("failed publication", &blocked)?;
 
@@ -1983,13 +1990,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
     need(&dirty, "Uncommitted:", "dirty premise")?;
     sentinels_intact("dirty premise refusal", &all_names)?;
-    // Accepted gap whose publication fails after the snapshot and packet were
-    // rewritten: their prior bytes return.
-    std::fs::remove_file(&baseline_path).map_err(|error| format!("clear baseline: {error}"))?;
-    std::fs::create_dir_all(&baseline_path).map_err(|error| format!("block baseline: {error}"))?;
+    // A reservation failure also preserves pre-existing shared inputs.
+    std::fs::write(&preparation_root, b"occupied").map_err(|error| error.to_string())?;
     let (failed_ok, failed) = ripr(&decoy, &gap_start_args)?;
-    std::fs::remove_dir_all(&baseline_path)
-        .map_err(|error| format!("unblock baseline: {error}"))?;
+    std::fs::remove_file(&preparation_root)
+        .map_err(|error| format!("unblock preparation: {error}"))?;
     expect_exit(failed_ok, false, "blocked publication with sentinels")?;
     sentinels_intact(
         "partial publication failure",
@@ -2089,20 +2094,23 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     if !roles.contains(&"before_check_findings") || !roles.contains(&"edit_cage_baseline") {
         return Err(format!("unexpected artifact roles {roles:?}"));
     }
-    // The retained before snapshot is the check-findings producer's artifact.
-    let snapshot = std::fs::read_to_string(
-        root.join("target")
-            .join("ripr")
-            .join("workflow")
-            .join("before.check-findings.json"),
-    )
-    .map_err(|error| format!("before snapshot: {error}"))?;
+    let retained_path = |role: &str| -> Result<PathBuf, String> {
+        let path = manifest["artifacts"]
+            .as_array()
+            .ok_or("artifacts missing")?
+            .iter()
+            .find(|artifact| artifact["role"] == role)
+            .and_then(|artifact| artifact["path"].as_str())
+            .ok_or("retained role missing")?;
+        Ok(root.join(path))
+    };
+    let accepted_snapshot_path = retained_path("before_check_findings")?;
+    let accepted_baseline_path = retained_path("edit_cage_baseline")?;
+    let snapshot =
+        std::fs::read_to_string(&accepted_snapshot_path).map_err(|error| error.to_string())?;
     need(&snapshot, "\"kind\":\"check_findings\"", "snapshot kind")?;
     need(&snapshot, &gap, "snapshot carries the gap")?;
-    // A later refused start (unknown gap) leaves the accepted start's shared
-    // snapshot and baseline byte-identical.
-    let accepted_snapshot_path = workflow_dir.join("before.check-findings.json");
-    let accepted_baseline_path = workflow_dir.join("attempt-baseline.json");
+    // A refused later start preserves the manifest-bound accepted inputs.
     let accepted_baseline = std::fs::read(&accepted_baseline_path)
         .map_err(|error| format!("accepted baseline: {error}"))?;
     let (late_ok, _) = ripr(
@@ -3383,9 +3391,10 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let baseline = attempt
-            .root
-            .join("target/ripr/workflow/attempt-baseline.json");
+        let baseline = attempt.root.join(format!(
+            "target/ripr/repair-preparations/{}/attempt-baseline.json",
+            attempt.attempt_id
+        ));
         std::fs::set_permissions(&baseline, std::fs::Permissions::from_mode(0o751))
             .map_err(|error| format!("make baseline executable: {error}"))?;
     }
@@ -4475,12 +4484,16 @@ fn gap_bound_status_stays_current_after_vitest_cache_written_post_receipt() -> R
 #[test]
 fn gap_bound_cage_refusal_names_its_own_packet() -> Result<(), String> {
     let attempt = GapAttempt::start("ts-cage-packet-hint")?;
-    if !attempt
-        .root
-        .join("target/ripr/workflow/gap-repair-packet.json")
-        .is_file()
-    {
-        return Err("before phase did not write its gap packet".to_string());
+    let manifest = attempt.manifest_for_only_attempt()?;
+    let packet = manifest["artifacts"]
+        .as_array()
+        .ok_or("missing artifacts")?
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_packet")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("missing retained packet")?;
+    if !attempt.root.join(packet).is_file() {
+        return Err("before phase did not retain its packet".to_string());
     }
     attempt.commit_closing_test()?;
     std::fs::write(attempt.root.join("before.err"), "redirected output")
@@ -4489,11 +4502,7 @@ fn gap_bound_cage_refusal_names_its_own_packet() -> Result<(), String> {
     let (_, stderr) = text_of(&output);
     expect_exit(output.status.success(), false, "untracked redirect")?;
     need(&stderr, "before.err", "refused redirect")?;
-    need(
-        &stderr,
-        "target/ripr/workflow/gap-repair-packet.json",
-        "gap packet path",
-    )?;
+    need(&stderr, packet, "gap packet path")?;
     if stderr.contains("target/ripr/workflow/agent-packet.json") {
         return Err(format!("gap refusal names the seam packet:\n{stderr}"));
     }

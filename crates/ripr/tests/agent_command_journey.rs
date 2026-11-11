@@ -1190,7 +1190,24 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
     let prepared = run_ripr(&journey.launch_dir, &packet_args)?;
     assert_success(&prepared, "prepare actual rooted repair packet")?;
     let packet = if prepared_repair {
-        read_json(&workflow_artifact(&selected, "agent-packet.json"))?
+        let attempts = std::fs::read_dir(selected.join("target/ripr/repair-attempts"))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        if attempts.len() != 1 {
+            return Err("prepared repair must publish exactly one attempt".to_string());
+        }
+        let manifest = read_json(&attempts[0].path().join("attempt.json"))?;
+        let packet_path = manifest["artifacts"]
+            .as_array()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["role"] == "agent_packet")
+            })
+            .and_then(|artifact| artifact["path"].as_str())
+            .ok_or("missing retained packet")?;
+        read_json(&selected.join(packet_path))?
     } else {
         serde_json::from_slice::<Value>(&prepared.stdout)
             .map_err(|error| format!("parse standalone packet: {error}"))?

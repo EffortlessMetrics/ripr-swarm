@@ -75,10 +75,14 @@ existed with no way to begin the attempt.
    full commit it resolved to; the before snapshot is produced against that
    commit. A start
    refused (including a dirty tracked non-test file, or a publication failure
-   after the workflow artifacts were written) leaves no attempt manifest and
-   restores the shared workflow artifacts to the bytes they had before the
-   invocation: prior files survive byte-identical and only files the
-   invocation created are removed.
+   after preparation was written) leaves no attempt manifest. Before inputs
+   are exclusively created under `target/ripr/repair-preparations/<attempt-id>`;
+   shared workflow inputs are never replaced or rolled back. Failure retains
+   preparation and any manifest-free reservation for inspection, including
+   intervening files. No pathname-based cleanup claims ownership from an
+   earlier identity check. Successful continuations name the manifest-bound
+   retained packet. This does not require other writers to take ripr's lock
+   (#13452).
 5. Status and recovery text for a gap attempt name the gap start and never
    `--seam-id`.
 6. `agent repair --phase after` for a gap-bound attempt writes

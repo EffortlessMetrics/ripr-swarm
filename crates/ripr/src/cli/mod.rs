@@ -99,11 +99,6 @@ impl std::fmt::Display for CommandError {
 
 impl std::error::Error for CommandError {}
 
-use crate::agent::loop_commands::{
-    WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
-    WORKFLOW_MANIFEST_ARTIFACT,
-};
 use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
@@ -301,105 +296,19 @@ fn drive_before_phase_inner(
         .ok_or_else(|| "before-phase repair attempt is missing its seam identity; report this as a ripr bug with the command you ran".to_string())?;
     let identity =
         crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
-    // #9103: remember the shared gap-bound workflow artifacts as this
-    // invocation found them, so a refusal restores exactly that state.
-    let prior_artifacts = options
-        .gap_id
-        .is_some()
-        .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
         Ok(()) => {
             persist_before_repair_attempt(&options, &identity).map_err(BeforePhaseError::from)
         }
         Err(error) => Err(error),
     };
-    let stdout_document = match published {
-        Ok(document) => document,
-        Err(error) => {
-            if let Some(prior) = prior_artifacts
-                && let Err(restore_error) = prior.restore()
-            {
-                // Rollback itself failed: the start did not complete and
-                // prior state may be clobbered, so this is not a clean
-                // refusal — surface both failures as one could-not-complete.
-                let original = match &error {
-                    BeforePhaseError::Refused(message) => message.clone(),
-                    BeforePhaseError::Other(error) => error.message().to_owned(),
-                };
-                return Err(BeforePhaseError::Other(CommandError::Failure(format!(
-                    "{original}; failed to restore prior workflow artifacts: {restore_error}; remove target/ripr/workflow by hand, then rerun the repair command"
-                ))));
-            }
-            return Err(error);
+    let stdout_document = published.inspect_err(|_error| {
+        let preparation = identity.preparation_directory();
+        if preparation.exists() {
+            eprintln!("ripr: preparation retained at {}; no shared before-workflow files were replaced; inspect retained files before manual cleanup", preparation.display());
         }
-    };
+    })?;
     Ok((identity.attempt_id().to_string(), stdout_document))
-}
-
-/// The shared workflow artifacts a gap-bound start may write, as found before
-/// the start (#9103). A refused start restores each to that state: a prior
-/// file keeps its bytes (a refusal before any write touches nothing), and only
-/// a file this invocation created is removed. An earlier gap projection or a
-/// seam workflow baseline therefore survives a stale-gap, not-ready or
-/// dirty-premise refusal and a partial publication failure.
-struct GapWorkflowArtifactBackup {
-    entries: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
-}
-
-impl GapWorkflowArtifactBackup {
-    const ARTIFACTS: [&'static str; 3] = [
-        "target/ripr/workflow/before.check-findings.json",
-        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT,
-        "target/ripr/workflow/attempt-baseline.json",
-    ];
-
-    fn capture(root: &Path) -> Self {
-        let entries = Self::ARTIFACTS
-            .iter()
-            .filter_map(|artifact| {
-                let path = root.join(artifact);
-                match std::fs::read(&path) {
-                    Ok(bytes) => Some((path, Some(bytes))),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        Some((path, None))
-                    }
-                    // Unreadable or not a regular file: not ours to touch.
-                    Err(_) => None,
-                }
-            })
-            .collect();
-        Self { entries }
-    }
-
-    fn restore(self) -> Result<(), String> {
-        // Attempt every entry: a failed restore of one artifact must not
-        // leave the others unrestored, and no failure may pass silently —
-        // the caller promises a refused start leaves prior state intact.
-        let mut failures: Vec<String> = Vec::new();
-        for (path, prior) in self.entries {
-            match prior {
-                Some(bytes) => {
-                    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
-                        && let Err(error) = std::fs::write(&path, bytes)
-                    {
-                        failures.push(format!("restore {} failed: {error}", path.display()));
-                    }
-                }
-                None => match std::fs::remove_file(&path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        failures.push(format!("restore {} failed: {error}", path.display()));
-                    }
-                },
-            }
-        }
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(failures.join("; "))
-        }
-    }
 }
 
 /// Serialize the shared repair projections across before and after phases,
@@ -564,15 +473,16 @@ fn persist_before_repair_attempt(
         .seam_id
         .as_deref()
         .ok_or_else(|| "before-phase repair attempt is missing its seam identity; report this as a ripr bug with the command you ran".to_string())?;
-    let workflow_manifest = root.join(WORKFLOW_MANIFEST_ARTIFACT);
-    let commands_markdown = root.join(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT);
-    let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
-    let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
-    let agent_packet = if options.gap_id.is_some() {
-        root.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT)
+    let preparation = identity.preparation_directory();
+    let workflow_manifest = preparation.join("workflow.json");
+    let commands_markdown = preparation.join("commands.md");
+    let agent_brief = preparation.join("agent-brief.json");
+    let before_snapshot = preparation.join("before.repo-exposure.json");
+    let agent_packet = preparation.join(if options.gap_id.is_some() {
+        crate::app::gap_bound_repair::GAP_BOUND_PACKET_FILE
     } else {
-        root.join(WORKFLOW_AGENT_PACKET_ARTIFACT)
-    };
+        "agent-packet.json"
+    });
     let packet_bytes = crate::bounded_input::read(&agent_packet).map_err(|error| {
         format!(
             "read {} failed: {error}; rerun the before phase to regenerate the packet",
@@ -603,18 +513,15 @@ fn persist_before_repair_attempt(
         } else {
             format!("`{}`", crate::app::task_first::repair_rerun_command(root, seam_id))
         };
-        // #13452: this recheck runs after the before phase already rewrote
-        // shared workflow files, so it can never be the clean "nothing was
-        // started" refusal the early admission gives: the shared files may
-        // already differ from before. Both outcomes are operational failures
-        // that say so.
+        // Preserve the operational failure at this post-preparation boundary.
+        // Shared inputs are now untouched; retained preparation needs inspection.
         let detail = crate::app::task_first::build_output_precondition_detail(error);
         format!(
-            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            "{} No repair attempt was started; preparation was retained and shared workflow inputs were not replaced.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
             detail.trim_end()
         )
     })?;
-    let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
+    let edit_cage_baseline = preparation.join("attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
     // The Python repair-trust binding (#3568, RIPR-SPEC-0176) is verified
@@ -649,15 +556,12 @@ fn persist_before_repair_attempt(
         // the manifest's.
         (Some(_), Some(base)) => Some(gap_binding_from_snapshot(
             base,
-            &root
-                .join("target/ripr/workflow")
-                .join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE),
+            &preparation.join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE),
         )?),
         _ => None,
     };
-    let gap_before_snapshot = root
-        .join("target/ripr/workflow")
-        .join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE);
+    let gap_before_snapshot =
+        preparation.join(crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE);
     let mut sources = if gap_binding.is_some() {
         vec![
             BeforeArtifactSource {
@@ -742,6 +646,21 @@ fn persist_before_repair_attempt(
     // continuation, and the manifest cannot drift apart when the
     // workflow-path capture is replaced between capture and staging.
     let baseline_ambiguous = result.baseline_ambiguous;
+    let retained_packet = result
+        .manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == "agent_packet")
+        .ok_or("published attempt is missing its packet role")?;
+    let agent_packet = root.join(&retained_packet.path);
+    let retained_baseline = result
+        .manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == "edit_cage_baseline")
+        .ok_or("published attempt is missing its baseline role")?;
+    let edit_cage_baseline = root.join(&retained_baseline.path);
+
     // The persist total stops at publication: everything below is success
     // narration and stdout rendering, and a slow stdout reader must not
     // inflate the persistence measurement (#6917).
@@ -821,13 +740,9 @@ fn persist_before_repair_attempt(
             "ripr: repair started. Next: add or strengthen one focused test (leave production code unchanged), then run the command printed below. Editing any file outside that test file fails the attempt."
         );
     }
-    let packet_location = if options.gap_id.is_some() {
-        crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT
-    } else {
-        "target/ripr/workflow/agent-packet.json"
-    };
+    let packet_location = crate::output::path::human_path(&agent_packet);
     if stdout_owns_start {
-        // The stdout summary already names the packet path.
+        // The stdout summary already names the retained packet path.
         eprintln!(
             "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The same applies to the next step."
         );
@@ -920,78 +835,6 @@ mod tests {
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         Ok(root)
-    }
-
-    #[test]
-    fn gap_artifact_backup_restores_prior_bytes_and_removes_only_new_files() -> Result<(), String> {
-        let root = test_root("gap-backup")?;
-        let result = (|| -> Result<(), String> {
-            let workflow = root.join("target/ripr/workflow");
-            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
-            let snapshot = workflow.join("before.check-findings.json");
-            let packet = workflow.join("gap-repair-packet.json");
-            let baseline = workflow.join("attempt-baseline.json");
-            std::fs::write(&snapshot, b"sentinel-snapshot").map_err(|e| e.to_string())?;
-            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
-            let backup = GapWorkflowArtifactBackup::capture(&root);
-            // A failed start overwrote one prior file and created the other.
-            std::fs::write(&snapshot, b"overwritten").map_err(|e| e.to_string())?;
-            std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
-            backup.restore()?;
-            if std::fs::read(&snapshot).map_err(|e| e.to_string())? != b"sentinel-snapshot"
-                || std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline"
-            {
-                return Err("prior artifact bytes were not preserved".to_string());
-            }
-            if packet.exists() {
-                return Err("a file the failed start created was kept".to_string());
-            }
-            Ok(())
-        })();
-        std::fs::remove_dir_all(&root)
-            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
-        result
-    }
-
-    #[test]
-    fn gap_artifact_backup_restore_reports_write_failure_and_still_restores_remaining_entries()
-    -> Result<(), String> {
-        let root = test_root("gap-backup-restore-failure")?;
-        let result = (|| -> Result<(), String> {
-            let workflow = root.join("target/ripr/workflow");
-            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
-            let snapshot = workflow.join("before.check-findings.json");
-            let packet = workflow.join("gap-repair-packet.json");
-            let baseline = workflow.join("attempt-baseline.json");
-            std::fs::write(&snapshot, b"sentinel-snapshot").map_err(|e| e.to_string())?;
-            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
-            let backup = GapWorkflowArtifactBackup::capture(&root);
-            // A failed start overwrote the baseline, created the packet, and
-            // replaced the snapshot file with a directory of the same name,
-            // so restoring the snapshot bytes must fail portably.
-            std::fs::write(&baseline, b"overwritten").map_err(|e| e.to_string())?;
-            std::fs::write(&packet, b"new").map_err(|e| e.to_string())?;
-            std::fs::remove_file(&snapshot).map_err(|e| e.to_string())?;
-            std::fs::create_dir_all(&snapshot).map_err(|e| e.to_string())?;
-            let error = backup
-                .restore()
-                .err()
-                .ok_or_else(|| "restore write failure was discarded".to_string())?;
-            if !error.contains("before.check-findings.json") {
-                return Err(format!("restore error did not name the snapshot: {error}"));
-            }
-            // Collect-all semantics: the other entries were still restored.
-            if std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline" {
-                return Err("baseline was not restored after the snapshot failure".to_string());
-            }
-            if packet.exists() {
-                return Err("packet was not removed after the snapshot failure".to_string());
-            }
-            Ok(())
-        })();
-        std::fs::remove_dir_all(&root)
-            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
-        result
     }
 
     #[test]

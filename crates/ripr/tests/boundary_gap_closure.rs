@@ -501,9 +501,14 @@ fn harness_executes_intended_test_and_printed_repair_agrees_with_status() -> Res
     let after_phase = run_printed_ripr(&candidate, &roots.fixture, &roots.decoy, &printed_after)?;
     require_success("printed ripr continue", &after_phase)?;
 
-    let before_path = roots
-        .fixture
-        .join("target/ripr/workflow/before.repo-exposure.json");
+    let attempt_id = tokens
+        .iter()
+        .position(|token| token == "--attempt")
+        .and_then(|index| tokens.get(index + 1))
+        .ok_or("printed continuation omitted attempt identity")?;
+    let before_path = roots.fixture.join(format!(
+        "target/ripr/repair-attempts/{attempt_id}/artifacts/before.repo-exposure.json"
+    ));
     let after_path = roots
         .fixture
         .join("target/ripr/workflow/after.repo-exposure.json");
