@@ -3,6 +3,7 @@ use crate::agent::loop_commands::{
     display_path,
 };
 use crate::app::agent_status::{self, AgentStatusCommand, AgentStatusReport};
+use crate::output::agent_receipt::AGENT_RECEIPT_STATUS_ADVISORY;
 use serde_json::Value;
 use std::path::Path;
 
@@ -67,7 +68,7 @@ pub(crate) fn reviewer_summary_headline_markdown(
     let target = target_seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("unknown seam");
-    reviewer_summary_headline(status, target, movement, analysis_outcome)
+    reviewer_summary_headline(status, target, movement, analysis_outcome, surfaces)
 }
 
 fn reviewer_summary_headline(
@@ -75,6 +76,7 @@ fn reviewer_summary_headline(
     target: &str,
     movement: &AgentReviewStaticMovement,
     analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    surfaces: &[AgentReviewSurface],
 ) -> String {
     match (movement.state.as_str(), analysis_outcome) {
         (_, None) => format!(
@@ -85,7 +87,34 @@ fn reviewer_summary_headline(
             outcome.kind.as_str()
         ),
         ("missing_artifact", _) => format!("Review packet is incomplete for {target}."),
-        _ => format!("Review packet is {status} for seam {target}."),
+        _ => match non_advisory_receipt_reason(movement, surfaces) {
+            Some(reason) => format!("Review packet is incomplete for {target}: {reason}."),
+            None => format!("Review packet is {status} for seam {target}."),
+        },
+    }
+}
+
+/// Why a receipt that supplied the static movement is not review evidence,
+/// as a fixed phrase. The receipt owner issues `advisory` only over a
+/// complete, valid producer analysis outcome
+/// (`agent_receipt_status_for_outcome`); an `invalid` or `incomplete`
+/// receipt, or one that records no such status, carries a movement that is
+/// not review evidence. The receipt surface carries the receipt's own
+/// `status`, so the summary reads it instead of re-deriving it. The phrase
+/// never echoes file content: an unknown status is reported as unrecognized.
+pub(crate) fn non_advisory_receipt_reason(
+    movement: &AgentReviewStaticMovement,
+    surfaces: &[AgentReviewSurface],
+) -> Option<&'static str> {
+    movement.evidence_artifact.as_ref()?;
+    let receipt = surfaces
+        .iter()
+        .find(|surface| surface.name == "agent_receipt" && surface.state == "present")?;
+    match receipt.status.as_str() {
+        AGENT_RECEIPT_STATUS_ADVISORY => None,
+        "invalid" => Some("the agent receipt status is invalid, not advisory"),
+        "incomplete" => Some("the agent receipt status is incomplete, not advisory"),
+        _ => Some("the agent receipt does not record an advisory status"),
     }
 }
 
@@ -272,6 +301,7 @@ fn review_status(
     if movement.state == "missing_artifact"
         || analysis_outcome.is_none()
         || analysis_outcome.is_some_and(|outcome| !outcome.kind.is_complete())
+        || non_advisory_receipt_reason(movement, surfaces).is_some()
     {
         return "incomplete".to_string();
     }
@@ -300,7 +330,7 @@ fn reviewer_summary(
     let headline = if fresh {
         FRESH_REVIEW_SUMMARY_HEADLINE.to_string()
     } else {
-        reviewer_summary_headline(status, target, movement, analysis_outcome)
+        reviewer_summary_headline(status, target, movement, analysis_outcome, surfaces)
     };
     let what_changed = if fresh {
         FRESH_REVIEW_SUMMARY_HEADLINE.to_string()
@@ -314,6 +344,10 @@ fn reviewer_summary(
     } else if movement.state == "missing_artifact" {
         "No static before/after movement is available because the agent receipt is missing."
             .to_string()
+    } else if let Some(reason) = non_advisory_receipt_reason(movement, surfaces) {
+        format!(
+            "The recorded static movement is not review evidence: {reason}. Reissue the receipt over a complete analysis outcome."
+        )
     } else {
         movement.summary.clone()
     };
