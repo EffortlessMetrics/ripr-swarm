@@ -339,16 +339,19 @@ impl Summary {
     }
 
     /// A failing gate, before the findings (#14081): a blocked or
-    /// misconfigured gate is why the job is red, so it leads. A decision
-    /// document is read as written; without one, only a set mode the gate
-    /// refuses is named. Every other state prints nothing here.
+    /// misconfigured gate is why the job is red, so it leads. A set mode the
+    /// gate refuses comes first, because the gate did not run under it. A
+    /// decision document is read only when it names this run's mode, so a
+    /// report left by an earlier run under another mode is never worded as
+    /// this run's verdict. Every other state prints nothing here.
     fn gate_verdict(&mut self, gate_mode: &str) {
-        let verdict = match fs::read(self.root.join(GATE_JSON)) {
-            Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+        let verdict = gate_verdict::GateVerdict::from_mode(gate_mode).or_else(|| {
+            fs::read(self.root.join(GATE_JSON))
                 .ok()
-                .and_then(|decision| gate_verdict::GateVerdict::from_decision(&decision)),
-            Err(_) => gate_verdict::GateVerdict::from_mode(gate_mode),
-        };
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
+                .and_then(|decision| gate_verdict::GateVerdict::from_decision(&decision))
+        });
         let Some(verdict) = verdict else {
             return;
         };

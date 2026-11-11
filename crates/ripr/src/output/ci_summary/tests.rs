@@ -1816,8 +1816,7 @@ fn an_unknown_gate_mode_is_named_as_the_cause() -> TestResult {
 
 /// Only a failing verdict adds the block. A decision that passes, is
 /// advisory, is acknowledged, carries a status this renderer does not word,
-/// or is unreadable renders the same bytes whatever accepted mode is set, and
-/// a written decision outranks the raw mode.
+/// or is unreadable renders the same bytes whatever accepted mode is set.
 #[test]
 fn a_gate_that_does_not_fail_adds_nothing() -> TestResult {
     let fixture = Fixture::complete("gate-verdict-quiet")?;
@@ -1835,15 +1834,42 @@ fn a_gate_that_does_not_fail_adds_nothing() -> TestResult {
             render_gate_mode(&fixture, "calibrated-gate")?,
             "{status}"
         );
-        // The decision is what was evaluated: a mode value that would be
-        // refused now does not overrule it.
-        assert!(
-            !render_gate_mode(&fixture, "visible_only")?.contains("### RIPR gate"),
-            "{status}"
-        );
     }
     fixture.write("target/ripr/reports/gate-decision.json", "{not json")?;
     let unreadable = render_gate_mode(&fixture, "acknowledgeable")?;
     assert!(!unreadable.contains("### RIPR gate"), "{unreadable}");
+    Ok(())
+}
+
+/// A decision report left by an earlier run is not this run's verdict. The
+/// verdict needs the report to name the mode this run is set to, and a mode
+/// the gate refuses is named first, because the gate did not run under it.
+#[test]
+fn a_decision_from_another_mode_is_not_this_runs_verdict() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-leftover")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 1},
+            "decisions": [{"decision": "blocking", "gate_reason": "no label"}],
+        }),
+    )?;
+    assert!(
+        render_gate_mode(&fixture, "acknowledgeable")?.contains("### RIPR gate: blocked\n"),
+        "the fixture must be a verdict under its own mode"
+    );
+    for mode in ["calibrated-gate", "visible-only", ""] {
+        let summary = render_gate_mode(&fixture, mode)?;
+        assert!(!summary.contains("### RIPR gate"), "{mode:?}: {summary}");
+    }
+    let refused = render_gate_mode(&fixture, "visible_only")?;
+    assert!(
+        refused.contains("### RIPR gate: unknown `RIPR_GATE_MODE`\n"),
+        "{refused}"
+    );
+    assert!(!refused.contains("### RIPR gate: blocked"), "{refused}");
+    assert_eq!(refused.matches("### RIPR gate").count(), 1, "{refused}");
     Ok(())
 }

@@ -31,6 +31,10 @@ pub(crate) enum GateVerdict {
         blocking: u64,
         /// The first blocking decision's reason and place, when listed.
         first: Option<(String, Option<String>)>,
+        /// Blocking exception-policy violations: their count and the first
+        /// one as `kind: detail`. A gate can block on these with no blocking
+        /// gap, so they are the stated cause when no gap blocks.
+        exception: Option<(u64, String)>,
     },
     /// An evaluation that could not complete.
     ConfigError { mode: String, errors: Vec<String> },
@@ -75,10 +79,30 @@ impl GateVerdict {
                     };
                     Some((reason, place))
                 });
+                let violations: Vec<&Value> = decision["exception_policy"]["violations"]
+                    .as_array()
+                    .map(|violations| {
+                        violations
+                            .iter()
+                            .filter(|item| item["blocking"].as_bool() == Some(true))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let exception = violations.first().map(|item| {
+                    (
+                        violations.len() as u64,
+                        format!(
+                            "{}: {}",
+                            item["kind"].as_str().unwrap_or("violation"),
+                            item["detail"].as_str().unwrap_or("no detail recorded")
+                        ),
+                    )
+                });
                 Some(Self::Blocked {
                     mode,
                     blocking,
                     first,
+                    exception,
                 })
             }
             GATE_STATUS_CONFIG_ERROR => {
@@ -117,16 +141,23 @@ impl GateVerdict {
                 mode,
                 blocking,
                 first,
+                exception,
             } => {
                 let mut text = format!(
                     "RIPR gate blocked this pull request under {mode} mode: {}",
-                    gaps(*blocking)
+                    blocked_by(*blocking, exception.as_ref())
                 );
-                if let Some((reason, place)) = first {
-                    text.push_str(&format!("; first: {reason}"));
-                    if let Some(place) = place {
-                        text.push_str(&format!(" [{place}]"));
+                match (first, exception) {
+                    (Some((reason, place)), _) => {
+                        text.push_str(&format!("; first: {reason}"));
+                        if let Some(place) = place {
+                            text.push_str(&format!(" [{place}]"));
+                        }
                     }
+                    (None, Some((_, violation))) if *blocking == 0 => {
+                        text.push_str(&format!("; first: {violation}"));
+                    }
+                    _ => {}
                 }
                 text.push_str(
                     ". See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact.",
@@ -154,15 +185,22 @@ impl GateVerdict {
                 mode,
                 blocking,
                 first,
+                exception,
             } => {
                 let mut lines = vec![
                     "### RIPR gate: blocked".to_string(),
                     format!(
                         "**The RIPR gate blocked this pull request** under {} mode: {}.",
                         code_span(mode),
-                        gaps(*blocking)
+                        blocked_by(*blocking, exception.as_ref())
                     ),
                 ];
+                if let Some((_, violation)) = exception {
+                    lines.push(format!(
+                        "- First blocking exception-policy violation: {}",
+                        code_span(violation)
+                    ));
+                }
                 if let Some((reason, place)) = first {
                     lines.push(match place {
                         Some(place) => format!(
@@ -205,6 +243,24 @@ impl GateVerdict {
                 format!("- Next step: fix the `RIPR_GATE_MODE` repository variable ({VARIABLE_ROUTE}), or unset it to stay advisory, then re-run the job."),
             ],
         }
+    }
+}
+
+/// What blocks: the gaps, the exception-policy violations, or both. With
+/// neither listed the gap count is still stated, so the line never claims a
+/// cause the document does not carry.
+fn blocked_by(blocking: u64, exception: Option<&(u64, String)>) -> String {
+    let violations = |count: u64| {
+        if count == 1 {
+            "1 blocking exception-policy violation".to_string()
+        } else {
+            format!("{count} blocking exception-policy violations")
+        }
+    };
+    match exception {
+        Some((count, _)) if blocking == 0 => violations(*count),
+        Some((count, _)) => format!("{} and {}", gaps(blocking), violations(*count)),
+        None => gaps(blocking),
     }
 }
 
@@ -267,6 +323,7 @@ mod tests {
                     "needs `ripr-waive`".to_string(),
                     Some("src/a.rs:9".to_string())
                 )),
+                exception: None,
             })
         );
         let verdict = verdict.ok_or("no verdict")?;
@@ -301,6 +358,7 @@ mod tests {
                 mode: "calibrated-gate".to_string(),
                 blocking: 1,
                 first: Some(("only".to_string(), Some("src/a.rs".to_string()))),
+                exception: None,
             })
         );
         let counted_only =
@@ -312,6 +370,7 @@ mod tests {
                 mode: "calibrated-gate".to_string(),
                 blocking: 4,
                 first: None,
+                exception: None,
             })
         );
         let verdict = verdict.ok_or("no verdict")?;
@@ -320,6 +379,54 @@ mod tests {
             "RIPR gate blocked this pull request under calibrated-gate mode: 4 blocking gaps. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact."
         );
         assert_eq!(verdict.summary_lines().len(), 3);
+        Ok(())
+    }
+
+    /// A gate can block on an exception-policy violation with no blocking
+    /// gap. The verdict then names the violation, not "0 blocking gaps".
+    #[test]
+    fn an_exception_policy_block_names_the_violation() -> Result<(), String> {
+        let decision = json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 0},
+            "decisions": [{"decision": "advisory", "gate_reason": "not this one"}],
+            "exception_policy": {"violations": [
+                {"kind": "note", "detail": "does not stop the gate", "blocking": false},
+                {"kind": "expired_exception", "detail": "EX-1 expired 2026-01-01", "blocking": true},
+                {"kind": "missing_owner", "detail": "EX-2 has no owner", "blocking": true},
+            ]},
+        });
+        let verdict = GateVerdict::from_decision(&decision).ok_or("no verdict")?;
+        assert_eq!(
+            verdict.annotation(),
+            "RIPR gate blocked this pull request under acknowledgeable mode: 2 blocking exception-policy violations; first: expired_exception: EX-1 expired 2026-01-01. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact."
+        );
+        assert_eq!(
+            verdict.summary_lines(),
+            [
+                "### RIPR gate: blocked",
+                "**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 2 blocking exception-policy violations.",
+                "- First blocking exception-policy violation: `expired_exception: EX-1 expired 2026-01-01`",
+                "- Detail: the `Gate decision` section below, and `gate-decision.md` in the `ripr-reports` artifact.",
+            ]
+        );
+
+        // Gaps and violations together: both are counted, the gap leads.
+        let both = json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 1},
+            "decisions": [{"decision": "blocking", "gate_reason": "no label"}],
+            "exception_policy": {"violations": [
+                {"kind": "expired_exception", "detail": "EX-1 expired", "blocking": true},
+            ]},
+        });
+        let verdict = GateVerdict::from_decision(&both).ok_or("no verdict")?;
+        assert_eq!(
+            verdict.annotation(),
+            "RIPR gate blocked this pull request under acknowledgeable mode: 1 blocking gap and 1 blocking exception-policy violation; first: no label. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact."
+        );
         Ok(())
     }
 

@@ -162,6 +162,23 @@ Gate evaluation may set pass/fail according to its own configured policy. The
 front panel, packet index, and job summary may point to that decision, but they
 do not become authority.
 
+When the configured gate fails the job, the failing step's error annotation and
+the job summary's first block restate that decision so the author does not
+have to open a log group or scroll to find it:
+
+- a `blocked` decision: the mode, the number of blocking gaps or blocking
+  exception-policy violations, and the first blocking reason;
+- a `config_error` decision: the gate's own configuration error;
+- a set `RIPR_GATE_MODE` the gate does not accept: the gate's own refusal and
+  where the variable is edited. The gate is not run under such a value.
+
+The restatement is read from the decision report the gate wrote and is used
+only when that report names the mode the run is set to. A report from another
+mode, an unreadable report, and a decision that does not fail add nothing. The
+annotation falls back to the gate command line and exit code when the report
+does not state the status that exit code means. This is presentation only: it
+never changes the decision or the exit code.
+
 ## Language-Aware Grouping
 
 Rust-only generated CI output remains the default. For a configuration that
