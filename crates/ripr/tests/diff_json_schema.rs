@@ -210,7 +210,7 @@ fn published_diff_schema_rejects_documents_it_forbids() -> Result<(), String> {
             doc["verdict"] = json!("clean")
         }),
         ("unknown seam field", |doc| {
-            doc["changed_seams"][0]["killed"] = json!(true)
+            doc["changed_seams"][0]["runtime_outcome"] = json!(true)
         }),
         ("stale schema_version", |doc| {
             doc["schema_version"] = json!("0.2")
