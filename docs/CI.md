@@ -150,9 +150,10 @@ superseded.
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
-- Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+- Explicit exception: `ub-review` is requested by `full-ci` itself, never by
+  `merge-ready` alone. Its event, concurrency and publication contracts are
+  pinned by `pr_readiness_workflow_contract`. The Python wheel workflow and
+  `source-of-truth` keep their own triggers; their cutover is tracked under #4984.
 
 ### What starts what
 
@@ -163,6 +164,10 @@ superseded.
 | Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
 | Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
 | Any other label | no (posts `Merge-ready Nonrequest`) | no |
+
+The required-check and gated-lane columns here do not include UB's direct
+`full-ci` advisory event, which creates no required check. See the UB notes
+below for its separate publication and concurrency behavior.
 
 The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
 is review state only and starts no required work. Gating the required job by
@@ -463,8 +468,8 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. For the gated lanes in this table, add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; those labels have no effect without it. **UB is the exception:** `full-ci` alone requests UB advisory review, and `merge-ready` alone never requests UB. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `full-ci` | Its own labeled event requests advisory UB review, independently of `merge-ready`. It also selects required, advisory and release-like lanes when `merge-ready` is applied; for Routed Rust Small it must be present then. Demotes `ripr-waive` for this PR. Expected to cost more. Adding it afterward does not rerun those lanes or repeat UB; re-apply `full-ci` for a new head. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -978,11 +983,15 @@ groups and cannot cancel the admitted UB run before their own job is skipped.
 In either case, `cancel-in-progress` applies only within that group and a
 cancelled old run is not review evidence.
 
-`.ub-review.toml` retains `opened`, `synchronize` and `reopened` in
-`gate.post_review_on` and adds `pull_request_other` for the newly admitted
-full-ci review. These are publication permissions, not additional workflow
-triggers. The action pin, sensors, evidence receipts, exact head, artifacts and
-advisory posture are unchanged. Automatic Droid PR review remains retired under
+The full-ci label is an explicit operator review request, so the job selects
+`run-pass: manual`. The pinned action's `pull_request_other` pass is
+artifact-only, while its documented manual operator request bypasses the pass
+publication list. The workflow still requires the same-repository/full-ci job
+guard and exact `pr-head-sha`; `manual` here records that explicit opt-in rather
+than relabeling it as `synchronize`. `.ub-review.toml` retains the original
+`opened`, `synchronize` and `reopened` publication events. The action pin,
+sensors, evidence receipts, exact head, artifacts and advisory posture are
+unchanged. Automatic Droid PR review remains retired under
 #5086; manual `@droid` commands and scheduled security scans retain their
 separate triggers and safeguards.
 

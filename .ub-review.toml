@@ -12,9 +12,10 @@ head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
-# Retain publication for prior admitted passes. A same-repository full-ci
-# request arrives as pull_request_other, so its admitted review is published.
-post_review_on = ["opened", "synchronize", "reopened", "pull_request_other"]
+# Retain publication for the original admitted passes. The workflow's
+# full-ci label is an explicit operator request and selects the action's manual
+# pass, which bypasses this list without relabeling the event as synchronize.
+post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to
 # the PR; suppress pure lane-status boilerplate. Without this, the default

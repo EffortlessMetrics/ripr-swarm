@@ -328,7 +328,7 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
 // a claim that a hosted lifecycle has been observed.
 const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
 const UB_GUARD: &str = "github.event.pull_request.head.repo.full_name == github.repository && github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
-const UB_PUBLICATION_EVENTS: &[&str] = &["opened", "pull_request_other", "reopened", "synchronize"];
+const UB_PUBLICATION_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
 
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
     repo_policy::routed_rust_pull_request_types(source)
@@ -370,15 +370,77 @@ fn models_ub_guard_admission(
     Ok(same_repository && action == "labeled" && label == Some("full-ci"))
 }
 
-/// Return the PR-group suffix for the event model after requiring the actual
-/// label-selective concurrency expression. This is a contract discriminator,
-/// not a claim to have scheduled a hosted workflow run.
-fn models_ub_concurrency_group(source: &str, label: &str, run_id: u64) -> Result<String, String> {
-    if !source.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name == 'full-ci' && 'full-ci' || github.run_id }}\n")
-        || !source.contains("  cancel-in-progress: true\n")
-    {
-        return Err("UB must isolate non-full-ci labels while retaining cancellation".to_owned());
+const UB_CONCURRENCY_SELECTOR: &str = "ub-review-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name == 'full-ci' && 'full-ci' || github.run_id }}";
+
+fn yaml_path<'a>(
+    mapping: &'a serde_yaml_ng::Mapping,
+    path: &[&str],
+) -> Result<&'a serde_yaml_ng::Value, String> {
+    let Some((last, parents)) = path.split_last() else {
+        return Err("YAML field path must not be empty".to_owned());
+    };
+    let mut current = mapping;
+    for key in parents {
+        current = current
+            .get(&serde_yaml_ng::Value::String((*key).to_owned()))
+            .and_then(serde_yaml_ng::Value::as_mapping)
+            .ok_or_else(|| format!("missing YAML mapping at {path:?}"))?;
     }
+    current
+        .get(&serde_yaml_ng::Value::String((*last).to_owned()))
+        .ok_or_else(|| format!("missing YAML field {path:?}"))
+}
+
+/// Read typed concurrency fields from the workflow, rather than accepting a
+/// matching line from another YAML scope or a continued scalar value.
+fn ub_concurrency_fields(source: &str) -> Result<(String, bool), String> {
+    let root: serde_yaml_ng::Mapping =
+        serde_yaml_ng::from_str(source).map_err(|error| format!("parse UB YAML: {error}"))?;
+    let concurrency = yaml_path(&root, &["concurrency"])?
+        .as_mapping()
+        .ok_or_else(|| "UB concurrency must be a mapping".to_owned())?;
+    let group = yaml_path(concurrency, &["group"])?
+        .as_str()
+        .ok_or_else(|| "UB concurrency.group must be a string".to_owned())?;
+    let cancel = yaml_path(concurrency, &["cancel-in-progress"])?
+        .as_bool()
+        .ok_or_else(|| "UB cancel-in-progress must be a boolean".to_owned())?;
+    if group != UB_CONCURRENCY_SELECTOR {
+        return Err(format!("unexpected UB concurrency.group: {group}"));
+    }
+    if !cancel {
+        return Err("UB cancellation must stay enabled per group".to_owned());
+    }
+    Ok((group.to_owned(), cancel))
+}
+
+fn ub_action_run_pass(source: &str) -> Result<String, String> {
+    let root: serde_yaml_ng::Mapping =
+        serde_yaml_ng::from_str(source).map_err(|error| format!("parse UB YAML: {error}"))?;
+    let steps = yaml_path(&root, &["jobs", "ub-review", "steps"])?
+        .as_sequence()
+        .ok_or_else(|| "UB action steps must be a sequence".to_owned())?;
+    let step = steps
+        .iter()
+        .find(|step| {
+            step.get(&serde_yaml_ng::Value::String("uses".to_owned()))
+                .and_then(serde_yaml_ng::Value::as_str)
+                == Some("EffortlessMetrics/ub-review@8d45f2cace407b1b0117cffe30e32bf6267d5182")
+        })
+        .and_then(serde_yaml_ng::Value::as_mapping)
+        .ok_or_else(|| "UB pinned action step must be present".to_owned())?;
+    let run_pass = yaml_path(step, &["with", "run-pass"])?
+        .as_str()
+        .ok_or_else(|| "UB run-pass must select the operator-requested manual pass".to_owned())?;
+    (run_pass == "manual")
+        .then(|| run_pass.to_owned())
+        .ok_or_else(|| format!("unexpected UB run-pass: {run_pass}"))
+}
+
+/// After parsing the group selector, model only the event's selected suffix.
+/// Any wrong, missing or continued actual group value fails before this model.
+fn models_ub_concurrency_group(source: &str, label: &str, run_id: u64) -> Result<String, String> {
+    ub_concurrency_fields(source)?;
     Ok(if label == "full-ci" {
         "full-ci".to_owned()
     } else {
@@ -399,6 +461,9 @@ fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
     }
     if !models_ub_guard_admission(ub, "labeled", Some("full-ci"), true)? {
         return Err("same-repository full-ci must execute the advisory review".to_owned());
+    }
+    if ub_action_run_pass(ub)? != "manual" {
+        return Err("full-ci must select the publication-permitted pass".to_owned());
     }
     Ok(())
 }
@@ -464,7 +529,46 @@ fn unrelated_labels_cannot_cancel_admitted_full_ci() -> Result<(), String> {
             "{label} must not group with or cancel admitted full-ci work"
         );
     }
-    assert!(source.contains("  cancel-in-progress: true\n"));
+    assert!(ub_concurrency_fields(&source)?.1);
+    Ok(())
+}
+
+#[test]
+fn concurrency_parser_rejects_per_pr_continued_and_decoy_groups() -> Result<(), String> {
+    let source = repo_file(UB_WORKFLOW)?;
+    let per_pr = source.replace(
+        "-${{ github.event.label.name == 'full-ci' && 'full-ci' || github.run_id }}",
+        "",
+    );
+    let error = match models_ub_concurrency_group(&per_pr, "full-ci", 101) {
+        Ok(_) => return Err("a per-PR group must be rejected".to_owned()),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("unexpected UB concurrency.group: "),
+        "unexpected per-PR error: {error}"
+    );
+
+    let continued = source.replacen(
+        "  cancel-in-progress: true\n",
+        "    ub-review-continued\n  cancel-in-progress: true\n",
+        1,
+    );
+    assert_ne!(continued, source, "continuation mutation must engage");
+    let error = match models_ub_concurrency_group(&continued, "full-ci", 101) {
+        Ok(_) => return Err("continued group text must be rejected".to_owned()),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("unexpected UB concurrency.group: "),
+        "unexpected continuation error: {error}"
+    );
+
+    let decoy = source.replacen("concurrency:\n", "run-name: |\n  concurrency:\n", 1);
+    assert!(
+        models_ub_concurrency_group(&decoy, "full-ci", 101).is_err(),
+        "group text outside the concurrency mapping must not supply identity"
+    );
     Ok(())
 }
 
@@ -472,7 +576,8 @@ fn unrelated_labels_cannot_cancel_admitted_full_ci() -> Result<(), String> {
 fn advisory_sensors_concurrency_and_trust_remain_exact() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
     assert_eq!(direct_job_field(&ub, "ub-review", "if"), Some(UB_GUARD));
-    assert!(ub.contains("  cancel-in-progress: true\n"));
+    assert_eq!(ub_action_run_pass(&ub)?, "manual");
+    assert!(ub_concurrency_fields(&ub)?.0 == UB_CONCURRENCY_SELECTOR);
     assert!(ub.contains("          review-mode: advisory\n"));
     assert!(ub.contains("          config: .ub-review.toml\n"));
     assert!(ub.contains("          posting: review\n"));
@@ -499,6 +604,17 @@ fn contract_rejects_reentry_and_missing_publication() -> Result<(), String> {
         Err(error) => error,
     };
     assert_eq!(error, "UB subscribe only to labeled pull-request events");
+    let changed = ub.replacen(
+        "          run-pass: manual\n",
+        "          run-pass: auto\n",
+        1,
+    );
+    assert_ne!(changed, ub, "run-pass mutation must engage");
+    let error = match advisory_contract(&changed, &config) {
+        Ok(()) => return Err("automatic label-to-other mapping must not post".to_owned()),
+        Err(error) => error,
+    };
+    assert_eq!(error, "unexpected UB run-pass: auto");
     let changed = config.replace("\"synchronize\", ", "");
     assert_ne!(
         changed, config,
@@ -512,10 +628,10 @@ fn contract_rejects_reentry_and_missing_publication() -> Result<(), String> {
         error.starts_with("UB must retain prior publication and admit full-ci reviews: "),
         "unexpected publication error: {error}"
     );
-    let changed = config.replace(", \"pull_request_other\"", "");
+    let changed = config.replace("\"opened\", ", "");
     assert_ne!(
         changed, config,
-        "failed to find ', \"pull_request_other\"' in config to apply mutation"
+        "failed to find '\"opened\", ' in config to apply mutation"
     );
     let error = match advisory_contract(&ub, &changed) {
         Ok(()) => return Err("full-ci publication must be retained".to_owned()),
