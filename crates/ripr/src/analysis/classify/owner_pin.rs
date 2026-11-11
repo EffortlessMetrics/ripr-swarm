@@ -169,6 +169,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #8361: the edit only drops or adds whole guard operands of the bool
+    /// owner's `&&` / `||` tail. A pinned call whose literal arguments leave
+    /// every such operand at its chain's identity value runs both versions
+    /// to the same result, so it withholds the credit.
+    guard_operands: Option<short_circuit::GuardOperandChange>,
     /// #13005: set only while [`Self::literal_check_withholds`] asks whether
     /// the current-owner literal check is the one gate refusing an assertion.
     skip_current_literal_check: Cell<bool>,
@@ -4994,6 +4999,17 @@ impl OwnerReturnPin {
             .and_then(|before| {
                 super::owner_value::ClosedChange::read(&owner.body, name, changed_line, before)
             });
+        let guard_operands = probe
+            .before
+            .as_deref()
+            .filter(|_| returns_bool)
+            .and_then(|before| {
+                short_circuit::GuardOperandChange::read(
+                    &owner.body,
+                    probe.expression.trim().trim_end_matches(';').trim(),
+                    before,
+                )
+            });
         Some(Self {
             name: name.to_string(),
             call,
@@ -5029,6 +5045,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            guard_operands,
             skip_current_literal_check: Cell::new(false),
         })
     }
@@ -5155,6 +5172,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5292,6 +5310,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5397,6 +5416,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_change: None,
             closed_owner: None,
+            guard_operands: None,
             skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -6575,6 +6595,22 @@ impl OwnerReturnPin {
                 if let ReturnPathGate::ShortCircuit(chain) = path
                     && !call_text.is_some_and(|text| {
                         chain.pinned_call_evaluates_every_operand(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            assertion.line,
+                            &self.name,
+                        )
+                    })
+                {
+                    return false;
+                }
+                // #8361: a dropped or added guard operand that every run of
+                // this call leaves at its chain's identity value gives both
+                // versions the same result here.
+                if let Some(guards) = &self.guard_operands
+                    && call_text.is_some_and(|text| {
+                        guards.pinned_call_agrees(
                             test,
                             loan.as_ref(),
                             text,
