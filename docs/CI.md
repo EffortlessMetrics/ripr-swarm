@@ -93,13 +93,14 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
-The admission job also refuses a `merge-ready` pull-request request whose PR has
-unresolved review threads, naming each thread, so the author learns in seconds
+The admission job also refuses an admitted `merge-ready` pull-request request or
+native `merge_group` request whose PR has unresolved review threads, naming each
+thread, so the author learns in seconds
 instead of after the roughly hour-long run. It is an early courtesy only: a read
 failure is a warning, and the late recheck above remains the authority.
 
-Source review disposition (#8157): a `merge-ready` request also needs a current-head
-source review attestation, read by `review_disposition.py` from the immutable trusted
+Source review disposition (#8157): both admitted request kinds need a current-head
+source review attestation for H, read by `review_disposition.py` from the immutable trusted
 admission bundle (the PR base for pull requests, the group base for queue entries; the
 script is covered by the bundle hash check). The admission job refuses at request
 time; the Result job repeats the read before the eligibility recheck. A trusted
@@ -108,6 +109,13 @@ first line is the readiness marker with an allowed tail; a trusted reviewer's la
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+
+After an early refusal, repair or refute the findings, resolve addressed threads,
+and refresh source review for the current H. Request fresh qualification through
+the applicable [merge flow](MERGE_FLOW.md): a fresh label request for the installed
+legacy PR route, or native queue re-entry for a queue request. A label request is
+not a retry of native queue qualification. Preserve any valid queued or running
+current-subject request instead of replacing it merely to refresh status.
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
