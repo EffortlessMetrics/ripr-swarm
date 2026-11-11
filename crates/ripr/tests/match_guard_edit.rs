@@ -93,9 +93,15 @@ fn diff_at(path: &str, text: &str, new: &str, old: &str) -> Result<(String, usiz
             .collect::<String>()
     };
     let start = index - 2;
+    // `old` may be several lines: rustfmt splits a long `&&`/`||` chain.
+    let old_count = 5 + old.lines().count();
+    let removed = old
+        .lines()
+        .map(|line| format!("-{line}\n"))
+        .collect::<String>();
     Ok((
         format!(
-            "diff --git a/{path} b/{path}\nindex 0000000..1111111 100644\n--- a/{path}\n+++ b/{path}\n@@ -{start},6 +{start},6 @@\n{}-{old}\n+{new}\n{}",
+            "diff --git a/{path} b/{path}\nindex 0000000..1111111 100644\n--- a/{path}\n+++ b/{path}\n@@ -{start},{old_count} +{start},6 @@\n{}{removed}+{new}\n{}",
             context(index - 3..index),
             context(index + 1..index + 3)
         ),
@@ -650,6 +656,115 @@ fn a_deleted_if_conjunct_is_not_credited() -> Result<(), String> {
             .infect
             .summary
             .contains("changes the predicate's `&&`/`||` operands")),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+fn two_input_block_if(condition: &str) -> String {
+    format!(
+        "/// The tier of `points`.\npub fn tier(points: i64, other: i64) -> u8 {{\n    let _ = other;\n    if {condition} {{\n        1\n    }} else {{\n        0\n    }}\n}}\n\npub fn unused() {{}}\n"
+    )
+}
+
+#[test]
+fn a_conjunct_deleted_from_a_multi_line_if_is_not_credited() -> Result<(), String> {
+    // #7945: rustfmt split the old chain, so one removed line (`if other >
+    // 0`) used to stand for the whole old predicate. The dropped operand
+    // and the old comparison sit on separate removed lines.
+    let lib = two_input_block_if("100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if 100 < points {",
+        "    if other > 0\n        && 100 <= points\n    {",
+        CONJUNCT_WITNESS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "multi-line deleted if conjunct");
+    assert_predicates_infection_unknown(&findings);
+    // The whole old chain is the predicate's old side, and the reason is
+    // the changed operands.
+    assert!(
+        predicates(&findings).iter().all(|finding| finding
+            .ripr
+            .infect
+            .summary
+            .contains("before: `other > 0 && 100 <= points`")),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_conjunct_deleted_from_a_trailing_operator_multi_line_if_is_not_credited() -> Result<(), String>
+{
+    // #7945: the same deletion with the connective ending the first line.
+    let lib = two_input_block_if("100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if 100 < points {",
+        "    if other > 0 &&\n        100 <= points\n    {",
+        CONJUNCT_WITNESS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(
+        &findings,
+        "trailing-operator multi-line deleted if conjunct",
+    );
+    assert_predicates_infection_unknown(&findings);
+    Ok(())
+}
+
+#[test]
+fn a_disjunct_deleted_from_a_multi_line_if_is_not_credited() -> Result<(), String> {
+    // #7945 with `||`, the boundary comparison on the first old line.
+    let lib = two_input_block_if("100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if 100 < points {",
+        "    if 100 <= points\n        || other > 0\n    {",
+        CHAIN_BOUNDARY_TESTS,
+    )?;
+    assert!(!predicates(&findings).is_empty(), "{findings:?}");
+    assert_not_exposed(&findings, "multi-line deleted if disjunct");
+    Ok(())
+}
+
+#[test]
+fn a_multi_line_if_joined_with_its_chain_unchanged_reads_exposed() -> Result<(), String> {
+    // Positive twin (#7945): the old chain spans lines but holds the same
+    // `&&`, so the inputs around `100` with `other == 0` true still
+    // discriminate the comparison edit.
+    let lib = two_input_block_if("other == 0 && 100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if other == 0 && 100 < points {",
+        "    if other == 0\n        && 100 <= points\n    {",
+        CHAIN_BOUNDARY_TESTS,
+    )?;
+    assert!(
+        predicates(&findings)
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_one_line_block_if_boundary_edit_reads_exposed() -> Result<(), String> {
+    // Control (#7945): no line of the old side carries a connective.
+    let lib = two_input_block_if("100 < points");
+    let findings = findings_on_changed_line(
+        &lib,
+        "    if 100 < points {",
+        "    if 100 <= points {",
+        CHAIN_BOUNDARY_TESTS,
+    )?;
+    assert!(
+        predicates(&findings)
+            .iter()
+            .any(|finding| finding.class == ExposureClass::Exposed),
         "{findings:?}"
     );
     Ok(())

@@ -80,7 +80,9 @@ pub(crate) fn probes_for_file_with_relations(
     );
     // Old-side line numbers of this file's removed lines whose positional
     // replacement is a guard-only arm edit, one entry per such edit: that
-    // edit's predicate already carries the old guard as `before`.
+    // edit's predicate already carries the old guard as `before`. #7945: also
+    // the old lines of a multi-line `&&`/`||` chain that an added predicate
+    // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
@@ -507,11 +509,13 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                let before = removed_before(
+                let before = family_before(
+                    &shape.family,
                     shape.start_line,
                     &canonical_text,
                     changed,
                     &added_run_starts,
+                    &mut guard_edit_counterparts,
                 );
                 // #5312 (widening #6995): a canonical shape's `after` is the
                 // parser shape, not the whole line, so cut the same span from
@@ -578,8 +582,15 @@ pub(crate) fn probes_for_file_with_relations(
                 {
                     continue;
                 }
-                let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                    .map(|line| arm_before(&shape.family, line, changed, old_source));
+                let before = family_before(
+                    &shape.family,
+                    added.new_side_line,
+                    text,
+                    changed,
+                    &added_run_starts,
+                    &mut guard_edit_counterparts,
+                )
+                .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -637,8 +648,15 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
-            let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                .map(|line| arm_before(&family, line, changed, old_source));
+            let before = family_before(
+                &family,
+                added.new_side_line,
+                text,
+                changed,
+                &added_run_starts,
+                &mut guard_edit_counterparts,
+            )
+            .map(|line| arm_before(&family, line, changed, old_source));
             let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -2581,6 +2599,104 @@ fn removed_before(
 ) -> Option<String> {
     replaced_line_counterpart(added_new_side_line, changed)
         .or_else(|| nearby_removed_line(added_new_side_line, added, changed, added_run_starts))
+}
+
+/// A probe's `before` text for its family. A predicate whose old side
+/// continues one `&&`/`||` chain across removed lines reads that whole
+/// chain (`removed_connective_block`); everything else reads
+/// `removed_before`.
+///
+/// The chain's old lines go to `represented`: the predicate now holds them
+/// as its old side, so probing each again as deleted behavior would read one
+/// operand of the chain (`if other > 0`) as a predicate of its own and
+/// credit an input at that operand's boundary (#7945).
+fn family_before(
+    family: &ProbeFamily,
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+    represented: &mut Vec<usize>,
+) -> Option<String> {
+    if *family == ProbeFamily::Predicate
+        && let Some((block, chain_lines)) =
+            removed_connective_block(added_new_side_line, changed, added_run_starts)
+    {
+        represented.extend(chain_lines);
+        return Some(block);
+    }
+    removed_before(added_new_side_line, added, changed, added_run_starts)
+}
+
+/// The whole old side of a replacement block whose removed lines continue
+/// one `&&`/`||` chain across lines (rustfmt's `if a` / `&& b` / `{`), with
+/// the old-side numbers of the chain's lines: each line that starts or ends
+/// with a connective and the neighbour it continues. `None` unless the block
+/// removes at least two consecutive old lines and one of them starts or
+/// ends with a connective.
+///
+/// #7945: pairing names one removed line as a predicate's `before`, which
+/// hides an operand on another line from `same_connectives`, so a dropped
+/// conjunct kept the surviving comparison's boundary credit. The lines are
+/// joined into the chain's one-line spelling so the shape cut and the
+/// connective comparison read it as they read a one-line edit. A block
+/// holding a comment keeps its line breaks instead, so a `//` comment cannot
+/// swallow the lines after it; such a block is never cut and is compared
+/// whole. A block that removes more than the chain is compared whole too:
+/// any connective it holds beyond the predicate's withholds credit.
+fn removed_connective_block(
+    added_new_side_line: usize,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+) -> Option<(String, Vec<usize>)> {
+    let run_start = added_run_start(added_new_side_line, added_run_starts);
+    let block = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if block.len() < 2
+        || block
+            .windows(2)
+            .any(|pair| pair[1].line != pair[0].line + 1)
+    {
+        return None;
+    }
+    let source = block
+        .iter()
+        .map(|line| line.text.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Masked, so a connective inside a string or comment is not one. Masking
+    // keeps byte offsets and line breaks.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&source);
+    let masked = masked.lines().map(str::trim).collect::<Vec<_>>();
+    let leads = |line: &str| line.starts_with("&&") || line.starts_with("||");
+    let trails = |line: &str| line.ends_with("&&") || line.ends_with("||");
+    let mut chain_lines = Vec::new();
+    for (at, removed) in block.iter().enumerate() {
+        let line = masked.get(at).copied().unwrap_or_default();
+        let next = masked.get(at + 1).copied().unwrap_or_default();
+        let previous = at
+            .checked_sub(1)
+            .and_then(|previous| masked.get(previous).copied())
+            .unwrap_or_default();
+        if leads(line) || trails(line) || leads(next) || trails(previous) {
+            chain_lines.push(removed.line);
+        }
+    }
+    if chain_lines.is_empty() {
+        return None;
+    }
+    // Raw text, so a `//` inside a string keeps the line breaks too: that
+    // only forgoes the cut.
+    let commented = source.contains("//") || source.contains("/*");
+    let block = if commented {
+        source
+    } else {
+        source.replace('\n', " ")
+    };
+    Some((block, chain_lines))
 }
 
 /// A match-arm probe's whole old line, with an uncut arm head joined to

@@ -422,10 +422,20 @@ credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
 an unchanged chain keeps its boundary credit. Because it compares only the
 connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
-&& b`) or regrouping a chain is not yet caught. The rule reads one changed
-line: a chain that rustfmt splits across lines (`if other > 0` over `&&
-100 <= points`) pairs only its first old line as `before`, so it is not yet
-covered (#7945).
+&& b`) or regrouping a chain is not yet caught. A chain that rustfmt split
+across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
+(#7945): when a predicate's replacement block removes two or more consecutive
+old lines and one of them starts or ends with `&&` or `||` outside strings
+and comments, the predicate's old text is the whole block, joined into its
+one-line spelling, instead of the one removed line that pairing names. A
+block holding a comment keeps its line breaks and is compared uncut, and a
+block that removes more than the chain is compared whole, so any connective
+it holds beyond the predicate's withholds credit. The chain's old lines
+(each line that starts or ends with a connective, and the neighbour it
+continues) are the predicate's old side, so they get no deleted-line probe of
+their own: one operand of the old chain is not a predicate an input at its
+boundary can expose. A new-side chain that spans several added lines still
+reads its probe's own shape text.
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
