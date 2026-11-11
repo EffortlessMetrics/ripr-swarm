@@ -3054,15 +3054,17 @@ pub(super) fn name_bound_outside_owner_crate(
 /// beside a changed `discount`, #14069). The nearest scope that binds the
 /// name decides, walked as `resolve_bare` walks it: the test body first, then
 /// each enclosing module while it globs its parent. Every binding of the name
-/// in that scope must be a rename whose path ends in a differently named
-/// function the index holds.
+/// in that scope must be a rename whose path places a differently named
+/// module-level function of the owner's package: the module the path spells
+/// holds that `fn`.
 ///
 /// Fails open, keeping the prior reading: a rename of the owner itself, a
-/// rename whose target the index does not hold as a module-level function
-/// (a module alias in the type namespace beside a glob-imported owner, a
-/// dependency's item, a tuple-struct constructor), a scope that also
-/// declares the name, a nested-block binding, a function-body glob, and an
-/// owner with no placeable call identity.
+/// rename whose path places no such function (a module alias in the type
+/// namespace beside a glob-imported owner, even when some unrelated function
+/// shares the module's name; a dependency's item; a tuple-struct
+/// constructor; a path the scope cannot place), a scope that also declares
+/// the name, a nested-block binding, a function-body glob, and an owner with
+/// no placeable call identity.
 pub(super) fn bare_name_renames_another_function(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -3090,6 +3092,7 @@ pub(super) fn bare_name_renames_another_function(
         return false;
     };
     let raw_name = format!("r#{name}");
+    let owner_package = package_key(&owner.file);
     for scope in &scopes.scopes {
         if scope.block_binds(name) || scope.block_binds(&raw_name) {
             return false;
@@ -3099,18 +3102,36 @@ pub(super) fn bare_name_renames_another_function(
             .chain(scope.imports_of(&raw_name))
             .collect();
         if !imports.is_empty() {
+            let base = test_scope
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &scope.modules));
             return !scope.defines.contains(name)
                 && imports.into_iter().all(|binding| {
                     let UseBinding::Renamed(path) = binding else {
                         return false;
                     };
-                    path.last().is_some_and(|last| {
-                        let target = last.trim_start_matches("r#");
-                        target != name
-                            && index.functions().iter().any(|function| {
-                                function.item.container == FunctionContainer::Free
-                                    && function.name.trim_start_matches("r#") == target
-                            })
+                    let Some((last, module)) = path.split_last() else {
+                        return false;
+                    };
+                    let target = last.trim_start_matches("r#");
+                    if target == name || module.is_empty() {
+                        return false;
+                    }
+                    // The renamed path must place a function: the module it
+                    // spells holds a module-level `fn` of the target name in
+                    // the owner's package. A same-named function elsewhere
+                    // says nothing about a path that names a module.
+                    let Some(placed) =
+                        use_target(module, base.as_deref(), scope, &test_scope.crate_names)
+                    else {
+                        return false;
+                    };
+                    index.functions().iter().any(|function| {
+                        function.item.container == FunctionContainer::Free
+                            && function.name.trim_start_matches("r#") == target
+                            && package_key(&function.file) == owner_package
+                            && definition_module_path(function).as_ref() == Some(&placed)
                     })
                 });
         }
@@ -3135,8 +3156,9 @@ pub(super) fn bare_name_renames_another_function(
 }
 
 /// Whether `source` spells `as <name>` (or `as r#<name>`) at identifier
-/// boundaries: the text every renaming import of `name` contains. A cheap
-/// necessary condition only; comments, strings and casts may also match.
+/// boundaries, or the name straight after a comment: the text every renaming
+/// import of `name` contains. A cheap necessary condition only; comments,
+/// strings and casts may also match.
 fn source_spells_rename_to(source: &str, name: &str) -> bool {
     source.match_indices(name).any(|(start, _)| {
         if ident_char_at(source, start + name.len()) {
@@ -3148,7 +3170,14 @@ fn source_spells_rename_to(source: &str, name: &str) -> bool {
             return false;
         }
         let before = head.trim_end();
-        before.len() < head.len() && head_word(before) == "as"
+        // A comment may sit between `as` and the name; answering yes there
+        // only sends the question on to the parsed scopes.
+        let after_comment = before.ends_with("*/")
+            || before
+                .rsplit('\n')
+                .next()
+                .is_some_and(|line| line.contains("//"));
+        after_comment || (before.len() < head.len() && head_word(before) == "as")
     })
 }
 
@@ -5928,6 +5957,31 @@ mod module_alias {
     }
 }
 
+pub mod unrelated {
+    pub fn pricing() {}
+}
+
+#[cfg(test)]
+mod commented_rename {
+    use super::other as /* alias */ discount;
+
+    #[test]
+    fn commented_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
+#[cfg(test)]
+mod line_commented_rename {
+    use super::other as // alias
+        discount;
+
+    #[test]
+    fn line_commented_rename_case() {
+        assert_eq!(discount(100), 10);
+    }
+}
+
 #[cfg(test)]
 mod qualified_beside_rename {
     use super::other as discount;
@@ -5962,7 +6016,9 @@ fn integration_rename_case() {
 }
 ";
 
-    const RENAMED_CASES: [&str; 5] = [
+    const RENAMED_CASES: [&str; 7] = [
+        "commented_rename_case",
+        "line_commented_rename_case",
         "module_rename_case",
         "brace_rename_case",
         "body_rename_case",
@@ -6053,6 +6109,8 @@ fn integration_rename_case() {
             ("use super::other as discount;", true),
             ("use super::{other as\n    discount};", true),
             ("use super::other as r#discount;", true),
+            ("use super::other as /* alias */ discount;", true),
+            ("use super::other as // alias\n    discount;", true),
             ("use super::other as discounted;", false),
             ("use super::other as my_discount;", false),
             ("use super::has discount;", false),
@@ -6065,6 +6123,22 @@ fn integration_rename_case() {
                 "{source}"
             );
         }
+        // `module_alias_case` renames the module `pricing`; the unrelated
+        // `unrelated::pricing` function must not make that a function rename,
+        // so its bare call still lends owner input.
+        let (owner, alias) = renamed_other_parts(&index, "module_alias_case")?;
+        assert!(
+            index
+                .functions()
+                .iter()
+                .any(|function| function.name == "pricing"),
+            "the unrelated same-named function must be indexed"
+        );
+        assert!(!bare_name_renames_another_function(&index, owner, alias));
+        assert!(
+            qualified_owner_calls_resolve(&index, owner, alias, "discount(100)", alias.start_line),
+            "a module alias does not take the owner's bare call"
+        );
         // The rule reads the renamed target, not the alias: `other` itself is
         // never renamed away from its own tests.
         let other = index
