@@ -2053,23 +2053,11 @@ Status: proposed
         if !text.contains("  workflow_dispatch:") {
             return Err("source-of-truth.yml is missing workflow_dispatch".to_string());
         }
-        // Trigger 3: PR execution only when spec-governance paths change.
+        // No development-event trigger (#4842): the required queue proof
+        // qualifies spec-governance changes; the digest runs on schedule only.
         for event in ["pull_request", "push"] {
-            let paths = workflow_event_paths(&text, event)?;
-            for required in [
-                ".allow/spec-system/**",
-                ".github/workflows/source-of-truth.yml",
-                ".ripr/traceability.toml",
-                ".ripr/traceability.d/**",
-                "docs/specs/**",
-                "docs/status/SUPPORT_TIERS.md",
-                "docs/templates/**",
-            ] {
-                if !paths.iter().any(|path| path == required) {
-                    return Err(format!(
-                        "{event} trigger is missing spec-governance path `{required}`: {paths:?}"
-                    ));
-                }
+            if workflow_event_paths(&text, event).is_ok() {
+                return Err(format!("source-of-truth.yml must not run on `{event}`"));
             }
         }
 
