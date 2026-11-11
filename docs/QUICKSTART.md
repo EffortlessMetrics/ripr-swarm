@@ -691,6 +691,9 @@ It also appears when no repairable PR-local gap was selected; read the printed
 
 ## Troubleshooting
 
+The [troubleshooting guide](TROUBLESHOOTING.md) lists each situation by the
+line `ripr` prints. The common ones:
+
 | Symptom | Next step |
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
