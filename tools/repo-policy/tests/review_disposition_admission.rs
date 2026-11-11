@@ -20,15 +20,46 @@ fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, Stri
 }
 
 fn check_review_bytes(bytes: &[u8], head: &str, legacy_stdin: bool) -> Result<Output, String> {
+    check_review_bytes_with_pull(bytes, head, legacy_stdin, None)
+}
+
+/// #4984: reviews on stdin plus the pull request object read from `pull`.
+fn check_reviews_with_pull(
+    reviews: &serde_json::Value,
+    pull: &serde_json::Value,
+    head: &str,
+    tag: &str,
+) -> Result<Output, String> {
+    let path = std::env::temp_dir().join(format!(
+        "review-disposition-pull-{}-{tag}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, pull.to_string()).map_err(|e| format!("write pull: {e}"))?;
+    let output =
+        check_review_bytes_with_pull(reviews.to_string().as_bytes(), head, false, Some(&path));
+    let _ = std::fs::remove_file(&path);
+    output
+}
+
+fn check_review_bytes_with_pull(
+    bytes: &[u8],
+    head: &str,
+    legacy_stdin: bool,
+    pull: Option<&std::path::Path>,
+) -> Result<Output, String> {
     let mut command = Command::new("python3");
     command.arg("-I");
     if legacy_stdin {
         // Force the Windows legacy decoding boundary even on UTF-8 hosts.
         command.args(["-c", "import runpy,sys; sys.stdin.reconfigure(encoding='cp1252'); path=sys.argv.pop(1); runpy.run_path(path, run_name='__main__')"]);
     }
-    let mut child = command
+    command
         .arg(script()?)
-        .args(["--check-reviews", "-", "--head", head])
+        .args(["--check-reviews", "-", "--head", head]);
+    if let Some(pull) = pull {
+        child_args_pull(&mut command, pull);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -65,6 +96,10 @@ fn utf8_review_input_ignores_legacy_stdin_encoding() -> Result<(), String> {
         false,
         "malformed UTF-8 review",
     )
+}
+
+fn child_args_pull(command: &mut Command, pull: &std::path::Path) {
+    command.arg("--check-pull").arg(pull);
 }
 
 /// Admit means exit 0; refuse means exit 1 with the refusal line and no crash.
@@ -457,7 +492,218 @@ fn live_read_merges_pages_and_fails_closed_on_gh_error() -> Result<(), String> {
     // An API error after a valid page must not admit.
     let failing = format!("#!/bin/sh\nprintf '%s\\n' '{page2}'\nexit 1\n");
     let output = run(failing);
-    let result = output.and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"));
+    let result = output
+        .and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"))
+        .and_then(|()| {
+            // #4984: with no review at all, the live read of the pull request
+            // description supplies the exact-head attestation.
+            let pull = pull_object(
+                "MEMBER",
+                "o/r",
+                &head,
+                &format!("Source review: REVIEW_READY {head}"),
+            );
+            let described = format!(
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) printf '%s\\n' '{pull}' ;; esac\n"
+            );
+            expect_outcome(&run(described)?, true, "live description attestation")
+        })
+        .and_then(|()| {
+            // A failed description read leaves only the (empty) reviews: refuse.
+            let unreadable =
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) exit 1 ;; esac\n"
+                    .to_string();
+            expect_outcome(&run(unreadable)?, false, "description read failure")
+        });
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+fn pull_object(
+    association: &str,
+    head_repo: &str,
+    head_sha: &str,
+    body: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "author_association": association,
+        "head": {"sha": head_sha, "repo": {"full_name": head_repo}},
+        "base": {"repo": {"full_name": "o/r"}},
+        "body": body,
+    })
+}
+
+/// #4984: the pull request description may carry the exact-head attestation when
+/// review writes are throttled. It is a carrier only; every review refusal stands.
+#[test]
+fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let line = format!("Source review: REVIEW_READY {head}");
+    let none = serde_json::json!([]);
+    let negative = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED"
+    )]);
+    let changes = serde_json::json!([review(
+        "r",
+        "CHANGES_REQUESTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        ""
+    )]);
+    let empty_reply =
+        serde_json::json!([review("r", "COMMENTED", &head, "2026-10-15T01:00:01Z", "")]);
+    let stale_ready = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "REVIEW_READY"
+    )]);
+    let embedded = format!("## Summary\n\n- one change\n\n{line}\n\n## Proof\n");
+    let abbreviated = format!("Source review: REVIEW_READY {}", &head[..12]);
+    let other_head = format!("Source review: REVIEW_READY {other}");
+    let fenced = format!("```\n{line}\n```");
+    let commented = format!("<!-- {line} -->");
+    let contradicted = format!("{line}\nSource review: REVIEW_INCOMPLETE");
+    let hedged = format!("{line} pending CI");
+    let quoted = format!("> {line}");
+    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 17] = [
+        (
+            "exact line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "line inside a filled template",
+            &none,
+            pull_object("OWNER", "o/r", &head, &embedded),
+            true,
+        ),
+        (
+            "empty reply review does not hide it",
+            &empty_reply,
+            pull_object("COLLABORATOR", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "unfilled template",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "Source review:"),
+            false,
+        ),
+        (
+            "no line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "## Summary"),
+            false,
+        ),
+        (
+            "abbreviated sha",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &abbreviated),
+            false,
+        ),
+        (
+            "line names another head",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &other_head),
+            false,
+        ),
+        (
+            "live head moved",
+            &none,
+            pull_object("MEMBER", "o/r", &other, &line),
+            false,
+        ),
+        (
+            "fenced example",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &fenced),
+            false,
+        ),
+        (
+            "html comment",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &commented),
+            false,
+        ),
+        (
+            "contradicting second line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &contradicted),
+            false,
+        ),
+        (
+            "hedged value",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &hedged),
+            false,
+        ),
+        (
+            "quoted line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &quoted),
+            false,
+        ),
+        (
+            "untrusted author",
+            &none,
+            pull_object("CONTRIBUTOR", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "fork head",
+            &none,
+            pull_object("MEMBER", "fork/r", &head, &line),
+            false,
+        ),
+        (
+            "trusted negative review still refuses",
+            &negative,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "changes requested still refuses",
+            &changes,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+    ];
+    for (index, (name, reviews, pull, admit)) in cases.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, pull, &head, &index.to_string())?,
+            *admit,
+            name,
+        )?;
+    }
+    // An older-head ready review plus an unfilled description admits nothing.
+    expect_outcome(
+        &check_reviews_with_pull(
+            &stale_ready,
+            &pull_object("MEMBER", "o/r", &head, "Source review:"),
+            &head,
+            "stale",
+        )?,
+        false,
+        "older-head review with unfilled description",
+    )?;
+    // Without the pull object the same reviews keep the review-only outcome.
+    expect_outcome(
+        &check_reviews(&none, &head)?,
+        false,
+        "no reviews and no pull object",
+    )?;
+    // A pull object that is not an object refuses instead of crashing.
+    expect_outcome(
+        &check_reviews_with_pull(&none, &serde_json::json!([1]), &head, "malformed")?,
+        false,
+        "malformed pull object",
+    )
 }
