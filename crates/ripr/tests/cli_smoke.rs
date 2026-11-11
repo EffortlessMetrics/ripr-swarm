@@ -28447,9 +28447,21 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     } else {
         "--base 'HEAD~1'"
     };
-    if stdout.contains("ripr explain") && !stdout.contains(quoted_base) {
+    // Every drill-in line is read on its own (#14083 T7): a report without a
+    // `ripr explain` line would otherwise pass unread, and one base spelled
+    // anywhere in the report would vouch for a drill-in that lost its range.
+    let drill_ins: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("ripr explain") || line.contains("ripr context"))
+        .collect();
+    if !drill_ins.iter().any(|line| line.contains("ripr explain")) {
         return Err(format!(
-            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+            "the report must offer a `ripr explain` drill-in for the range oracle to read; got:\n{stdout}"
+        ));
+    }
+    if let Some(unbound) = drill_ins.iter().find(|line| !line.contains(quoted_base)) {
+        return Err(format!(
+            "drill-in commands must stay on the analyzed last-commit range; `{unbound}` does not; got:\n{stdout}"
         ));
     }
     if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
@@ -29974,18 +29986,7 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "v3"])?;
     let absent_selector = format!("{finding_id}f00d");
-    for (command, retry) in [
-        (
-            "explain",
-            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {absent_selector}"),
-        ),
-        (
-            "context",
-            format!(
-                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {absent_selector}"
-            ),
-        ),
-    ] {
+    for command in ["explain", "context"] {
         let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
@@ -30003,9 +30004,14 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
                 "{command} miss must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
             ));
         }
-        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
+        // The retry route is recognised by its `--worktree` flag rather than
+        // by a full command string: the renderer quotes the base and root for
+        // the host shell, so a POSIX-quoted needle can never match on Windows
+        // and that half of the oracle read nothing there (#14083 T7). A
+        // clean-tree miss names no working-tree route at all.
+        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains("--worktree") {
             return Err(format!(
-                "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
+                "{command} miss on a clean tree must not claim uncommitted edits or offer a --worktree retry:\n{stderr}"
             ));
         }
     }

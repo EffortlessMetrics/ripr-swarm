@@ -515,6 +515,68 @@ mod tests {
         Ok(())
     }
 
+    /// #14083 T4: an alias is dropped only when it is present. Two absent
+    /// values compare equal, so without the presence guards a finding with no
+    /// gap id, or a stage row lacking `state` or `confidence` beside an owner
+    /// that lacks it too, would be recorded as a dropped alias and the row
+    /// content (which the legend cannot rebuild) would be lost.
+    #[test]
+    fn terse_never_records_an_absent_alias_as_dropped() -> Result<(), String> {
+        let stage_rows = |missing: &str| -> (Value, Value) {
+            let mut ripr = serde_json::Map::new();
+            let mut rows = Vec::new();
+            for stage in STAGE_ORDER {
+                let mut owner = serde_json::json!({"state": "yes", "confidence": "high"});
+                let mut row =
+                    serde_json::json!({"stage": stage, "state": "yes", "confidence": "high"});
+                for value in [&mut owner, &mut row] {
+                    if let Some(object) = value.as_object_mut() {
+                        object.remove(missing);
+                    }
+                }
+                // Keep the row at three keys so only the presence guard, not
+                // the key count, decides.
+                row["note"] = serde_json::json!("kept");
+                ripr.insert(stage.to_string(), owner);
+                rows.push(row);
+            }
+            (Value::Object(ripr), Value::Array(rows))
+        };
+        let (ripr_no_state, rows_no_state) = stage_rows("state");
+        let (ripr_no_confidence, rows_no_confidence) = stage_rows("confidence");
+        // Each case renders alone, so one failing guard cannot hide another.
+        let cases = [
+            ("no gap fields", serde_json::json!({"id": "probe:a"})),
+            (
+                "gap without an id",
+                serde_json::json!({"id": "probe:b", "canonical_gap": {"owner": "f"}}),
+            ),
+            (
+                "rows and owner without state",
+                serde_json::json!({"ripr": ripr_no_state, "evidence_stages": rows_no_state}),
+            ),
+            (
+                "rows and owner without confidence",
+                serde_json::json!({"ripr": ripr_no_confidence, "evidence_stages": rows_no_confidence}),
+            ),
+        ];
+        assert_eq!(cases[2].1["evidence_stages"][0]["note"], "kept");
+        assert!(cases[2].1["evidence_stages"][0].get("state").is_none());
+        assert!(cases[3].1["ripr"]["reach"].get("confidence").is_none());
+        let mut failures = Vec::new();
+        for (label, finding) in cases {
+            let full = serde_json::json!({"findings": [finding]});
+            let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+            let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
+                .map_err(|error| error.to_string())?;
+            if terse.get("dropped_aliases").is_some() || terse["findings"] != full["findings"] {
+                failures.push(format!("{label}: {terse}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(())
+    }
+
     #[test]
     fn terse_round_trips_prose_and_drops_only_alias_fields() -> Result<(), String> {
         let full: Value = serde_json::from_str(FULL_DOC).map_err(|error| error.to_string())?;
