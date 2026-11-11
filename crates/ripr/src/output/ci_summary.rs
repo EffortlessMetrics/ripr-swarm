@@ -1735,12 +1735,14 @@ impl Summary {
                 "- Counts: publishable=`{publishable}`, skipped=`{skipped}`, blocked=`{blocked}`"
             ));
             self.line(&format!("- Safe to publish: `{safe}`"));
-            self.line("- Plan artifacts: `target/ripr/review/comment-publish-plan.json`, `target/ripr/review/comment-publish-plan.md`");
+            self.line("- Plan artifacts: `ripr/review/comment-publish-plan.json`, `ripr/review/comment-publish-plan.md` in the `ripr-reports` artifact");
             self.line("- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority.");
             self.blank();
             // The plan is what `RIPR_COMMENT_MODE=plan` asks to see: which
             // lines would get a comment and why others are skipped. It stays
-            // inline, collapsed; it is bounded by the inline-comment cap.
+            // inline, collapsed. Its comment lines are bounded by the
+            // inline-comment cap; each stale-comment delete is one line, and
+            // stale comments are the previous run's capped set.
             if self.is_file("target/ripr/review/comment-publish-plan.md") {
                 self.collapsed_report("target/ripr/review/comment-publish-plan.md");
             }
