@@ -64,6 +64,7 @@ pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
 pub(crate) use ripr_contract::core_error;
+pub(crate) use ripr_contract::diff_scope_guard;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
 // Public application error boundary (#1986).

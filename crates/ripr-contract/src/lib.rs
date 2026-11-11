@@ -10,6 +10,7 @@
 pub mod analysis;
 pub mod config;
 pub mod core_error;
+pub mod diff_scope_guard;
 pub mod domain;
 pub mod path_identity;
 mod path_unicode;

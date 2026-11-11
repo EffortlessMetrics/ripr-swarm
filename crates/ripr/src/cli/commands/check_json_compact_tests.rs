@@ -72,19 +72,22 @@ fn json_compact_typed_refusal_keeps_identity_and_diagnostic_bytes() -> Result<()
 #[test]
 fn json_compact_scope_guards_keep_the_frozen_envelope() -> Result<(), String> {
     let input = CheckInput::default();
-    for (detail, status, scope) in [
+    // #4861: the diff guard is typed; a `Message` lookalike never classifies.
+    // The repo guard keeps its String path until a sibling slice types it.
+    for (error, status, scope) in [
         (
-            "diff_scope_oversized: too many changed lines",
+            CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(3, 1, 2),
+            ),
             "diff_scope_oversized",
             "diff",
         ),
         (
-            "repo_scope_oversized: too many source files",
+            CoreError::message("repo_scope_oversized: too many source files"),
             "repo_scope_oversized",
             "repo",
         ),
     ] {
-        let error = CoreError::from(detail.to_string());
         let pretty = document(&input, OutputFormat::Json, &error)?;
         let compact = document(&input, OutputFormat::JsonCompact, &error)?;
         let value = same_refusal(&pretty, &compact)?;
@@ -94,11 +97,19 @@ fn json_compact_scope_guards_keep_the_frozen_envelope() -> Result<(), String> {
             return Err(format!("scope guard changed identity: {value}"));
         }
         let legacy =
-            crate::output::limited_check::render_diff_scope_limited_check_json(&input, detail)?
+            crate::output::limited_check::render_diff_scope_limited_check_json(&input, &error)?
                 .ok_or("scope fixture must exercise the scope-guard producer")?;
         if pretty != legacy {
             return Err("the existing JSON scope-guard bytes changed".to_string());
         }
+    }
+    // A forged diff-scope message stays on the honest fallback, not the guard.
+    let lookalike = CoreError::message("diff_scope_oversized: too many changed lines");
+    if lookalike.is_diff_scope_oversized()
+        || crate::output::limited_check::render_diff_scope_limited_check_json(&input, &lookalike)?
+            .is_some()
+    {
+        return Err("a Message lookalike must not render the diff-scope envelope".to_string());
     }
     Ok(())
 }
