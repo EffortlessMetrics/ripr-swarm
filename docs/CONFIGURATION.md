@@ -311,7 +311,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON, JSON-compact, GitHub and missed-txt formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. Python truthiness findings that require a live physical audit refuse `--from`; run explain/context without it. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--output-dir DIR` | _(unset)_ | With a named `--diff` file, write native `badge.json`, `detail.json` and `human.txt` from one analysis plus a `manifest.json`. `DIR` must be new (its parent must exist). Does not combine with `--format`/`--json`, scope switches, `--gap-ledger`, `--write-artifact` or `--suppression-policy`. See [Output schema](OUTPUT_SCHEMA.md). |
@@ -1240,12 +1240,12 @@ cannot be `off`.
 ### `[severity.seams]`
 
 Seam severities apply wherever ripr reports seams: LSP seam diagnostics, SARIF
-seam results, the seam `severity` field in `review-comments` and agent-brief
-output, and agent results. Valid values are `off`, `info`, `warning`, and
-`note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
-left out of agent results (with the omission reason named); review-comments and
-agent-brief output label it `off`. `ripr check` findings use
-`[severity.findings]`.
+seam results, the seam `severity` field in `review-comments` output, and
+agent-brief seam selection and its `severity` field. Valid values are `off`,
+`info`, `warning`, and `note`. A class set to `off` publishes no LSP diagnostic
+or SARIF result and is left out of agent-brief results (with the omission
+reason named); `review-comments` output still lists it, labelled `off`.
+`ripr check` findings use `[severity.findings]`.
 
 | Key | Default |
 | --- | --- |
