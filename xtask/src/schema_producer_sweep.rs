@@ -137,6 +137,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/cache-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_status_json_conforms_to_the_published_schema_in_every_portable_state and cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory in crates/ripr/tests/cache_clear_safety.rs validate the real CLI bytes of the not_found, ok, unavailable and aliased states, and published_cache_status_schema_rejects_documents_it_forbids is the negative experiment; the document carries the host's absolute cache directory, so the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-status.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/capabilities.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
@@ -161,6 +170,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "narrower authority: check_json_argv_usage_errors_emit_cli_refusal and context_selector_miss_emits_cli_refusal_only_for_json_request in crates/ripr/tests/cli_smoke.rs parse the real CLI bytes of usage errors and selector misses, and the output::refusal unit tests pin the renderer; the committed fixture is hand-written",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/cli-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_conforms_to_the_published_schema_in_each_completion_state in crates/ripr/tests/diff_json_schema.rs validates the real CLI bytes of a complete diff with a finding, a complete empty diff and an incomplete diff with a preview-language advisory, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_schema_rejects_documents_it_forbids is the negative experiment; `ripr diff --json` writes to stdout from a live git range, so the committed fixture is a capture kept as an edge fixture. The refusal envelope the command writes when it cannot produce a report is a separate document this schema does not describe",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff.valid.json"],
         excluded: &[],
     },
     Binding {

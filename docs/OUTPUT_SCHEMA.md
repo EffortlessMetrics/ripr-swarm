@@ -114,7 +114,7 @@ map is:
 | `ripr check --format repo-sarif-compact` | `version` | `2.1.0` (the `repo-sarif` document minified and byte-bounded; #13195) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.4` |
-| `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
+| `ripr diff --json` (`kind: "ripr_diff"`; published as `schemas/ripr/diff.schema.json`) | `schema_version` | `0.1` |
 | `ripr capabilities --json` (`kind: "ripr_language_capabilities"`; published as `schemas/ripr/capabilities.schema.json`, #14067) | `schema_version` | `0.1` |
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
@@ -133,7 +133,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` | `schema_version` | `0.2` |
+| `ripr cache status --json` (published as `schemas/ripr/cache-status.schema.json`) | `schema_version` | `0.2` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
@@ -166,10 +166,12 @@ records that distinction.
 
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
+| `schemas/ripr/cache-status.schema.json` | `0.2` | `crates/ripr/src/cli/commands/cache.rs`; cache status report (`ripr cache status --json`) |
 | `schemas/ripr/capabilities.schema.json` | `0.1` | `crates/ripr-contract/src/domain/language_capability.rs`; language capability registry (`ripr capabilities --json`, #5531, #14067) |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
+| `schemas/ripr/diff.schema.json` | `0.1` | `crates/ripr/src/output/diff_report.rs`; `ripr_diff` report (`ripr diff --json`); the command's refusal envelope is a separate document |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
@@ -938,6 +940,13 @@ guidance surfaces stays with #2615 and #1614.
 Config parse errors stay redacted on this surface (RIPR-SPEC-0007): the
 `config` check's `evidence` keeps only the first line of the `toml` error, and no
 environment field above reproduces `ripr.toml` source text.
+
+The published schema for `ripr cache status --json` is
+[`schemas/ripr/cache-status.schema.json`](../schemas/ripr/cache-status.schema.json).
+It also states the two cross-field rules below: `via_symlink` agrees with
+`real_cache_dir`, and a `not_found` or `unavailable` report has all four
+counts at `0`. `crates/ripr/tests/cache_clear_safety.rs` validates the bytes
+the real command writes against it.
 
 `ripr cache status --json` (schema `0.2`) prints one object with
 `schema_version`, `cache_dir` (the directory as resolved from
@@ -2060,6 +2069,18 @@ limitation signals. Human and JSON `ripr diff` reports both go to stdout (see
 carries warnings and diagnostics only. This section documents the JSON object.
 Exit mapping matches check JSON for `analysis_outcome` (see the `ripr diff` note
 under [Check Output](#check-output)).
+
+The published schema for the `ripr_diff` object is
+[`schemas/ripr/diff.schema.json`](../schemas/ripr/diff.schema.json). It also
+states the agreement rules described below: `runtime_status.state`,
+`runtime_status.diff` and `receipt.outcome_hint` follow `run_status`, and an
+incomplete `run_status` requires an `analysis_outcome` whose
+`analysis_complete` is `false`. Its `analysis_outcome.outcome` and
+`preview_languages[]` definitions are the check schema's, held identical by
+`crates/ripr/tests/diff_json_schema.rs`, which also validates the bytes the real
+command writes. When `ripr diff --json` cannot produce a report (an
+unresolvable base, no work tree) it writes a refusal envelope instead; that
+document has no `kind: "ripr_diff"` and this schema does not describe it.
 
 ```json
 {

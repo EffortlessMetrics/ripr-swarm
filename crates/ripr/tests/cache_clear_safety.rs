@@ -1304,3 +1304,189 @@ fn full_directory_swap_cache_matches_cold_after_restart() -> Result<(), String> 
 fn compact_directory_swap_cache_matches_cold_after_restart() -> Result<(), String> {
     directory_swap_preserves_current_cache_output("repo-exposure-summary-json")
 }
+
+// The published `ripr cache status --json` schema, checked against bytes the
+// real command wrote for each status a test can produce on every host.
+
+#[path = "common/published_schema.rs"]
+mod published_schema;
+
+const CACHE_STATUS_SCHEMA: &str = "schemas/ripr/cache-status.schema.json";
+
+fn cache_status_json(base: &Path, cache_dir: &Path) -> Result<serde_json::Value, String> {
+    let output = run_ripr(base, cache_dir, &["cache", "status", "--json"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "cache status --json failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "cache status JSON did not parse: {error}\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn conforms_to_cache_status_schema(
+    document: &serde_json::Value,
+    schema: &serde_json::Value,
+) -> Result<(), String> {
+    published_schema::check(document, schema, schema, "cache_status")
+}
+
+/// One populated cache: a recognized layer with one entry and one foreign
+/// file, so both count pairs are non-zero in the `ok` document.
+fn populated_cache(base: &Path) -> Result<PathBuf, String> {
+    let cache = base.join("cache");
+    let layer = cache.join("repo-file-facts");
+    fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+    fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+    fs::write(cache.join("note.txt"), b"mine").map_err(|error| error.to_string())?;
+    Ok(cache)
+}
+
+#[test]
+fn the_checker_covers_every_keyword_the_cache_status_schema_uses() -> Result<(), String> {
+    let schema = published_schema::read(CACHE_STATUS_SCHEMA)?;
+    let ignored = published_schema::unsupported_keywords(&schema);
+    if ignored.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the conformance checker ignores these published keywords, so it would under-check the schema: {ignored:?}"
+        ))
+    }
+}
+
+#[test]
+fn cache_status_json_conforms_to_the_published_schema_in_every_portable_state() -> Result<(), String>
+{
+    let schema = published_schema::read(CACHE_STATUS_SCHEMA)?;
+    let base = temp_dir("status-schema");
+    fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+
+    let missing = cache_status_json(&base, &base.join("no-cache-yet"))?;
+    conforms_to_cache_status_schema(&missing, &schema)
+        .map_err(|error| format!("not_found: {error}"))?;
+
+    let cache = populated_cache(&base)?;
+    let ok = cache_status_json(&base, &cache)?;
+    conforms_to_cache_status_schema(&ok, &schema).map_err(|error| format!("ok: {error}"))?;
+
+    let file = base.join("cache-is-a-file");
+    fs::write(&file, b"x").map_err(|error| error.to_string())?;
+    let unavailable = cache_status_json(&base, &file)?;
+    conforms_to_cache_status_schema(&unavailable, &schema)
+        .map_err(|error| format!("unavailable: {error}"))?;
+
+    // The states are the ones intended, so three conforming documents are
+    // three different arms of the contract and not one arm three times.
+    let observed = (
+        missing["status"].as_str(),
+        ok["status"].as_str(),
+        ok["entry_count"].as_u64(),
+        ok["foreign_entry_count"].as_u64(),
+        unavailable["status"].as_str(),
+    );
+    remove_base(&base)?;
+    if observed
+        != (
+            Some("not_found"),
+            Some("ok"),
+            Some(1),
+            Some(1),
+            Some("unavailable"),
+        )
+    {
+        return Err(format!("unexpected states: {observed:?}"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory()
+-> Result<(), String> {
+    let schema = published_schema::read(CACHE_STATUS_SCHEMA)?;
+    let base = temp_dir("status-schema-alias");
+    fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+    let cache = populated_cache(&base)?;
+    let alias = base.join("alias");
+    std::os::unix::fs::symlink(&cache, &alias).map_err(|error| error.to_string())?;
+    let document = cache_status_json(&base, &alias)?;
+    let conformance = conforms_to_cache_status_schema(&document, &schema);
+    let aliased = document["via_symlink"] == true && document["real_cache_dir"].is_string();
+    remove_base(&base)?;
+    conformance?;
+    if aliased {
+        Ok(())
+    } else {
+        Err(format!(
+            "alias run did not report the real directory: {document}"
+        ))
+    }
+}
+
+/// The negative experiment: each case starts from real emitted bytes and
+/// breaks one thing a consumer relies on.
+#[test]
+fn published_cache_status_schema_rejects_documents_it_forbids() -> Result<(), String> {
+    type Mutation = fn(&mut serde_json::Value);
+    let schema = published_schema::read(CACHE_STATUS_SCHEMA)?;
+    let base = temp_dir("status-schema-negative");
+    fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+    let cache = populated_cache(&base)?;
+    let ok = cache_status_json(&base, &cache);
+    remove_base(&base)?;
+    let ok = ok?;
+    conforms_to_cache_status_schema(&ok, &schema)?;
+    let cases: [(&str, Mutation); 9] = [
+        ("unknown field", |doc| {
+            doc["hit_rate"] = serde_json::json!(0.5)
+        }),
+        ("stale schema_version", |doc| {
+            doc["schema_version"] = serde_json::json!("0.1")
+        }),
+        ("missing required field", |doc| {
+            if let Some(object) = doc.as_object_mut() {
+                object.remove("foreign_entry_count");
+            }
+        }),
+        ("unlisted status", |doc| {
+            doc["status"] = serde_json::json!("stale")
+        }),
+        ("negative count", |doc| {
+            doc["entry_count"] = serde_json::json!(-1)
+        }),
+        ("string count", |doc| {
+            doc["total_size_bytes"] = serde_json::json!("2")
+        }),
+        ("via_symlink without a real directory", |doc| {
+            doc["via_symlink"] = serde_json::json!(true)
+        }),
+        ("real directory without via_symlink", |doc| {
+            doc["real_cache_dir"] = serde_json::json!("/real/cache")
+        }),
+        ("not_found with a non-zero count", |doc| {
+            doc["status"] = serde_json::json!("not_found")
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut document = ok.clone();
+        mutate(&mut document);
+        if document == ok {
+            return Err(format!("{label}: the mutation changed nothing"));
+        }
+        match conforms_to_cache_status_schema(&document, &schema) {
+            Ok(()) => {
+                return Err(format!(
+                    "the published cache status schema accepted a document the contract forbids: {label}"
+                ));
+            }
+            Err(error) => println!("rejected as expected ({label}): {error}"),
+        }
+    }
+    Ok(())
+}

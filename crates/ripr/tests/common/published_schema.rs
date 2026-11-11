@@ -55,6 +55,43 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
     if let Some(expected) = schema.get("type") {
         check_type(value, expected, location)?;
     }
+    for branch in schema
+        .get("allOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        check(value, branch, root, location)?;
+    }
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+        let matched = branches
+            .iter()
+            .filter(|branch| check(value, branch, root, location).is_ok())
+            .count();
+        if matched != 1 {
+            return Err(format!(
+                "{location}: matched {matched} of {} oneOf branches, expected exactly 1",
+                branches.len()
+            ));
+        }
+    }
+    if let Some(condition) = schema.get("if") {
+        let branch = if check(value, condition, root, location).is_ok() {
+            "then"
+        } else {
+            "else"
+        };
+        if let Some(consequence) = schema.get(branch) {
+            check(value, consequence, root, location)
+                .map_err(|error| format!("{error} (in the `{branch}` branch)"))?;
+        }
+    }
+    if let Some(number) = value.as_i64()
+        && let Some(minimum) = schema.get("minimum").and_then(Value::as_i64)
+        && number < minimum
+    {
+        return Err(format!("{location}: {number} is below minimum {minimum}"));
+    }
     if let Some(object) = value.as_object() {
         check_object(object, schema, root, location)?;
     }
@@ -215,15 +252,21 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "$ref",
     "$schema",
     "additionalProperties",
+    "allOf",
     "const",
     "description",
+    "else",
     "enum",
+    "if",
     "items",
     "minItems",
     "minLength",
+    "minimum",
+    "oneOf",
     "pattern",
     "properties",
     "required",
+    "then",
     "title",
     "type",
     "uniqueItems",
@@ -249,7 +292,12 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
                     collect_unsupported(member, found);
                 }
             }
-            "items" => collect_unsupported(nested, found),
+            "items" | "if" | "then" | "else" => collect_unsupported(nested, found),
+            "allOf" | "oneOf" => {
+                for member in nested.as_array().into_iter().flatten() {
+                    collect_unsupported(member, found);
+                }
+            }
             other if SUPPORTED_KEYWORDS.contains(&other) => {}
             other => found.push(other.to_string()),
         }
