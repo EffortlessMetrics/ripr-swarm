@@ -2530,14 +2530,15 @@ Check options:
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
-  --mode                              Same modes as gate evaluate, but defaults to acknowledgeable.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
   --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
   --acknowledgements, --baseline, --out, --out-md
                                       As for gate evaluate.
-  gate check produces its own guidance, so it does not accept --pr-guidance,
-  --gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
-  --agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
-  run review-comments and gate evaluate yourself to supply them.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
 
 Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
