@@ -16,7 +16,8 @@ import {
   listZipCentralDirectoryEntries,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
-  isAllowedHttpsRedirect
+  isAllowedHttpsRedirect,
+  requestErrorMessage
 } from '../../src/downloader';
 import {
   assertExtractedTreeContained,
@@ -268,6 +269,29 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       assert.match(outcome.message, /ECONNREFUSED/);
       assert.strictEqual(classifyDownloadFailureKind(outcome.message), 'network');
     }
+  });
+
+  test('a request error with an empty message keeps its code and still classifies as network (#13638)', () => {
+    const url = 'https://sentinel.invalid/ripr-server-manifest-v2.0.0.json';
+    // Shape of the AggregateError Node raises when every address of a host refuses.
+    const aggregate = Object.assign(new Error(''), { code: 'ECONNREFUSED' });
+    const message = requestErrorMessage(url, aggregate);
+    assert.strictEqual(message, `Could not fetch ${url}: ECONNREFUSED`);
+    assert.strictEqual(classifyDownloadFailureKind(message), 'network');
+    // A code already in the message is not repeated.
+    assert.strictEqual(
+      requestErrorMessage(url, Object.assign(new Error('getaddrinfo ENOTFOUND sentinel.invalid'), { code: 'ENOTFOUND' })),
+      `Could not fetch ${url}: getaddrinfo ENOTFOUND sentinel.invalid`
+    );
+    // An error that already names the URL is left alone.
+    assert.strictEqual(requestErrorMessage(url, new Error(`Timed out while fetching ${url}.`)), `Timed out while fetching ${url}.`);
+    // No message and no code: still a sentence, and not guessed to be a network failure.
+    const bare = requestErrorMessage(url, new Error(''));
+    assert.strictEqual(bare, `Could not fetch ${url}: the request failed without a reported cause`);
+    assert.notStrictEqual(classifyDownloadFailureKind(bare), 'network');
+    // A non-network code is surfaced but stays out of the network kind.
+    const tls = requestErrorMessage(url, Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }));
+    assert.notStrictEqual(classifyDownloadFailureKind(tls), 'network');
   });
 
   test('fetchManifestBytesOverHttps uses a larger cap for archives', async function () {
