@@ -121,7 +121,7 @@ tower = { version = "0.5", default-features = false }
 # drops the assert.
 # Shared read-only Cargo package-name admission also needs Unicode XID facts.
 unicode-ident = "=1.0.24"
-unicode-properties = { version = "=0.1.5", optional = true }
+unicode-properties = { version = "=0.1.4", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # Standalone CLI SIGINT observation through safe signal registration.
