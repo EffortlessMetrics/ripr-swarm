@@ -75,6 +75,19 @@ fn assert_reading_with_probe(
     exposed: bool,
     edit: Option<(&str, &str)>,
 ) -> Result<(), String> {
+    assert_relation_and_reading(label, source, exposed, edit, false)
+}
+/// The exact test is not related to the changed call at all.
+fn assert_unrelated(label: &str, source: &str) -> Result<(), String> {
+    assert_relation_and_reading(label, source, false, None, true)
+}
+fn assert_relation_and_reading(
+    label: &str,
+    source: &str,
+    exposed: bool,
+    edit: Option<(&str, &str)>,
+    unrelated: bool,
+) -> Result<(), String> {
     let subject = Subject::new(source)?;
     if let Some((before, after)) = edit {
         let path = subject.0.join("edit.diff");
@@ -111,13 +124,22 @@ fn assert_reading_with_probe(
         !findings.is_empty(),
         "{label}: target call must produce findings"
     );
-    assert!(
-        findings.iter().any(|f| f
-            .related_tests
+    let related = findings.iter().any(|f| {
+        f.related_tests
             .iter()
-            .any(|t| t.name.ends_with("exact_line"))),
-        "{label}: the exact test must be related"
-    );
+            .any(|t| t.name.ends_with("exact_line"))
+    });
+    if unrelated {
+        // #14087: the test runs a local item of the owner's name, so it is
+        // no test of the owner and no finding may be `exposed`.
+        assert!(!related, "{label}: the exact test must not be related");
+        assert!(
+            findings.iter().all(|f| f.class != ExposureClass::Exposed),
+            "{label}: an unrelated test cannot expose the call"
+        );
+        return Ok(());
+    }
+    assert!(related, "{label}: the exact test must be related");
     assert_eq!(
         findings.iter().any(|f| f.class == ExposureClass::Exposed),
         exposed,
@@ -311,15 +333,34 @@ fn hidden_execution_and_module_value_twins_cannot_supply_credit() -> Result<(), 
         &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
     );
     for (label, candidate) in [
-        ("overloaded setup equality", base.replace("n: u32) {", "n: u32) { let skip = Stop == Stop;")
-            + "\nstruct Stop; impl PartialEq for Stop { fn eq(&self, _: &Self) -> bool { std::process::exit(0); } }\n"),
-        ("let-else exits before observation", base.replace("n: u32) {", "n: u32) { let N = 1 else { std::process::exit(0); };") + "\nconst N: u32 = 2;\n"),
-        ("hidden format exit", base.replace("format!(\"n={}\", n)", "format!(\"n={}\", { std::process::exit(0); n })")),
+        (
+            "overloaded setup equality",
+            base.replace("n: u32) {", "n: u32) { let skip = Stop == Stop;")
+                + "\nstruct Stop; impl PartialEq for Stop { fn eq(&self, _: &Self) -> bool { std::process::exit(0); } }\n",
+        ),
+        (
+            "let-else exits before observation",
+            base.replace(
+                "n: u32) {",
+                "n: u32) { let N = 1 else { std::process::exit(0); };",
+            ) + "\nconst N: u32 = 2;\n",
+        ),
+        (
+            "hidden format exit",
+            base.replace(
+                "format!(\"n={}\", n)",
+                "format!(\"n={}\", { std::process::exit(0); n })",
+            ),
+        ),
+    ] {
+        assert_reading(label, &candidate, false)?;
+    }
+    for (label, candidate) in [
         ("module const redirects owner", base.replace("use super::*;", "use super::*; const report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
         ("module static redirects owner", base.replace("use super::*;", "use super::*; static report: fn(&mut dyn Sink, u32) = rival; fn rival(s: &mut dyn Sink, _: u32) { s.send(\"n=3\".to_string()); }")),
         ("tuple constructor redirects owner", base.replace("use super::*;", "use super::*; struct report<'a>(&'a mut dyn Sink, u32); impl Drop for report<'_> { fn drop(&mut self) { self.0.send(\"n=3\".to_string()); } }")),
     ] {
-        assert_reading(label, &candidate, false)?;
+        assert_unrelated(label, &candidate)?;
     }
     Ok(())
 }

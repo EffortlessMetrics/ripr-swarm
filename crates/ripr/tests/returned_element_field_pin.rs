@@ -283,24 +283,45 @@ pub mod inner {
 /// changed element's integer field, so none observes it (#8059 review).
 #[test]
 fn a_decoy_the_shared_checks_catch_keeps_the_gap() -> Result<(), String> {
-    for (items, body, label) in [
-        (
-            "    trait Decoy {\n        fn iter(&self) -> std::iter::Once<Row>;\n    }\n    impl Decoy for [Row; 2] {\n        fn iter(&self) -> std::iter::Once<Row> {\n            std::iter::once(Row { total: 33 })\n        }\n    }\n",
-            ANY,
-            "a trait supplies the array's iter",
-        ),
-        (
-            "    fn decoy(_a: u32, _b: u32) -> [Row; 2] {\n        [Row { total: 33 }, Row { total: 33 }]\n    }\n    const rows: fn(u32, u32) -> [Row; 2] = decoy;\n",
-            "        assert_eq!(rows(30, 3)[1].total, 33);",
-            "a callable const takes the bare call",
-        ),
-    ] {
+    for (items, body, label) in [(
+        "    trait Decoy {\n        fn iter(&self) -> std::iter::Once<Row>;\n    }\n    impl Decoy for [Row; 2] {\n        fn iter(&self) -> std::iter::Once<Row> {\n            std::iter::once(Row { total: 33 })\n        }\n    }\n",
+        ANY,
+        "a trait supplies the array's iter",
+    )] {
         assert_eq!(
             field_class_with("0", items, body)?,
             ExposureClass::WeaklyExposed,
             "{label}"
         );
     }
+    Ok(())
+}
+
+/// #14087: a callable `const` of the owner's name is what the bare call
+/// runs, so the test is no test of `rows` and reaches nothing in it.
+#[test]
+fn a_callable_const_that_takes_the_bare_call_leaves_no_static_path() -> Result<(), String> {
+    let lib = source_with(
+        "0",
+        "    fn decoy(_a: u32, _b: u32) -> [Row; 2] {\n        [Row { total: 33 }, Row { total: 33 }]\n    }\n    const rows: fn(u32, u32) -> [Row; 2] = decoy;\n",
+        "        assert_eq!(rows(30, 3)[1].total, 33);",
+    );
+    let findings = TempRepo::create_with(&lib, &diff("0"), "", &[])?.findings()?;
+    let field = findings
+        .iter()
+        .find(|finding| {
+            finding.probe.location.line == 6
+                && finding.probe.family == ProbeFamily::FieldConstruction
+        })
+        .ok_or_else(|| {
+            format!("premise: a field_construction finding on line 6, got {findings:?}")
+        })?;
+    assert!(
+        !field.ripr.reach.summary.contains("rows_carry_the_sum"),
+        "the const-bound test must not reach the owner: {:?}",
+        field.ripr.reach
+    );
+    assert_eq!(field.class, ExposureClass::NoStaticPath);
     Ok(())
 }
 
