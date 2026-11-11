@@ -823,8 +823,8 @@ fn replaced_literal_is_paired(
 }
 
 /// True when a trimmed changed line is one literal and nothing else: a
-/// number (sign, digits, `_`, `.`, exponent and type suffix), `true`/`false`,
-/// or one quoted string/char with no interpolation, optionally followed by
+/// number (sign, digits, `_`, one fractional `.`, type suffix), `true`/`false`,
+/// or one quoted string/char (no raw or byte prefix), optionally followed by
 /// a single `,` or `;`. Anything with an operator, call, path or second
 /// token is not bare, so the removed-side probe stays (fail closed).
 #[cfg(test)]
@@ -862,7 +862,18 @@ fn bare_literal_body(text: &str) -> Option<&str> {
         return None;
     }
     let digits = body.strip_prefix('-').unwrap_or(body);
-    let numeric = !digits.contains("..")
+    // At most one `.`, and only before a digit or at the end (`2.5`, `1.`),
+    // so a method on a literal (`1.max`, `1.0.abs`) is not bare.
+    let mut dots = digits.match_indices('.');
+    let fractional = match (dots.next(), dots.next()) {
+        (None, _) => true,
+        (Some((index, _)), None) => digits[index + 1..]
+            .chars()
+            .next()
+            .is_none_or(|next| next.is_ascii_digit()),
+        (Some(_), Some(_)) => false,
+    };
+    let numeric = fractional
         && digits
             .chars()
             .next()
@@ -6266,7 +6277,7 @@ mod tests {
     #[test]
     fn bare_literal_lines_are_single_literals_only() {
         for bare in [
-            "1200", "-3", "1_000u64", "2.5f32", "true", "\"v1\",", "'x';", "0x1F",
+            "1200", "-3", "1_000u64", "2.5f32", "1.", "true", "\"v1\",", "'x';", "0x1F",
         ] {
             assert!(is_bare_literal_line(bare), "{bare} must read as bare");
         }
@@ -6278,6 +6289,9 @@ mod tests {
             "f(1)",
             "\"a\" + b",
             "1.max(2)",
+            "1.max",
+            "1.0.abs",
+            "1.2.3",
             "Some(1)",
             "",
             "\"unterminated",
