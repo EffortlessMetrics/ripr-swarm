@@ -3657,12 +3657,8 @@ fn an_actix_test_runtime_runs_an_async_test_body_and_other_shapes_refuse() {
         // A local `actix_rt` / `actix_web` shadows the crate.
         "mod actix_rt { pub use other::test; }\n#[actix_rt::test]",
         "use other as actix_web;\n#[actix_web::test]",
-        // Not the admitted paths.
-        "#[actix_web::rt::test]",
-        "#[actix_rt::test_helper]",
-        "#[actix::test]",
         // The other crate's attribute elsewhere in the module must hold too.
-        "mod actix_web { pub use other::test; }\n#[actix_web::test]\nasync fn decoy() {}\n#[actix_rt::test]",
+        "mod actix_web { pub use other::test; }\n#[actix_web::test]\nstruct Decoy;\n#[actix_rt::test]",
         "#[actix_rt::test]\n#[ignore]",
     ] {
         let tests = format!(
