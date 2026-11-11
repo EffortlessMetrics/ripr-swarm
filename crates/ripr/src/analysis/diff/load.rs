@@ -2007,6 +2007,11 @@ fn missing_ref_repair(
     flag: &str,
     git_timeout: Option<Duration>,
 ) -> String {
+    // #14238: a range can never resolve, in any repository state, so it is
+    // answered before the probes below can blame spelling, depth or a remote.
+    if let Some(advice) = revision_range_repair(missing_ref, flag) {
+        return advice;
+    }
     // An unborn HEAD has no commit for any ref, `HEAD` included: spelling and
     // remote advice would blame a name that is not the problem.
     // Only when no other ref exists either: an orphan branch in a repository
@@ -2093,6 +2098,56 @@ fn missing_ref_repair(
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// The repair for a revision range (`main..HEAD`, `main...HEAD`, `main..`)
+/// passed where one revision is expected (#14238). Git forbids `..` inside a
+/// ref name, so such a value is never a misspelt or unfetched branch: the
+/// reader typed the range `git diff` takes, and the flag wants one end of
+/// it. `--base` gets the range's start, `--head` its end. An end is quoted
+/// as a command only when [`range_end_is_plain`] holds; otherwise, and for
+/// an open range that lacks the wanted end, the advice names the end in
+/// words. `None` when `missing_ref` is not a range.
+fn revision_range_repair(missing_ref: &str, flag: &str) -> Option<String> {
+    let (start, end) = missing_ref
+        .split_once("...")
+        .or_else(|| missing_ref.split_once(".."))?;
+    let (wanted, wanted_name, forms) = if flag == "--head" {
+        (
+            end,
+            "end",
+            "ripr builds the range itself, from `--base` to that revision",
+        )
+    } else {
+        (
+            start,
+            "start",
+            "ripr builds the range itself, from that revision's merge base to the head it \
+             analyzes",
+        )
+    };
+    let pass = if range_end_is_plain(wanted) {
+        format!("Pass the range's {wanted_name}: `{flag} {wanted}`")
+    } else {
+        format!("Pass the range's {wanted_name} revision alone")
+    };
+    Some(format!(
+        "`{missing_ref}` is a revision range, and `{flag}` takes one revision: {forms}. {pass}"
+    ))
+}
+
+/// Whether one end of a range is safe to quote inside a suggested command:
+/// non-empty, not option-shaped, and made only of the characters a branch,
+/// tag, remote-tracking ref, commit id or ancestor offset is spelled with.
+/// Whitespace, quotes, backticks and shell metacharacters all fail, so the
+/// advice can never be read as a flag or a second command.
+fn range_end_is_plain(end: &str) -> bool {
+    !end.is_empty()
+        && !end.starts_with('-')
+        && !end.contains("..")
+        && end.chars().all(|cell| {
+            cell.is_ascii_alphanumeric() || matches!(cell, '_' | '.' | '-' | '/' | '~' | '^' | '@')
+        })
 }
 
 /// The anchor of a revision spelled relative to another commit (`HEAD` in
@@ -4890,6 +4945,147 @@ mod tests {
         ] {
             assert!(!remote_name_is_plain(hostile), "{hostile}");
         }
+    }
+
+    #[test]
+    fn revision_range_repair_names_the_end_the_flag_wants() {
+        // #14238: `--base` wants the range's start, `--head` its end, for
+        // both range spellings.
+        for (range, start, end) in [
+            ("main..HEAD", "main", "HEAD"),
+            (
+                "origin/main...feature/topic",
+                "origin/main",
+                "feature/topic",
+            ),
+            ("v1.2.0..HEAD~1", "v1.2.0", "HEAD~1"),
+        ] {
+            let base = revision_range_repair(range, "--base");
+            assert_eq!(
+                base.as_deref(),
+                Some(
+                    format!(
+                        "`{range}` is a revision range, and `--base` takes one revision: ripr \
+                         builds the range itself, from that revision's merge base to the head it \
+                         analyzes. Pass the range's start: `--base {start}`"
+                    )
+                    .as_str()
+                ),
+                "{range}"
+            );
+            let head = revision_range_repair(range, "--head");
+            assert_eq!(
+                head.as_deref(),
+                Some(
+                    format!(
+                        "`{range}` is a revision range, and `--head` takes one revision: ripr \
+                         builds the range itself, from `--base` to that revision. Pass the \
+                         range's end: `--head {end}`"
+                    )
+                    .as_str()
+                ),
+                "{range}"
+            );
+        }
+    }
+
+    #[test]
+    fn revision_range_repair_quotes_no_missing_or_unsafe_end() {
+        // An open range has no end to quote for the flag that wants it, and
+        // an end that could read as a flag or a second command is never
+        // interpolated into a suggested command line.
+        for (range, flag) in [
+            ("main..", "--head"),
+            ("..main", "--base"),
+            ("..", "--base"),
+            ("-x..HEAD", "--base"),
+            ("main; rm -rf ~..HEAD", "--base"),
+            ("`id`..HEAD", "--base"),
+            ("main..$(id)", "--head"),
+            ("a..b..c", "--head"),
+        ] {
+            let repair = revision_range_repair(range, flag).unwrap_or_default();
+            let wanted = if flag == "--head" { "end" } else { "start" };
+            assert!(
+                repair.ends_with(&format!("Pass the range's {wanted} revision alone")),
+                "{range} {flag}: {repair}"
+            );
+            assert!(
+                !repair.contains(&format!("`{flag} ")),
+                "{range} {flag}: no command may be suggested: {repair}"
+            );
+        }
+        // The other end of an open range is still named.
+        assert!(
+            revision_range_repair("main..", "--base")
+                .is_some_and(|repair| repair.ends_with("Pass the range's start: `--base main`"))
+        );
+        assert!(
+            revision_range_repair("..topic", "--head")
+                .is_some_and(|repair| repair.ends_with("Pass the range's end: `--head topic`"))
+        );
+    }
+
+    #[test]
+    fn revision_range_repair_leaves_single_revisions_alone() {
+        for single in [
+            "main",
+            "origin/main",
+            "v1.2.0",
+            "release-1.x",
+            "HEAD~3",
+            "topic@{1}",
+            "refs/heads/main",
+            "a.b",
+            "",
+        ] {
+            assert_eq!(revision_range_repair(single, "--base"), None, "{single}");
+            assert_eq!(revision_range_repair(single, "--head"), None, "{single}");
+        }
+    }
+
+    #[test]
+    fn missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice()
+    -> std::io::Result<()> {
+        // #14238: with one remote configured, a plain missing branch is told
+        // to fetch it (the control); a range is not, in either flag.
+        let dir = unique_fixture_root("missing-ref-revision-range")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+
+        let control = missing_ref_repair(&dir, "no-such-branch", "--base", None);
+        assert!(
+            control.contains("git fetch origin") && control.contains("origin/no-such-branch"),
+            "fixture precondition: a plain missing branch gets the fetch advice, got: {control}"
+        );
+        for flag in ["--base", "--head"] {
+            for range in ["main..HEAD", "main...HEAD", "main..", "..main"] {
+                let repair = missing_ref_repair(&dir, range, flag, None);
+                assert!(
+                    repair.contains(&format!("`{range}` is a revision range"))
+                        && repair.contains(&format!("`{flag}` takes one revision")),
+                    "{flag} {range}: {repair}"
+                );
+                for wrong in [
+                    "git fetch",
+                    "Check the spelling",
+                    "fetched branch",
+                    "origin/",
+                ] {
+                    assert!(
+                        !repair.contains(wrong),
+                        "{flag} {range}: a range must get no `{wrong}` advice, got: {repair}"
+                    );
+                }
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
