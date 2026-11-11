@@ -88,11 +88,10 @@ fn usage_lines<'a>(body: &'a str, path: &str) -> Vec<&'a str> {
 /// Opening words of the family-body prose paragraphs that describe each leaf:
 /// its contract, exit status, environment, and side effects. The scoped page
 /// keeps them so it drops sibling detail, not this leaf's own rules. A
-/// paragraph that covers several leaves is listed for each one.
+/// genuinely shared caveat paragraph is listed for each leaf it covers.
 fn leaf_note_openings(path: &str) -> &'static [&'static str] {
     const BASELINE_OUTPUT: &str = "Output discipline:";
-    const POLICY: &str = "The policy readiness report is read-only";
-    const PR_EXISTING_REQUESTS: &str = "`existing` keeps only marked comments";
+    const POLICY_LIMITS: &str = "These policy commands do not run analysis";
     match path {
         "reports index" => &["The report-packet index"],
         "reports ci-packet" => &["The CI packet runs"],
@@ -101,18 +100,19 @@ fn leaf_note_openings(path: &str) -> &'static [&'static str] {
         "reports kani" => &["The Kani report imports"],
         "reports ts-limitations" => &["The TypeScript limitation leaderboard"],
         "reports ts-false-actionable" => &["The TypeScript false-actionable audit report"],
-        "policy readiness"
-        | "policy operations"
-        | "policy history"
-        | "policy promote"
-        | "policy preview-promote"
-        | "policy waiver-aging"
-        | "policy suppression-health" => &[POLICY],
+        "policy readiness" => &["The policy readiness report", POLICY_LIMITS],
+        "policy operations" => &["The policy operations report", POLICY_LIMITS],
+        "policy history" => &["The policy history report", POLICY_LIMITS],
+        "policy promote" => &["The policy promotion packet", POLICY_LIMITS],
+        "policy preview-promote" => &["The preview promotion packet", POLICY_LIMITS],
+        "policy waiver-aging" => &["The waiver-aging report", POLICY_LIMITS],
+        "policy suppression-health" => &["The suppression-health report", POLICY_LIMITS],
         "baseline create" => &["The baseline create command", BASELINE_OUTPUT],
         "baseline diff" => &["The baseline diff command", BASELINE_OUTPUT],
         "baseline update" => &["The baseline update command", BASELINE_OUTPUT],
         "pr-comments plan" => &["The PR comments plan"],
-        "pr-comments existing" | "pr-comments requests" => &[PR_EXISTING_REQUESTS],
+        "pr-comments existing" => &["`existing` keeps only marked comments"],
+        "pr-comments requests" => &["`requests` writes one JSON payload"],
         "pr-comments summary" => &["`summary` renders"],
         "assistant-loop proof" => &["The assistant-loop proof report"],
         "assistant-loop health" => &["The assistant-loop health report"],
@@ -292,6 +292,16 @@ mod tests {
         let requests = leaf_help("pr-comments requests").unwrap_or_default();
         assert!(requests.contains("requests.tsv"), "{requests}");
         assert!(!requests.contains("`summary` renders"), "{requests}");
+        assert!(!requests.contains("`existing` keeps"), "{requests}");
+        let existing = leaf_help("pr-comments existing").unwrap_or_default();
+        assert!(!existing.contains("requests.tsv"), "{existing}");
+        let readiness = leaf_help("policy readiness").unwrap_or_default();
+        assert!(
+            readiness.contains("These policy commands do not"),
+            "{readiness}"
+        );
+        assert!(!readiness.contains("waiver-aging report"), "{readiness}");
+        assert!(!readiness.contains("promotion packet"), "{readiness}");
     }
 
     #[test]

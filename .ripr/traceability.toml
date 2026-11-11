@@ -14542,11 +14542,23 @@ tests = [
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_exit_mapping_matches_the_typed_contract",
   "crates/ripr/src/cli/command.rs::tests::help_json_parses_the_machine_discovery_route",
   "crates/ripr/tests/cli_smoke.rs::help_json_is_deterministic_across_roots_env_and_side_effect_free",
+  "crates/ripr/src/cli/help_leaf.rs::tests::every_shared_body_leaf_has_scoped_help",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_has_the_leaf_section_and_no_sibling_section",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_leads_with_the_catalog_summary",
+  "crates/ripr/src/cli/help_leaf.rs::tests::multi_usage_leaves_keep_every_own_line_and_no_sibling_line",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_lists_exactly_the_flags_suggestions_know",
+  "crates/ripr/src/cli/help_leaf.rs::tests::every_leaf_keeps_its_own_contract_paragraphs",
+  "crates/ripr/src/cli/help_leaf.rs::tests::a_path_without_a_shared_body_has_no_scoped_help",
+  "crates/ripr/tests/cli_help_json_flags.rs::shared_body_leaf_rows_list_only_the_leaf_flags",
+  "crates/ripr/tests/cli_help_json_flags.rs::every_leaf_row_flag_is_accepted_by_the_leaf_parser",
+  "crates/ripr/tests/cli_help_json_flags.rs::every_leaf_usage_flag_is_in_the_leaf_row",
+  "crates/ripr/tests/cli_help_json_flags.rs::leaf_help_is_scoped_and_family_help_is_unchanged",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/main.rs",
   "crates/ripr/src/cli/help_json.rs",
+  "crates/ripr/src/cli/help_leaf.rs",
   "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/cli/commands/agent_card.rs",
   "crates/ripr/src/cli/commands/agent_stub.rs",

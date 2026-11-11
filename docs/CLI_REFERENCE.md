@@ -3056,24 +3056,33 @@ Suppression health options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy history --current target/ripr/reports/policy-operations.json
@@ -3105,27 +3114,13 @@ History options:
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-history.md.
   --out-jsonl PATH                      Optional append-only JSONL producer. Writes one compact snapshot line per run (`example_append_record`). Generated CI does not pass this flag.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The policy history report shows whether readiness, waivers, suppressions,
+baseline debt, calibration, and preview boundaries are improving or decaying
+without appending history unless `--out-jsonl` is supplied.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy history --current target/ripr/reports/policy-operations.json
@@ -3156,27 +3151,13 @@ Operations options:
   --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-operations.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-operations.md.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The policy operations report composes existing policy artifacts into current
+ceiling, next safe action, safe/not-safe promotion modes, blockers, and input
+health without promoting anything.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy operations --policy-readiness target/ripr/reports/policy-readiness.json
@@ -3202,27 +3183,14 @@ Preview promotion options:
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The preview promotion packet writes default blocked evidence accounting for
+TypeScript and Python preview classes while keeping preview evidence visible,
+advisory, non-gating, outside RIPR Zero, and outside calibrated confidence
+until a later explicit policy is reviewed.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy preview-promote --language typescript --class boundary_gap
@@ -3248,27 +3216,12 @@ Promotion options:
   --out PATH                            JSON output path. Defaults to target/ripr/reports/policy-promotion-<mode>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/policy-promotion-<mode>.md.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The policy promotion packet reads policy operations plus optional policy
+history and writes manual-review promotion evidence without changing config.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy promote --to baseline-check --operations target/ripr/reports/policy-operations.json
@@ -3302,24 +3255,11 @@ Readiness options:
 The policy readiness report is read-only advisory governance over explicit
 existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
 baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+language evidence stays visible and advisory by default.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy readiness
@@ -3343,27 +3283,12 @@ Suppression health options:
   --out PATH                            JSON output path. Defaults to target/ripr/reports/suppression-health.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/suppression-health.md.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The suppression-health report flags durable exception metadata gaps while
+keeping suppressed findings visible.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy suppression-health --root .
@@ -3388,27 +3313,12 @@ Waiver aging options:
   --out PATH                            JSON output path. Defaults to target/ripr/reports/waiver-aging.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/waiver-aging.md.
 
-The policy readiness report is read-only advisory governance over explicit
-existing artifacts. It recommends advisory-only, visible-only, acknowledgeable,
-baseline-check, or calibrated-gate posture without executing a gate. Preview
-language evidence stays visible and advisory by default. The policy operations
-report composes existing policy artifacts into current ceiling, next safe
-action, safe/not-safe promotion modes, blockers, and input health without
-promoting anything. The policy history report shows whether readiness, waivers,
-suppressions, baseline debt, calibration, and preview boundaries are improving
-or decaying without appending history unless `--out-jsonl` is supplied. The
-policy promotion packet reads policy operations plus optional policy history
-and writes manual-review promotion evidence without changing config. The preview
-promotion packet writes default blocked evidence accounting for TypeScript and
-Python preview classes while
-keeping preview evidence visible, advisory, non-gating, outside RIPR Zero, and
-outside calibrated confidence until a later explicit policy is reviewed. The
-waiver-aging report keeps repeated waivers visible as repair or policy-review
-signals. The suppression-health report flags durable exception metadata gaps
-while keeping suppressed findings visible. These commands do not run analysis,
-mutate baselines or suppressions, post comments, edit source, generate tests,
-run mutation testing, change gate policy, promote preview evidence, or make CI
-blocking.
+The waiver-aging report keeps repeated waivers visible as repair or
+policy-review signals.
+
+These policy commands do not run analysis, mutate baselines or suppressions,
+post comments, edit source, generate tests, run mutation testing, change gate
+policy, promote preview evidence, or make CI blocking.
 
 Examples:
   ripr policy waiver-aging
@@ -3452,12 +3362,14 @@ default.
 Usage: ripr pr-comments existing [--root PATH] [--raw PATH] [--out PATH]
 
 Existing options:
+  --root PATH                 Workspace root. Defaults to current directory.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
 Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
 
 Summary options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
@@ -3474,16 +3386,19 @@ nothing for a clean pull request. It does not call GitHub or read a token.
 Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
 
 Requests options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
   --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
-`existing` keeps only marked comments that github-actions[bot] posted.
+`existing` keeps only marked comments that github-actions[bot] posted. It
+does not call GitHub or read a token.
+
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
 message to print once the call succeeds. An unsafe plan writes no requests
-and prints why. Neither command calls GitHub or reads a token; the generated
+and prints why. It does not call GitHub or read a token; the generated
 workflow's comment steps hold GH_TOKEN and run `gh api`.
 
 Examples:
@@ -3504,15 +3419,12 @@ Usage:
   ripr pr-comments existing [--root PATH] [--raw PATH] [--out PATH]
 
 Existing options:
+  --root PATH                 Workspace root. Defaults to current directory.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
-`existing` keeps only marked comments that github-actions[bot] posted.
-`requests` writes one JSON payload per call and requests.tsv, one line per
-call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
-message to print once the call succeeds. An unsafe plan writes no requests
-and prints why. Neither command calls GitHub or reads a token; the generated
-workflow's comment steps hold GH_TOKEN and run `gh api`.
+`existing` keeps only marked comments that github-actions[bot] posted. It
+does not call GitHub or read a token.
 
 Examples:
   ripr pr-comments existing --root .
@@ -3571,16 +3483,16 @@ Usage:
   ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
 
 Requests options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
   --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
-`existing` keeps only marked comments that github-actions[bot] posted.
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
 message to print once the call succeeds. An unsafe plan writes no requests
-and prints why. Neither command calls GitHub or reads a token; the generated
+and prints why. It does not call GitHub or read a token; the generated
 workflow's comment steps hold GH_TOKEN and run `gh api`.
 
 Examples:
@@ -3600,6 +3512,7 @@ Usage:
   ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
 
 Summary options:
+  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.

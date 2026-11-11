@@ -256,6 +256,47 @@ fn every_leaf_row_flag_is_accepted_by_the_leaf_parser() -> Result<(), String> {
     Ok(())
 }
 
+/// #14314: a leaf row is complete: every flag its scoped usage line names is
+/// in the row, so a generator never misses an accepted flag such as `--root`.
+#[test]
+fn every_leaf_usage_flag_is_in_the_leaf_row() -> Result<(), String> {
+    let document = catalog()?;
+    let mut checked = 0;
+    for row in leaf_rows(&document)? {
+        let path = row["path"].as_str().ok_or("path missing")?;
+        let names = flag_names(row);
+        let mut args: Vec<&str> = path.split(' ').collect();
+        args.push("--help");
+        let (ok, stdout, stderr) = run_ripr_text(&args)?;
+        assert!(ok, "ripr {path} --help failed: {stderr}");
+        // Usage is either `Usage: ripr <path> ...` or a `Usage:` heading
+        // followed by indented `ripr <path> ...` lines; take every one.
+        let prefix = format!("ripr {path}");
+        let usage = stdout
+            .lines()
+            .map(|line| line.trim_start_matches("Usage:").trim())
+            .filter(|line| line.starts_with(&prefix))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!usage.is_empty(), "{path}: no usage line in {stdout}");
+        for token in usage.split(|c: char| c.is_whitespace() || "[]|()".contains(c)) {
+            let Some(flag) = token.strip_prefix("--").map(|rest| format!("--{rest}")) else {
+                continue;
+            };
+            if flag == "--" {
+                continue;
+            }
+            assert!(
+                names.iter().any(|name| *name == flag),
+                "{path}: usage names {flag} but the catalog row lists {names:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 50, "expected many usage flags, checked {checked}");
+    Ok(())
+}
+
 /// #14314: scoped help carries the leaf's own section and no sibling section,
 /// both spellings agree, and bare family help still has every section.
 #[test]
