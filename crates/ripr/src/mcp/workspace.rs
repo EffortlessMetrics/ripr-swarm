@@ -622,9 +622,13 @@ impl Snapshot {
             })?
             .as_str()
             .to_string();
+        // The profile identity names the mode the analysis actually ran
+        // (`[analysis] mode`, #14347), so a draft and a deep selection never
+        // share one identity; default runs keep `profile:diff:draft`.
         let profile_identity = format!(
-            "mcp:{}:profile:diff:draft",
-            root_identity.unwrap_or("root:unavailable")
+            "mcp:{}:profile:diff:{}",
+            root_identity.unwrap_or("root:unavailable"),
+            output.mode.as_str()
         );
         let evidence_identity = evidence_identity(&items).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
