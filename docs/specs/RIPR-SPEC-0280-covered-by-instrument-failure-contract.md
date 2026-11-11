@@ -173,7 +173,9 @@ nothing else) against source:
   ordinary `mod` declarations or inline modules, where `#[cfg(test)]` is the
   only accepted condition;
 - the final module holds at least one `#[test]` function with no condition
-  other than `#[cfg(test)]`.
+  other than `#[cfg(test)]`, and neither it nor an inline module inside it
+  declares a file module (`mod deeper;`), whose tests would be missing from
+  the list.
 
 A selector that resolves starts no build. Its report row reads
 `applicable; resolved_in_source=N; not_listed; tests=[...]`, carries none of
@@ -235,7 +237,8 @@ and list every applicable selector.
   no subject, and publishes a row that cannot be read as coverage.
 - Source resolution is pinned on a generated workspace: the grammar, a
   declared module with tests, and the shapes that must not resolve (renamed
-  module, feature condition, conditional test, syntax error). One test
+  module, feature condition, conditional test, syntax error, nested file
+  module). One test
   resolves the shipped `ripr` selector in this repository. A policy test pins
   that a resolved selector is not handed to the builder, that the remaining
   selectors are, and that the resolved row cannot be read as a listing.

@@ -130,8 +130,10 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
 }
 
 /// Test names under `items`, relative to `prefix`. Nested inline modules are
-/// followed; nested file modules are left out, which only shortens the list.
-fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) {
+/// followed. A nested file module (`mod deeper;`) is not read here, so its
+/// tests would be missing from the list: the whole selector is refused
+/// (`None`) and goes to the build-and-list path instead.
+fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> Option<()> {
     for item in items {
         match item {
             ast::Item::Fn(function)
@@ -142,14 +144,14 @@ fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) {
                 }
             }
             ast::Item::Module(module) if present_in_test_build(module) => {
-                if let (Some(name), Some(list)) = (module.name(), module.item_list()) {
-                    let nested = list.items().collect::<Vec<_>>();
-                    collect_tests(&nested, &format!("{prefix}::{}", name.text()), tests);
-                }
+                let name = module.name()?;
+                let nested = module.item_list()?.items().collect::<Vec<_>>();
+                collect_tests(&nested, &format!("{prefix}::{}", name.text()), tests)?;
             }
             _ => {}
         }
     }
+    Some(())
 }
 
 /// The tests a library unit-test selector names, read from source under
@@ -191,7 +193,7 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         };
     }
     let mut tests = Vec::new();
-    collect_tests(&items, &selector.module_path.join("::"), &mut tests);
+    collect_tests(&items, &selector.module_path.join("::"), &mut tests)?;
     (!tests.is_empty()).then_some(tests)
 }
 
@@ -321,6 +323,10 @@ mod tests {
         let gated_test =
             "#[cfg(test)]\nmod tests {\n    #[cfg(windows)]\n    #[test]\n    fn first() {}\n}\n";
         let broken = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn first( {}\n";
+        // Inline tests plus a nested file module: its tests would be left out
+        // of the list, so the selector is not resolved at all.
+        let nested_file =
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn first() {}\n    mod deeper;\n}\n";
         for (label, inner) in [
             ("no-tests", no_tests),
             ("renamed", renamed),
@@ -328,6 +334,7 @@ mod tests {
             ("pathed", pathed),
             ("gated-test", gated_test),
             ("broken", broken),
+            ("nested-file", nested_file),
         ] {
             let workspace = layout(label, inner)?;
             let tests = resolve_in_source(workspace.root(), SELECTOR);
