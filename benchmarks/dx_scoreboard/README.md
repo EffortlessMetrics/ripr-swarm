@@ -593,3 +593,70 @@ It pins the actual retained regression, 58/203 to 74/203 (+16/203, above the
 unchanged 0.02 margin), separately from 55/162 added abstentions and the whole
 129/365 value. It is a regression-test witness, not a new baseline. The repair
 does not make that gate green or change analyzer classifications (#7553).
+
+## Bounded resident sessions (#12906)
+
+The opt-in resident-session instrument lives beside the existing scoreboard
+instruments. It builds without the analyzer dependency graph and never builds,
+downloads or installs the selected analyzer:
+
+```sh
+cargo run --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session -- /absolute/path/to/ripr /new/evidence/directory
+```
+
+Use an already qualified executable appropriate to the question. Its full
+SHA-256 is recorded and checked again at completion. The evidence directory
+must not exist. It retains the small generated Rust repository, cache directories,
+per-operation resident/reference snapshots and `resident-session.json`.
+A failed rehearsal exits nonzero and writes `status: failed`; it is not a
+partial performance pass. Compare runs only with the same workload, fixture
+file hashes, host class, effective analyzer/configuration and cache regime.
+
+This first bounded slice requests explicit analysis on LSP and MCP. Each
+resident process observes initial load, an unchanged request, a real predicate
+edit, a test-only assertion edit, two returns to the initial source state,
+process teardown/restart and one second of idle settling. A fresh server runs
+against the identical saved state after each measured operation. Nonempty
+initial subjects, internally bound current snapshots, complete small-fixture
+lists and equal full semantic projections are required. Only independently
+validated session-generation strings and the document pull `resultId` token
+are normalized. Both predicate and test-only edits must change semantic collections. Replaying
+prior findings with the current response metadata must fail the same parity
+check; a changed input hash alone cannot satisfy the negative control. No claim is made about
+request cancellation, interrupted refresh supersession, didSave scheduling or
+large-workspace residency; those remain #12906 follow-ons and the existing
+implementation owners retain their work.
+
+Linux `VmRSS` is sampled on the exact resident server PID at 20 ms intervals
+while requests run and during a fixed 100 ms settling interval. Each row
+retains raw samples, sample count, sampled operation peak and settled current
+RSS in bytes. Initial-load and restart observations include initialization.
+Request wall time and total observation wall time (including settling) are
+separate fields; each row also reports its retained-RSS delta from the first. These are direct-process resident observations, not allocated
+heap, lifetime `VmHWM`, CPU, or aggregate descendant memory. Between-sample
+peaks can be missed. Reference processes are not sampled as resident work;
+they reuse the surface's private disk cache and therefore warm that cache
+between measured operations. The report does not call later operations cold.
+No universal memory or latency guarantee is inferred from this tiny fixture.
+
+The whole run has a fixed 180-second deadline, a 1 GiB direct-child RSS limit
+and a 3 GiB host available-memory reserve. It refuses on unsupported platforms
+or unavailable observations. These are instrument safety bounds, not product
+budgets. Child groups are signaled and primary children reaped on exit; this
+is not a claim about descendants that deliberately escape their group.
+
+Run the measurement control without RIPR:
+
+```sh
+cargo run --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session -- --self-test
+cargo test --locked -p xtask --no-default-features --features resident-session \
+  --example resident_session
+```
+
+The control starts a separate synthetic measured child, records settled RSS,
+then touches and retains 32 MiB in that same PID. The retained-growth evaluator
+must reject it against a 16 MiB control threshold. Allocating memory in the
+driver cannot satisfy this control. This proves the observer/control path,
+not that a real RIPR session leaks or meets a memory target.
