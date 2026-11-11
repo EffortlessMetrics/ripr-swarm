@@ -43,14 +43,15 @@ repos:
 The hook uses `language: system`: `ripr` must already be on `PATH` (see
 [Install channels](INSTALL_CHANNELS.md)). It deliberately does not use
 `language: rust`, which would compile the whole crate in every consumer's hook
-environment. The `rev` must be a release tag that contains
-`.pre-commit-hooks.yaml`. The hook runs
+environment. The manifest is new in 0.11.0: no tag before `v0.11.0` contains
+it, and `rev` must name a release tag that does. The hook runs
 `ripr check --worktree --base HEAD --quiet` when a Rust file is selected, with
 `pass_filenames: false` and `verbose: true` so findings show even when the hook
 passes; `--quiet` keeps stderr progress lines out of the hook log. On a
 `git commit` (or a plain `pre-commit run`), pre-commit stashes unstaged edits
 before running hooks, so ripr checks exactly the change being committed;
 `pre-commit run --all-files` does not stash, so unstaged edits are included.
+New files stay out of the diff until they are staged.
 Output is the default human rendering. For a much smaller terminal (about 570
 bytes against about 3,400 for the same one-finding run), add arguments, which
 pre-commit appends to the entry:
