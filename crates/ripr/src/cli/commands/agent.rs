@@ -5078,7 +5078,10 @@ mod tests {
         );
         let custom = line(" --store /tmp/attempts");
         let custom_store = super::start_recipe_undecided(root, &custom);
-        assert!(!custom_store.contains("`ripr repair --root"), "{custom_store}");
+        assert!(
+            !custom_store.contains("`ripr repair --root"),
+            "{custom_store}"
+        );
         assert_eq!(
             custom_store,
             crate::app::agent_status::without_start_recipe(&custom)
