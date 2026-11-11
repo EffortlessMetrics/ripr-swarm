@@ -2116,36 +2116,55 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
 /// `pytest.raises(...)`. Nesting does not hide it either, since Python
 /// evaluates `wrap(utils.parse(""))` arguments before `wrap` runs. A call
 /// deferred by a `lambda` or a nested `def`/`class` does not run in the body
-/// and is not read.
+/// and is not read, nor is one spelled in a comment or a string, including a
+/// triple-quoted string opened on an earlier line.
+///
+/// A rule 14 comparison joined after the body (`assert str(exc.value) ==
+/// ...`) runs after the `with`, when the error was already raised, so an
+/// owner call there is not the call that raises and is not read.
 pub(super) fn exception_body_calls(gate_text: &str, item_text: &str, callee: &str) -> bool {
-    let Some(body) = gate_text.strip_prefix(item_text) else {
+    let Some(body) = gate_text
+        .strip_prefix(item_text)
+        .and_then(|rest| rest.strip_prefix('\n'))
+        .map(exception_body_text)
+    else {
         return false;
     };
-    let defers = |line: &str| {
+    let visible = |idx: usize| !python_text_hides_code(body, idx);
+    let defers_by_keyword = body.lines().any(|line| {
         let line = line.trim_start();
         ["def ", "async def ", "class "]
             .iter()
             .any(|keyword| line.starts_with(keyword))
-            || oracle_text_has_word(line, "lambda")
-    };
-    if body.lines().any(defers) {
+    });
+    let defers_by_lambda = body.match_indices("lambda").any(|(idx, word)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + word.len()..].chars().next();
+        !before.is_some_and(is_python_identifier_char)
+            && !after.is_some_and(is_python_identifier_char)
+            && visible(idx)
+    });
+    if defers_by_keyword || defers_by_lambda {
         return false;
     }
     let needle = format!("{callee}(");
-    body.match_indices(&needle).any(|(idx, _)| {
-        python_callee_start_has_boundary(body, idx)
-            && !line_prefix_looks_like_comment_or_string(body, idx)
-    })
+    body.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(body, idx) && visible(idx))
 }
 
-/// Whether `word` appears in `text` as a whole identifier.
-fn oracle_text_has_word(text: &str, word: &str) -> bool {
-    text.match_indices(word).any(|(idx, _)| {
-        let before = text[..idx].chars().next_back();
-        let after = text[idx + word.len()..].chars().next();
-        !before.is_some_and(is_python_identifier_char)
-            && !after.is_some_and(is_python_identifier_char)
-    })
+/// The `with` body (or callable call) of an exception assertion's gate text
+/// after its item: the first line, which the gate text holds trimmed, and the
+/// lines after it that keep their indentation. The first later line at column
+/// 0 is the rule 14 comparison the gate text appends, which is not body.
+fn exception_body_text(after_item: &str) -> &str {
+    let mut end = 0;
+    for (index, line) in after_item.split_inclusive('\n').enumerate() {
+        if index > 0 && !line.starts_with(char::is_whitespace) {
+            break;
+        }
+        end += line.len();
+    }
+    &after_item[..end]
 }
 
 /// Builtins that only re-materialize their one argument, so a call wrapped in
@@ -4168,10 +4187,30 @@ mod oracle_operand_tests {
         let item = "pytest.raises(ValueError, match=\"blank\")";
         for (body, expected) in [
             ("\nutils.sign(0)", true),
-            ("\nvalue = 1\nutils.sign(value)", true),
+            ("\nvalue = 1\n        utils.sign(value)", true),
             ("\nwrap(utils.sign(0))", true),
-            ("\nutils.sign(0)\nstr(excinfo.value) == \"blank\"", true),
+            (
+                "\nutils.sign(0)\nassert str(excinfo.value) == \"blank\"",
+                true,
+            ),
+            ("\nutils.sign(\n            0\n        )", true),
+            ("\nnote = \"lambda\"\n        utils.sign(0)", true),
+            ("\nnote = 1  # lambda\n        utils.sign(0)", true),
             ("", false),
+            // The rule 14 comparison runs after the error was raised.
+            (
+                "\nother(0)\nassert str(excinfo.value) == utils.sign(1)",
+                false,
+            ),
+            (
+                "\nother(0)\n        more(0)\nassert utils.sign(1) == str(excinfo.value)",
+                false,
+            ),
+            // A triple-quoted string opened on an earlier line.
+            (
+                "\nnote = \"\"\"\n        utils.sign(0)\n        \"\"\"\n        other(0)",
+                false,
+            ),
             ("\nmyutils.sign(0)", false),
             ("\nother.utils.sign(0)", false),
             ("\nutils.signed(0)", false),

@@ -95,6 +95,10 @@ fn module_qualified_call_in_a_raises_body_credits_the_changed_raise() -> Check {
         "import unittest\nfrom src import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        with self.assertRaisesRegex(ValueError, \"blank level\"):\n            levels.parse(\"\")\n",
     )?;
     expect_module_call_credit(
+        "the word lambda in a string defers nothing",
+        "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        note = \"lambda\"\n        levels.parse(\"\")\n",
+    )?;
+    expect_module_call_credit(
         "nested call still runs the owner first",
         "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        print(levels.parse(\"\"))\n",
     )
@@ -154,6 +158,14 @@ fn a_raises_body_that_does_not_run_the_owner_stays_uncredited() -> Check {
     expect_no_credit(
         "call deferred by a nested def",
         "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    with pytest.raises(ValueError, match=\"blank level\"):\n        def check():\n            levels.parse(\"\")\n        levels.other(\"\")\n",
+    )?;
+    expect_no_credit(
+        "owner called only in the comparison after the with",
+        "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    with pytest.raises(ValueError) as excinfo:\n        levels.other(\"\")\n    assert str(excinfo.value) == levels.parse(\"blank level\").lower()\n",
+    )?;
+    expect_no_credit(
+        "call spelled in a triple-quoted string",
+        "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    levels.parse(\"ok\")\n    with pytest.raises(ValueError, match=\"blank level\"):\n        note = \"\"\"\n        levels.parse(\"\")\n        \"\"\"\n        levels.other(\"\")\n",
     )?;
     expect_no_credit(
         "call named only in a comment",
