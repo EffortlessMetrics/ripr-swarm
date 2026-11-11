@@ -2419,48 +2419,37 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         let arguments = argument_map(serde_json::json!({"source": value}));
         assert_eq!(refresh_source_argument(&arguments), Ok(expected));
     }
-    for (wrong, message) in [
+    for (wrong, message, expected) in [
         (
             serde_json::json!(""),
             "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
         ),
         (
             serde_json::json!("Worktree"),
             "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
         ),
         (
             serde_json::json!("HEAD"),
             "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
         ),
-        (serde_json::json!(1), "source must be a string"),
+        (
+            serde_json::json!(1),
+            "source must be a string",
+            serde_json::json!("string"),
+        ),
     ] {
         let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
         let error = refresh_source_argument(&arguments)
             .err()
             .ok_or_else(|| format!("{wrong} must not select a refresh source"))?;
         assert_eq!(error.message, message, "{wrong}");
-        assert_eq!(
-            invalid_params_data(&error)?["argument"],
-            serde_json::json!("source"),
-            "{wrong}"
-        );
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("source"), "{wrong}");
+        assert_eq!(data["expected"], expected, "{wrong}");
     }
-    let arguments = argument_map(serde_json::json!({"source": "Worktree"}));
-    let error = refresh_source_argument(&arguments)
-        .err()
-        .ok_or("wrong-case source must be refused")?;
-    assert_eq!(
-        invalid_params_data(&error)?["expected"],
-        serde_json::json!(["committed", "worktree"])
-    );
-    let arguments = argument_map(serde_json::json!({"source": 1}));
-    let error = refresh_source_argument(&arguments)
-        .err()
-        .ok_or("numeric source must be refused")?;
-    assert_eq!(
-        invalid_params_data(&error)?["expected"],
-        serde_json::json!("string")
-    );
     Ok(())
 }
 
