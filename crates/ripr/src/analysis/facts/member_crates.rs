@@ -870,11 +870,36 @@ impl MemberCrates {
         crate_root: &Path,
     ) -> Option<std::collections::BTreeSet<String>> {
         let package = self.default_library_package(crate_root)?;
-        // Package selection above reads the worktree; the feature table is
+        self.package_default_features(&package)
+    }
+
+    /// The cargo features a plain `cargo test` enables for the package that
+    /// owns `file` (root-relative): every target of a package, its test
+    /// targets included, is built with the package's default feature
+    /// closure (#8780). Whether `file` is compiled at all is the caller's
+    /// question. `None` without manifest authority, for a file under no
+    /// readable package, or for a feature table this cannot read.
+    pub(crate) fn default_test_features(
+        &self,
+        file: &Path,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        let root = lexical(self.root.as_ref()?);
+        let file = lexical(&root.join(file));
+        let (package, _) = nearest_package(&root, file.parent()?)?;
+        self.package_default_features(&package)
+    }
+
+    /// The closure of `package`'s `[features] default = [..]`; see
+    /// [`Self::default_library_features`] for the rule.
+    fn package_default_features(
+        &self,
+        package: &Package,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        // Package selection reads the worktree; the feature table is
         // read where the analyzed sources are read, so a dirty `Cargo.toml`
         // cannot add a default feature the analyzed commit lacks (review of
         // #12368). With no committed overlay active this is the worktree file.
-        let manifest = self.analyzed_manifest(&package)?;
+        let manifest = self.analyzed_manifest(package)?;
         let Some(table) = manifest.get("features") else {
             return Some(std::collections::BTreeSet::new());
         };

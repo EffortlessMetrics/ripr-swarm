@@ -755,6 +755,37 @@ fn gate_resolution_answers_only_provably_true() {
 }
 
 #[test]
+fn a_test_gate_resolves_with_test_as_the_build_flag() {
+    use super::test_gate_is_default_enabled;
+    use std::collections::BTreeSet;
+    let defaults: BTreeSet<String> = ["a"].iter().map(|name| name.to_string()).collect();
+    for (attribute, expected) in [
+        ("#[cfg(feature = \"a\")]", true),
+        ("#![cfg(feature = \"a\")]", true),
+        ("  #[cfg(all(test, feature = \"a\"))]\n", true),
+        ("#[cfg(any(feature = \"c\", feature = \"a\"))]", true),
+        // `doctest` is the doc-example build's flag, not a test target's.
+        ("#[cfg(all(doctest, feature = \"a\"))]", false),
+        ("#[cfg(feature = \"c\")]", false),
+        ("#[cfg(not(feature = \"c\"))]", false),
+        ("#[cfg(all(feature = \"a\", unix))]", false),
+        ("#[cfg_attr(feature = \"a\", ignore)]", false),
+        ("#[ignore]", false),
+        ("#[cfg(feature = \"a\"", false),
+    ] {
+        assert_eq!(
+            test_gate_is_default_enabled(attribute, Some(&defaults)),
+            expected,
+            "{attribute}"
+        );
+        assert!(
+            !test_gate_is_default_enabled(attribute, None),
+            "no manifest authority: {attribute}"
+        );
+    }
+}
+
+#[test]
 fn the_feature_table_is_read_where_the_analyzed_sources_are_read() -> Result<(), Box<dyn Error>> {
     use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
     use std::sync::Arc;

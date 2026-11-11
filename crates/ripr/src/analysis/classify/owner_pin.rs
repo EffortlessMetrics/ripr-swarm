@@ -87,8 +87,8 @@ use crate::analysis::syntax::{
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
     is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
-    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    owner_pin_assertions, owner_pin_assertions_with_default_features, parse_clean_source_file,
+    pattern_pins, qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
     source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
     trusted_macro_binding_sites,
 };
@@ -2160,9 +2160,14 @@ impl OwnerPinSyntax {
         };
         self.by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(
+                owner_pin_assertions_with_default_features(
                     &expanded_assertion_view(&facts.source, facts.tests.iter()),
                     &assertion_context_macros(),
+                    false,
+                    index
+                        .member_crates
+                        .default_test_features(&test.file)
+                        .as_ref(),
                 )
             })
             .refusal_trusting_comparison_macros(
@@ -2343,17 +2348,18 @@ impl OwnerPinSyntax {
         };
         let file_refusal = admissions
             .get_or_build(&test.file, || {
-                if matches_context {
-                    owner_pin_matches_assertions(
-                        &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
-                    )
-                } else {
-                    owner_pin_assertions(
-                        &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
-                    )
-                }
+                // A gate the package's default features switch on is
+                // compiled by a plain `cargo test`, so it does not refuse
+                // (#8780).
+                owner_pin_assertions_with_default_features(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                    matches_context,
+                    index
+                        .member_crates
+                        .default_test_features(&test.file)
+                        .as_ref(),
+                )
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
