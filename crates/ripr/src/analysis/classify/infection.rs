@@ -1171,9 +1171,10 @@ fn added_string_arm_input(
 /// Whether nothing in the owner before `chain` can take a call away from it
 /// (#10856 for this reading): the chain occurs once in the owner's text, and
 /// the body before it holds no `if`, `match`, loop, `return`, `break`,
-/// `continue`, `?`, match arm, closure or other short-circuit. An early return
-/// on another parameter (`if strict { return false; }`) would keep a test
-/// that passes the new literal from ever evaluating the chain. Strings and
+/// `continue`, `?`, match arm, closure, other short-circuit, macro or call.
+/// An early return on another parameter (`if strict { return false; }`)
+/// would keep a test that passes the new literal from ever evaluating the
+/// chain. Strings and
 /// comments are masked; a chain ripr cannot find exactly once declines.
 fn chain_is_first_decision(function: &str, chain: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(function);
@@ -1190,7 +1191,11 @@ fn chain_is_first_decision(function: &str, chain: &str) -> bool {
     let Some((_, head)) = masked[..at].split_once('{') else {
         return false;
     };
-    if head.contains(['?', '|']) || head.contains("&&") || head.contains("=>") {
+    // `!` (a macro such as `assert!` or `panic!`) and `(` (a call such as
+    // `std::process::exit(1)`) can diverge without a keyword, so they
+    // decline too; wrapping the chain in a call (`Some(...)`) declines with
+    // them.
+    if head.contains(['?', '|', '!', '(']) || head.contains("&&") || head.contains("=>") {
         return false;
     }
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
@@ -2046,11 +2051,14 @@ mod tests {
             added_string_arm_evidence(shadowed, before, after, &["flag = \"--verbose\""], false);
         assert_ne!(rebound.state, StageState::Yes, "{}", rebound.summary);
         // An early return on another parameter can keep the input away
-        // from the chain, and so can an earlier `?` or `match` arm.
+        // from the chain, and so can an earlier `?`, `match` arm, panicking
+        // macro or diverging call.
         for diverted in [
             "pub fn pick(flag: &str, strict: bool) -> bool {\n    if strict { return false; }\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
             "pub fn pick(flag: &str, gate: Option<()>) -> Option<bool> {\n    gate?;\n    Some(flag == \"-v\" || flag == \"--verbose\")\n}\n",
             "pub fn pick(flag: &str, mode: u8) -> bool {\n    match mode { 0 => false, _ => flag == \"-v\" || flag == \"--verbose\" }\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    assert!(!strict);\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
+            "pub fn pick(flag: &str, strict: bool) -> bool {\n    std::process::exit(i32::from(strict));\n    flag == \"-v\" || flag == \"--verbose\"\n}\n",
         ] {
             let evidence = added_string_arm_evidence(
                 diverted,
