@@ -673,6 +673,7 @@ pub(in crate::analysis) fn range_change_visibility(
                 .iter()
                 .any(|binding| binding.name == owner.name)
             || body_declares_same_name_fn(test, &owner.name)
+            || body_imports_same_name(test, &owner.name)
         {
             every_mention_agrees = false;
             continue;
@@ -1107,6 +1108,22 @@ fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
     })
 }
 
+/// Whether the test body holds a `use` item naming `owner_name`
+/// (`use crate::rival::f;` in a nested block): the bare call may then name
+/// the imported function, not the owner.
+fn body_imports_same_name(test: &TestSummary, owner_name: &str) -> bool {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())
+    else {
+        // An unparsed body cannot show that no import rebinds the name.
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        ast::Use::cast(node).is_some_and(|item| {
+            count_name_tokens(&item.syntax().text().to_string(), owner_name) > 0
+        })
+    })
+}
+
 /// Which equality macro family the assertion uses and its first operands.
 /// `Some((true, ..))` is the `assert_ne!` family (the asserted relation is
 /// inequality); `None` is not an equality assertion at all.
@@ -1318,8 +1335,8 @@ fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
 /// (`(lo..=hi).contains(&x)`), either optionally cast `as` a recognized
 /// integer type, or a `match` on one parameter whose arms are integer
 /// literals, literal range patterns, `|` alternatives of those, or `_`.
-/// Endpoints and arm values must be literal arithmetic over the owner's
-/// parameters; the block holds no statement; reductions take no arguments or
+/// Endpoints and arm values must each be one integer literal or one owner
+/// parameter ([`plain_operand`]: no typed intermediate arithmetic); the block holds no statement; reductions take no arguments or
 /// turbofish; match arms carry no guard. Any other shape is `None` and the
 /// token fold decides as before.
 enum RangeTail {
@@ -1365,11 +1382,30 @@ fn plain_text(node: &impl AstNode) -> Option<String> {
     (crate::analysis::extract::mask_comments_and_strings(&text) == text).then_some(text)
 }
 
+/// [`plain_text`] restricted to one integer literal (optionally negated) or
+/// one bare name. The range-tail fold has no typed intermediate arithmetic:
+/// `(n + 1) / 2` at `n: u8 = 255` wraps to 0 in unchecked Rust while an
+/// untyped fold reads 128, so an operand that computes anything is not read.
+fn plain_operand(node: &impl AstNode) -> Option<String> {
+    let text = plain_text(node)?;
+    let trimmed = text.trim();
+    let digits = trimmed.strip_prefix('-').unwrap_or(trimmed).trim_start();
+    let literal = digits.starts_with(|ch: char| ch.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    let name = trimmed.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    (literal || name).then_some(text)
+}
+
 /// An optional range endpoint's text: an open side is `Some(None)`, an
 /// endpoint the fold cannot read is `None`.
 fn endpoint_text(endpoint: Option<impl AstNode>) -> Option<Option<String>> {
     match endpoint {
-        Some(endpoint) => plain_text(&endpoint).map(Some),
+        Some(endpoint) => plain_operand(&endpoint).map(Some),
         None => Some(None),
     }
 }
@@ -1515,7 +1551,7 @@ impl RangeTail {
                     .collect::<Option<Vec<_>>>()?,
                 pat => vec![ArmPattern::of(&pat)?],
             };
-            arms.push((patterns, plain_text(&arm.expr()?)?));
+            arms.push((patterns, plain_operand(&arm.expr()?)?));
         }
         Some(Self::Match { subject, arms })
     }
@@ -1578,7 +1614,7 @@ impl ArmPattern {
     fn of(pat: &ast::Pat) -> Option<Self> {
         match pat {
             ast::Pat::WildcardPat(_) => Some(Self::Wildcard),
-            ast::Pat::LiteralPat(literal) => Some(Self::Literal(plain_text(literal)?)),
+            ast::Pat::LiteralPat(literal) => Some(Self::Literal(plain_operand(literal)?)),
             ast::Pat::RangePat(range) => Some(Self::Range(TailRange::of_pat(range)?)),
             _ => None,
         }

@@ -345,3 +345,98 @@ fn a_self_comparison_does_not_credit_a_range_bound() -> Result<(), String> {
     assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
     Ok(())
 }
+
+#[test]
+fn a_moved_match_range_start_needs_an_input_between_the_bounds() -> Result<(), String> {
+    // `1..5` and `0..5` differ only at 0; `tier(3)` reads 1 on both.
+    let between = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        1..5 => 1,",
+        &test_calling("assert_eq!(tier(3), 1);"),
+    )?;
+    assert!(
+        classes(&between)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{between:?}"
+    );
+    // The arm head carries the change; the removed old arm keeps its own
+    // deleted-behavior reading, unchanged from before this gate.
+    let head_infection = |findings: &[Finding]| {
+        findings
+            .iter()
+            .filter(|finding| finding.probe.expression == "0..5 =>")
+            .map(|finding| format!("{:?}", finding.ripr.infect.state))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(head_infection(&between), vec!["Weak".to_string()]);
+    let moved = findings_on_changed_line(
+        TIER,
+        "        0..5 => 1,",
+        "        1..5 => 1,",
+        &test_calling("assert_eq!(tier(0), 1);"),
+    )?;
+    assert_eq!(head_infection(&moved), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn another_caller_keeps_agreeing_inputs_unknown() -> Result<(), String> {
+    // A helper may feed the owner inputs no test names, so "every asserted
+    // input agrees" is not claimed.
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\n/// Twice the sum.\npub fn twice(n: u32) -> u32 {\n    sum_to(n) * 2\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_scoped_import_of_the_owner_name_does_not_supply_a_separating_input() -> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::sum_to;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
+    let findings = findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", test)?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_match_arm_with_intermediate_arithmetic_is_not_folded_or_contradicted() -> Result<(), String> {
+    // At n = 255 `n + 1` wraps to 0 in unchecked u8 arithmetic, so the
+    // passing assertion must not be read against an untyped 128.
+    let lib = "/// Bucket a byte.\npub fn bucket(n: u8) -> u8 {\n    match n {\n        200..=255 => (n + 1) / 2,\n        _ => 0,\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        200..=255 => (n + 1) / 2,",
+        "        201..=255 => (n + 1) / 2,",
+        &test_calling("assert_eq!(bucket(255), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    let contradicted = findings
+        .iter()
+        .any(|finding| format!("{finding:?}").contains("contradicts static evaluation"));
+    assert!(!contradicted, "{findings:?}");
+    Ok(())
+}

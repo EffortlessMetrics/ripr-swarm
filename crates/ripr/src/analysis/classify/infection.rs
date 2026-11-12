@@ -1086,8 +1086,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             {
                 range_bound_infection(
                     owner.filter(|_| !assertion_macros_rebound),
-                    before,
-                    &probe.expression,
+                    &aligned_range_texts(before, &probe.expression),
                     related_tests,
                     owner_has_other_callers,
                 )
@@ -1111,8 +1110,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
 /// the caller) or an unread shape stays unknown, never `yes`.
 fn range_bound_infection(
     owner: Option<&FunctionSummary>,
-    before: &str,
-    after: &str,
+    (before, after): &(String, String),
     related_tests: &[&TestSummary],
     owner_has_other_callers: bool,
 ) -> StageEvidence {
@@ -1163,12 +1161,21 @@ fn range_bound_infection(
 /// not absorb it: the result has one element more or fewer at every input
 /// where either range is non-empty, which is the ordinary reading's premise,
 /// so such ranges keep it. A version that does not parse as a statement
-/// still counts when the whole difference is one `=` right after a `..`
-/// (a match range pattern `0..5 =>` to `0..=5 =>`).
+/// still counts when the whole difference is one `=` right after a `..`.
+/// Match arm lines and block headers are parsed in a `match` or with their
+/// block closed, so endpoint moves there (`1..5 =>` to `0..5 =>`,
+/// `for i in 1..n {`) are read too.
+///
+/// The preserving list is a length claim, not an injectivity claim:
+/// `.collect()` into a set or `Option<Vec<_>>` can still absorb an element,
+/// and both ranges being empty at the test input (`(1..n)` and `(0..n)` at
+/// `n = 0`) leaves any consumer unchanged. Those shapes keep the ordinary
+/// reading and are a known limit.
 pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str) -> bool {
     use crate::analysis::language::mask_rust_comments_and_strings;
-    let before = mask_rust_comments_and_strings(before.trim());
-    let after = mask_rust_comments_and_strings(after.trim());
+    let (before, after) = aligned_range_texts(before, after);
+    let before = mask_rust_comments_and_strings(&before);
+    let after = mask_rust_comments_and_strings(&after);
     if before == after {
         return false;
     }
@@ -1204,6 +1211,20 @@ pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str)
                     .get(..prefix)
                     .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."))
         }
+    }
+}
+
+/// `before` and `after` trimmed, and cut to their arm heads when both are
+/// match arms: a match-arm probe may carry only the head (`0..5 =>`) while
+/// its baseline carries the whole line (`1..5 => 1,`).
+pub(in crate::analysis) fn aligned_range_texts(before: &str, after: &str) -> (String, String) {
+    let (before, after) = (before.trim(), after.trim());
+    match (before.find("=>"), after.find("=>")) {
+        (Some(left), Some(right)) => (
+            before[..left + 2].to_string(),
+            after[..right + 2].to_string(),
+        ),
+        _ => (before.to_string(), after.to_string()),
     }
 }
 
@@ -1252,19 +1273,49 @@ const LENGTH_PRESERVING_METHODS: [&str; 25] = [
 /// receiver it is.
 fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsumer> {
     const PREFIX: &str = "fn __ripr_range_probe() {\n";
-    let source = format!("{PREFIX}{text}\n}}\n");
+    const ARM_PREFIX: &str = "fn __ripr_range_probe() {\nmatch __ripr_subject {\n";
+    let covers = |node: &ra_ap_syntax::SyntaxNode, offset: usize| {
+        let covered = node.text_range();
+        usize::from(covered.start()) <= offset + span.start
+            && offset + span.end <= usize::from(covered.end())
+    };
+    // A match arm line (`1..5 => 1,`) parses inside a `match`; a range
+    // pattern there is a membership test, which absorbs every element away
+    // from the moved bound.
+    if text.contains("=>") {
+        // A probe may carry only the arm head (`0..5 =>`); give it a body.
+        let body = if text.trim_end().ends_with("=>") {
+            " {},"
+        } else {
+            ""
+        };
+        let source = format!("{ARM_PREFIX}{text}{body}\n_ => {{}}\n}}\n}}\n");
+        if let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source)
+            && parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter(|node| ast::RangePat::can_cast(node.kind()))
+                .any(|node| covers(&node, ARM_PREFIX.len()))
+        {
+            return Some(RangeConsumer::Absorbing);
+        }
+    }
+    // A block header (`for i in 1..n {`, `if (0..n).contains(&x) {`) parses
+    // once its block is closed.
+    let closing = if text.trim_end().ends_with('{') {
+        "}"
+    } else {
+        ""
+    };
+    let source = format!("{PREFIX}{text}{closing}\n}}\n");
     let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
-    let start = PREFIX.len() + span.start;
-    let end = PREFIX.len() + span.end;
     let range = parse
         .tree()
         .syntax()
         .descendants()
         .filter_map(ast::RangeExpr::cast)
-        .filter(|range| {
-            let covered = range.syntax().text_range();
-            usize::from(covered.start()) <= start && end <= usize::from(covered.end())
-        })
+        .filter(|range| covers(range.syntax(), PREFIX.len()))
         .last()?;
     let mut node = range.syntax().clone();
     while let Some(parent) = node.parent() {
