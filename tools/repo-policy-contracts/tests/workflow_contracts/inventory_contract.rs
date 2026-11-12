@@ -26,10 +26,15 @@ const CONTROLS: &[&str] = &[
     "workflow_contracts::inventory_contract::missing_mapping_is_refused",
     "workflow_contracts::inventory_contract::missing_native_case_is_refused",
     "workflow_contracts::inventory_contract::changed_ignore_state_is_refused",
+    "workflow_contracts::inventory_contract::failure_tail_is_bounded_and_utf8_safe",
 ];
 
 fn mapping() -> Result<Mapping, String> {
     serde_json::from_str(include_str!("fixtures/inventory-map.json")).map_err(|e| e.to_string())
+}
+
+fn diagnostic_tail(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(2048)..]).into_owned()
 }
 
 fn native_listing(arguments: &[&str]) -> Result<BTreeSet<String>, String> {
@@ -38,14 +43,11 @@ fn native_listing(arguments: &[&str]) -> Result<BTreeSet<String>, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        let tail = |bytes: &[u8]| {
-            String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(2048)..]).into_owned()
-        };
         return Err(format!(
             "native inventory failed: {:?}; stdout tail: {}; stderr tail: {}",
             output.status,
-            tail(&output.stdout),
-            tail(&output.stderr)
+            diagnostic_tail(&output.stdout),
+            diagnostic_tail(&output.stderr)
         ));
     }
     let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
@@ -62,6 +64,17 @@ fn native_listing(arguments: &[&str]) -> Result<BTreeSet<String>, String> {
         }
     }
     Ok(names)
+}
+
+#[test]
+fn failure_tail_is_bounded_and_utf8_safe() {
+    let mut bytes = vec![0xc3, 0xa9];
+    bytes.resize(2049, b'x');
+    let tail = diagnostic_tail(&bytes);
+    assert!(tail.starts_with('\u{fffd}'));
+    assert_eq!(tail.chars().count(), 2048);
+    assert_eq!(diagnostic_tail(&[0xff, b'x']), "\u{fffd}x");
+    assert_eq!(diagnostic_tail(b"short"), "short");
 }
 
 fn native_inventory() -> Result<BTreeSet<(String, bool)>, String> {
