@@ -250,6 +250,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+          cargo fmt --all
           cargo fmt --all -- --check
           cargo test --locked -p repo-policy --test hosted_queue_route --test review_disposition_admission
           cargo test --locked -p repo-policy --lib workflow
