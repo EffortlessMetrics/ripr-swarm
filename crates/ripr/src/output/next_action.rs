@@ -995,6 +995,30 @@ mod tests {
     }
 
     #[test]
+    fn scope_missing_stop_names_the_last_commit_rerun_in_both_views() -> Result<(), String> {
+        let stop = NextActionStop::CheckTriage {
+            case: crate::domain::NextActionCheckCase::ScopeMissing,
+            detail_route: String::new(),
+            repair_route: String::new(),
+            scope_route: "ripr check --root . --base HEAD~1".to_string(),
+        };
+        let verbose = render_stop(&stop, None);
+        if verbose.len() != 1
+            || !verbose[0].ends_with("; check the last commit: ripr check --root . --base HEAD~1")
+        {
+            return Err(format!("verbose stop must name the rerun: {verbose:?}"));
+        }
+        let plain = render_next_action_plain_at_root(&stopped_action(stop)?, None);
+        if !plain
+            .iter()
+            .any(|line| line.contains("check the last commit") && line.contains("--base HEAD~1"))
+        {
+            return Err(format!("plain view must name the rerun: {plain:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn append_canonical_next_action_member_keeps_one_json_document() -> Result<(), String> {
         let action = stopped_action(NextActionStop::CheckTriage {
             case: crate::domain::NextActionCheckCase::TopGap,
