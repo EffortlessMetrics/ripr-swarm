@@ -391,6 +391,54 @@ fn given_foreign_or_shadowed_factory_when_dunder_reaches_helper_then_no_link_exi
 }
 
 #[test]
+fn given_foreign_star_import_when_dunder_reaches_helper_then_no_link_or_credit_exists()
+-> Result<(), String> {
+    let test_source = "from isodate import Duration\nfrom other.parsers import *\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n";
+    let factory_sources = [("src/isodate/isoduration.py", IMPORTED_FACTORY)];
+    assert_eq!(
+        factory_helper_link_count(&factory_sources, test_source)?,
+        0,
+        "a foreign star import must not establish the owner's factory"
+    );
+
+    let source = ISODATE_HELPER_PY
+        .split("\n\ndef parse_duration")
+        .next()
+        .ok_or("fixture must contain the class")?;
+    let mut owners = extract_owners(Path::new("src/isodate/duration.py"), source);
+    for (path, factory) in factory_sources {
+        owners.extend(extract_owners(Path::new(path), factory));
+    }
+    apply_class_facts(&mut owners);
+    let tests = extract_tests(Path::new("tests/test_duration.py"), test_source);
+    let needle = "a, b = val - low, high - low";
+    let (index, line) = source
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.trim() == needle)
+        .ok_or("fixture must contain the changed helper line")?;
+    let finding = classify_change(
+        Path::new("src/isodate/duration.py"),
+        index + 1,
+        line,
+        &owners,
+        &tests,
+    )
+    .ok_or("expected a finding for the changed helper")?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("helper_owner_call:")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn given_conflicting_package_factories_when_implicit_name_is_used_then_no_link_exists()
 -> Result<(), String> {
     let test = "from isodate import Duration\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n";

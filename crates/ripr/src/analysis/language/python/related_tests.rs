@@ -595,10 +595,11 @@ fn dunder_protocol_helper_call(
                     .count()
                     == 1
                 && !test_binds_local(test, &factory.name)
-                && !test
-                    .imports
-                    .iter()
-                    .any(|import| import.alias == factory.name)
+                && !test.imports.iter().any(|import| {
+                    import.alias == factory.name
+                        || (import.alias == "*"
+                            && !module_contains_owner(&import.source_module, factory))
+                })
             {
                 callees.push(factory.name.clone());
             }
