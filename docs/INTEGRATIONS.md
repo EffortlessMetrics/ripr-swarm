@@ -48,8 +48,9 @@ repos:
 current branch's commits with the default base (`origin/HEAD`, then
 `origin/main`, `origin/master`, `main`, `master`). That is the branch against
 its base, not the exact ref range being pushed. Pushing `main` reports the
-local commits not yet in `origin/main`, and "nothing was in scope" when the
-base resolves to the same commit as `HEAD`. Staged and unstaged edits are left out
+local commits not yet in the resolved base (usually `origin/main` through
+`origin/HEAD`), and "nothing was in scope" when that base is the same commit
+as `HEAD`. Staged and unstaged edits are left out
 and the report says so. When none of those bases resolves,
 ripr exits 2, the hook fails and the push stops with a message naming the
 fix; for a repository whose base has another name, set
