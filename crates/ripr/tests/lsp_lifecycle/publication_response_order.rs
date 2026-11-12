@@ -42,7 +42,7 @@ fn refresh_requires_both_obligations() {
         vec![publication("file:///repo/src/lib.rs", json!([{}]))],
         vec![json!({"id": 2, "result": null})],
     ] {
-        assert!(observe(messages, Some(2), true).is_err());
+        assert!(matches!(observe(messages, Some(2), true), Err(message) if !message.is_empty()));
     }
 }
 
@@ -77,7 +77,7 @@ fn deletion_requires_real_empty_diagnostics_for_the_same_file() -> Result<(), St
         publication("file:///repo/src/lib.rs", Value::Null),
         json!({"id": 2, "result": null}),
     ] {
-        assert!(observe(vec![message], None, false).is_err());
+        assert!(matches!(observe(vec![message], None, false), Err(message) if !message.is_empty()));
     }
     assert_eq!(
         observe(
