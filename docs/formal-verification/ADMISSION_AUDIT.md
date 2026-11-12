@@ -64,10 +64,11 @@ These are byte/admission bounds, not a wall-time or exact peak-memory guarantee.
 | Critical Kani claims | Required covers must be nonempty. Cover descriptions declare intent; they are not observed reachability. |
 | Identity | Results must reference selected registered claims and their exact declared subjects. Duplicate result subjects reject. A generation mismatch must remain explicitly stale. |
 | Established row | Requires declared verified/current evidence, discovery membership, complete cover counts matching the claim, duration and raw stream/block commitments. |
+| Failed row | Requires a declared current counterexample or unreachable required cover, discovery membership, the claim's required-cover count, duration and raw stream/block commitments. An unreachable-cover verdict must report a positive unreachable count. Tool failure, absence and verified output cannot be relabeled as behavioral failure. |
 | Partial run | Completed rows remain inspectable after whole-run failure or timeout. Missing selected subjects and unmapped discovered subjects are reported separately. Neither is erased by a successful row. |
-| Complete inventory | Empty, missing, unmapped or rejection-bearing inventories cannot declare completeness. |
+| Complete inventory | Empty, missing, unmapped or rejection-bearing inventories cannot declare completeness. Every selected subject must occur in native discovery; a missing-result placeholder cannot fill that gap. `undiscovered_selected_subjects` reports this separately from missing result rows. |
 | Process | Completed needs an exit observation; failed/killed cannot claim exit zero; timeout fields must agree; not-started cannot borrow output or a native verdict. |
-| Zero observations | A not-started or partial run can have no rows. No dummy claim/result is invented. An incomplete inventory needs a reason. |
+| Zero observations | A not-started or partial run can have no rows. Not-started rows may retain declared required-cover counts, but cannot claim satisfied/unreachable covers, duration or peak memory. No dummy claim/result is invented. An incomplete inventory needs a reason. |
 | Presentation | Output ordering is deterministic; document consistency, declared positive rows, process success, cleanup and native assurance remain different fields. |
 
 Only the Kani bounded-model-check native profile is admitted. Other native
@@ -75,6 +76,11 @@ profiles are explicitly unsupported, not silently converted to Kani semantics.
 Other claim families can still be inspected as declarations without a native
 run. Provider versions are declarations, not a qualified parser compatibility
 matrix.
+
+`admitted_merge_group` is accepted claim-phase metadata for the #14500 target
+lifecycle. Legacy ordinary-PR and merge-ready phase spellings remain inspectable
+historical declarations, not permission to start proof workflows. This passive
+audit selects no claims and grants no CI admission for any phase.
 
 ## What this cannot establish
 

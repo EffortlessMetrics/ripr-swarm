@@ -36,7 +36,7 @@ Every critical claim records:
 | `family` | Bounded model checking, deductive proof, state-machine model, etc. |
 | `provider` | Exact admitted native provider |
 | `criticality` | Critical, important, advisory, scheduled, or manual |
-| `phase` | Ordinary PR critical, merge-ready, scheduled, release, or manual |
+| `phase` | Admitted merge group, scheduled, release, or manual; legacy ordinary-PR/merge-ready values are historical declarations only |
 | `proposition` | Machine- and reviewer-readable statement of what is asserted |
 | `non_claims` | Explicit statements the result does not establish |
 | `owners` | Exact production symbols/files or a typed owner rule |
@@ -57,6 +57,13 @@ Every critical claim records:
 
 An unregistered harness may remain in the source census. It cannot increase
 registered assurance coverage.
+
+For the queue-only development lifecycle in #14500, new critical development
+claims use `admitted_merge_group`. The document auditor retains the older
+`ordinary_pr_critical` and `merge_ready` spellings to inspect historical input;
+accepting either spelling does not authorize a workflow start. Phase selection
+and source-bound native evidence belong to #14474 and the admitted-G plan,
+not to the passive document audit.
 
 ## Claim families
 

@@ -50,7 +50,10 @@
     },
     "provider": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "criticality": {"enum": ["critical", "important", "advisory", "scheduled", "manual"]},
-    "phase": {"enum": ["ordinary_pr_critical", "merge_ready", "scheduled", "release", "manual"]},
+    "phase": {
+      "description": "Admitted merge-group qualification is the target development phase. Legacy ordinary_pr_critical and merge_ready values remain inspectable historical declarations, never workflow-trigger authority.",
+      "enum": ["admitted_merge_group", "ordinary_pr_critical", "merge_ready", "scheduled", "release", "manual"]
+    },
     "proposition": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "non_claims": {
       "type": "array",

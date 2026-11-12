@@ -205,6 +205,22 @@
           }
         },
         {
+          "if": {"properties": {"status": {"const": "FAILED"}}, "required": ["status"]},
+          "then": {
+            "required": ["raw_block_digest"],
+            "properties": {
+              "native_verdict": {"enum": ["counterexample", "unreachable_cover"]},
+              "current": {"const": true},
+              "raw_block_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+              "duration_ms": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "FAILED"}, "native_verdict": {"const": "unreachable_cover"}}, "required": ["status", "native_verdict"]},
+          "then": {"properties": {"covers": {"properties": {"required": {"minimum": 1}, "unreachable": {"minimum": 1}}}}}
+        },
+        {
           "if": {"properties": {"status": {"const": "STALE"}}, "required": ["status"]},
           "then": {"properties": {"current": {"const": false}}}
         },
@@ -219,7 +235,7 @@
     {
       "if": {
         "properties": {
-          "results": {"contains": {"properties": {"status": {"const": "ESTABLISHED"}}, "required": ["status"]}}
+          "results": {"contains": {"properties": {"status": {"enum": ["ESTABLISHED", "FAILED"]}}, "required": ["status"]}}
         },
         "required": ["results"]
       },
@@ -244,7 +260,10 @@
               "properties": {
                 "status": {"const": "NOT_ESTABLISHED"},
                 "native_verdict": {"const": "missing"},
-                "raw_block_digest": {"type": "null"}
+                "raw_block_digest": {"type": "null"},
+                "duration_ms": {"type": "null"},
+                "peak_memory_bytes": {"type": "null"},
+                "covers": {"properties": {"satisfied": {"const": 0}, "unreachable": {"const": 0}}}
               }
             }
           }

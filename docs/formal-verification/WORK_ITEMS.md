@@ -93,12 +93,17 @@ remain separate axes.
 
 ### TLA+ repair-lifecycle pilot
 
-The source-only branch `codex/repair-lifecycle-model-20261106` still requires:
+The pilot branch `codex/repair-lifecycle-model-20261106` has
+[direct native TLC evidence](https://github.com/EffortlessMetrics/ripr-swarm/issues/12109#issuecomment-6813436649)
+at source `30ec9ac187025985314858ff9ba9d72bf1ad02e9`: the positive model run
+explored 199 distinct states with an empty frontier, and all three original
+negative configurations failed their named invariants. These are model-only
+observations, not Rust adapter or implementation-conformance evidence.
 
-- native TLC positive run;
-- all three expected counterexamples;
+Remaining qualification includes:
+
 - Rust adapter compilation/tests;
-- exact model/config/tool/source commitments;
+- producer-integrated model/config/tool/source commitments and retained native results;
 - state/action-to-Rust mapping;
 - six-case bounded conformance comparison;
 - current-main integration.

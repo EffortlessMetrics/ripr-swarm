@@ -3,10 +3,18 @@
 Formal verification should be useful enough to run and honest enough to block.
 Those goals require separate critical, complete, and canary routes.
 
+The target development lifecycle is #14500's hosted, queue-only path. Draft,
+Ready, synchronize, label and routine push events must start no automatic
+product qualification. This document describes the replacement topology;
+it does not change the installed workflow or retire a protection. Explicit
+warm-owner proof requests, scheduled deep proof and release/incident work
+retain their separately selected authority.
+
 ## Layer 1: `kani-critical`
 
-Purpose: bounded PR feedback for registered critical claims affected by a
-change.
+Purpose: bounded qualification of registered critical claims affected by the
+actual admitted merge group G, including every member of its admitted stack.
+The claim phase is `admitted_merge_group`, not an ordinary-PR trigger.
 
 Selection inputs:
 
@@ -18,6 +26,15 @@ Selection inputs:
 
 Incomplete classification falls back to all registered critical claims. It
 never falls back to no work.
+
+Bind selection to the admitted base, actual G, complete ordered constituent
+heads, accepted claim registry and controller generation. The executor consumes
+the exact plan identity; it must not infer a smaller selection from paths,
+one stack member or a prior H result. Claims whose complete source/configuration
+closure is not proven unchanged cannot borrow earlier proof. Unsupported or
+manual obligations remain visible. A fallback that exceeds the budget is an
+honest incomplete qualification, not permission to omit claims or fabricate
+success. #14474 owns the conservative selector and its completeness controls.
 
 Required behavior:
 
@@ -40,7 +57,13 @@ Runs:
 
 - nightly;
 - explicit manual dispatch;
-- merge-ready or equivalent selected qualification.
+- an explicit full-proof request when the accepted qualification plan requires it.
+
+The existing scheduled/manual full lane remains a separate inventory owner.
+The replacement does not automatically add the full lane to every G, and a
+critical selector cannot silently retire an applicable full-proof obligation.
+Legacy merge-ready triggers are retired only through #14500's reviewed event
+perimeter cutover, not by relabeling claims in this document.
 
 The route may shard by package and measured cost class. Shards share one exact
 run identity and expected inventory. Final aggregation rejects missing,
@@ -68,8 +91,9 @@ Required canaries include:
 - changed domain, assumption, trust, or bound invalidates prior result;
 - incomplete shard union does not pass.
 
-Canaries may run scheduled or when the runner, registry, parser, provider, or
-claim satisfaction law changes.
+Canaries may run scheduled, on explicit request, or in the admitted-G portfolio
+when the runner, registry, parser, provider or claim satisfaction law changes.
+They do not create an ordinary-PR or label-trigger exception.
 
 ## Metrics
 

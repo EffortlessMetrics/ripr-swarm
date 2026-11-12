@@ -43,6 +43,8 @@ enum Criticality {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
+    AdmittedMergeGroup,
+    // Retained for historical document inspection, not trigger authority.
     OrdinaryPrCritical,
     MergeReady,
     Scheduled,
@@ -244,6 +246,7 @@ struct Summary {
     observed_rows: usize,
     declared_established_rows: usize,
     missing_subjects: Vec<String>,
+    undiscovered_selected_subjects: Vec<String>,
     unmapped_discovered_subjects: Vec<String>,
     process_completed_successfully: Option<bool>,
     inventory_declared_complete: Option<bool>,
@@ -252,7 +255,11 @@ struct Summary {
 }
 
 fn require(condition: bool, message: &str) -> AuditResult<()> {
-    if condition { Ok(()) } else { Err(message.to_string()) }
+    if condition {
+        Ok(())
+    } else {
+        Err(message.to_string())
+    }
 }
 
 fn text(value: &str, field: &str) -> AuditResult<()> {
@@ -260,69 +267,126 @@ fn text(value: &str, field: &str) -> AuditResult<()> {
 }
 
 fn strings(values: &[String], field: &str, nonempty: bool) -> AuditResult<()> {
-    require(!nonempty || !values.is_empty(), &format!("{field}: empty list"))?;
+    require(
+        !nonempty || !values.is_empty(),
+        &format!("{field}: empty list"),
+    )?;
     let mut seen = BTreeSet::new();
     for value in values {
         text(value, field)?;
-        require(seen.insert(value), &format!("{field}: duplicate value {value}"))?;
+        require(
+            seen.insert(value),
+            &format!("{field}: duplicate value {value}"),
+        )?;
     }
     Ok(())
 }
 
 fn claim_id(value: &str) -> AuditResult<()> {
     let mut bytes = value.bytes();
-    let first_valid = bytes.next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let first_valid = bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
     require(
-        value.len() >= 2 && first_valid && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b)),
+        value.len() >= 2
+            && first_valid
+            && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b)),
         "claim_id: expected stable lowercase identifier",
     )
 }
 
 fn digest(value: &str, field: &str) -> AuditResult<()> {
-    let hex = value.strip_prefix("sha256:").ok_or_else(|| format!("{field}: expected sha256 digest"))?;
-    require(hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()), &format!("{field}: expected 64 hex digits"))
+    let hex = value
+        .strip_prefix("sha256:")
+        .ok_or_else(|| format!("{field}: expected sha256 digest"))?;
+    require(
+        hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+        &format!("{field}: expected 64 hex digits"),
+    )
 }
 
 fn optional_digest(value: &Option<String>, field: &str) -> AuditResult<()> {
-    match value { Some(value) => digest(value, field), None => Ok(()) }
+    match value {
+        Some(value) => digest(value, field),
+        None => Ok(()),
+    }
 }
 
 fn git_object(value: &str, field: &str) -> AuditResult<()> {
-    require(matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit()), &format!("{field}: expected full Git object ID"))
+    require(
+        matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit()),
+        &format!("{field}: expected full Git object ID"),
+    )
 }
 
 fn validate_claim(claim: &Claim) -> AuditResult<()> {
-    require(claim.schema == "ripr.formal-claim.v1", "unsupported claim schema")?;
+    require(
+        claim.schema == "ripr.formal-claim.v1",
+        "unsupported claim schema",
+    )?;
     claim_id(&claim.claim_id)?;
     if claim.provider == "kani" {
-        require(claim.family == Family::BoundedModelCheck, "Kani claim has the wrong proof family")?;
+        require(
+            claim.family == Family::BoundedModelCheck,
+            "Kani claim has the wrong proof family",
+        )?;
     }
-    require(claim.claim_generation > 0 && claim.owner_issue > 0, "claim generation and owner issue must be positive")?;
+    require(
+        claim.claim_generation > 0 && claim.owner_issue > 0,
+        "claim generation and owner issue must be positive",
+    )?;
     for (field, value) in [
-        ("provider", &claim.provider), ("proposition", &claim.proposition),
-        ("domain", &claim.domain), ("observable", &claim.observable),
+        ("provider", &claim.provider),
+        ("proposition", &claim.proposition),
+        ("domain", &claim.domain),
+        ("observable", &claim.observable),
         ("result_satisfaction", &claim.result_satisfaction),
-        ("transition_policy", &claim.transition_policy), ("owner_spec", &claim.owner_spec),
-    ] { text(value, field)?; }
+        ("transition_policy", &claim.transition_policy),
+        ("owner_spec", &claim.owner_spec),
+    ] {
+        text(value, field)?;
+    }
     for (field, values, nonempty) in [
-        ("non_claims", &claim.non_claims, true), ("owners", &claim.owners, true),
-        ("source_closure", &claim.source_closure, true), ("assumptions", &claim.assumptions, false),
-        ("trust_dependencies", &claim.trust_dependencies, true), ("subjects", &claim.subjects, true),
-        ("required_covers", &claim.required_covers, claim.criticality == Criticality::Critical && claim.provider == "kani"),
-        ("negative_controls", &claim.negative_controls, true), ("currentness_inputs", &claim.currentness_inputs, true),
-    ] { strings(values, field, nonempty)?; }
-    require(!claim.bounds.is_empty(), "bounds: explicit disposition required")?;
+        ("non_claims", &claim.non_claims, true),
+        ("owners", &claim.owners, true),
+        ("source_closure", &claim.source_closure, true),
+        ("assumptions", &claim.assumptions, false),
+        ("trust_dependencies", &claim.trust_dependencies, true),
+        ("subjects", &claim.subjects, true),
+        (
+            "required_covers",
+            &claim.required_covers,
+            claim.criticality == Criticality::Critical && claim.provider == "kani",
+        ),
+        ("negative_controls", &claim.negative_controls, true),
+        ("currentness_inputs", &claim.currentness_inputs, true),
+    ] {
+        strings(values, field, nonempty)?;
+    }
+    require(
+        !claim.bounds.is_empty(),
+        "bounds: explicit disposition required",
+    )?;
     for (key, value) in &claim.bounds {
         text(key, "bound key")?;
-        if let BoundValue::Text(value) = value { text(value, "bound value")?; }
+        if let BoundValue::Text(value) = value {
+            text(value, "bound value")?;
+        }
         if key == "unwind" {
-            require(matches!(value, BoundValue::Number(n) if n.as_u64().is_some_and(|v| v > 0)), "unwind: positive integer required")?;
+            require(
+                matches!(value, BoundValue::Number(n) if n.as_u64().is_some_and(|v| v > 0)),
+                "unwind: positive integer required",
+            )?;
         }
     }
     for path in &claim.source_closure {
         require(
-            !path.contains('\\') && !path.contains(':') && !path.chars().any(char::is_control)
-                && path.split('/').all(|p| !p.is_empty() && p != "." && p != ".."),
+            !path.contains('\\')
+                && !path.contains(':')
+                && !path.chars().any(char::is_control)
+                && path
+                    .split('/')
+                    .all(|p| !p.is_empty() && p != "." && p != ".."),
             "source_closure: repository-relative paths only; no glob execution or traversal",
         )?;
     }
@@ -330,57 +394,142 @@ fn validate_claim(claim: &Claim) -> AuditResult<()> {
 }
 
 fn validate_row(row: &Row, claim: &Claim, run: &Run) -> AuditResult<()> {
-    require(row.claim_generation > 0, "result claim_generation must be positive")?;
-    require(claim.subjects.contains(&row.subject), "result subject is not registered for its claim")?;
+    require(
+        row.claim_generation > 0,
+        "result claim_generation must be positive",
+    )?;
+    require(
+        claim.subjects.contains(&row.subject),
+        "result subject is not registered for its claim",
+    )?;
     strings(&row.reasons, "result reasons", true)?;
     strings(&row.non_claims, "result non_claims", true)?;
     digest(&row.source_digest, "result source_digest")?;
     digest(&row.bounds_digest, "result bounds_digest")?;
     optional_digest(&row.assumptions_digest, "assumptions_digest")?;
     optional_digest(&row.raw_block_digest, "raw_block_digest")?;
-    let counted = row.covers.satisfied.checked_add(row.covers.unreachable).ok_or("cover count overflow")?;
-    require(counted <= row.covers.required, "cover counts exceed declared requirement")?;
+    let counted = row
+        .covers
+        .satisfied
+        .checked_add(row.covers.unreachable)
+        .ok_or("cover count overflow")?;
+    require(
+        counted <= row.covers.required,
+        "cover counts exceed declared requirement",
+    )?;
     if row.status == Status::Stale {
         require(!row.current, "STALE result cannot declare current=true")?;
     }
     if row.claim_generation != claim.claim_generation {
-        require(row.status == Status::Stale && !row.current, "wrong claim generation must remain STALE")?;
+        require(
+            row.status == Status::Stale && !row.current,
+            "wrong claim generation must remain STALE",
+        )?;
     }
     if row.native_verdict == Verdict::Timeout {
-        require(matches!(row.status, Status::NotEstablished | Status::Stale), "timeout is not a counterexample or established result")?;
+        require(
+            matches!(row.status, Status::NotEstablished | Status::Stale),
+            "timeout is not a counterexample or established result",
+        )?;
     }
     if run.process.state == ProcessState::NotStarted {
-        require(row.status == Status::NotEstablished && row.native_verdict == Verdict::Missing && row.raw_block_digest.is_none(), "not-started run cannot contain native observations")?;
+        require(
+            row.status == Status::NotEstablished
+                && row.native_verdict == Verdict::Missing
+                && row.raw_block_digest.is_none(),
+            "not-started run cannot contain native observations",
+        )?;
+        require(
+            row.covers.satisfied == 0
+                && row.covers.unreachable == 0
+                && row.duration_ms.is_none()
+                && row.peak_memory_bytes.is_none(),
+            "not-started row cannot contain observed covers, duration or memory",
+        )?;
+    }
+    // A behavioral failure is also an evidence-bearing claim. Tool absence,
+    // stale observations and success-looking output cannot become a failed
+    // proposition merely because the input labels them FAILED.
+    if matches!(row.status, Status::Established | Status::Failed) {
+        require(row.current, "ESTABLISHED/FAILED requires current evidence")?;
+        require(
+            run.inventory.discovered_subjects.contains(&row.subject),
+            "ESTABLISHED/FAILED subject was not discovered",
+        )?;
+        require(
+            row.raw_block_digest.is_some() && run.process.raw_output_digest.is_some(),
+            "ESTABLISHED/FAILED requires retained raw-output and block commitments",
+        )?;
+        require(
+            row.duration_ms.is_some(),
+            "ESTABLISHED/FAILED requires observed duration",
+        )?;
+        require(
+            row.covers.required
+                == u64::try_from(claim.required_covers.len()).map_err(|e| e.to_string())?,
+            "required-cover count disagrees with claim",
+        )?;
+    }
+    if row.status == Status::Failed {
+        require(
+            matches!(
+                row.native_verdict,
+                Verdict::Counterexample | Verdict::UnreachableCover
+            ),
+            "FAILED requires a behavioral counterexample or unreachable required cover",
+        )?;
+        if row.native_verdict == Verdict::UnreachableCover {
+            require(
+                row.covers.unreachable > 0,
+                "unreachable-cover failure requires an observed unreachable cover",
+            )?;
+        }
     }
     if row.status == Status::Established {
-        require(row.native_verdict == Verdict::Verified && row.current, "ESTABLISHED requires verified/current evidence")?;
-        require(run.inventory.discovered_subjects.contains(&row.subject), "ESTABLISHED subject was not discovered")?;
-        require(row.raw_block_digest.is_some() && run.process.raw_output_digest.is_some(), "ESTABLISHED requires retained raw-output and block commitments")?;
-        require(row.duration_ms.is_some(), "ESTABLISHED requires observed duration")?;
-        require(row.covers.required == u64::try_from(claim.required_covers.len()).map_err(|e| e.to_string())?, "required-cover count disagrees with claim")?;
-        require(row.covers.satisfied == row.covers.required && row.covers.unreachable == 0, "ESTABLISHED requires all declared covers satisfied")?;
+        require(
+            row.native_verdict == Verdict::Verified,
+            "ESTABLISHED requires verified evidence",
+        )?;
+        require(
+            row.covers.satisfied == row.covers.required && row.covers.unreachable == 0,
+            "ESTABLISHED requires all declared covers satisfied",
+        )?;
         if claim.provider == "kani" && claim.criticality == Criticality::Critical {
-            require(row.covers.required > 0, "critical Kani claim requires positive cover evidence")?;
+            require(
+                row.covers.required > 0,
+                "critical Kani claim requires positive cover evidence",
+            )?;
         }
     }
     Ok(())
 }
 
 fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
-    require(!claims.is_empty() && claims.len() <= MAX_CLAIMS, "supply between 1 and 256 claims")?;
+    require(
+        !claims.is_empty() && claims.len() <= MAX_CLAIMS,
+        "supply between 1 and 256 claims",
+    )?;
     let mut registry = BTreeMap::new();
     for claim in claims {
         validate_claim(claim).map_err(|e| format!("{}: {e}", claim.claim_id))?;
-        require(registry.insert(claim.claim_id.as_str(), claim).is_none(), "duplicate claim ID")?;
+        require(
+            registry.insert(claim.claim_id.as_str(), claim).is_none(),
+            "duplicate claim ID",
+        )?;
     }
     let mut summary = Summary {
         schema: "ripr.formal-evidence-audit.v1",
         document_consistency: "consistent",
         native_assurance: "not_assessed",
-        registered_claims: claims.len(), selected_claims: 0, observed_rows: 0,
-        declared_established_rows: 0, missing_subjects: Vec::new(),
+        registered_claims: claims.len(),
+        selected_claims: 0,
+        observed_rows: 0,
+        declared_established_rows: 0,
+        missing_subjects: Vec::new(),
+        undiscovered_selected_subjects: Vec::new(),
         unmapped_discovered_subjects: Vec::new(),
-        process_completed_successfully: None, inventory_declared_complete: None,
+        process_completed_successfully: None,
+        inventory_declared_complete: None,
         cleanup_complete: None,
         limitations: vec![
             "Input declarations are not authenticated evidence.",
@@ -389,18 +538,34 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
             "This audit cannot issue a proof receipt or authorize CI admission.",
         ],
     };
-    let Some(run) = run else { return Ok(summary); };
-    require(run.schema == "ripr.native-proof-run.v1", "unsupported run schema")?;
+    let Some(run) = run else {
+        return Ok(summary);
+    };
+    require(
+        run.schema == "ripr.native-proof-run.v1",
+        "unsupported run schema",
+    )?;
     // Only this provider profile has a semantic admission policy in this tool.
-    require(run.provider.family == Family::BoundedModelCheck && run.provider.name == "kani", "unsupported native provider profile; no assurance inferred")?;
+    require(
+        run.provider.family == Family::BoundedModelCheck && run.provider.name == "kani",
+        "unsupported native provider profile; no assurance inferred",
+    )?;
     for (field, value) in [
-        ("run_id", &run.run_id), ("repository", &run.repository),
+        ("run_id", &run.run_id),
+        ("repository", &run.repository),
         ("claim_registry_generation", &run.claim_registry_generation),
-        ("provider version", &run.provider.version), ("toolchain language", &run.toolchain.language),
+        ("provider version", &run.provider.version),
+        ("toolchain language", &run.toolchain.language),
         ("runner generation", &run.runner.generation),
-    ] { text(value, field)?; }
-    if let Some(value) = &run.provider.solver_version { text(value, "solver_version")?; }
-    if let Some(value) = &run.toolchain.target { text(value, "target")?; }
+    ] {
+        text(value, field)?;
+    }
+    if let Some(value) = &run.provider.solver_version {
+        text(value, "solver_version")?;
+    }
+    if let Some(value) = &run.toolchain.target {
+        text(value, "target")?;
+    }
     git_object(&run.revision, "revision")?;
     git_object(&run.tree, "tree")?;
     digest(&run.source_closure_digest, "source_closure_digest")?;
@@ -408,52 +573,142 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
     optional_digest(&run.worktree_digest, "worktree_digest")?;
     optional_digest(&run.process.raw_output_digest, "raw_output_digest")?;
     let deadline = &run.runner.deadline_policy;
-    require(deadline.preflight_seconds > 0 && deadline.whole_run_seconds > 0 && deadline.per_subject_seconds > 0, "deadlines must be positive")?;
-    strings(&run.inventory.expected_claim_ids, "expected_claim_ids", false)?;
-    strings(&run.inventory.discovered_subjects, "discovered_subjects", false)?;
-    strings(&run.inventory.rejection_reasons, "inventory rejection_reasons", !run.inventory.complete)?;
-    require(run.process.timed_out == (run.process.state == ProcessState::TimedOut), "process timeout fields contradict")?;
+    require(
+        deadline.preflight_seconds > 0
+            && deadline.whole_run_seconds > 0
+            && deadline.per_subject_seconds > 0,
+        "deadlines must be positive",
+    )?;
+    strings(
+        &run.inventory.expected_claim_ids,
+        "expected_claim_ids",
+        false,
+    )?;
+    strings(
+        &run.inventory.discovered_subjects,
+        "discovered_subjects",
+        false,
+    )?;
+    strings(
+        &run.inventory.rejection_reasons,
+        "inventory rejection_reasons",
+        !run.inventory.complete,
+    )?;
+    require(
+        run.process.timed_out == (run.process.state == ProcessState::TimedOut),
+        "process timeout fields contradict",
+    )?;
     if run.process.state == ProcessState::Completed {
-        require(run.process.exit_code.is_some(), "completed process is missing exit status")?;
+        require(
+            run.process.exit_code.is_some(),
+            "completed process is missing exit status",
+        )?;
     }
-    if matches!(run.process.state, ProcessState::Failed | ProcessState::Killed) {
-        require(run.process.exit_code != Some(0), "failed/killed process cannot have successful exit")?;
+    if matches!(
+        run.process.state,
+        ProcessState::Failed | ProcessState::Killed
+    ) {
+        require(
+            run.process.exit_code != Some(0),
+            "failed/killed process cannot have successful exit",
+        )?;
     }
     if run.process.state == ProcessState::NotStarted {
-        require(run.process.exit_code.is_none() && run.process.raw_output_digest.is_none(), "not-started run cannot borrow process output or exit status")?;
+        require(
+            run.process.exit_code.is_none() && run.process.raw_output_digest.is_none(),
+            "not-started run cannot borrow process output or exit status",
+        )?;
     }
     if run.inventory.complete {
-        require(!run.inventory.expected_claim_ids.is_empty() && !run.inventory.discovered_subjects.is_empty(), "empty inventory cannot be complete")?;
-        require(run.inventory.rejection_reasons.is_empty(), "complete inventory cannot carry rejection reasons")?;
+        require(
+            !run.inventory.expected_claim_ids.is_empty()
+                && !run.inventory.discovered_subjects.is_empty(),
+            "empty inventory cannot be complete",
+        )?;
+        require(
+            run.inventory.rejection_reasons.is_empty(),
+            "complete inventory cannot carry rejection reasons",
+        )?;
     }
     let mut expected = BTreeSet::new();
     for id in &run.inventory.expected_claim_ids {
-        let claim = registry.get(id.as_str()).ok_or_else(|| format!("unregistered selected claim: {id}"))?;
-        require(claim.family == run.provider.family && claim.provider == run.provider.name, "selected claim/provider mismatch")?;
-        for subject in &claim.subjects { expected.insert((id.as_str(), subject.as_str())); }
+        let claim = registry
+            .get(id.as_str())
+            .ok_or_else(|| format!("unregistered selected claim: {id}"))?;
+        require(
+            claim.family == run.provider.family && claim.provider == run.provider.name,
+            "selected claim/provider mismatch",
+        )?;
+        for subject in &claim.subjects {
+            expected.insert((id.as_str(), subject.as_str()));
+        }
     }
     let mut observed = BTreeSet::new();
     for row in &run.results {
         let key = (row.claim_id.as_str(), row.subject.as_str());
-        require(expected.contains(&key), "result is outside the selected registered subjects")?;
-        require(observed.insert(key), "duplicate result subject; never first/last match wins")?;
-        let claim = registry.get(row.claim_id.as_str()).ok_or("result claim is not registered")?;
+        require(
+            expected.contains(&key),
+            "result is outside the selected registered subjects",
+        )?;
+        require(
+            observed.insert(key),
+            "duplicate result subject; never first/last match wins",
+        )?;
+        let claim = registry
+            .get(row.claim_id.as_str())
+            .ok_or("result claim is not registered")?;
         validate_row(row, claim, run)?;
     }
-    summary.missing_subjects = expected.difference(&observed).map(|(id, subject)| format!("{id}::{subject}")).collect();
+    summary.missing_subjects = expected
+        .difference(&observed)
+        .map(|(id, subject)| format!("{id}::{subject}"))
+        .collect();
     let selected_subjects: BTreeSet<&str> = expected.iter().map(|(_, subject)| *subject).collect();
-    summary.unmapped_discovered_subjects = run.inventory.discovered_subjects.iter()
-        .filter(|subject| !selected_subjects.contains(subject.as_str())).cloned().collect();
+    let discovered_subjects: BTreeSet<&str> = run
+        .inventory
+        .discovered_subjects
+        .iter()
+        .map(String::as_str)
+        .collect();
+    summary.undiscovered_selected_subjects = selected_subjects
+        .difference(&discovered_subjects)
+        .map(|subject| (*subject).to_string())
+        .collect();
+    summary.unmapped_discovered_subjects = run
+        .inventory
+        .discovered_subjects
+        .iter()
+        .filter(|subject| !selected_subjects.contains(subject.as_str()))
+        .cloned()
+        .collect();
     summary.unmapped_discovered_subjects.sort();
     if run.inventory.complete {
-        require(summary.unmapped_discovered_subjects.is_empty(), "complete inventory has unmapped discovered subjects")?;
-        require(summary.missing_subjects.is_empty(), "complete inventory has missing result subjects")?;
+        require(
+            summary.undiscovered_selected_subjects.is_empty(),
+            "complete inventory has selected subjects absent from native discovery",
+        )?;
+        require(
+            summary.unmapped_discovered_subjects.is_empty(),
+            "complete inventory has unmapped discovered subjects",
+        )?;
+        require(
+            summary.missing_subjects.is_empty(),
+            "complete inventory has missing result subjects",
+        )?;
     }
     summary.selected_claims = run.inventory.expected_claim_ids.len();
     summary.observed_rows = run.results.len();
-    summary.declared_established_rows = run.results.iter().filter(|r| r.status == Status::Established).count();
+    summary.declared_established_rows = run
+        .results
+        .iter()
+        .filter(|r| r.status == Status::Established)
+        .count();
     summary.inventory_declared_complete = Some(run.inventory.complete);
-    summary.process_completed_successfully = Some(run.process.state == ProcessState::Completed && run.process.exit_code == Some(0) && !run.process.timed_out);
+    summary.process_completed_successfully = Some(
+        run.process.state == ProcessState::Completed
+            && run.process.exit_code == Some(0)
+            && !run.process.timed_out,
+    );
     summary.cleanup_complete = Some(run.process.cleanup_state == Cleanup::Complete);
     Ok(summary)
 }
@@ -489,7 +744,8 @@ impl<'de> Deserialize<'de> for UniqueJson {
                 Ok(UniqueJson(v.into()))
             }
             fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
-                serde_json::Number::from_f64(v).map(|n| UniqueJson(n.into()))
+                serde_json::Number::from_f64(v)
+                    .map(|n| UniqueJson(n.into()))
                     .ok_or_else(|| E::custom("non-finite JSON number"))
             }
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
@@ -501,16 +757,26 @@ impl<'de> Deserialize<'de> for UniqueJson {
             fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
                 Ok(UniqueJson(serde_json::Value::Null))
             }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
                 let mut values = Vec::new();
-                while let Some(UniqueJson(value)) = seq.next_element()? { values.push(value); }
+                while let Some(UniqueJson(value)) = seq.next_element()? {
+                    values.push(value);
+                }
                 Ok(UniqueJson(values.into()))
             }
-            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
                 let mut values = serde_json::Map::new();
                 while let Some((key, UniqueJson(value))) = map.next_entry::<String, UniqueJson>()? {
                     if values.insert(key.clone(), value).is_some() {
-                        return Err(serde::de::Error::custom(format!("duplicate JSON key: {key}")));
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate JSON key: {key}"
+                        )));
                     }
                 }
                 Ok(UniqueJson(values.into()))
@@ -526,14 +792,20 @@ fn parse_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> AuditResult<T> {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path, remaining: &mut u64) -> AuditResult<T> {
-    let metadata = std::fs::metadata(path).map_err(|e| format!("inspect {}: {e}", path.display()))?;
+    let metadata =
+        std::fs::metadata(path).map_err(|e| format!("inspect {}: {e}", path.display()))?;
     require(metadata.is_file(), "input must be a regular file")?;
     let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     let limit = MAX_INPUT_BYTES.min(*remaining);
-    file.take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("read {}: {e}", path.display()))?;
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read {}: {e}", path.display()))?;
     let length = u64::try_from(bytes.len()).map_err(|e| e.to_string())?;
-    require(length <= limit, "input exceeds 1 MiB per file or 16 MiB total budget")?;
+    require(
+        length <= limit,
+        "input exceeds 1 MiB per file or 16 MiB total budget",
+    )?;
     *remaining -= length;
     parse_json(&bytes).map_err(|e| format!("parse {}: {e}", path.display()))
 }
@@ -543,7 +815,9 @@ fn execute(args: &[String]) -> AuditResult<Summary> {
     let mut run_path = None;
     let mut args = args.iter();
     while let Some(flag) = args.next() {
-        let value = args.next().ok_or_else(|| format!("{flag} requires a path; {USAGE}"))?;
+        let value = args
+            .next()
+            .ok_or_else(|| format!("{flag} requires a path; {USAGE}"))?;
         match flag.as_str() {
             "--claim" => {
                 require(claim_paths.len() < MAX_CLAIMS, "too many claim files")?;
@@ -557,8 +831,13 @@ fn execute(args: &[String]) -> AuditResult<Summary> {
         }
     }
     let mut remaining = MAX_TOTAL_INPUT_BYTES;
-    let claims = claim_paths.iter().map(|p| read_json::<Claim>(Path::new(p), &mut remaining)).collect::<AuditResult<Vec<_>>>()?;
-    let run = run_path.map(|p| read_json::<Run>(Path::new(p), &mut remaining)).transpose()?;
+    let claims = claim_paths
+        .iter()
+        .map(|p| read_json::<Claim>(Path::new(p), &mut remaining))
+        .collect::<AuditResult<Vec<_>>>()?;
+    let run = run_path
+        .map(|p| read_json::<Run>(Path::new(p), &mut remaining))
+        .transpose()?;
     audit(&claims, run.as_ref())
 }
 
@@ -568,7 +847,9 @@ fn main() -> std::process::ExitCode {
         println!("{USAGE}");
         return std::process::ExitCode::SUCCESS;
     }
-    match execute(&args).and_then(|summary| serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())) {
+    match execute(&args)
+        .and_then(|summary| serde_json::to_string_pretty(&summary).map_err(|e| e.to_string()))
+    {
         Ok(output) => {
             println!("{output}");
             std::process::ExitCode::SUCCESS
@@ -616,7 +897,11 @@ mod tests {
         Ok((claim, run))
     }
 
-    fn row(run: &mut Run) -> AuditResult<&mut Row> { run.results.first_mut().ok_or_else(|| "missing test row".to_string()) }
+    fn row(run: &mut Run) -> AuditResult<&mut Row> {
+        run.results
+            .first_mut()
+            .ok_or_else(|| "missing test row".to_string())
+    }
 
     #[test]
     fn consistent_documents_never_become_native_assurance() -> AuditResult<()> {
@@ -642,18 +927,54 @@ mod tests {
     }
 
     #[test]
+    fn admitted_merge_group_phase_is_passive_metadata_not_admission() -> AuditResult<()> {
+        let (mut claim, _) = fixtures()?;
+        claim.phase = Phase::AdmittedMergeGroup;
+        let encoded = serde_json::to_vec(&claim).map_err(|e| e.to_string())?;
+        let decoded: Claim = parse_json(&encoded)?;
+        let summary = audit(&[decoded], None)?;
+        assert_eq!(summary.native_assurance, "not_assessed");
+        assert_eq!(summary.selected_claims, 0);
+        assert_eq!(summary.process_completed_successfully, None);
+        let unknown = String::from_utf8(encoded)
+            .map_err(|e| e.to_string())?
+            .replace("admitted_merge_group", "implicit_push_qualification");
+        assert!(parse_json::<Claim>(unknown.as_bytes()).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn incomplete_critical_claim_metadata_rejects() -> AuditResult<()> {
         let (claim, _) = fixtures()?;
         let mut mutations = Vec::new();
-        let mut c = claim.clone(); c.claim_generation = 0; mutations.push(c);
-        let mut c = claim.clone(); c.proposition = " ".to_string(); mutations.push(c);
-        let mut c = claim.clone(); c.required_covers.clear(); mutations.push(c);
-        let mut c = claim.clone(); c.negative_controls.clear(); mutations.push(c);
-        let mut c = claim.clone(); c.non_claims.clear(); mutations.push(c);
-        let mut c = claim.clone(); c.bounds.clear(); mutations.push(c);
-        let mut c = claim.clone(); c.source_closure = vec!["../escape.rs".to_string()]; mutations.push(c);
-        let mut c = claim.clone(); c.bounds.insert("unwind".to_string(), BoundValue::Number(0.into())); mutations.push(c);
-        for c in mutations { assert!(validate_claim(&c).is_err(), "accepted {}", c.claim_id); }
+        let mut c = claim.clone();
+        c.claim_generation = 0;
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.proposition = " ".to_string();
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.required_covers.clear();
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.negative_controls.clear();
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.non_claims.clear();
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.bounds.clear();
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.source_closure = vec!["../escape.rs".to_string()];
+        mutations.push(c);
+        let mut c = claim.clone();
+        c.bounds
+            .insert("unwind".to_string(), BoundValue::Number(0.into()));
+        mutations.push(c);
+        for c in mutations {
+            assert!(validate_claim(&c).is_err(), "accepted {}", c.claim_id);
+        }
         assert!(audit(&[], None).is_err());
         assert!(audit(&[claim.clone(), claim], None).is_err());
         Ok(())
@@ -663,31 +984,56 @@ mod tests {
     fn success_looking_incomplete_evidence_rejects() -> AuditResult<()> {
         let (claim, run) = fixtures()?;
         let mut mutations = Vec::new();
-        let mut r = run.clone(); row(&mut r)?.current = false; mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.native_verdict = Verdict::Missing; mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.covers.satisfied = 1; mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.covers.unreachable = 1; mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.covers.required = 3; mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.raw_block_digest = None; mutations.push(r);
-        let mut r = run.clone(); r.process.raw_output_digest = None; mutations.push(r);
-        let mut r = run.clone(); r.inventory.discovered_subjects.clear(); mutations.push(r);
-        let mut r = run.clone(); row(&mut r)?.duration_ms = None; mutations.push(r);
-        for r in mutations { assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err()); }
+        let mut r = run.clone();
+        row(&mut r)?.current = false;
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.native_verdict = Verdict::Missing;
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.covers.satisfied = 1;
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.covers.unreachable = 1;
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.covers.required = 3;
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.raw_block_digest = None;
+        mutations.push(r);
+        let mut r = run.clone();
+        r.process.raw_output_digest = None;
+        mutations.push(r);
+        let mut r = run.clone();
+        r.inventory.discovered_subjects.clear();
+        mutations.push(r);
+        let mut r = run.clone();
+        row(&mut r)?.duration_ms = None;
+        mutations.push(r);
+        for r in mutations {
+            assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        }
         Ok(())
     }
 
     #[test]
     fn wrong_identity_duplicate_rows_and_missing_subjects_reject() -> AuditResult<()> {
         let (claim, run) = fixtures()?;
-        let mut r = run.clone(); row(&mut r)?.claim_generation = 2;
+        let mut r = run.clone();
+        row(&mut r)?.claim_generation = 2;
         assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
-        let mut r = run.clone(); row(&mut r)?.subject = "other::same_name".to_string();
+        let mut r = run.clone();
+        row(&mut r)?.subject = "other::same_name".to_string();
         assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
-        let mut r = run.clone(); r.results.extend(run.results.clone());
+        let mut r = run.clone();
+        r.results.extend(run.results.clone());
         assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
-        let mut r = run.clone(); r.results.clear();
+        let mut r = run.clone();
+        r.results.clear();
         assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
-        let mut r = run; r.provider.name = "lookalike".to_string();
+        let mut r = run;
+        r.provider.name = "lookalike".to_string();
         assert!(audit(&[claim], Some(&r)).is_err());
         Ok(())
     }
@@ -697,7 +1043,9 @@ mod tests {
         let (mut claim, mut run) = fixtures()?;
         claim.subjects.push("ripr::kani_smoke::second".to_string());
         run.inventory.complete = false;
-        run.inventory.rejection_reasons.push("second subject did not finish".to_string());
+        run.inventory
+            .rejection_reasons
+            .push("second subject did not finish".to_string());
         run.process.state = ProcessState::TimedOut;
         run.process.exit_code = None;
         run.process.timed_out = true;
@@ -713,7 +1061,9 @@ mod tests {
     fn no_subject_or_not_started_run_needs_no_fabricated_result() -> AuditResult<()> {
         let (claim, mut run) = fixtures()?;
         run.inventory.complete = false;
-        run.inventory.rejection_reasons.push("tool unavailable".to_string());
+        run.inventory
+            .rejection_reasons
+            .push("tool unavailable".to_string());
         run.inventory.discovered_subjects.clear();
         run.process.state = ProcessState::NotStarted;
         run.process.exit_code = None;
@@ -724,6 +1074,48 @@ mod tests {
         assert_eq!(summary.observed_rows, 0);
         assert_eq!(summary.missing_subjects.len(), 1);
         assert_eq!(summary.process_completed_successfully, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn not_started_rows_cannot_borrow_cover_or_resource_observations() -> AuditResult<()> {
+        let (claim, mut run) = fixtures()?;
+        run.process.state = ProcessState::NotStarted;
+        run.process.exit_code = None;
+        run.process.raw_output_digest = None;
+        run.process.cleanup_state = Cleanup::NotApplicable;
+        run.inventory.complete = false;
+        run.inventory
+            .rejection_reasons
+            .push("tool unavailable".into());
+        run.inventory.discovered_subjects.clear();
+        let result = row(&mut run)?;
+        result.status = Status::NotEstablished;
+        result.native_verdict = Verdict::Missing;
+        result.raw_block_digest = None;
+        result.duration_ms = None;
+        result.peak_memory_bytes = None;
+        result.covers.satisfied = 0;
+        audit(std::slice::from_ref(&claim), Some(&run))?;
+        let mut mutations = Vec::new();
+        let mut candidate = run.clone();
+        row(&mut candidate)?.covers.satisfied = 1;
+        mutations.push(candidate);
+        let mut candidate = run.clone();
+        row(&mut candidate)?.covers.unreachable = 1;
+        mutations.push(candidate);
+        let mut candidate = run.clone();
+        row(&mut candidate)?.duration_ms = Some(0);
+        mutations.push(candidate);
+        let mut candidate = run;
+        row(&mut candidate)?.peak_memory_bytes = Some(0);
+        mutations.push(candidate);
+        for candidate in mutations {
+            assert!(
+                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                "not-started row accepted native observations"
+            );
+        }
         Ok(())
     }
 
@@ -753,12 +1145,83 @@ mod tests {
     }
 
     #[test]
+    fn failed_claim_requires_current_observed_behavioral_failure() -> AuditResult<()> {
+        let (claim, run) = fixtures()?;
+        let mut failed = run.clone();
+        row(&mut failed)?.status = Status::Failed;
+        row(&mut failed)?.native_verdict = Verdict::Counterexample;
+        failed.process.exit_code = Some(1);
+        audit(std::slice::from_ref(&claim), Some(&failed))?;
+        let mut mutations = Vec::new();
+        for verdict in [
+            Verdict::Verified,
+            Verdict::Missing,
+            Verdict::AbnormalProcess,
+            Verdict::Malformed,
+            Verdict::Unknown,
+        ] {
+            let mut candidate = failed.clone();
+            row(&mut candidate)?.native_verdict = verdict;
+            mutations.push(candidate);
+        }
+        let mut candidate = failed.clone();
+        row(&mut candidate)?.current = false;
+        mutations.push(candidate);
+        let mut candidate = failed.clone();
+        row(&mut candidate)?.raw_block_digest = None;
+        mutations.push(candidate);
+        let mut candidate = failed.clone();
+        candidate.process.raw_output_digest = None;
+        mutations.push(candidate);
+        let mut candidate = failed.clone();
+        row(&mut candidate)?.duration_ms = None;
+        mutations.push(candidate);
+        let mut candidate = failed.clone();
+        candidate.inventory.complete = false;
+        candidate
+            .inventory
+            .rejection_reasons
+            .push("subject was never discovered".into());
+        candidate.inventory.discovered_subjects.clear();
+        mutations.push(candidate);
+        for candidate in mutations {
+            let verdict = &candidate
+                .results
+                .first()
+                .ok_or("missing row")?
+                .native_verdict;
+            assert!(
+                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                "accepted contradictory failed row: {verdict:?}"
+            );
+        }
+        row(&mut failed)?.native_verdict = Verdict::UnreachableCover;
+        assert!(
+            audit(std::slice::from_ref(&claim), Some(&failed)).is_err(),
+            "accepted unreachable verdict with zero unreachable covers"
+        );
+        row(&mut failed)?.covers.satisfied = 1;
+        row(&mut failed)?.covers.unreachable = 1;
+        audit(std::slice::from_ref(&claim), Some(&failed))?;
+        row(&mut failed)?.covers.required = 3;
+        assert!(
+            audit(&[claim], Some(&failed)).is_err(),
+            "accepted different required-cover inventory"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn registry_order_does_not_change_summary() -> AuditResult<()> {
         let (claim, run) = fixtures()?;
-        let mut other = claim.clone(); other.claim_id = "example.other".to_string();
+        let mut other = claim.clone();
+        other.claim_id = "example.other".to_string();
         let left = audit(&[claim.clone(), other.clone()], Some(&run))?;
         let right = audit(&[other, claim], Some(&run))?;
-        assert_eq!(serde_json::to_value(left).map_err(|e| e.to_string())?, serde_json::to_value(right).map_err(|e| e.to_string())?);
+        assert_eq!(
+            serde_json::to_value(left).map_err(|e| e.to_string())?,
+            serde_json::to_value(right).map_err(|e| e.to_string())?
+        );
         Ok(())
     }
 
@@ -769,8 +1232,11 @@ mod tests {
         let duplicate = encoded.replace("\"bounds\":{", "\"bounds\":{\"selection\":\"shadow\",");
         assert!(parse_json::<Claim>(duplicate.as_bytes()).is_err());
         let mut value = serde_json::to_value(run).map_err(|e| e.to_string())?;
-        value.get_mut("process").and_then(serde_json::Value::as_object_mut)
-            .ok_or("missing process")?.remove("exit_code");
+        value
+            .get_mut("process")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing process")?
+            .remove("exit_code");
         let missing = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
         assert!(parse_json::<Run>(&missing).is_err());
         let trailing = format!("{encoded} {{}}");
@@ -781,19 +1247,56 @@ mod tests {
     #[test]
     fn extra_discovered_subject_cannot_hide_behind_complete_inventory() -> AuditResult<()> {
         let (claim, mut run) = fixtures()?;
-        run.inventory.discovered_subjects.push("unmapped::proof".to_string());
+        run.inventory
+            .discovered_subjects
+            .push("unmapped::proof".to_string());
         assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
         run.inventory.complete = false;
-        run.inventory.rejection_reasons.push("unmapped subject".to_string());
+        run.inventory
+            .rejection_reasons
+            .push("unmapped subject".to_string());
         let summary = audit(&[claim], Some(&run))?;
         assert_eq!(summary.unmapped_discovered_subjects, ["unmapped::proof"]);
         Ok(())
     }
 
     #[test]
+    fn missing_placeholder_cannot_complete_an_undiscovered_subject() -> AuditResult<()> {
+        let (mut claim, mut run) = fixtures()?;
+        let missing_subject = "ripr::kani_smoke::undiscovered";
+        claim.subjects.push(missing_subject.into());
+        let mut missing = run.results.first().ok_or("missing fixture row")?.clone();
+        missing.subject = missing_subject.into();
+        missing.status = Status::NotEstablished;
+        missing.native_verdict = Verdict::Missing;
+        missing.raw_block_digest = None;
+        missing.duration_ms = None;
+        missing.covers.satisfied = 0;
+        run.results.push(missing);
+        assert!(
+            audit(std::slice::from_ref(&claim), Some(&run)).is_err(),
+            "placeholder row hid incomplete native discovery"
+        );
+        run.inventory.complete = false;
+        run.inventory
+            .rejection_reasons
+            .push("selected subject not discovered".into());
+        let summary = audit(&[claim], Some(&run))?;
+        assert!(summary.missing_subjects.is_empty());
+        assert_eq!(summary.undiscovered_selected_subjects, [missing_subject]);
+        assert_eq!(summary.observed_rows, 2);
+        assert_eq!(summary.native_assurance, "not_assessed");
+        Ok(())
+    }
+
+    #[test]
     fn checked_in_examples_do_not_claim_execution() -> AuditResult<()> {
-        let claim: Claim = parse_json(include_bytes!("../../../docs/formal-verification/examples/formal-claim.example.json"))?;
-        let run: Run = parse_json(include_bytes!("../../../docs/formal-verification/examples/native-proof-run.example.json"))?;
+        let claim: Claim = parse_json(include_bytes!(
+            "../../../docs/formal-verification/examples/formal-claim.example.json"
+        ))?;
+        let run: Run = parse_json(include_bytes!(
+            "../../../docs/formal-verification/examples/native-proof-run.example.json"
+        ))?;
         let summary = audit(&[claim], Some(&run))?;
         assert_eq!(summary.native_assurance, "not_assessed");
         assert_eq!(summary.observed_rows, 0);
@@ -823,11 +1326,18 @@ mod tests {
             claim: Claim,
             cases: Vec<Case>,
         }
-        let corpus: Corpus = parse_json(include_bytes!("../../../docs/formal-verification/examples/admission-controls.json"))?;
+        let corpus: Corpus = parse_json(include_bytes!(
+            "../../../docs/formal-verification/examples/admission-controls.json"
+        ))?;
         assert!(!corpus.cases.is_empty());
         for case in corpus.cases {
             let result = audit(std::slice::from_ref(&corpus.claim), Some(&case.document));
-            assert_eq!(result.is_ok(), case.semantic_valid, "{}: {result:?}", case.name);
+            assert_eq!(
+                result.is_ok(),
+                case.semantic_valid,
+                "{}: {result:?}",
+                case.name
+            );
         }
         Ok(())
     }
