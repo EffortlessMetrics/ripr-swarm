@@ -27289,6 +27289,241 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
 
 #[test]
 #[serial]
+fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Result<(), String> {
+    // #14447: the didOpen refresh is about to analyze, so the pre-snapshot
+    // marker must say analysis is in progress instead of asking the user to
+    // save or run `ripr.refresh` to start it, and still retract on commit.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-pending-running")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let published = params.first().ok_or_else(|| {
+            "push client received no publication for the opened document".to_string()
+        })?;
+        let marker = published["diagnostics"]
+            .as_array()
+            .and_then(|items| items.first())
+            .ok_or_else(|| format!("first publication carried no marker: {published}"))?;
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!(
+                "first publication must be the pending marker: {published}"
+            ));
+        }
+        if marker["data"]["recovery"] != "analysis_running" {
+            return Err(format!(
+                "an unblocked didOpen refresh must name the running analysis: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if !message.contains("analysis is in progress") || message.contains("ripr.refresh") {
+            return Err(format!(
+                "the marker must not ask to start analysis that is already starting: {message}"
+            ));
+        }
+
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("refresh published nothing for the tracked URI: {notifications:?}")
+        })?;
+        let still_pending = last["diagnostics"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["code"]
+                    == serde_json::json!(
+                        crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
+                    )
+            })
+        });
+        if still_pending {
+            return Err(format!(
+                "the first commit must retract the pending marker: {last}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+-> Result<(), String> {
+    // #14447 review: "in progress" must not outlive the attempt. When the
+    // first analysis fails without a snapshot and nothing follows it, the
+    // push marker returns to the save/refresh route that starts analysis.
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes the attempt fail fast.
+                    "initializationOptions": {"baseRef": "ripr-lsp-pending-revert-missing-base"},
+                    "capabilities": {
+                        "textDocument": {"publishDiagnostics": {"versionSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri, "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+            let mut recoveries = Vec::new();
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message["method"] != "textDocument/publishDiagnostics"
+                    || message["params"]["uri"] != uri.as_str()
+                {
+                    continue;
+                }
+                let recovery = message["params"]["diagnostics"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|marker| marker["data"]["recovery"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let done = recovery == "save_or_refresh";
+                recoveries.push(recovery);
+                if done {
+                    return Ok::<_, String>(recoveries);
+                }
+            }
+        })
+        .await
+        .map_err(|elapsed| {
+            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+        })??;
+        if recoveries.first().map(String::as_str) != Some("analysis_running") {
+            return Err(format!(
+                "the didOpen marker must name the running analysis first: {recoveries:?}"
+            ));
+        }
+        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+            return Err(format!(
+                "a failed attempt must restore the start route: {recoveries:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(root);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> Result<(), String> {
     // #13441: the empty-scope marker is served, not stored, so push clients
     // are re-served when the marker state flips: marker on every open
