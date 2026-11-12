@@ -94,6 +94,89 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
     }
 }
 
+/// #9981 forwarding residual: a row read as `no_assertion` whose test calls a
+/// same-file helper that asserts after forwarding the test's closure to a call
+/// ripr cannot resolve (tracing's `with_default(subscriber, fun)`) does have
+/// an assertion; whether it observes the closure is what is unknown. Such a
+/// row becomes the analyzer-limit miss `assertion_admission_unproven`
+/// (RIPR-SPEC-0221) and the finding names the helper and callee. It grants no
+/// oracle, strength or class, so no class can rise from it; only the false
+/// absence claim (and its "add an assertion" repair) is withdrawn.
+///
+/// [`ForwardedCallbackLimits::only_limits`] is true when at least one row was
+/// rewritten, no `no_assertion` row is left, no row carries an oracle, and
+/// every oracle-crediting related test, including any the display window
+/// omits, is a forwarded-limit test with no assertion of its own: the
+/// only assertions the related tests hold are the forwarded helpers'. Only
+/// then may the caller replace the "no assertion" stage summaries with the
+/// existing refused-context ones (RIPR-SPEC-0221), so the finding-level next
+/// step stops prescribing an assertion the test already has.
+pub(in crate::analysis) fn name_forwarded_callback_limits(
+    context: &ProbeContext<'_>,
+    related_tests: &mut [RelatedTest],
+) -> ForwardedCallbackLimits {
+    let mut named = ForwardedCallbackLimits::default();
+    // Recorded by this producer loop as it rewrites, so the `only_limits`
+    // decision below reads these facts rather than re-reading the miss.
+    let mut rows_clear = true;
+    for row in related_tests.iter_mut() {
+        if row.oracle.is_some() {
+            rows_clear = false;
+            continue;
+        }
+        if row.miss != Some(RelatedTestMiss::NoAssertion) {
+            continue;
+        }
+        let Some(limit) = context
+            .index
+            .forwarded_callback_limit(&row.file, row.line, &row.name)
+        else {
+            rows_clear = false;
+            continue;
+        };
+        row.miss = Some(RelatedTestMiss::AssertionAdmissionUnproven);
+        let line = format!(
+            "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
+            row.name, limit.helper, limit.callee
+        );
+        if !named.evidence.contains(&line) {
+            named.evidence.push(line);
+        }
+    }
+    // The rows are the capped display window; the stage summaries read every
+    // related test. So the decision also reads every related test: each one
+    // whose relation may credit an oracle must be a forwarded-limit test with
+    // no assertion of its own. A hidden assertion-free or oracle-bearing test
+    // anywhere keeps the finding's no-assertion wording.
+    let credits = super::oracle_crediting_relations(&context.related_tests);
+    named.only_limits = !named.evidence.is_empty()
+        && rows_clear
+        && context
+            .related_tests
+            .iter()
+            .filter(|(_, reason)| credits(*reason))
+            .all(|(test, _)| {
+                test.assertions.is_empty()
+                    && context
+                        .index
+                        .forwarded_callback_limit(&test.file, test.start_line, &test.name)
+                        .is_some()
+            });
+    named
+}
+
+/// What [`name_forwarded_callback_limits`] rewrote.
+#[derive(Default)]
+pub(in crate::analysis) struct ForwardedCallbackLimits {
+    /// One evidence line per rewritten test, naming the helper and callee.
+    pub(in crate::analysis) evidence: Vec<String>,
+    /// Every assertion the related tests hold is a forwarded helper's.
+    pub(in crate::analysis) only_limits: bool,
+}
+
+/// Evidence prefix of a [`name_forwarded_callback_limits`] line.
+pub(in crate::analysis) const FORWARDED_CALLBACK_PREFIX: &str = "closure forwarded by helper: ";
+
 #[cfg(test)]
 mod combine_tests {
     use super::combine_refusal_misses;

@@ -192,6 +192,12 @@ pub struct RustIndex {
     /// Transient VP3R resource edges; rebuilt during index construction (#5171).
     pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
+    /// Tests whose same-file helper asserts after forwarding the test's
+    /// closure to a call the helper-credit pass cannot show runs it (#9981),
+    /// keyed by (file, start line, name). Transient: rebuilt by every run of
+    /// that pass, never serialized.
+    pub(super) forwarded_callback_limits:
+        BTreeMap<(PathBuf, usize, String), super::test_helpers::ForwardedCallbackLimit>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -556,6 +562,19 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    /// The forwarded-closure limit the helper-credit pass recorded for one
+    /// test (#9981), when its helper asserts after forwarding the test's
+    /// closure to a call that pass cannot show runs it.
+    pub(crate) fn forwarded_callback_limit(
+        &self,
+        file: &Path,
+        start_line: usize,
+        name: &str,
+    ) -> Option<&super::test_helpers::ForwardedCallbackLimit> {
+        self.forwarded_callback_limits
+            .get(&(file.to_path_buf(), start_line, name.to_string()))
+    }
+
     /// Crate names of the workspace's own members: `workspace_crates` when
     /// the build computed it, else `package_names`.
     pub(crate) fn workspace_member_crates(&self) -> &BTreeSet<String> {
@@ -755,6 +774,8 @@ impl RustIndex {
         self.proptest_metadata_failures
             .retain(|(file, _, _), _| file.as_path() != path);
         self.bolero_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.forwarded_callback_limits
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.
