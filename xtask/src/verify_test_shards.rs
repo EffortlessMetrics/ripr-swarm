@@ -36,8 +36,10 @@
 //! The flag changes only the expected `command` receipt (and its combined
 //! echo); every other conservation check is unchanged.
 
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 struct Options {
@@ -182,6 +184,51 @@ struct Outcome {
 }
 
 fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Outcome {
+    let identity = options
+        .native_receipt
+        .as_ref()
+        .map(|_| native_runner_identity());
+    let executable = options.native_receipt.as_ref().map(|_| {
+        std::env::current_exe().map_err(|e| format!("cannot identify running verifier: {e}"))
+    });
+    verify_with_native_authority(
+        options,
+        expected_blobs,
+        identity.as_ref(),
+        executable.as_ref(),
+    )
+}
+
+#[derive(Debug)]
+struct NativeRunnerIdentity {
+    repository: String,
+    sha: String,
+    run_id: String,
+    attempt: String,
+}
+
+/// Environment is a separate witness from command arguments, not an
+/// authentication boundary. Only an installed trusted workflow can give it
+/// that authority; full native proof is still always refused.
+fn native_runner_identity() -> Result<NativeRunnerIdentity, String> {
+    if !matches!(std::env::var("GITHUB_ACTIONS"), Ok(value) if value == "true") {
+        return Err("native receipt mode requires GitHub Actions identity".into());
+    }
+    let get = |key: &str| std::env::var(key).map_err(|_| format!("missing {key}"));
+    Ok(NativeRunnerIdentity {
+        repository: get("GITHUB_REPOSITORY")?,
+        sha: get("GITHUB_SHA")?,
+        run_id: get("GITHUB_RUN_ID")?,
+        attempt: get("GITHUB_RUN_ATTEMPT")?,
+    })
+}
+
+fn verify_with_native_authority(
+    options: &Options,
+    expected_blobs: Result<Vec<String>, String>,
+    identity: Option<&Result<NativeRunnerIdentity, String>>,
+    executable: Option<&Result<PathBuf, String>>,
+) -> Outcome {
     let mut problems = Vec::new();
     let expected_blobs = match expected_blobs {
         Ok(blobs) => Some(blobs),
@@ -220,6 +267,15 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         if shard == 1 {
             first_dir = Some(dir.clone());
             if let Some(native) = &options.native_receipt {
+                check_native_current_attempt(
+                    &dir,
+                    shard_attempt,
+                    options,
+                    native,
+                    identity,
+                    executable,
+                    &mut problems,
+                );
                 check_native_receipt(&dir, shard_attempt, options, native, &mut problems);
             }
         }
@@ -357,6 +413,15 @@ fn find_native_receipts_with_limits(
     max_nodes: usize,
     max_depth: usize,
 ) -> Result<Vec<PathBuf>, String> {
+    find_native_files_with_limits(root, crate::policy::RECEIPT_NAME, max_nodes, max_depth)
+}
+
+fn find_native_files_with_limits(
+    root: &Path,
+    name: &str,
+    max_nodes: usize,
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, String> {
     crate::policy::validate_native_directory(root)?;
     let mut pending = vec![(root.to_path_buf(), 0usize)];
     let mut found = Vec::new();
@@ -383,7 +448,7 @@ fn find_native_receipts_with_limits(
             if kind.is_dir() {
                 pending.push((entry.path(), next_depth));
             } else if kind.is_file() {
-                if entry.file_name() == crate::policy::RECEIPT_NAME {
+                if entry.file_name() == name {
                     found.push(entry.path());
                 }
                 if found.len() > 1 {
@@ -395,6 +460,102 @@ fn find_native_receipts_with_limits(
         }
     }
     Ok(found)
+}
+
+/// Hash a regular file in bounded space; the static path checks are not atomic
+/// against hostile concurrent mutation. 1 GiB bounds the stripped hosted
+/// verifier and the diagnostic fails closed on larger files.
+fn native_binary_digest(path: &Path) -> Result<String, String> {
+    const MAX_BYTES: u64 = 1024 * 1024 * 1024;
+    let parent = path.parent().ok_or("verifier binary has no parent")?;
+    crate::policy::validate_native_directory(parent)?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| format!("cannot inspect verifier binary: {e}"))?;
+    if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > MAX_BYTES {
+        return Err("verifier binary must be a nonempty regular file within the size limit".into());
+    }
+    let file = fs::File::open(path).map_err(|e| format!("cannot open verifier binary: {e}"))?;
+    let mut input = file.take(MAX_BYTES + 1);
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|e| format!("cannot read verifier binary: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > MAX_BYTES {
+            return Err("verifier binary exceeds size limit".into());
+        }
+        hash.update(&buffer[..count]);
+    }
+    if total == 0 {
+        return Err("verifier binary is empty".into());
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn check_native_current_attempt(
+    dir: &Path,
+    selected_attempt: u32,
+    options: &Options,
+    native: &NativeReceiptOptions,
+    identity: Option<&Result<NativeRunnerIdentity, String>>,
+    executable: Option<&Result<PathBuf, String>>,
+    problems: &mut Vec<String>,
+) {
+    let Some(Ok(identity)) = identity else {
+        problems.push(
+            "native receipt mode has no separately observed Actions environment identity".into(),
+        );
+        return;
+    };
+    if identity.repository != options.repository
+        || identity.sha != options.sha
+        || identity.run_id != options.run_id
+        || identity.attempt != options.attempt
+        || identity.attempt != selected_attempt.to_string()
+        || native.verifier_attempt != selected_attempt
+        || selected_attempt == 0
+    {
+        problems.push("native receipt mode requires the current Actions producer attempt; verifier-only retries are not established".into());
+        return;
+    }
+    if native.producer_result != "success" {
+        problems.push("native producer matrix did not succeed".into());
+        return;
+    }
+    let Some(Ok(executable)) = executable else {
+        problems.push("cannot independently identify running verifier binary".into());
+        return;
+    };
+    let files = match find_native_files_with_limits(dir, "xtask", 10_000, 32) {
+        Ok(files) => files,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    let [member] = files.as_slice() else {
+        problems.push(format!(
+            "selected shard 1 must contain exactly one verifier binary (found {})",
+            files.len()
+        ));
+        return;
+    };
+    match (
+        native_binary_digest(executable),
+        native_binary_digest(member),
+    ) {
+        (Ok(running), Ok(retained)) if running == retained => (),
+        (Ok(_), Ok(_)) => {
+            problems.push("running verifier binary differs from selected shard 1 artifact".into())
+        }
+        (Err(error), _) | (_, Err(error)) => problems.push(error),
+    }
 }
 
 fn check_native_receipt(
@@ -1170,6 +1331,200 @@ mod tests {
         let native = all.native_receipt.ok_or("native mode missing")?;
         assert_eq!(native.verifier_attempt, 2);
         assert_eq!(native.producer_result, "success");
+        Ok(())
+    }
+
+    #[test]
+    fn native_verify_requires_current_attempt_and_same_artifact_binary() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-current-producer");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        lay_out(&root, false)?;
+        let blobs = || Ok(vec![BLOB.to_string(); 4]);
+        let baseline = verify(&options(&root, 2), blobs());
+        assert!(baseline.problems.is_empty(), "{:?}", baseline.problems);
+        let running = root.join("running-verifier");
+        fs::write(&running, b"same verifier bytes").map_err(|e| e.to_string())?;
+        let executable = Ok(running);
+        let identity = |attempt: &str| {
+            Ok(NativeRunnerIdentity {
+                repository: "o/r".into(),
+                sha: SHA.into(),
+                run_id: "7".into(),
+                attempt: attempt.into(),
+            })
+        };
+        let mut strict = options(&root, 2);
+        strict.native_receipt = Some(NativeReceiptOptions {
+            context: root.join("context.json"),
+            producer_result: "success".into(),
+            verifier_attempt: 1,
+        });
+        let run = |opts: &Options, actor: &Result<NativeRunnerIdentity, String>| {
+            verify_with_native_authority(opts, blobs(), Some(actor), Some(&executable)).problems
+        };
+        let current = identity("1");
+        let no_identity = verify_with_native_authority(&strict, blobs(), None, Some(&executable));
+        assert!(
+            no_identity
+                .problems
+                .iter()
+                .any(|p| p.contains("no separately observed Actions environment identity")),
+            "{:?}",
+            no_identity.problems
+        );
+        let missing_binary = run(&strict, &current);
+        assert!(
+            missing_binary
+                .iter()
+                .any(|p| p.contains("exactly one verifier binary")),
+            "{missing_binary:?}"
+        );
+        let shard1 = shard_dir(&root, 1);
+        fs::write(shard1.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        let missing_receipt = run(&strict, &current);
+        assert!(
+            !missing_receipt
+                .iter()
+                .any(|p| p.contains("verifier binary")),
+            "{missing_receipt:?}"
+        );
+        assert!(
+            missing_receipt
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{missing_receipt:?}"
+        );
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .producer_result = "failure".into();
+        let failed = run(&strict, &current);
+        assert!(
+            failed
+                .iter()
+                .any(|p| p.contains("native producer matrix did not succeed")),
+            "{failed:?}"
+        );
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .producer_result = "success".into();
+        fs::write(shard1.join("xtask"), b"wrong bytes").map_err(|e| e.to_string())?;
+        let mismatch = run(&strict, &current);
+        assert!(
+            mismatch.iter().any(|p| p.contains("differs from selected")),
+            "{mismatch:?}"
+        );
+        fs::write(shard1.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        fs::create_dir(shard1.join("nested")).map_err(|e| e.to_string())?;
+        fs::write(shard1.join("nested/xtask"), b"same verifier bytes")
+            .map_err(|e| e.to_string())?;
+        let duplicates = run(&strict, &current);
+        assert!(
+            duplicates
+                .iter()
+                .any(|p| p.contains("exactly one verifier binary")),
+            "{duplicates:?}"
+        );
+        fs::remove_file(shard1.join("nested/xtask")).map_err(|e| e.to_string())?;
+        fs::write(
+            shard1.join(crate::policy::RECEIPT_NAME),
+            b"old green receipt",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            shard1.join("nested").join(crate::policy::RECEIPT_NAME),
+            b"duplicate",
+        )
+        .map_err(|e| e.to_string())?;
+        let duplicate_receipt = run(&strict, &current);
+        assert!(
+            duplicate_receipt.iter().any(|p| p.contains("ambiguous")),
+            "{duplicate_receipt:?}"
+        );
+        fs::remove_file(shard1.join("nested").join(crate::policy::RECEIPT_NAME))
+            .map_err(|e| e.to_string())?;
+        // An absent newer producer artifact must not fall back to the old one.
+        strict.attempt = "2".into();
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .verifier_attempt = 2;
+        let retry = run(&strict, &identity("2"));
+        assert!(
+            retry
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{retry:?}"
+        );
+        let wrong_actor = run(&strict, &identity("1"));
+        assert!(
+            wrong_actor
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{wrong_actor:?}"
+        );
+        // Even a verifier-only rerun is refused until platform job provenance exists.
+        lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
+        let latest = strict.dir.join("art-nextest-shard-1-2");
+        fs::write(latest.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        let new_missing = run(&strict, &identity("2"));
+        assert!(
+            new_missing
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{new_missing:?}"
+        );
+        assert!(
+            !new_missing
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{new_missing:?}"
+        );
+        // Exercise the selected receipt through verify(), including Git-derived
+        // source resolution. A malformed latest receipt cannot fall back to the
+        // older member even when that older member is present.
+        let head = crate::run::run_output("git", &["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
+        assert_eq!(head.len(), 40, "fixture needs a full checkout commit");
+        for directory in [shard1.clone(), shard_dir(&root, 2), latest.clone()] {
+            let context_file = directory.join("run-context.txt");
+            let text = fs::read_to_string(&context_file).map_err(|e| e.to_string())?;
+            fs::write(&context_file, text.replace(SHA, &head)).map_err(|e| e.to_string())?;
+        }
+        strict.sha = head.clone();
+        let declared = serde_json::json!({
+            "repository": "o/r", "checkout_sha": head, "run_id": "7", "attempt": 2,
+            "target": "x86_64-unknown-linux-gnu", "cargo_profile": "test",
+            "configuration_sha256": "b".repeat(64), "features_sha256": "c".repeat(64),
+        });
+        fs::write(root.join("context.json"), declared.to_string()).map_err(|e| e.to_string())?;
+        fs::write(latest.join(crate::policy::RECEIPT_NAME), b"{broken")
+            .map_err(|e| e.to_string())?;
+        let actor = Ok(NativeRunnerIdentity {
+            repository: "o/r".into(),
+            sha: strict.sha.clone(),
+            run_id: "7".into(),
+            attempt: "2".into(),
+        });
+        let latest_bad = run(&strict, &actor);
+        assert!(
+            latest_bad
+                .iter()
+                .any(|p| p.contains("invalid native receipt")),
+            "{latest_bad:?}"
+        );
+        assert!(
+            !latest_bad
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{latest_bad:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
