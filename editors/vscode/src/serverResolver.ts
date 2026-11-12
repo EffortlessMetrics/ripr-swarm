@@ -64,10 +64,14 @@ export interface ResolvedServer {
  * Why resolution produced no usable server. `showMissingServerMessage` offers
  * "Copy Install Command" only for `missing_binary`; download, HTTP, checksum
  * and manifest failures are not repaired by `cargo install ripr` (#8588).
+ * `network` is a download that never got an answer from its host (no DNS,
+ * refused or dropped connection, fetch timeout), so the recovery names the
+ * connection and the offline route (#13638).
  */
 export type ResolveFailureKind =
   | 'missing_binary'
   | 'download'
+  | 'network'
   | 'http'
   | 'checksum'
   | 'manifest'
@@ -279,6 +283,21 @@ export function missingServerRemedy(autoDownload: boolean): string {
 }
 
 /**
+ * Recovery for a download that could not reach its host. "Retry" alone is a
+ * dead end without a connection, so it names the offline route: a local
+ * binary through `ripr.server.path`, or a reachable mirror (#13638).
+ */
+export const NETWORK_FAILURE_REMEDY =
+  'The download host could not be reached; check the network connection or proxy, then retry. ' +
+  'To work offline, set ripr.server.path to a ripr binary already on this machine ' +
+  '(ripr.server.downloadBaseUrl for a mirror).';
+
+// Node socket and resolver error codes for a request that got no HTTP
+// answer, plus this extension's own fetch-timeout and dropped-body messages.
+const NETWORK_FAILURE_PATTERN =
+  /\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN)\b|socket hang up|Timed out while fetching|closed before completion/i;
+
+/**
  * Recovery sentence for a resolution failure. Cargo install is only honest
  * for `missing_binary`; other kinds point at the diagnostic and path/mirror
  * settings (#8588).
@@ -294,14 +313,18 @@ export function resolutionFailureRecovery(
   if (kind === 'missing_binary') {
     return missingServerRemedy(autoDownload);
   }
+  if (kind === 'network') {
+    return NETWORK_FAILURE_REMEDY;
+  }
   return 'Inspect the diagnostic, then retry or set ripr.server.path (ripr.server.downloadBaseUrl for a mirror).';
 }
 
 /**
  * Map a managed-download error string onto a resolution-failure kind.
- * Unknown download errors stay `download` (no install command) rather than
- * `missing_binary`. A missing prebuilt target is the one download-adjacent
- * case where `cargo install ripr` is the documented recovery.
+ * A request that never got an HTTP answer is `network`. Unknown download
+ * errors stay `download` (no install command) rather than `missing_binary`.
+ * A missing prebuilt target is the one download-adjacent case where
+ * `cargo install ripr` is the documented recovery.
  */
 export function classifyDownloadFailureKind(message: string): ResolveFailureKind {
   if (/checksum mismatch/i.test(message) || /admitted manifest SHA-256/i.test(message)) {
@@ -309,6 +332,11 @@ export function classifyDownloadFailureKind(message: string): ResolveFailureKind
   }
   if (/failed with HTTP \d+/i.test(message)) {
     return 'http';
+  }
+  // Before the manifest check: a dropped manifest response is a connection
+  // problem, not a malformed manifest.
+  if (NETWORK_FAILURE_PATTERN.test(message)) {
+    return 'network';
   }
   if (/manifest/i.test(message)) {
     return 'manifest';

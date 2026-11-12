@@ -224,11 +224,19 @@ fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResu
             "stderr must not repeat `{repeated}` from stdout:\n{stderr}"
         );
     }
-    let lines = combined.lines().count();
-    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 15)");
+    // The run line names the exact native command for the new test (#14320).
     assert!(
-        lines <= 15,
-        "agent repair start grew to {lines} lines, over its 15-line budget:\n{combined}"
+        stdout.contains("Run the new test: cargo test --manifest-path ")
+            && stdout.contains(" --test pricing "),
+        "stdout must name the focused test command:\n{stdout}"
+    );
+    // 16: one line more than before #14320, spent on that run command, the
+    // step a developer otherwise has to work out by hand.
+    let lines = combined.lines().count();
+    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 16)");
+    assert!(
+        lines <= 16,
+        "agent repair start grew to {lines} lines, over its 16-line budget:\n{combined}"
     );
     Ok(())
 }

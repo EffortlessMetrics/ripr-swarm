@@ -2577,6 +2577,10 @@ mod json_compact_tests;
 mod gap_ledger_legend_tests;
 
 #[cfg(test)]
+#[path = "check_member_selector_tests.rs"]
+mod member_selector_tests;
+
+#[cfg(test)]
 mod candidate_tree_tests {
     use super::super::super::commands::check;
 

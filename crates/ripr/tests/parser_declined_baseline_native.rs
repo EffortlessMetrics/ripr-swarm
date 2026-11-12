@@ -145,6 +145,10 @@ fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
     fixture_git_ok(&root, &["add", "src/lib.rs"])?;
     fixture_git_ok(&root, &["commit", "-qm", "fixed"])?;
     review_and_gate(&root, &base, "fixed")?;
+    // #14082 control: every changed file parsed and nothing was found.
+    let fixed_gate = read(&root, "fixed-gate.json")?;
+    assert_eq!(fixed_gate["status"], "pass", "{fixed_gate}");
+    assert_eq!(fixed_gate["warnings"], serde_json::json!([]));
     run(
         &root,
         &[
@@ -195,6 +199,24 @@ fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
     fixture_git_ok(&root, &["add", "src/lib.rs"])?;
     fixture_git_ok(&root, &["commit", "-qm", "declined"])?;
     review_and_gate(&root, &base, "declined")?;
+    // #14082: nothing evaluated because the file was not parsed is not `pass`.
+    let declined_gate = read(&root, "declined-gate.json")?;
+    assert_eq!(declined_gate["summary"]["evaluated"], 0, "{declined_gate}");
+    assert_eq!(declined_gate["status"], "advisory", "{declined_gate}");
+    assert!(
+        declined_gate["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("parser_declined_files") && w.contains("`src/lib.rs`")),
+        "{declined_gate}"
+    );
+    let declined_markdown =
+        std::fs::read_to_string(root.join("declined-gate.md")).map_err(|e| e.to_string())?;
+    assert!(
+        declined_markdown.contains("Decision: advisory")
+            && declined_markdown.contains("## Warnings")
+            && declined_markdown.contains("src/lib.rs"),
+        "{declined_markdown}"
+    );
     run(
         &root,
         &[
@@ -249,5 +271,92 @@ fn parser_decline_keeps_native_baseline_debt() -> Result<(), String> {
         .map(|e| e["identity"].clone())
         .collect::<Vec<_>>();
     assert_eq!(identities, retained);
+    Ok(())
+}
+
+/// #14082: seams withheld as static limitations never become gate candidates,
+/// so a decision that evaluated none of them must not read as `pass`.
+#[test]
+fn static_limited_seams_never_read_as_gate_pass() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-static-limited-gate-native-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).map_err(|e| e.to_string())?;
+    let _fixture = Fixture(root.clone());
+    fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+    fixture_git_ok(&root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
+    fixture_git_ok(&root, &["config", "commit.gpgsign", "false"])?;
+    write(
+        &root,
+        "Cargo.toml",
+        "[package]\nname=\"limited-proof\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+    )?;
+    let source = |operator: &str| {
+        (0..4)
+            .map(|i| {
+                format!(
+                    "pub fn f{i}(n: i32) -> bool {{ n {operator} {} }}\n",
+                    i + 10
+                )
+            })
+            .collect::<String>()
+    };
+    write(&root, "src/lib.rs", &source(">"))?;
+    // Each owner is called, and nothing asserts on the result.
+    write(
+        &root,
+        "tests/smoke.rs",
+        &(0..4)
+            .map(|i| format!("#[test] fn t{i}() {{ let _ = limited_proof::f{i}(1); }}\n"))
+            .collect::<String>(),
+    )?;
+    fixture_git_ok(&root, &["add", "."])?;
+    fixture_git_ok(&root, &["commit", "-qm", "base"])?;
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_owned();
+    write(&root, "src/lib.rs", &source(">="))?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&root, &["commit", "-qm", "boundaries"])?;
+    review_and_gate(&root, &base, "limited")?;
+
+    // The fixture must really be the withheld case: the producer dropped
+    // every changed seam as a static limitation and offered no candidate.
+    let review = read(&root, "limited-review.json")?;
+    let withheld = review["analysis_scope"]["static_limited_omitted_seams"]
+        .as_u64()
+        .ok_or_else(|| format!("no static-limited omission disclosed: {review}"))?;
+    assert!(withheld >= 4, "{review}");
+    assert_eq!(
+        review["analysis_scope"]["omitted_by_policy"], withheld,
+        "{review}"
+    );
+
+    let gate = read(&root, "limited-gate.json")?;
+    assert_eq!(gate["summary"]["evaluated"], 0, "{gate}");
+    assert_eq!(gate["status"], "advisory", "{gate}");
+    assert_eq!(
+        gate["analysis_scope"]["static_limited_omitted_seams"], withheld,
+        "{gate}"
+    );
+    let expected = format!("static_limited_omitted_seams: {withheld} seam(s)");
+    assert!(
+        gate["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains(&expected)),
+        "{gate}"
+    );
+    let markdown =
+        std::fs::read_to_string(root.join("limited-gate.md")).map_err(|e| e.to_string())?;
+    assert!(
+        markdown.contains("Decision: advisory") && markdown.contains("## Warnings"),
+        "{markdown}"
+    );
     Ok(())
 }

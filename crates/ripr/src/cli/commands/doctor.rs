@@ -710,6 +710,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             lines.push(compact_tilde_line(evidence));
         }
     }
+    if let Some(check) = check_named(report, "git_default_base") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(compact_tilde_line(evidence));
+    }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
             "Generated workflow: {advisory}"
@@ -1263,6 +1267,14 @@ fn doctor_start_here_lines(
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
         output::doctor::DoctorFirstCommand::UnbornHead => {}
+        // The advisory `git_default_base` line carries the reason and repair;
+        // say what the placeholder stands for and how to read local edits.
+        output::doctor::DoctorFirstCommand::NoDefaultBase => {
+            lines.push(
+                "- Base note: replace `REF` with the branch or commit this work started from; `--base HEAD` reads uncommitted tracked edits."
+                    .to_string(),
+            );
+        }
     }
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
