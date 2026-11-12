@@ -8073,6 +8073,9 @@ tests = [
   "crates/ripr/src/output/json::tests::json_render_emits_scope_disclosures_when_no_scope_provided",
   "crates/ripr/src/output/json::tests::json_render_omits_scope_disclosures_when_scope_provided",
   "crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result",
+  "crates/ripr/src/output/analyzed_revisions.rs::tests::head_is_contained_only_when_the_merge_base_is_head_and_the_base_is_ahead",
+  "crates/ripr/src/output/human.rs::tests::a_base_that_already_contains_head_names_that_cause_in_the_headline",
+  "crates/ripr/tests/cli_smoke.rs::check_on_a_branch_its_base_already_contains_names_that_cause",
   "crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant",
   "crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke",
   "crates/ripr/tests/cli_smoke.rs::check_diff_file_with_base_does_not_report_a_git_range_note",
@@ -8090,7 +8093,9 @@ code = [
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/github.rs",
   "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/analyzed_revisions.rs",
   "crates/ripr/src/output/human/agent.rs",
+  "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/output/json/report.rs"
 ]
 outputs = [
@@ -8154,7 +8159,13 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names",
-  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref"
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref",
+  "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants",
+  "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end",
+  "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone",
+  "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice",
+  "crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch"
 ]
 fixtures = []
 code = [

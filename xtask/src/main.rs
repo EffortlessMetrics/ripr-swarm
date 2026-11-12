@@ -23980,6 +23980,15 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("examples/")
+        && (path.ends_with(".ts") || path.ends_with(".py"))
+        && (path.contains("/project/") || path.contains("/strengthened/"))
+    {
+        return Some(
+            "Starter example projects are analyzed inputs that users run `ripr check` on (#14151); the Python and TypeScript examples must stay in their own language to show the preview adapters honestly.",
+        );
+    }
+
     if path.starts_with("benchmarks/muse-plugin/fixtures/")
         && (path.ends_with(".ts")
             || path.ends_with(".tsx")
