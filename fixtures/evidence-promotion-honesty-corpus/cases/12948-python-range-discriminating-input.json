@@ -1,0 +1,20 @@
+{
+  "id": "python_range_discriminating_input_exposed",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_range_discriminating_input",
+  "vector": "different_iteration_sequence_is_discriminated_by_exact_sum",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}
