@@ -4411,13 +4411,35 @@ pub fn fallible(total: u32) -> Result<u32, Error> {
         Err(Error::Small)
     }
 }
+
+pub fn early(total: u32) -> u32 {
+    if total > 1 {
+        total
+    } else {
+        return 5
+    }
+}
 "#;
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
-        let return_shapes = facts
+        let all_return_shapes = facts
             .probe_shapes
             .iter()
             .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
             .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        // `early`: a `return` branch tail already has its return-expression
+        // shape, so the branch walk adds no second one over the same line.
+        let early = all_return_shapes
+            .iter()
+            .filter(|(line, _)| *line >= 60)
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        if early != [62, 64] {
+            return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
+        }
+        let return_shapes = all_return_shapes
+            .into_iter()
+            .filter(|(line, _)| *line < 60)
             .collect::<Vec<_>>();
         // `newline_keyword`: a nested `if`/`match` branch tail whose keyword
         // ends its line is still control flow, so it gets no shape (Devin
