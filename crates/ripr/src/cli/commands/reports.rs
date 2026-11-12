@@ -144,7 +144,7 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     // it either: same exit 2 after the `blocked` write (#14434).
     if let Some(refusal) = report.source_refusal() {
         return Err(format!(
-            "reports gap-ledger {} {} is {refusal}: nothing was analyzed, so the ledger was written as `blocked` with no records. Follow the source's repair_route (a narrower diff or scope budget), re-run it, then rebuild this ledger",
+            "reports gap-ledger {} {} is {refusal}: nothing was analyzed, so the ledger was written as `blocked` with no records. Follow the source's repair_route, re-run it, then rebuild this ledger",
             source_flag(&options.source),
             output::path::human_path(options.source.path()),
         ));
