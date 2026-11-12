@@ -260,8 +260,8 @@ pub(in crate::app) fn selector_matches_file_line(
 /// or, when the file holds none, the files that do. `None` for a selector
 /// that is not location-shaped. The listing comes from the analyzed findings
 /// only; the typed selector is never echoed into a command.
-/// `analysis_incomplete` is set by a fresh run whose language run did not
-/// complete or left files unanalyzed (#14406): an empty scope or a file
+/// `analysis_incomplete` is set by a fresh run whose producer outcome or
+/// language run did not complete or left files unanalyzed (#14406): an empty scope or a file
 /// with no finding is then not evidence that none exist there.
 pub(in crate::app) fn location_miss_hint(
     findings: &[Finding],
@@ -316,21 +316,19 @@ pub(in crate::app) fn location_miss_hint(
     let mut same_file =
         std::collections::BTreeMap::<String, std::collections::BTreeSet<usize>>::new();
     let mut other_files = std::collections::BTreeSet::<String>::new();
-    let root_prefix = normalize_locator_path(&crate::analysis::stable_path_text(root));
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         let stored = normalize_locator_path(file.as_ref());
         let matches = stored == wanted
             || stored.ends_with(&format!("/{wanted}"))
             || wanted.ends_with(&format!("/{stored}"));
-        // Shown root-relative: a fresh run stores absolute paths, and the
-        // suffix match accepts the relative form the user types.
-        let stored = match stored.strip_prefix(&format!("{root_prefix}/")) {
-            Some(relative) if !root_prefix.is_empty() && !relative.is_empty() => {
-                relative.to_string()
-            }
-            _ => stored,
-        };
+        // Shown root-relative through the shared location projector: a
+        // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
+        // and the suffix match accepts the relative form the user types.
+        let stored = normalize_locator_path(&crate::analysis::finding_location_text(
+            root,
+            &finding.probe.location.file,
+        ));
         if matches {
             same_file
                 .entry(stored)
@@ -777,6 +775,20 @@ mod tests {
                 false
             )
         );
+        // A Windows verbatim finding path under a plain-drive root is shown
+        // root-relative, like every other rendered location.
+        #[cfg(windows)]
+        {
+            let drive = "F:";
+            let root = std::path::PathBuf::from(format!(r"{drive}\repo"));
+            let mut verbatim = finding("probe:w", 8, None);
+            verbatim.probe.location =
+                SourceLocation::new(format!(r"\\?\{drive}\repo\src\lib.rs"), 8, 1);
+            assert_eq!(
+                location_miss_hint(&[verbatim], &root, "src/lib.rs:99", false).as_deref(),
+                Some(" Findings in src/lib.rs are on line 8; select one as src/lib.rs:8.")
+            );
+        }
         // Line 3 holds two findings, so `src/lib.rs:3` would refuse as
         // ambiguous; the suggestion is the line that resolves uniquely.
         assert!(matches!(
@@ -803,6 +815,10 @@ mod tests {
             "gap:rust:x",
             "nocolon",
             "src/lib.rs:abc",
+            // Path guard boundaries: no `/` or `.`, and an empty file part.
+            "rust:12",
+            ":12",
+            "./:12",
         ] {
             assert_eq!(
                 location_miss_hint(&findings, std::path::Path::new(""), selector, false),
