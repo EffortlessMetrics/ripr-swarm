@@ -9,6 +9,10 @@ from dtolnay/semver `d913bcd`: six `let x = match e { Some(x) => x, None =>
 return R, }` blocks become `let Some(x) = e else { return R; }`. The scrutinee
 and the diverging statement are the same on both sides.
 
+The input keeps only the four changed files, the types they use, and the two
+test files that reach them; the other semver modules do not change the
+classification.
+
 ## When
 
 ```bash
