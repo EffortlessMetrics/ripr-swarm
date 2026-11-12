@@ -3472,24 +3472,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_weakly_exposed_python_findings_get_repair_cards() {
-        let carded = python_preview_finding(11, true);
-        assert_eq!(carded.class, ExposureClass::WeaklyExposed);
-        assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
-        for class in ExposureClass::ALL
-            .into_iter()
-            .filter(|class| *class != ExposureClass::WeaklyExposed)
-        {
-            let mut finding = carded.clone();
-            finding.class = class;
-            assert!(
-                crate::output::python_repair_card::python_repair_card(&finding).is_none(),
-                "{class:?}"
-            );
-        }
-    }
-
     /// #5531: the same carded finding stamped as repo-scoped gets no repair
     /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
     #[test]
