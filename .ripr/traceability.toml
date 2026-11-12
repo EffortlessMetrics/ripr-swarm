@@ -312,6 +312,8 @@ tests = [
   "crates/ripr/tests/range_bound_edit.rs::a_separating_input_on_a_match_arm_body_range_is_unknown_not_weak",
   "crates/ripr/tests/range_bound_edit.rs::a_str_match_range_pattern_keeps_moved_input_credit",
   "crates/ripr/tests/range_bound_edit.rs::a_str_match_range_pattern_on_a_computed_scrutinee_is_not_exposed_at_an_inside_input",
+  "crates/ripr/tests/range_bound_edit.rs::a_sum_into_an_unresolved_alias_width_does_not_supply_a_separating_input",
+  "crates/ripr/tests/range_bound_edit.rs::a_sum_into_a_recognized_width_keeps_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::a_glob_import_in_the_test_body_does_not_supply_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::a_local_const_or_static_of_the_owner_name_does_not_supply_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::an_arrow_inside_a_comment_does_not_hide_a_range_bound",

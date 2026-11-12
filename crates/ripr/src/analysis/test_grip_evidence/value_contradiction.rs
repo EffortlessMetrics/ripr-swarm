@@ -1591,6 +1591,16 @@ impl RangeTail {
                 let (Some(start), Some(stop)) = range.bounds(environment)? else {
                     return None;
                 };
+                // A sum or product accumulates in the owner's return type,
+                // so its width must be known: an unresolved alias (`Byte`)
+                // or a cast (whose source width is the inferred element
+                // type) could wrap where the fold sees an unequal value.
+                // `count()` accumulates in `usize`.
+                if !matches!(reduction, Reduction::Count)
+                    && (cast.is_some() || fold_range.is_none())
+                {
+                    return None;
+                }
                 let value = reduce(*reduction, start, stop)?;
                 let value = within(value, *cast)?;
                 within(value, fold_range).map(Value::Int)

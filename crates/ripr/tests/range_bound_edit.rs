@@ -526,6 +526,43 @@ fn a_str_match_range_pattern_on_a_computed_scrutinee_is_not_exposed_at_an_inside
 }
 
 #[test]
+fn a_sum_into_an_unresolved_alias_width_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `Byte` is `u8`, so `(34u8..41).sum()` wraps to 3 with overflow checks
+    // off, the same as `(1u8..3).sum()`; the fold cannot see the width.
+    let lib = "/// A byte.\npub type Byte = u8;\n\n/// Sum a fixed range.\npub fn f() -> Byte {\n    (34u8..41).sum()\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (34u8..41).sum()",
+        "    (1u8..3).sum()",
+        &test_calling("assert_eq!(f(), 3);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sum_into_a_recognized_width_keeps_a_separating_input() -> Result<(), String> {
+    // Control: with the width written out, 3 and 6 both fit in `u8`.
+    let lib = "/// Sum a fixed range.\npub fn f() -> u8 {\n    (1u8..4).sum()\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    (1u8..4).sum()",
+        "    (1u8..3).sum()",
+        &test_calling("assert_eq!(f(), 6);"),
+    )?;
+    assert_eq!(
+        infection_states(&findings),
+        vec!["Yes".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result<(), String> {
     let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
     let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::*;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
