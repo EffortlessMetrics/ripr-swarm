@@ -11250,6 +11250,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_speaks_plain_language_only",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_exposed_production_over_unknown_test_file",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_weak_production_over_unknown_test_file",
+  "crates/ripr/src/output/human/triage.rs::tests::start_here_breaks_an_evidence_tie_by_class_before_path",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_keeps_static_limited_when_all_probes_are_unknown",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_demote_production_unknown_below_test_decisive",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_same_owner_exposed_over_production_static_unknown",
