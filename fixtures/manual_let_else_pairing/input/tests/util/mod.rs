@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use semver::{BuildMetadata, Comparator, Error, Prerelease, Version, VersionReq};
 use std::fmt::Display;
 
