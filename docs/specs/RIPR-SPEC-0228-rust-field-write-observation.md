@@ -821,8 +821,8 @@ changes `self.count += 2` to `self.count += 1`.
   `krate::Name { .. }` is spelled only when the root names the owner's type.
   A raw spelling (`r#n`, `r#Counter`) is the same identifier for every one of
   these scans. The owner's module is read from its file path, so any
-  `#[path = ..]` attribute in the indexed sources withdraws the module-path
-  routes. When the owner writes a plain literal (`self.n = 1;`), the expected
+  `path = ..` attribute in the indexed sources (plain or inside `cfg_attr`)
+  withdraws the module-path routes. When the owner writes a plain literal (`self.n = 1;`), the expected
   literal must not differ from it, since such an assertion fails with or
   without the write. A workspace with a visible non-empty `Drop` impl, or a
   source that does not parse cleanly, gets no such credit, since a `Drop` that

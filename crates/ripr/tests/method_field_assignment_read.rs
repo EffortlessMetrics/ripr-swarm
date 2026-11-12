@@ -390,6 +390,24 @@ fn a_path_remapped_module_gets_no_reexport_credit() -> Result<(), String> {
         ],
     )?;
     assert_ne!(remapped.class, ExposureClass::Exposed, "{remapped:#?}");
+    let cfg_remapped = finding_in(
+        "src/owner.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[
+            (
+                "src/lib.rs",
+                "#[cfg_attr(all(), path = \"owner.rs\")]\nmod internal;\n# [path = \"counter.rs\"]\npub mod owner;\npub use owner::Counter;\n",
+            ),
+            ("src/counter.rs", other),
+        ],
+    )?;
+    assert_ne!(
+        cfg_remapped.class,
+        ExposureClass::Exposed,
+        "{cfg_remapped:#?}"
+    );
     let control = finding_in(
         "src/owner.rs",
         OWNER,

@@ -2365,18 +2365,28 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
 }
 
 /// #14407: [`library_module_path`] of `file`, or `None` when any indexed
-/// file may remap a module to another file with a `#[path = ..]` attribute,
-/// since the file path then need not name the module.
+/// file may remap a module to another file with a `path = ..` attribute
+/// (plain or inside `cfg_attr`), since the file path then need not name the
+/// module.
 pub(in crate::analysis) fn indexed_library_module_path(
     index: &RustIndex,
     file: &Path,
 ) -> Option<Vec<String>> {
+    // `#[path = ..]`, `# [path = ..]` and `#[cfg_attr(.., path = ..)]` all
+    // put `path =` right after `[` or `,`; a `let path = ..` does not.
     let remaps = index.files().iter().any(|(_, facts)| {
-        facts.source.contains("path")
-            && crate::analysis::extract::mask_comments_and_strings(&facts.source)
-                .split("#[")
-                .skip(1)
-                .any(|attribute| attribute.trim_start().starts_with("path"))
+        if !facts.source.contains("path") {
+            return false;
+        }
+        let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+        super::owner_pin::whole_word_offsets(&masked, "path")
+            .into_iter()
+            .any(|offset| {
+                let after = masked[offset + "path".len()..].trim_start();
+                masked[..offset].trim_end().ends_with(['[', ','])
+                    && after.starts_with('=')
+                    && !after.starts_with("==")
+            })
     });
     if remaps {
         None
