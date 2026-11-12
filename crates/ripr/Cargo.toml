@@ -27,6 +27,7 @@ include = [
   "examples/*/tests/**",
   "examples/*.diff",
   "examples/*.rs",
+  "examples/support/*.rs",
   "README.md",
   "LICENSE-*",
   "Cargo.toml",

@@ -288,7 +288,10 @@ wrong credits.
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
    a panic does, so they refuse. The same completion rule applies under
    `#[async_std::test]` when `async_std` is the crate in the test's module and
-   the attribute carries no arguments (#5040). An `async` owner's return value is then read
+   the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
+   and `#[actix_web::test]` on the same terms (#14073): the exact
+   crate-qualified path, the crate not rebound in the test's module, and no
+   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`

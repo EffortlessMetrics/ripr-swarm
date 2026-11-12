@@ -400,6 +400,8 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+#[cfg(test)]
+mod exception_body_call_tests;
 mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;

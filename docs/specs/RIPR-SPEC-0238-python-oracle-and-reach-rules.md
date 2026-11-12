@@ -729,7 +729,13 @@ effect-channel credit need module identity. An empty owner or changed-sink token
 set does not itself establish observation. All owners, including `<module>` and
 one-letter free functions, require an assertion that satisfies a credit branch
 under rule 4. A genuine short-function output assertion can still credit the
-existing module-identified call branch. With no crediting branch, a strong oracle
+existing module-identified call branch. For an exception assertion, which
+compares no operand (rule 4), that branch reads the module-qualified owner call
+in the assertion's `with` body or rule 13 callable instead of an asserted
+operand, so `levels.parse("")` and an imported `parse("")` under the same
+`pytest.raises(ValueError, match=...)` read alike (#14090). A body holding a
+`lambda` or a nested `def`/`class` is not read, since the call may be deferred.
+With no crediting branch, a strong oracle
 is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
 This reverses the legacy no-token observing exception (#7526), which could
 credit an unrelated strong assertion. Ordinary module-import links retain their

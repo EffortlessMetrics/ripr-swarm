@@ -738,11 +738,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             findings.push(format!("shards: verify lost `{required}`"));
         }
     }
-    // The hosted route must run the shards behind its gates job and may not report
-    // the required result green without them.
+    // The hosted route must start the shards on the hosted gates job's own
+    // condition (alongside it, so the required context fits the merge queue's
+    // status-check timeout, #4838) and may not report the required result green
+    // without them.
     for required in [
         "      test-shards: 4\n",
-        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
+        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n    if: >-\n      !cancelled() &&\n      needs.admission.result == 'success' &&\n      needs.detect-docs-only.result == 'success' &&\n      needs.admission.outputs.docs_only != 'true' &&\n      (needs.route.outputs.router_target == 'github' ||\n      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml\n",
         "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
@@ -900,8 +902,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "rust-github, docs-gate,",
         ),
         (
-            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
-            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail')) || always()\n    uses: ./.github/workflows/rust-test-shards.yml",
         ),
     ] {
         let changed = ROUTED.replace(from, to);
