@@ -396,10 +396,15 @@ pub(in crate::app) fn location_miss_hint(
             String::new()
         };
         let noun = if lines.len() == 1 { "line" } else { "lines" };
+        let matching = if case_note.is_empty() {
+            "matching that path"
+        } else {
+            "matching that path ignoring case"
+        };
         let others = match same_file.len().saturating_sub(1) {
             0 => String::new(),
-            1 => " 1 other file matching that path also has findings.".to_string(),
-            n => format!(" {n} other files matching that path also have findings."),
+            1 => format!(" 1 other file {matching} also has findings."),
+            n => format!(" {n} other files {matching} also have findings."),
         };
         return Some(format!(
             "{case_note} Findings in {file} are on {noun} {listed}{more}; {suggestion}.{others}{column_note}"
@@ -835,7 +840,7 @@ mod tests {
         assert_eq!(
             location_miss_hint(&mixed, std::path::Path::new(""), "src/LIB.rs:9:1", true).as_deref(),
             Some(
-                " Paths match case-sensitively. Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5. 1 other file matching that path also has findings. Selectors are file:line; drop the column."
+                " Paths match case-sensitively. Findings in SRC/Lib.rs are on line 5; select one as SRC/Lib.rs:5. 1 other file matching that path ignoring case also has findings. Selectors are file:line; drop the column."
             )
         );
         // Line 3 holds two findings, so `src/lib.rs:3` would refuse as
