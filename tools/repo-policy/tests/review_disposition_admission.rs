@@ -714,6 +714,13 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         ),
         ("table field", "| Disposition | REPAIR_REQUIRED |", false),
         (
+            "first-cell state",
+            "| REPAIR_REQUIRED | fix oracle |",
+            false,
+        ),
+        ("sole-cell state", "| REPAIR_REQUIRED |", false),
+        ("ordinary table", "| fmt | pass |", true),
+        (
             "numbered prose",
             "1. Recorded the earlier disposition in the issue.",
             true,

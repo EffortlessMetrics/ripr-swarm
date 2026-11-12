@@ -90,7 +90,7 @@ STATE_LINE = re.compile(
     STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
     r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
-    r"|^[ \t]*\|.*\|[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -132,7 +132,7 @@ BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0
 BODY_COMPETING_FIELD = re.compile(
     STATE_LINE_PREFIX + r"disposition[ \t*_`]*:"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
-    r"|^[ \t]*\|.*\|[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
 
@@ -534,6 +534,12 @@ def self_test() -> None:
         ("REVIEW_READY\nCurrent disposition: REVIEW_INCOMPLETE", False),
         ("REVIEW_READY\n| Disposition | REPAIR_REQUIRED |", False),
         ("REVIEW_READY\n| PR | State |\n| --- | --- |\n| 14421 | REPAIR_REQUIRED |", False),
+        # Any cell position, including the first and a sole cell.
+        ("REVIEW_READY\n| State | Detail |\n| --- | --- |\n| REPAIR_REQUIRED | fix oracle |", False),
+        ("REVIEW_READY\n| a | REPAIR_REQUIRED | b |", False),
+        ("REVIEW_READY\n| REPAIR_REQUIRED |", False),
+        ("REVIEW_READY\n| **`REPAIR_REQUIRED`** | fix oracle |", False),
+        ("REVIEW_READY\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         # Narration that only mentions a state word is not a state line (#11566).
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
@@ -602,6 +608,8 @@ def self_test() -> None:
         ('```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
         ("Final disposition: REPAIR_REQUIRED", False),
         ("| Disposition | REPAIR_REQUIRED |", False),
+        ("| REPAIR_REQUIRED | fix oracle |", False),
+        ("| REPAIR_REQUIRED |", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
@@ -656,6 +664,9 @@ def self_test() -> None:
         (f"{line}\nCurrent disposition: REVIEW_INCOMPLETE", False),
         (f"{line}\n| Disposition | REPAIR_REQUIRED |", False),
         (f"{line}\n| PR | State |\n| --- | --- |\n| 14421 | REPAIR_REQUIRED |", False),
+        (f"{line}\n| REPAIR_REQUIRED | fix oracle |", False),
+        (f"{line}\n| REPAIR_REQUIRED |", False),
+        (f"{line}\n| a | REVIEW_READY | b |", False),  # ambiguous even when positive
         (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),
@@ -688,6 +699,8 @@ def self_test() -> None:
         ('```toml\nstate = "REPAIR_REQUIRED"\n```', False),
         ("Current disposition: REVIEW_INCOMPLETE", False),
         ("| Disposition | REPAIR_REQUIRED |", False),
+        ("| REPAIR_REQUIRED | fix oracle |", False),
+        ("| REPAIR_REQUIRED |", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
