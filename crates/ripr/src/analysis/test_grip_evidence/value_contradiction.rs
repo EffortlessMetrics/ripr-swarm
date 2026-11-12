@@ -613,12 +613,15 @@ enum CallReading {
 }
 
 /// [`RangeChangeVisibility`] for the related `tests` of `owner`, whose body
-/// holds `after` exactly once in place of `before`.
+/// holds `after` exactly once in place of `before`. When another function
+/// calls the owner (`owner_has_other_callers`), a helper may feed it inputs
+/// no test names, so "every asserted input agrees" is not claimed.
 pub(in crate::analysis) fn range_change_visibility(
     owner: &FunctionSummary,
     before: &str,
     after: &str,
     tests: &[&TestSummary],
+    owner_has_other_callers: bool,
 ) -> RangeChangeVisibility {
     let current = owner.body.as_str();
     if before == after || current.matches(after).count() != 1 {
@@ -630,8 +633,14 @@ pub(in crate::analysis) fn range_change_visibility(
             if count_name_tokens(operand, &owner.name) != 1 {
                 return None;
             }
-            let arguments = owner_call_arguments(operand, &owner.name)
-                .or_else(|| wrapped_owner_call_arguments(operand, &owner.name))?;
+            // Only the bare call, or the same call awaited: a wrapper
+            // (`is_positive(owner(3))`) may map both results to one value,
+            // so it never grants credit here.
+            let trimmed = operand.trim();
+            let arguments = owner_call_arguments(
+                trimmed.strip_suffix(".await").unwrap_or(trimmed),
+                &owner.name,
+            )?;
             let environment = BTreeMap::new();
             let mut values = Vec::with_capacity(arguments.len());
             for argument in &arguments {
@@ -694,7 +703,18 @@ pub(in crate::analysis) fn range_change_visibility(
                 continue;
             }
             if let Some((asserts_inequality, _)) = equality_assertion_shape(&oracle.text) {
-                for operand in assertion_operands(&oracle.text, test.body.as_str()) {
+                let operands = assertion_operands(&oracle.text, test.body.as_str());
+                let owner_mentions: usize = operands
+                    .iter()
+                    .map(|operand| count_name_tokens(&operand.text, &owner.name))
+                    .sum();
+                if owner_mentions > 1 {
+                    // `assert_eq!(owner(5), owner(5))` changes on both sides
+                    // at once; it pins nothing about either version.
+                    note(CallReading::Unread, false);
+                    continue;
+                }
+                for operand in operands {
                     if count_name_tokens(&operand.text, &owner.name) > 0
                         && let Some(call) = note(read_call(&operand.text), !asserts_inequality)
                     {
@@ -725,7 +745,9 @@ pub(in crate::analysis) fn range_change_visibility(
         // at every input, so "no test input reaches the change" would send
         // the reader after a test that cannot exist.
         (None, Some(call))
-            if every_mention_agrees && versions_differ_on_small_inputs(current, &baseline) =>
+            if every_mention_agrees
+                && !owner_has_other_callers
+                && versions_differ_on_small_inputs(current, &baseline) =>
         {
             RangeChangeVisibility::EveryAssertedInputAgrees(call)
         }

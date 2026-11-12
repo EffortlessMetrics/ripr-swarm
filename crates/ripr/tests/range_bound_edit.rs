@@ -296,3 +296,52 @@ fn a_slice_range_feeding_a_sum_is_not_credited_without_a_fold() -> Result<(), St
     assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
     Ok(())
 }
+
+const UPTO: &str = "/// The values below the bound.\npub fn upto(n: u32) -> Vec<u32> {\n    (0..=n).collect()\n}\n";
+
+#[test]
+fn a_collected_range_keeps_the_ordinary_reading() -> Result<(), String> {
+    // `.collect()` preserves length, so one element more shows at every
+    // non-empty input; the gate leaves this shape to the ordinary reading.
+    let findings = findings_on_changed_line(
+        UPTO,
+        "    (0..=n).collect()",
+        "    (0..n).collect()",
+        &test_calling("assert_eq!(upto(2), vec![0, 1, 2]);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn a_wrapper_around_the_owner_call_does_not_credit_a_range_bound() -> Result<(), String> {
+    // 0..3 sums to 3 and 0..=3 to 6: both are positive, so the wrapper
+    // folds the separating input back into one outcome.
+    let test = "use ranges::*;\n\nfn is_positive(value: u32) -> bool {\n    value > 0\n}\n\n#[test]\nfn pins() {\n    assert!(is_positive(sum_to(3)));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_self_comparison_does_not_credit_a_range_bound() -> Result<(), String> {
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(5), sum_to(5));"),
+    )?;
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}

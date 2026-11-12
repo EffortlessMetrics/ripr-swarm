@@ -1089,6 +1089,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     before,
                     &probe.expression,
                     related_tests,
+                    owner_has_other_callers,
                 )
             } else {
                 StageEvidence::new(
@@ -1113,9 +1114,12 @@ fn range_bound_infection(
     before: &str,
     after: &str,
     related_tests: &[&TestSummary],
+    owner_has_other_callers: bool,
 ) -> StageEvidence {
     use crate::analysis::test_grip_evidence::{RangeChangeVisibility, range_change_visibility};
-    match owner.map(|owner| range_change_visibility(owner, before, after, related_tests)) {
+    match owner.map(|owner| {
+        range_change_visibility(owner, before, after, related_tests, owner_has_other_callers)
+    }) {
         Some(RangeChangeVisibility::ExactInputSeparates(call)) => StageEvidence::new(
             StageState::Yes,
             Confidence::Medium,
@@ -1145,17 +1149,22 @@ fn range_bound_infection(
     }
 }
 
-/// Whether `before` and `after` differ only inside one range expression: the
-/// operator (`..` to `..=`) or an endpoint (`1..n` to `0..n`). The changed
-/// span is the text between the longest common prefix and suffix; it must sit
-/// inside a range expression in both versions. A version that does not parse
-/// as a statement still counts when the whole difference is one `=` right
-/// after a `..` (`for i in 0..n {` to `for i in 0..=n {`).
+/// Whether `before` and `after` differ only inside one range expression (the
+/// operator, `..` to `..=`, or an endpoint, `1..n` to `0..n`) whose values
+/// feed a consumer that can absorb the changed element. The changed span is
+/// the text between the longest common prefix and suffix; it must sit inside
+/// a range expression in both versions.
 ///
-/// A range that indexes a slice or string and is itself the whole changed
-/// value (`&s[..n]` to `&s[..=n]`) is excluded: the indexed result's length
-/// changes at every input the baseline accepts, so the ordinary reading
-/// stays.
+/// Absorbing consumers are where a reaching input can leave the result
+/// unchanged: `.sum()` adds the extra element 0, `.contains(&x)` and
+/// `.any(..)` ignore it away from the endpoint, `.take(k)` drops it, and a
+/// `for` loop body may do anything with it. A chain of length-preserving
+/// adaptors (`.iter()`, `.map(..)`, `.collect()`, `.len()`, slicing) does
+/// not absorb it: the result has one element more or fewer at every input
+/// where either range is non-empty, which is the ordinary reading's premise,
+/// so such ranges keep it. A version that does not parse as a statement
+/// still counts when the whole difference is one `=` right after a `..`
+/// (a match range pattern `0..5 =>` to `0..=5 =>`).
 pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str) -> bool {
     use crate::analysis::language::mask_rust_comments_and_strings;
     let before = mask_rust_comments_and_strings(before.trim());
@@ -1178,10 +1187,10 @@ pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str)
         .count();
     let span = |text: &str| prefix..text.len() - suffix;
     match (
-        range_holding_span(&before, span(&before)),
-        range_holding_span(&after, span(&after)),
+        range_consumer(&before, span(&before)),
+        range_consumer(&after, span(&after)),
     ) {
-        (Some(RangeSite::Value), Some(RangeSite::Value)) => true,
+        (Some(RangeConsumer::Absorbing), Some(RangeConsumer::Absorbing)) => true,
         (Some(_), Some(_)) => false,
         _ => {
             let (short, long) = if before.len() < after.len() {
@@ -1191,25 +1200,57 @@ pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str)
             };
             long.len() == short.len() + 1
                 && long.get(span(long)) == Some("=")
-                && long[..prefix].ends_with("..")
-                && !long[..prefix].ends_with("...")
+                && long
+                    .get(..prefix)
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."))
         }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RangeSite {
-    /// The range feeds a value the owner computes from (a reduction, a loop,
-    /// an iterator chain).
-    Value,
-    /// The range indexes a slice and the indexed place is the whole statement
-    /// value.
-    WholeIndex,
+enum RangeConsumer {
+    /// A consumer that can leave the result unchanged when the range gains or
+    /// loses an element.
+    Absorbing,
+    /// Only length-preserving adaptors, or the range value itself.
+    Preserving,
 }
 
-/// The innermost range expression of `text` (parsed as one block statement)
-/// whose text covers `span`.
-fn range_holding_span(text: &str, span: std::ops::Range<usize>) -> Option<RangeSite> {
+/// Adaptors after which one element more or fewer still shows up in the
+/// result. Any other method on the range's chain is read as absorbing.
+const LENGTH_PRESERVING_METHODS: [&str; 25] = [
+    "iter",
+    "iter_mut",
+    "into_iter",
+    "copied",
+    "cloned",
+    "map",
+    "rev",
+    "enumerate",
+    "collect",
+    "count",
+    "len",
+    "to_vec",
+    "to_owned",
+    "as_slice",
+    "as_bytes",
+    "bytes",
+    "copy_from_slice",
+    "clone_from_slice",
+    "into",
+    "try_into",
+    "to_string",
+    "chars",
+    "char_indices",
+    "par_iter",
+    "into_par_iter",
+];
+
+/// How the innermost range expression of `text` (parsed as one block
+/// statement) whose text covers `span` is consumed: walk up through
+/// parentheses, references, a slice index and the method chain whose
+/// receiver it is.
+fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsumer> {
     const PREFIX: &str = "fn __ripr_range_probe() {\n";
     let source = format!("{PREFIX}{text}\n}}\n");
     let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
@@ -1225,34 +1266,36 @@ fn range_holding_span(text: &str, span: std::ops::Range<usize>) -> Option<RangeS
             usize::from(covered.start()) <= start && end <= usize::from(covered.end())
         })
         .last()?;
-    let Some(indexed) = range
-        .syntax()
-        .parent()
-        .and_then(ast::IndexExpr::cast)
-        .filter(|index| {
-            index
-                .index()
-                .is_some_and(|inner| inner.syntax() == range.syntax())
-        })
-    else {
-        return Some(RangeSite::Value);
-    };
-    let mut node = indexed.syntax().clone();
+    let mut node = range.syntax().clone();
     while let Some(parent) = node.parent() {
         if ast::RefExpr::can_cast(parent.kind()) || ast::ParenExpr::can_cast(parent.kind()) {
             node = parent;
             continue;
         }
-        let whole = ast::StmtList::can_cast(parent.kind())
-            || ast::ExprStmt::can_cast(parent.kind())
-            || ast::ReturnExpr::can_cast(parent.kind());
-        return Some(if whole {
-            RangeSite::WholeIndex
-        } else {
-            RangeSite::Value
-        });
+        if let Some(index) = ast::IndexExpr::cast(parent.clone())
+            && index.index().is_some_and(|inner| inner.syntax() == &node)
+        {
+            node = parent;
+            continue;
+        }
+        if let Some(call) = ast::MethodCallExpr::cast(parent.clone())
+            && call
+                .receiver()
+                .is_some_and(|receiver| receiver.syntax() == &node)
+        {
+            let name = call.name_ref().map(|name| name.text().to_string());
+            if !name.is_some_and(|name| LENGTH_PRESERVING_METHODS.contains(&name.as_str())) {
+                return Some(RangeConsumer::Absorbing);
+            }
+            node = parent;
+            continue;
+        }
+        if ast::ForExpr::can_cast(parent.kind()) {
+            return Some(RangeConsumer::Absorbing);
+        }
+        break;
     }
-    Some(RangeSite::Value)
+    Some(RangeConsumer::Preserving)
 }
 
 /// Resolve literal boundaries from live, non-computed local initializers.
