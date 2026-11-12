@@ -478,7 +478,7 @@ fn given_valid_factory_import_spellings_when_dunder_reaches_helper_then_weak_lin
         assert_eq!(
             factory_helper_link_count(&[("src/isodate/isoduration.py", IMPORTED_FACTORY)], test)?,
             1,
-            "a proven import identity should retain weak reach: {test}"
+            "an established import identity should retain weak reach: {test}"
         );
     }
     Ok(())
