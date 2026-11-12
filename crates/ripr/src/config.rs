@@ -904,18 +904,35 @@ fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
 /// keeps the location alone. Without the location header (no span) there is
 /// no fixed layout to rely on, so nothing is read.
 fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Option<&str> {
-    // The header must END in toml's own `TOML parse error at line N, column M`,
-    // so a semantic diagnostic that echoes a value cannot pose as one.
-    let first = error.lines().next()?;
-    let (_, position) = first.rsplit_once("TOML parse error at line ")?;
+    // The header must END in ripr's own `invalid ripr.toml: TOML parse error
+    // at line N, column M`, and whatever precedes it (a path, `candidate
+    // tree ripr.toml: `) must hold no quote or backtick. A semantic diagnostic
+    // echoes a user value inside backticks, so its value cannot pose as the
+    // header (review of #14449).
+    let mut lines = error.lines();
+    let first = lines.next()?;
+    let (prefix, position) = first.rsplit_once("invalid ripr.toml: TOML parse error at line ")?;
+    if prefix.contains(['`', '"', '\'']) {
+        return None;
+    }
     let (line, column) = position.split_once(", column ")?;
     let is_number = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
     if !(is_number(line) && is_number(column)) {
         return None;
     }
-    let mut message = error
-        .lines()
-        .skip(4)
+    // Then toml's fixed excerpt: a bare gutter, `N | <source>` for the same
+    // line N, and a caret line.
+    let gutter = lines.next()?.trim();
+    let excerpt = lines.next()?;
+    let caret = lines.next()?.trim();
+    let caret_marks = caret.strip_prefix('|').map(str::trim_start);
+    if gutter != "|"
+        || !excerpt.starts_with(&format!("{line} | "))
+        || !caret_marks.is_some_and(|marks| !marks.is_empty() && marks.bytes().all(|b| b == b'^'))
+    {
+        return None;
+    }
+    let mut message = lines
         .map(str::trim)
         // The candidate-tree recovery line is ripr's own fixed text, appended
         // after the parser's message.

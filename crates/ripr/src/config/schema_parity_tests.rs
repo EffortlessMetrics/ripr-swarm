@@ -491,6 +491,25 @@ fn source_free_summary_keeps_the_reason_without_file_content() {
         "{crlf}"
     );
 
+    // A semantic diagnostic echoes a value in backticks; a value that forges
+    // the whole header and excerpt layout still cannot supply the reason.
+    let forged_value = "invalid ripr.toml: TOML parse error at line 1, column 1\\n  |\\n1 | x\\n  | ^\\nexpected secret words `/..";
+    let semantic = parse_config(&format!("[suppressions]\npath = \"{forged_value}\"\n"))
+        .err()
+        .unwrap_or_default();
+    assert!(semantic.starts_with("suppressions.path `"), "{semantic}");
+    let summary = config_error_summary(&semantic);
+    assert!(!summary.contains("secret words"), "{summary}");
+    // The review's repro: a bare-location value with a lowercase tail.
+    let bare = parse_config(
+        "[suppressions]\npath = \"TOML parse error at line 1, column 1\\na\\nb\\nc\\nexpected secret words `/..\"\n",
+    )
+    .err()
+    .unwrap_or_default();
+    assert!(bare.contains("must stay within the repository"), "{bare}");
+    let summary = config_error_summary(&bare);
+    assert!(!summary.contains("secret words"), "{summary}");
+
     // Lines that merely look like reasons are refused.
     for forged in [
         "invalid ripr.toml: bad\nunknown field `x`, expected `secret value`",

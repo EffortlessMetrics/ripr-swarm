@@ -330,9 +330,12 @@ The source-free summary also keeps the parser's reason without file content
 is dropped; the expected list is ripr's schema), and a grammar reason such as
 `unclosed table, expected `]`` keeps its fixed wording only when every
 backticked token is punctuation. Wrong-type and value lines never pass.
-The reason is read only when the parser's message is a single line after its
-fixed location excerpt; a key or value whose newline splits the message keeps
-the location alone.
+The reason is read only from the parser's own layout (an `invalid ripr.toml:
+TOML parse error at line N, column M` header with no quoted text before it,
+then the gutter, `N | ` excerpt and caret lines) and only when the message
+after it is a single line; a key or value whose newline splits the message,
+or a semantic diagnostic whose echoed value imitates that layout, keeps the
+location alone.
 
 Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,
