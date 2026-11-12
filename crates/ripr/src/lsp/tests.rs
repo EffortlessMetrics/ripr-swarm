@@ -75,15 +75,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeLensOptions, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType,
-    FileEvent, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, MarkedString,
-    NumberOrString, PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
-    WorkspaceFolder,
+    CodeLensOptions, Diagnostic, DiagnosticServerCapabilities, DiagnosticSeverity,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
+    ExecuteCommandParams, FileChangeType, FileEvent, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, MarkedString, NumberOrString, PartialResultParams,
+    Position, PositionEncodingKind, PreviousResultId, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkspaceDiagnosticParams, WorkspaceFolder,
 };
 use tower_lsp_server::{LspService, Server};
 
@@ -580,6 +580,15 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
                     "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
                 })
             })
+            // #14099: one change-and-delete watcher for analyzed sources
+            // rides the same root-anchored registration.
+            .chain(std::iter::once(serde_json::json!({
+                "globPattern": {
+                    "baseUri": root_uri.as_str(),
+                    "pattern": "**/*.{rs,py,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                },
+                "kind": 6,
+            })))
             .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
@@ -8534,12 +8543,29 @@ async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), 
     let (pull_service, _pull_socket) =
         LspService::new(|client| Backend::new(client, pull_root.path().to_path_buf()));
     let pull_backend = pull_service.inner();
-    pull_backend
+    let pull_initialize = pull_backend
         .initialize(push_pull_parity_initialize_params(
             &pull_root, profile, true,
         )?)
         .await
         .map_err(|err| format!("{leg}: pull initialize failed: {err}"))?;
+    // #1630: workspace pull is offered only to the ripr editor client; a
+    // generic pull client gets document pull so a refresh re-pulls its
+    // open buffers.
+    let Some(DiagnosticServerCapabilities::Options(pull_options)) =
+        pull_initialize.capabilities.diagnostic_provider
+    else {
+        return Err(format!(
+            "{leg}: pull client got no static diagnostic provider"
+        ));
+    };
+    let expect_workspace_pull = !matches!(profile, PushPullParityProfile::Generic);
+    if pull_options.workspace_diagnostics != expect_workspace_pull {
+        return Err(format!(
+            "{leg}: workspaceDiagnostics was {}, expected {expect_workspace_pull}",
+            pull_options.workspace_diagnostics
+        ));
+    }
     let (pull_uri, line) = commit_push_pull_parity_fixture(pull_backend, &pull_root)?;
     let pull_report = pull_backend
         .diagnostic(DocumentDiagnosticParams {
@@ -28825,6 +28851,168 @@ fn framed_pull_only_client_receives_workspace_versions() -> Result<(), String> {
                 "the workspace pull entry must bind the observed version 8 without negotiation: {entry}"
             ));
         }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_generic_pull_client_repulls_its_open_document_after_a_save_refresh() -> Result<(), String>
+{
+    // #1630: a generic pull client (Neovim 0.12) is offered document pull
+    // only, gets `workspace/diagnostic/refresh` after a saved-workspace
+    // refresh, and a document re-pull then carries the new finding.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("generic-pull-refresh")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": {"dynamicRegistration": false}
+                        },
+                        "workspace": {"diagnostics": {"refreshSupport": true}},
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        let provider = &initialize["result"]["capabilities"]["diagnosticProvider"];
+        if provider["workspaceDiagnostics"] != serde_json::json!(false) {
+            return Err(format!(
+                "a generic pull client must be offered document pull only: {initialize}"
+            ));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+
+        let changed_text = saved_text.replace(">=", ">");
+        if changed_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        std::fs::write(&lib_path, &changed_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 2 },
+                    "contentChanges": [{ "text": changed_text }]
+                }
+            }),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": { "textDocument": { "uri": text_uri } }
+            }),
+        )
+        .await?;
+
+        // Answer requests until the refresh request after an analysis that
+        // found the changed boundary; the client then re-pulls its document.
+        let mut report = serde_json::Value::Null;
+        let mut next_id = 10_u64;
+        tokio::time::timeout(Duration::from_mins(1), async {
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                let Some(method) = message.get("method").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Some(request_id) = message.get("id").cloned() else {
+                    continue;
+                };
+                write_lsp_message(
+                    &mut client_write,
+                    serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+                )
+                .await?;
+                if method != "workspace/diagnostic/refresh" {
+                    continue;
+                }
+                next_id += 1;
+                report = framed_pull_document_report(
+                    &mut client_read,
+                    &mut client_write,
+                    next_id,
+                    &text_uri,
+                )
+                .await?;
+                let has_finding = report["items"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["code"]
+                            .as_str()
+                            .is_some_and(|code| !code.starts_with("ripr-diagnostic-"))
+                    })
+                });
+                if has_finding {
+                    return Ok::<(), String>(());
+                }
+            }
+        })
+        .await
+        .map_err(|_elapsed| {
+            format!("no refresh-driven document pull carried the saved change's finding: {report}")
+        })??;
 
         shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 3).await?;
         drop(temp);

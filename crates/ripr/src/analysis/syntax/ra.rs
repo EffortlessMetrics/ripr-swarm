@@ -1302,6 +1302,20 @@ pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBin
     collect_body_shadow_facts(&function, &|offset| line_index.line(offset), 1)
 }
 
+/// The `#[path]` target shapes of `source`'s top-level out-of-line
+/// `mod name;` declarations, through the producer the index uses. `None`
+/// when the source is not parser-valid.
+pub(crate) fn module_path_targets(source: &str) -> Option<Vec<ModulePathTarget>> {
+    let parse = parse_clean_source_file(source)?;
+    let line_index = LineIndex::new(source);
+    Some(
+        module_declaration_facts(&parse.tree(), &line_index)
+            .into_iter()
+            .map(|declaration| declaration.path_target)
+            .collect(),
+    )
+}
+
 /// Classifies the `#[path]` attributes of one declaration into the bounded
 /// target shape. Exactly one plain string-literal attribute resolves; absence
 /// falls back to default name resolution; anything else (multiple `path`
@@ -1527,7 +1541,8 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 }
 
 /// Whether a function carries a test-framework attribute (`#[test]`,
-/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// `#[tokio::test]`, `#[async_std::test]`, `#[actix_rt::test]`,
+/// `#[actix_web::test]`, `#[rstest]`). Parser-backed, so
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
@@ -1537,7 +1552,9 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
         if let Some(path) = attribute_harness_path(&attr)
             && (names_exact_harness_path(&path, "test")
                 || names_exact_harness_path(&path, "tokio::test")
-                || names_exact_harness_path(&path, "async_std::test"))
+                || names_exact_harness_path(&path, "async_std::test")
+                || names_exact_harness_path(&path, "actix_rt::test")
+                || names_exact_harness_path(&path, "actix_web::test"))
         {
             return true;
         }

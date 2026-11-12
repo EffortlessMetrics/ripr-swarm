@@ -301,6 +301,240 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     Ok(())
 }
 
+/// #14355: a negated change/repair phrase is resolved work, not a blocker.
+/// The witness is the #14117 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-11T11:00:28Z";
+    let cases: [(&str, bool); 67] = [
+        // The strip-exercising control: this admits only because the strip ran.
+        ("REVIEW_READY\nResolved with no code change needed.", true),
+        (
+            "REVIEW_READY\nThree Devin threads resolved, no code changes needed.",
+            true,
+        ),
+        // Control that does not exercise the strip: no "needed"/"required".
+        ("REVIEW_READY\nResolved without a code change.", true),
+        // A comma resets the clause, so a benign cue earlier in the sentence
+        // does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nGemini isn't available, no changes needed.",
+            true,
+        ),
+        // A hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            true,
+        ),
+        ("REVIEW_READY\nCode change needed.", false),
+        ("REVIEW_READY\nA change is needed.", false),
+        ("REVIEW_READY\nChanges required.", false),
+        ("REVIEW_READY\nRepairs required.", false),
+        (
+            "REVIEW_READY\nNo code change needed, but repairs required.",
+            false,
+        ),
+        // The real #14117 line 6: mid-line phrase followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR \
+             conversation and resolved with no code change needed. Gemini had no findings. \
+             CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a \
+             review; the owning session's inline source review stands in for them.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. All threads resolved.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini had no findings.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is red.",
+            false,
+        ),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        (
+            "REVIEW_READY\nNo code change needed. Repairs required.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build fails.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is broken.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is failing.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. A fix is needed.",
+            false,
+        ),
+        // A refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", false),
+        ("REVIEW_READY\nNo changes are needed; that is false.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That is not true.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", false),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", false),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", false),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", false),
+        ("REVIEW_READY\nNo code change needed. Not so.", false),
+        ("REVIEW_READY\nNo changes are needed. Not true.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That isn't true.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This isn't correct.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The above is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The statement is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The finding is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The report is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This statement is untrue.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. All green.", true),
+        // Ordinary prose with a cue word is not a refutation.
+        (
+            "REVIEW_READY\nNo changes are needed. Nothing is wrong.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. No incorrect claims.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            true,
+        ),
+        // An unlisted refutation ahead of the phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt's not accurate that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt's not correct that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI disagree that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI don't believe no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nI doubt no changes are needed.", false),
+        // Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini isn't available.",
+            true,
+        ),
+        // A refuted phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt is not true that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nIt is false that no change is needed.", false),
+        ("REVIEW_READY\nNo changes are needed is false.", false),
+        ("REVIEW_READY\nNo code change needed is not correct.", false),
+        (
+            "REVIEW_READY\nNo changes are needed -- the build is red.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nThere is no truth to the claim that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is a lie that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is wrong to say that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNobody could say that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nno findings, code change needed", false),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]

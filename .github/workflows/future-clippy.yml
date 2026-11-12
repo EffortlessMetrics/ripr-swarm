@@ -4,10 +4,6 @@ on:
   # Advisory lane: a daily run on main instead of every push (a merge lands
   # every few minutes and this lane takes 30+ minutes). Use workflow_dispatch
   # for an on-demand run.
-  schedule:
-    - cron: "3 4 * * *"
-  pull_request:
-    types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -102,6 +98,7 @@ jobs:
             target/future-clippy.log
             target/future-clippy-status.txt
           if-no-files-found: error
+          retention-days: 14
 
   stable-repo-policy:
     name: stable-repo-policy

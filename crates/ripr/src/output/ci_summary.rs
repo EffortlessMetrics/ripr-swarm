@@ -100,6 +100,10 @@ pub(crate) struct CiSummaryInput {
     pub(crate) base_ref: String,
     /// `RIPR_UPLOAD_SARIF == "true"`.
     pub(crate) upload_sarif: bool,
+    /// `github.event_name == "pull_request"`. The packet renders the diff
+    /// SARIF on a pull request and the repo seam SARIF otherwise (#14300),
+    /// so an absent file is expected only for the other event.
+    pub(crate) pull_request: bool,
     /// `RIPR_GATE_BASELINE` is set.
     pub(crate) gate_baseline: bool,
     /// `RIPR_GATE_MODE` is not blank. When false the policy
@@ -138,7 +142,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.gate_decision();
     summary.baseline_delta(input.gate_baseline);
     summary.ripr_zero();
-    summary.sarif_and_badges(input.upload_sarif);
+    summary.sarif_and_badges(input.upload_sarif, input.pull_request);
     summary.guidance_annotations();
     summary.inline_comments(&input.comment_mode);
     summary.known_limits();
@@ -1656,11 +1660,32 @@ impl Summary {
         self.blank();
     }
 
-    fn sarif_and_badges(&mut self, upload_sarif: bool) {
+    fn sarif_and_badges(&mut self, upload_sarif: bool, pull_request: bool) {
         self.line("### SARIF and badge status");
         if upload_sarif {
-            self.generated("- Diff SARIF", "target/ripr/reports/ripr-findings.sarif");
-            self.generated("- Repo seam SARIF", "target/ripr/reports/ripr-seams.sarif");
+            // Each SARIF renders for one event kind only (#14300), so its
+            // absence on the other kind is expected, not a fault.
+            let (diff_absent, seams_absent) = if pull_request {
+                (
+                    "missing or skipped",
+                    "not generated (manual runs only; on a pull request the diff SARIF covers the changed lines)",
+                )
+            } else {
+                (
+                    "not generated (pull request runs only)",
+                    "missing or skipped",
+                )
+            };
+            self.generated_or(
+                "- Diff SARIF",
+                "target/ripr/reports/ripr-findings.sarif",
+                diff_absent,
+            );
+            self.generated_or(
+                "- Repo seam SARIF",
+                "target/ripr/reports/ripr-seams.sarif",
+                seams_absent,
+            );
         } else {
             self.line("- SARIF upload: disabled by `RIPR_UPLOAD_SARIF`");
         }
@@ -1670,6 +1695,15 @@ impl Summary {
             "target/ripr/reports/repo-ripr-badge-shields.json",
         );
         self.blank();
+    }
+
+    fn generated_or(&mut self, label: &str, path: &str, absent: &str) {
+        let state = if self.is_file(path) {
+            "generated"
+        } else {
+            absent
+        };
+        self.line(&format!("{label}: {state}"));
     }
 
     fn generated(&mut self, label: &str, path: &str) {
