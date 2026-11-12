@@ -2365,49 +2365,7 @@ fn last_commit_fallback_applies(
     let Some(base) = output.base.as_deref() else {
         return false;
     };
-    let git = |args: &[&str]| {
-        crate::git::run_git_output_with_deadline(
-            root,
-            args,
-            // `--git-timeout` bounds these probes like any other git call.
-            Some(git_timeout.unwrap_or(std::time::Duration::from_secs(5))),
-        )
-        .ok()
-        .filter(|out| out.status.success())
-    };
-    // Both spellings below require the base to name HEAD's own commit: an
-    // empty range by construction, not a branch that is merely behind.
-    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-    else {
-        return false;
-    };
-    let commit = |rev: &str| {
-        git(&[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{rev}^{{commit}}"),
-        ])
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-    };
-    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
-    if !same_commit || commit("HEAD~1").is_none() {
-        return false;
-    }
-    if base == branch {
-        return true;
-    }
-    // A clone resolves the default base to `origin/<branch>` while HEAD is
-    // `<branch>`. That is also the shape of a feature-branch clone whose
-    // `origin/HEAD` tracks the feature branch, where the real base is
-    // elsewhere and the existing hedge names it (#7644); only narrow to the
-    // last commit when the branch is a conventional default or no other base
-    // candidate exists (a full clone of `main` usually carries other remote
-    // branches, which must not disable the fallback).
-    base.strip_prefix("origin/") == Some(branch.as_str())
-        && (matches!(branch.as_str(), "main" | "master")
-            || crate::analysis::another_base_candidate(root, git_timeout).is_none())
+    crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout)
 }
 
 /// The stderr warning for an empty default-base result when the default base

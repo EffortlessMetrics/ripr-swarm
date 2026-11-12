@@ -28541,7 +28541,7 @@ fn check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun() -> Re
         .nth(1)
         .and_then(|rest| rest.split('`').next())
         .ok_or_else(|| format!("the stop must name the last-commit rerun: {stop}"))?;
-    if !stop.contains("HEAD is on the comparison base `main`")
+    if !stop.contains("HEAD is at the comparison base `main`")
         || !command.starts_with("ripr check --root ")
         || !command.ends_with(" --base HEAD~1 --format agent")
     {
@@ -28574,6 +28574,63 @@ fn check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun() -> Re
             "JSON stop must carry the scope route only: {stop_value}"
         ));
     }
+
+    // A clone resolves the default base to `origin/main` at the same commit
+    // as `main`: the same empty range, so both machine formats name the
+    // same rerun.
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    run_git(
+        &root,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    )?;
+    let clone_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&clone_agent);
+    let clone_text = String::from_utf8_lossy(&clone_agent.stdout);
+    if !clone_text.contains("HEAD is at the comparison base `origin/main`")
+        || !clone_text.contains(" --base HEAD~1 --format agent`")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must name the last-commit rerun: {clone_text}"
+        ));
+    }
+    let clone_json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&clone_json);
+    let clone_value: serde_json::Value = serde_json::from_slice(&clone_json.stdout)
+        .map_err(|err| format!("parse origin/main check JSON: {err}"))?;
+    if !clone_value["canonical_next_action"]["stop"]["scope_route"]
+        .as_str()
+        .unwrap_or_default()
+        .ends_with(" --base HEAD~1")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must carry the scope route: {clone_value}"
+        ));
+    }
+
+    // Ignored source: the last commit cannot reach the ignored file, so
+    // neither machine format names the rerun.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(
+        root.join("src/generated.rs"),
+        "pub fn generated() -> u8 { 2 }\n",
+    )
+    .map_err(|err| format!("write generated.rs: {err}"))?;
+    let ignored_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&ignored_agent);
+    let ignored_text = String::from_utf8_lossy(&ignored_agent.stdout);
+    if ignored_text.contains("to check the last commit run") {
+        return Err(format!(
+            "ignored source must not name the last-commit rerun: {ignored_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &[], "ignored source")?;
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove generated.rs: {err}"))?;
 
     // Untracked source: the empty range is explained by the untracked file,
     // so neither machine format names the last-commit rerun.

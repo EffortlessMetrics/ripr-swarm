@@ -1245,9 +1245,11 @@ pub(crate) fn canonical_next_action_for_triage(
 
 /// #14423: the one owner of the "check the last commit" retry for an empty
 /// `scope_missing` range that is the base branch compared with itself. True
-/// when the committed-history read compared HEAD's own branch as the base, no
-/// untracked source file explains the empty range, and `HEAD~1` resolves. The
-/// human `Safe next action`, the agent `stop=` line and the JSON
+/// when the committed-history read compared HEAD's own branch as the base
+/// (`<branch>`, or `origin/<branch>` in a clone, under the same git-identity
+/// rule the bare human check's rescope uses), no untracked or ignored source
+/// file explains the empty range, and `HEAD~1` resolves. The human `Safe next
+/// action`, the agent `stop=` line and the JSON
 /// `canonical_next_action.stop.scope_route` all read this decision.
 pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
     let Some(base) = output.base.as_deref() else {
@@ -1256,10 +1258,11 @@ pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
     if crate::output::analyzed_revisions::is_working_tree_read(output)
         || (output.unanalyzed_working_tree
             && !output.untracked_working_tree_source_paths.is_empty())
+        || !output.ignored_working_tree_source_paths.is_empty()
     {
         return false;
     }
-    head_is_on_branch(&output.root, base) && head_has_parent(&output.root)
+    crate::analysis::base_is_checked_out_head_with_parent(&output.root, base, None)
 }
 
 /// The `ripr check` rerun for [`last_commit_retry_applies`], rooted like the
@@ -1275,17 +1278,6 @@ pub(crate) fn last_commit_retry_command(output: &CheckOutput, format: Option<&st
         command.push_str(&format!(" --format {format}"));
     }
     command
-}
-
-/// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
-fn head_has_parent(root: &std::path::Path) -> bool {
-    crate::git::run_git_output_with_deadline(
-        root,
-        &["rev-parse", "--verify", "--quiet", "HEAD~1"],
-        Some(std::time::Duration::from_secs(5)),
-    )
-    .ok()
-    .is_some_and(|output| output.status.success())
 }
 
 /// True when `HEAD` is the symbolic ref of local branch `base` (a detached

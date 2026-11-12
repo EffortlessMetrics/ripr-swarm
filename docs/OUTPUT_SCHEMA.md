@@ -1497,6 +1497,9 @@ because naming the route does not run it; the field is omitted otherwise. A
 resolves carries an additive `stop.scope_route` (#14423): the
 `ripr check --root <root> --base HEAD~1` rerun the human `Safe next action`
 and the agent `stop=` line name, from one decision; it is omitted otherwise.
+The base may be the checked-out branch or, in a clone, `origin/<branch>` at
+the same commit; an untracked or ignored source file in the working tree
+omits it, because the last commit cannot reach that file.
 Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 

@@ -131,7 +131,9 @@ When the compared Git range is empty by construction (the base commit is
 is empty (no changed files)", and the base-branch `Safe next action` prints
 `ripr check --base HEAD~1` when `HEAD~1` resolves (#13036). The agent `stop=`
 line and the JSON `canonical_next_action.stop.scope_route` name the same rerun
-from the same decision (#14423); the machine formats still do not rescope. A Git range that
+from the same decision (#14423), including a clone whose default base is
+`origin/<branch>` at HEAD; an untracked or ignored source file omits the route,
+and the machine formats still do not rescope. A Git range that
 changed files but no checkable behavior (for example only tests changed after the
 feature commit) adds a hint to choose a base before the change. Neither changes
 a verdict.
@@ -352,7 +354,7 @@ a gitlink (#10648).
 - `crates/ripr/src/output/human/agent_tests.rs::agent_no_scope_outcome_is_not_done_but_complete_no_findings_is` (#13658: agent format refuses `done` on a `NoScope` outcome; a complete no-findings run still says `done`)
 - `crates/ripr/tests/cli_smoke.rs::check_empty_diff_file_is_not_a_clean_result_in_agent_and_github` (#13658: end-to-end — an empty `--diff` file in agent and GitHub formats carries the stop/warning, never the clean-result claim)
 
-- `crates/ripr/tests/cli_smoke.rs::check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun` (#14423: agent `stop=` and JSON `scope_route` name the last-commit rerun, the rerun analyzes it; root commit and detached HEAD keep no route)
+- `crates/ripr/tests/cli_smoke.rs::check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun` (#14423: agent `stop=` and JSON `scope_route` name the last-commit rerun, the rerun analyzes it, also for an `origin/main` default base; root commit, detached HEAD, feature branch, ignored and untracked source keep no route)
 - `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
 
 ## Implementation Mapping

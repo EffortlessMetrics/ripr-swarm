@@ -820,7 +820,7 @@ fn terminal_line(
         // instead of leaving REV to be guessed.
         NextActionCheckCase::ScopeMissing if triage::last_commit_retry_applies(output) => {
             format!(
-                "stop=nothing was analyzed: HEAD is on the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
+                "stop=nothing was analyzed: HEAD is at the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
                 output.base.as_deref().unwrap_or_default(),
                 triage::last_commit_retry_command(output, Some("agent"))
             )
