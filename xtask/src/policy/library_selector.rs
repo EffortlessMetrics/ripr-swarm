@@ -102,7 +102,10 @@ fn attribute_text(attr: &ast::Attr) -> String {
         .to_string()
         .chars()
         .filter(|ch| !ch.is_whitespace())
-        .collect()
+        .collect::<String>()
+        // An inner attribute (`#![cfg(..)]`) applies to its enclosing module
+        // and is read the same way as an outer one.
+        .replacen("#![", "#[", 1)
 }
 
 /// The value of one whitespace-free `cfg` predicate in a test build on this
@@ -161,7 +164,14 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
     if !parse.errors().is_empty() {
         return None;
     }
-    Some(parse.tree().items().collect())
+    let tree = parse.tree();
+    // The file's inner attributes apply to the whole module. A file whose
+    // module is not built here, or whose attributes are not understood, is
+    // not resolved: the build-and-list path decides.
+    if presence_in_test_build(&tree) != Some(true) {
+        return None;
+    }
+    Some(tree.items().collect())
 }
 
 /// Whether an attribute could mark a function as a test in a way this module
@@ -198,7 +208,12 @@ fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> 
                     continue;
                 }
                 let name = module.name()?;
-                let nested = module.item_list()?.items().collect::<Vec<_>>();
+                let list = module.item_list()?;
+                // An inline module's inner attributes sit under its item list.
+                if !presence_in_test_build(&list)? {
+                    continue;
+                }
+                let nested = list.items().collect::<Vec<_>>();
                 collect_tests(&nested, &format!("{prefix}::{}", name.text()), tests)?;
             }
             ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
@@ -236,7 +251,8 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         }
         child_directory.push(segment);
         items = match module.item_list() {
-            Some(list) => list.items().collect(),
+            Some(list) if presence_in_test_build(&list) == Some(true) => list.items().collect(),
+            Some(_) => return None,
             None => {
                 let file = child_directory.with_extension("rs");
                 let directory_module = child_directory.join("mod.rs");
@@ -389,6 +405,11 @@ mod tests {
         let mixed_module = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(any(unix, windows))]\n    mod nested {\n        #[test]\n        fn nested_test() {}\n    }\n}\n";
         let mixed_nested = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    mod nested {\n        #[test]\n        fn plain() {}\n        #[cfg_attr(unix, ignore)]\n        #[cfg(not(feature = \"x\"))]\n        #[test]\n        fn unix_only() {}\n    }\n}\n";
         let other_attribute = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[tokio::test]\n    async fn other() {}\n}\n";
+        // Inner attributes of the selected inline module: the build decides.
+        let inner_feature = "#[cfg(test)]\nmod tests {\n    #![cfg(feature = \"x\")]\n    #[test]\n    fn always() {}\n}\n";
+        let inner_cfg_attr = "#[cfg(test)]\nmod tests {\n    #![cfg_attr(unix, allow(dead_code))]\n    #[test]\n    fn always() {}\n}\n";
+        // An inner attribute at the top of the module file itself.
+        let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         let macro_tests = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    make_tests!(a, b);\n}\n";
         for (label, inner) in [
             ("no-tests", no_tests),
@@ -403,6 +424,9 @@ mod tests {
             ("mixed-nested", mixed_nested),
             ("other-attribute", other_attribute),
             ("macro-tests", macro_tests),
+            ("inner-feature", inner_feature),
+            ("inner-cfg-attr", inner_cfg_attr),
+            ("file-inner-feature", file_inner_feature),
         ] {
             let workspace = layout(label, inner)?;
             let tests = resolve_in_source(workspace.root(), SELECTOR);

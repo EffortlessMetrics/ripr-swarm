@@ -181,6 +181,9 @@ nothing else) against source:
   these could leave tests out of the list, so it refuses the whole selector.
   A test or module whose `cfg` is false on this host is left out, as the
   build on this host leaves it out.
+  Inner attributes (`#![cfg(..)]`) of a module file or inline module are
+  read the same way; a module file on the path that is not built here, or
+  whose inner attributes are not understood, refuses the selector.
 
 A selector that resolves starts no build. Its report row reads
 `applicable; resolved_in_source=N; not_listed; tests=[...]`, carries none of
