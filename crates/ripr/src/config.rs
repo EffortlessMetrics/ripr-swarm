@@ -29,6 +29,8 @@ mod python;
 mod schema_parity_tests;
 mod suggest;
 mod toolchain_file;
+#[cfg(test)]
+mod value_hint_tests;
 pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
@@ -1263,7 +1265,11 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer){}",
+                    near_value_hint(
+                        other,
+                        &["rust", "typescript", "javascript", "python", "perl"]
+                    )
                 ));
             }
         };
@@ -1965,6 +1971,19 @@ fn assign_severity(
     Ok(())
 }
 
+/// ` (did you mean `x`?)` when a rejected closed-set value is one of the
+/// accepted spellings in another case, padded with whitespace, or a small
+/// typo of one; empty otherwise. Values are case-sensitive, so `Draft` fails
+/// the load, and without this the error lists every accepted value but does
+/// not say which one was meant. The hint is built from the fixed accepted
+/// names, never from file text.
+fn near_value_hint(value: &str, accepted: &[&'static str]) -> String {
+    let normalized = value.trim().to_ascii_lowercase();
+    suggest::did_you_mean(&normalized, accepted)
+        .map(|nearest| format!(" ({})", suggest::suggestion_line(nearest)))
+        .unwrap_or_default()
+}
+
 fn parse_mode_value(value: &str) -> Result<Mode, String> {
     match value {
         "instant" => Ok(Mode::Instant),
@@ -1973,7 +1992,8 @@ fn parse_mode_value(value: &str) -> Result<Mode, String> {
         "deep" => Ok(Mode::Deep),
         "ready" => Ok(Mode::Ready),
         _ => Err(format!(
-            "analysis.mode `{value}` is not supported; expected instant, draft, fast, deep, or ready"
+            "analysis.mode `{value}` is not supported; expected instant, draft, fast, deep, or ready{}",
+            near_value_hint(value, &["instant", "draft", "fast", "deep", "ready"])
         )),
     }
 }
@@ -1987,7 +2007,11 @@ fn parse_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, Str
         "none" => Ok(OracleStrength::None),
         "unknown" => Ok(OracleStrength::Unknown),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
+            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown{}",
+            near_value_hint(
+                value,
+                &["strong", "medium", "weak", "smoke", "none", "unknown"]
+            )
         )),
     }
 }
@@ -2002,8 +2026,16 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
             "{field} cannot be `off`; use suppressions for accepted debt"
         )),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected info, warning, or note{}",
-            if allow_off { ", or off" } else { "" }
+            "{field} `{value}` is not supported; expected info, warning, or note{}{}",
+            if allow_off { ", or off" } else { "" },
+            near_value_hint(
+                value,
+                if allow_off {
+                    &["info", "warning", "note", "off"]
+                } else {
+                    &["info", "warning", "note"]
+                }
+            )
         )),
     }
 }
