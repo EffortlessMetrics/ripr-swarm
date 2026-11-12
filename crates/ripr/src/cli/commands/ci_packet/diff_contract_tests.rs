@@ -185,6 +185,33 @@ fn side_route_diff_contract() -> Result<(), String> {
     let packet = capture(root)?;
     let tree = candidate(root, &base)?;
     let analysis = load_diff_range(root, &base, "HEAD")?;
+    assert!(String::from_utf8_lossy(&packet).contains("@@ -58,3 +58,4 @@"));
+    assert!(tree.contains("@@ -60,0 +61 @@"), "{tree}");
+    assert!(analysis.contains("@@ -60,0 +61 @@"), "{analysis}");
+    let mut names =
+        crate::analysis::pinned_git_diff_args("diff", &["--name-only", "-z"], "--unified=3");
+    names.push(&range);
+    let names = git_bytes(root, &names)?;
+    let mut paths: Vec<&[u8]> = names.split(|byte| *byte == 0).collect();
+    assert_eq!(paths.pop(), Some(b"".as_slice()), "names must end in NUL");
+    paths.sort();
+    let mut expected: Vec<&[u8]> = [
+        "-pure new.rs",
+        "blob.bin",
+        "gone.rs",
+        "unrelated.rs",
+        "xray space.rs",
+        "yankée.rs",
+    ]
+    .into_iter()
+    .map(str::as_bytes)
+    .collect();
+    expected.sort();
+    assert_eq!(
+        paths, expected,
+        "name-only must stay NUL-separated native paths"
+    );
+
     assert!(String::from_utf8_lossy(&packet).contains("GIT binary patch"));
     assert!(!tree.contains("GIT binary patch"));
     for patch in [String::from_utf8_lossy(&packet).as_ref(), &tree, &analysis] {

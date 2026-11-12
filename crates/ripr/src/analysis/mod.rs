@@ -6,6 +6,7 @@ pub(crate) mod committed_source;
 pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
+pub(crate) use diff::pinned_git_diff_args;
 mod diff_scope_filter;
 mod extract;
 mod facts;
@@ -104,8 +105,8 @@ pub(crate) use diff::{
     load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
     load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    pinned_git_diff_args, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
     untrack_artifacts_command, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
