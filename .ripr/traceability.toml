@@ -1982,6 +1982,10 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
   "crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt",
+  "crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses",
+  "crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts",
+  "crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory",
+  "crates/ripr/src/app/task_first.rs::tests::evidence_limited_reason_names_the_first_unclear_stage",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none",
   "crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage",
   "crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module",
@@ -10033,6 +10037,7 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::a_limits_only_refusal_does_not_name_a_gap_the_header_denies",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::syntax_errors_keep_partial_json_for_all_path_spellings",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::valid_files_do_not_acquire_parse_limitations",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_nonportable_source_path_keeps_bounded_parser_cause",
@@ -15545,6 +15550,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::a_glob_under_another_declared_target_does_not_bind_the_test_crate_root",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::only_an_explicit_target_path_is_a_declared_target_entry",
   "crates/ripr/tests/private_inherent_receiver.rs::undeclared_target_glob_keeps_the_cross_target_probe_weakly_exposed",
+  "crates/ripr/tests/declared_target_owner_pin.rs::a_declared_test_target_outside_tests_dir_pins_like_an_autodiscovered_one",
+  "crates/ripr/tests/declared_target_owner_pin.rs::an_undeclared_file_outside_the_layout_stays_unplaced",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/shared_target_context.rs::an_explicitly_declared_target_entry_is_a_recognized_root",
 ]
 fixtures = [
   "fixtures/rust_polling_helper_direct",
