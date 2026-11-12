@@ -383,7 +383,11 @@ pub(crate) fn no_finding_matched_fresh_run(
         &output.findings,
         root,
         selector,
-        fresh_run_incomplete(output),
+        if fresh_run_incomplete(output) {
+            super::selector::ScopeCompleteness::Incomplete
+        } else {
+            super::selector::ScopeCompleteness::Complete
+        },
     ) {
         message.push('.');
         message.push_str(&hint);
@@ -555,9 +559,14 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
                 &explain_navigation_list_command(&navigation),
                 None,
             );
-            if let Some(hint) =
-                super::selector::location_miss_hint(&findings, &input.root, selector, false)
-            {
+            if let Some(hint) = super::selector::location_miss_hint(
+                &findings,
+                &input.root,
+                selector,
+                // #14440: the artifact records findings, not whether
+                // its run was complete.
+                super::selector::ScopeCompleteness::Unrecorded,
+            ) {
                 message.push('.');
                 message.push_str(&hint);
             }
