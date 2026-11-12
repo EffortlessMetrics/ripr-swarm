@@ -3666,10 +3666,6 @@ name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::plain_value_declaration_recognizer_is_closed",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::presented_shape_rewrites_only_the_ambiguous_fallback",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::classify_change_omits_probe_facts_for_ambiguous_const_expression",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::classify_change_keeps_predicate_for_ambiguous_conditional_declaration",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_registration_is_a_partial_extraction_gap",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_it_for_registration_is_a_partial_extraction_gap",
   "crates/ripr/src/analysis/language/typescript/tests_extract_finder_tests.rs::vitest_test_for_empty_table_is_not_a_dropped_active_registration",
