@@ -8,6 +8,7 @@
 //! their established `ripr::domain` paths and are not a separate public API.
 
 pub mod analysis;
+pub mod cache_integrity;
 pub mod config;
 pub mod core_error;
 pub mod domain;

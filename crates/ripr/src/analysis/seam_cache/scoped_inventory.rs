@@ -19,9 +19,9 @@
 //! Rendered output is never cached: the entry holds classified facts only.
 
 use super::{
-    CacheLayer, CacheLoad, CachedSeamLimitInfo, ChecksummedBody, ClassifiedSeam, RepoSeamCacheKey,
-    cache_base_untrusted_reason, cache_dir_not_a_directory_reason, cache_layer_dir, corrupt_entry,
-    fnv1a_64, related_test_table, semantic_body_digest,
+    CacheLayer, CacheLoad, CachedSeamLimitInfo, ClassifiedSeam, RepoSeamCacheKey,
+    cache_base_untrusted_reason, cache_dir_not_a_directory_reason, cache_layer_dir,
+    checksummed_body, corrupt_entry, fnv1a_64, related_test_table, semantic_body_digest,
 };
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -263,11 +263,8 @@ impl RepoScopedInventoryCache {
         let digest = envelope.expected_digest()?;
         // Compact JSON: the classified evidence is large and this layer is
         // read back only by ripr, so pretty-printing would only cost bytes.
-        let bytes = serde_json::to_vec(&ChecksummedBody {
-            body: &envelope,
-            payload_digest: digest,
-        })
-        .map_err(|err| format!("encode scoped inventory failed: {err}"))?;
+        let bytes = serde_json::to_vec(&checksummed_body(&envelope, digest))
+            .map_err(|err| format!("encode scoped inventory failed: {err}"))?;
         if bytes.len() as u64 > max_bytes {
             return Err(format!(
                 "scoped inventory entry is {} bytes, over the {max_bytes} byte ceiling",
