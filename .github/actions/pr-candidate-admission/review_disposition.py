@@ -83,9 +83,14 @@ STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 # backticks), still states it. The leading markup includes ordered-list numbers
 # (``1.``, ``1)``) and task-list boxes (``[ ]``, ``[x]``).
 STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
+# A ``disposition`` field label anywhere on the line (``Final disposition:``, a
+# ``| Disposition | ... |`` table row) and a table cell that holds only a state token
+# also state one.
 STATE_LINE = re.compile(
     STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
-    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$",
+    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
+    r"|^.*?\bdisposition[ \t*_`]*[:|]"
+    r"|^[ \t]*\|.*\|[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -204,7 +209,7 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_LINE.match(line) or NEGATION.search(line) for line in fenced):
+    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
         return False
     return all(
         positive_line(line)
@@ -230,7 +235,7 @@ def comment_body_negative(body: str) -> bool:
     return any(
         STATE_LINE.match(line) or (STATE_MENTION.search(line) and NEGATION.search(line))
         for line in visible
-    ) or any(STATE_LINE.match(line) or NEGATION.search(line) for line in fenced)
+    ) or any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced)
 
 
 def body_attests_head(body: str, head: str) -> bool:
@@ -512,6 +517,14 @@ def self_test() -> None:
         ("REVIEW_READY\n- [x] Disposition: REPAIR_REQUIRED", False),
         ("REVIEW_READY\n```\n1. REPAIR_REQUIRED: repair oracle\n```", False),
         ("REVIEW_READY\n1. The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
+        # Fences cannot hide a state token, whatever shape the fenced text has.
+        ('REVIEW_READY\n```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ('REVIEW_READY\n```toml\nstate = "REPAIR_REQUIRED"\n```', False),
+        # Declared field and table shapes state a disposition.
+        ("REVIEW_READY\nFinal disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\nCurrent disposition: REVIEW_INCOMPLETE", False),
+        ("REVIEW_READY\n| Disposition | REPAIR_REQUIRED |", False),
+        ("REVIEW_READY\n| PR | State |\n| --- | --- |\n| 14421 | REPAIR_REQUIRED |", False),
         # Narration that only mentions a state word is not a state line (#11566).
         ("SOURCE_REVIEW_READY - head 314f6893124dc719aabe2a4da3df6d5bf5f33ef5\n\n- One-line delta.\n\nThe earlier `SOURCE_REVIEW_READY` at c0d7341941 is superseded by this exact-head attestation.", True),
         ("REVIEW_READY\nThe previous run quoted `SOURCE_REVIEW_READY` in a later line and was refused.", True),
@@ -577,6 +590,9 @@ def self_test() -> None:
         ("1) REPAIR_REQUIRED: repair oracle", False),
         ("- [ ] REPAIR_REQUIRED: repair oracle", False),
         ("- [ ] Disposition: REPAIR_REQUIRED", False),
+        ('```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ("Final disposition: REPAIR_REQUIRED", False),
+        ("| Disposition | REPAIR_REQUIRED |", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
@@ -649,6 +665,10 @@ def self_test() -> None:
         ("- [ ] REPAIR_REQUIRED: repair oracle", False),
         ("- [ ] Disposition: REPAIR_REQUIRED", False),
         ("- REPAIR_REQUIRED: repair oracle", False),
+        ('```json\n{"disposition":"REPAIR_REQUIRED"}\n```', False),
+        ('```toml\nstate = "REPAIR_REQUIRED"\n```', False),
+        ("Current disposition: REVIEW_INCOMPLETE", False),
+        ("| Disposition | REPAIR_REQUIRED |", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(

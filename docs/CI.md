@@ -108,8 +108,10 @@ first line is the readiness marker with an allowed tail; a trusted reviewer's la
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
-quote, heading, emphasis or code
-markers, with a `disposition:` field or a state token, or it is a state token alone.
+quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
+it is a state token alone; it carries a `disposition` field label anywhere (such as
+`Final disposition:` or a `| Disposition | ... |` table row); or it is a table row with a
+cell that holds only a state token. Fenced text is still scanned for any state token.
 A state word inside prose, such as a backticked quotation of a marker or "the earlier
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
