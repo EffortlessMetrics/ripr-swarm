@@ -132,7 +132,7 @@ CI, a ship packet, J, or K is evidence only; none authorizes publication.
 The transaction reuses this repository's standing operator contracts. They are
 restated here only as pointers; their semantics stay with their owners:
 
-- Any repair PR created during the transaction, and every queued PR
+- Any repair swarm PR created during the transaction, and every queued swarm PR
   dispositioned in section 1, converges through the ordinary PR qualification
   route in [the native-queue procedure](MERGE_FLOW.md): current source review
   and all required contexts must qualify the actual queue composition before
