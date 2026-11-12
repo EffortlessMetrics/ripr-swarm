@@ -1856,6 +1856,112 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
     }
 }
 
+/// Whether a branch-local return-value seam is statically reached by the
+/// oracle's call (#14496). `None` when the seam is not the tail expression or
+/// `return` statement of a single `if` branch of the owner, the oracle does not
+/// name a bare owner call with literal arguments, or the condition does not
+/// fold. `Some(false)` only when the condition folds and the seam's branch is
+/// not the taken one, so a caller can withhold credit without guessing.
+pub(super) fn seam_branch_reached_by_call(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    oracle_text: &str,
+) -> Option<bool> {
+    let (_, arguments) = equality_assertion_shape(oracle_text)?;
+    let [actual, ..] = arguments.as_slice() else {
+        return None;
+    };
+    let call_arguments = owner_call_arguments(actual, &owner.name)?;
+    let mut values = Vec::with_capacity(call_arguments.len());
+    for argument in &call_arguments {
+        values.push(fold_expression(argument, &BTreeMap::new())?);
+    }
+    let parse = parse_clean_source_file(owner.body.as_str())?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let block = function.body()?;
+    let mut names = Vec::new();
+    for param in function.param_list()?.params() {
+        let ast::Pat::IdentPat(ident) = param.pat()? else {
+            return None;
+        };
+        names.push(ident.name()?.text().to_string());
+    }
+    if names.len() != values.len() {
+        return None;
+    }
+    let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
+    let target = normalized_expression(seam_expression);
+    let mut matches = Vec::new();
+    for if_expr in block.syntax().descendants().filter_map(ast::IfExpr::cast) {
+        let then_block = if_expr.then_branch()?;
+        let in_then = block_holds_expression(&then_block, &target);
+        let in_else = match if_expr.else_branch() {
+            Some(ast::ElseBranch::Block(else_block)) => {
+                block_holds_expression(&else_block, &target)
+            }
+            _ => false,
+        };
+        if in_then || in_else {
+            matches.push((if_expr, in_then));
+        }
+    }
+    // More than one `if` holding the same expression is ambiguous: the seam's
+    // own branch is not established, so keep today's credit.
+    let [(if_expr, in_then)] = matches.as_slice() else {
+        return None;
+    };
+    let condition = fold_condition(
+        &if_expr.condition()?.syntax().text().to_string(),
+        &environment,
+    )?;
+    Some(if *in_then { condition } else { !condition })
+}
+
+/// Whitespace- and trailing-semicolon-insensitive spelling of one expression,
+/// so a seam's recorded text matches the parser's statement or tail text.
+fn normalized_expression(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .trim_end_matches(';')
+        .to_string()
+}
+
+/// Whether `block`'s tail expression or one of its statements is `target`.
+fn block_holds_expression(block: &ast::BlockExpr, target: &str) -> bool {
+    if block
+        .tail_expr()
+        .is_some_and(|tail| normalized_expression(&tail.syntax().text().to_string()) == target)
+    {
+        return true;
+    }
+    block
+        .statements()
+        .any(|statement| normalized_expression(&statement.syntax().text().to_string()) == target)
+}
+
+/// Fold one `if` condition with the call's literal argument bindings.
+fn fold_condition(text: &str, environment: &BTreeMap<String, i128>) -> Option<bool> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    let mut parser = Parser {
+        tokens: &tokens,
+        position: 0,
+        environment,
+        range: None,
+        uniform: None,
+    };
+    let value = parser.parse_expression()?;
+    if parser.position != tokens.len() {
+        return None;
+    }
+    bool_value(value)
+}
+
 /// Fold a `{ .. }` block with `environment` as the parameter bindings and
 /// `range` as the return type's declared width (no width when `None`).
 fn fold_block(

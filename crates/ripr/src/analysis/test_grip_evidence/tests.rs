@@ -23675,3 +23675,107 @@ fn field_write_facts_with_tail(
         .map(|fact| fact.value.clone())
         .collect())
 }
+
+/// #14496: the owner's early return is one branch of an `if`. A test that
+/// calls the owner with arguments that take the other branch observes the
+/// other value, so it must not strongly grip this seam.
+#[test]
+fn branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 control: the committed two-test fixture reaches both branches, so
+/// the early-return seam stays strongly gripped. A blanket downgrade fails
+/// here.
+#[test]
+fn branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let both = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, both)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a reaching call must keep the seam strongly gripped: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: the else-branch seam is reached by the else-branch call, so the
+/// same test that withholds the then-branch seam keeps this one strong.
+#[test]
+fn branch_local_return_value_seam_in_the_taken_branch_stays_strong() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression().trim() == "amount")
+        .ok_or_else(|| format!("expected the else-branch seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the else-branch call reaches the else-branch seam: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 control: the committed `fixtures/boundary_gap` two-test fixture
+/// still grades its predicate seam strongly, so the branch gate does not
+/// blanket-downgrade the fixture.
+#[test]
+fn committed_boundary_gap_fixture_stays_strongly_gripped() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = include_str!("../../../../../fixtures/boundary_gap/input/src/lib.rs");
+    let tests = PathBuf::from("tests/pricing.rs");
+    let tests_src = include_str!("../../../../../fixtures/boundary_gap/input/tests/pricing.rs");
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| format!("expected the predicate seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the committed two-test fixture must stay strongly gripped: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}

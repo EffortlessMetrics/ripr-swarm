@@ -4841,6 +4841,19 @@ fn oracle_discriminates_seam_in_test(
                 )
         });
     }
+    // #14496: a return-value seam inside one branch of the owner is credited
+    // only by an oracle whose call statically reaches that branch. An exact pin
+    // of the owner's result from a call that takes the other branch observes a
+    // different value, so it is not strong grip for this seam. `None` (a shape
+    // the fold cannot read) keeps today's credit.
+    if seam.kind() == SeamKind::ReturnValue
+        && let Some(owner) = owner
+        && let Some(reached) =
+            value_contradiction::seam_branch_reached_by_call(owner, seam.expression(), &oracle.text)
+        && !reached
+    {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
