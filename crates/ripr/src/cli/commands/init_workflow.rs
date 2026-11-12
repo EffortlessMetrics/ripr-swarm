@@ -40,15 +40,11 @@ permissions:
 env:
   RIPR_UPLOAD_SARIF: "true"
   # Repository variables: Settings > Secrets and variables > Actions > Variables.
-  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.
-  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}
+  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
-  # Optional positive milliseconds; empty keeps the pilot's default deadline.
-  RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}
-  # RIPR_COMMENT_MODE: off, plan or inline.
-  RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
-  # RIPR_SUMMARY_COMMENT: "false" turns off the one summary comment on the pull request.
-  RIPR_SUMMARY_COMMENT: ${{ vars.RIPR_SUMMARY_COMMENT || 'true' }}
+  RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }} # optional positive milliseconds; empty keeps the pilot's default deadline
+  RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }} # off, plan or inline
+  RIPR_SUMMARY_COMMENT: ${{ vars.RIPR_SUMMARY_COMMENT || 'true' }} # "false" turns off the one summary comment on the pull request
 
 defaults:
   run:
@@ -65,6 +61,9 @@ jobs:
     runs-on: ubuntu-latest
     # Advisory unless RIPR_GATE_MODE names a blocking mode.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -76,71 +75,13 @@ jobs:
         run: rm -rf target/ripr target/ci # a pull request must not supply its own RIPR inputs
 
 @RIPR_PIN_FIRST_LINE@
-      # its commands. Downloads the prebuilt release (a zip on Windows x64) and
-      # checks its SHA-256; with none for this runner, `cargo install` (needs Rust).
+      # its commands; that release's ripr-check action installs it (SHA-256 checked).
       - name: Install ripr
         id: install
-        run: |
-          version=@RIPR_VERSION@
-          case "$RUNNER_OS-$RUNNER_ARCH" in
-            Linux-X64) target=x86_64-unknown-linux-gnu ;;
-            Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
-            macOS-X64) target=x86_64-apple-darwin ;;
-            macOS-ARM64) target=aarch64-apple-darwin ;;
-            Windows-X64) target=x86_64-pc-windows-msvc ;;
-            Windows-ARM64) echo "::error::Unsupported runner Windows-ARM64: ripr $version publishes no prebuilt Windows ARM64 build, and this installer does not run the x64 build under emulation. Use a Windows x64 runner."; exit 1 ;;
-            *) target="" ;;
-          esac
-          case "$target" in
-            *-windows-*) ext=zip exe=ripr.exe ;;
-            *) ext=tar.gz exe=ripr ;;
-          esac
-          asset="ripr-server-v$version-$target.$ext"
-          url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset"
-          cd "$RUNNER_TEMP" && mkdir -p ripr-bin
-          ripr=ripr
-          if [ -n "$target" ] && curl -fsSL --retry 3 -O "$url"; then
-            # The release asset exists: from here every failure is final. A missing or
-            # mismatched checksum, a bad archive or a wrong payload never falls back to
-            # cargo or to a ripr already on PATH.
-            curl -fsSL --retry 3 -O "$url.sha256" || { echo "::error::$asset has no downloadable SHA-256 ($url.sha256); refusing to install it unverified"; exit 1; }
-            expected="$(awk 'NR == 1 { print $1 }' "$asset.sha256")"
-            actual="$( { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } | awk '{ print $1 }')"
-            if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-              echo "::error::$asset does not match its published SHA-256 (expected ${expected:-nothing}, got $actual)"; exit 1
-            fi
-            if [ "$ext" = zip ]; then
-              # Git for Windows' bash ships GNU tar (no zip support) and no unzip, so use the
-              # bsdtar that Windows itself ships, by absolute path so nothing on PATH can stand in.
-              ziptool="${SYSTEMROOT:-${SystemRoot:-}}/System32/tar.exe"
-              [ -x "$ziptool" ] || { echo "::error::Cannot extract $asset: Windows tar not found at $ziptool"; exit 1; }
-              entries="$("$ziptool" -tf "$asset" | tr -d '\r' | sed 's#^\./##' | LC_ALL=C sort)" || { echo "::error::$asset is not a readable zip archive"; exit 1; }
-              if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
-                echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
-              fi
-              [ -z "$(printf '%s\n' "$entries" | tr 'A-Z' 'a-z' | sed 's/[. ]*$//' | LC_ALL=C sort | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
-              grep -Fqx -- "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
-              "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
-            else
-              tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
-            fi
-            if [ ! -f "$RUNNER_TEMP/ripr-bin/$exe" ] || [ -L "$RUNNER_TEMP/ripr-bin/$exe" ]; then
-              echo "::error::$asset did not extract a regular file named $exe"; exit 1
-            fi
-            ripr="$RUNNER_TEMP/ripr-bin/$exe"
-            echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
-            echo "::notice title=ripr install::version $version, target $target, archive $asset, sha256 $actual, executable $ripr"
-          else
-            why="no prebuilt ripr $version for $RUNNER_OS-$RUNNER_ARCH"; [ -z "$target" ] || why="downloading $url failed"
-            if ! command -v cargo >/dev/null 2>&1; then
-              echo "::error::Cannot install ripr: $why, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."; exit 1
-            fi
-            echo "::notice::$why; building it with cargo install"
-            cargo install ripr --version @RIPR_VERSION@ --locked
-          fi
-          reported="$("$ripr" --version)"; echo "$reported"
-          case "$reported" in "ripr $version" | "ripr $version "*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
-          echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV"
+        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v@RIPR_VERSION@
+        with:
+          version: @RIPR_VERSION@
+          install-only: true
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; reuses unchanged files' analysis
         with:
@@ -153,14 +94,13 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
         run: |
-          gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/comments" \
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" \
             | ripr pr-comments existing --root . --raw -
 
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 
       - name: Publish RIPR summary comment
@@ -168,14 +108,11 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
         run: |
-          gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
             | ripr pr-comments summary --root . --raw - --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
+            gh api --method "$method" "repos/$GITHUB_REPOSITORY/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/summary/summary.tsv
 
@@ -184,13 +121,10 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
         run: |
           ripr pr-comments requests --root . --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
+            gh api --method "$method" "repos/$GITHUB_REPOSITORY/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/publish/requests.tsv
 
@@ -429,13 +363,16 @@ mod template_pin_tests {
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
     /// re-measured it once more. #11206 added the fork and Dependabot guard to
-    /// the inline comment step and re-measured it.
+    /// the inline comment step and re-measured it. #5409 replaced the inline
+    /// installer with the release's `ripr-check` action (`install-only`),
+    /// moved the PR number and head SHA into job `env:`, used the runner's
+    /// own `GITHUB_REPOSITORY`, and re-measured it (150 rendered lines).
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f9221c8e19e6ececf8ef67065f86cde9814a59d16be976514540c2483b313768";
+        "15376b05b06b0f66fcc7218a51261a0be2e59f46952957792dae01ece1341899";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
@@ -533,53 +470,49 @@ mod install_version_tests {
         Ok(())
     }
 
+    /// The install step names one version twice, the action tag and its
+    /// `version` input, and the workflow has no other install route (#5409).
+    fn assert_single_action_pin(workflow: &str, pinned: &str) {
+        let uses = format!(
+            "        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{pinned}\n        with:\n          version: {pinned}\n          install-only: true\n"
+        );
+        assert!(workflow.contains(&uses), "missing action pin {pinned}");
+        assert_eq!(
+            workflow.matches("ripr/.github/actions/ripr-check@").count(),
+            1,
+            "one install route"
+        );
+        assert!(
+            !workflow.contains("cargo install") && !workflow.contains("releases/download"),
+            "the template keeps no second installer"
+        );
+        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
+    }
+
     /// Released rendering keeps the historical pin comment first line and
-    /// self-pin byte-for-byte, on both install routes (#5208, #5236).
+    /// self-pins the action tag and version (#5208, #5236, #5409).
     #[test]
     fn released_rendering_pins_itself_with_the_historical_comment() {
         let workflow = generated_workflow_for_version("0.10.0");
-        assert!(
-            workflow.contains("          version=0.10.0\n"),
-            "missing prebuilt self pin"
-        );
-        assert!(
-            workflow.contains("cargo install ripr --version 0.10.0 --locked"),
-            "missing fallback self pin"
-        );
+        assert_single_action_pin(&workflow, "0.10.0");
         assert!(
             workflow.contains(
                 "      # Pinned to the ripr that generated this workflow. The steps below use\n"
             ),
             "missing historical comment"
         );
-        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
-        let installs: Vec<&str> = workflow
-            .lines()
-            .filter(|line| line.contains("cargo install ripr"))
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect();
-        assert_eq!(installs.len(), 1, "{installs:?}");
     }
 
-    /// Unreleased rendering pins the latest release on both install routes
-    /// and says why (#5208, #5236).
+    /// Unreleased rendering pins the latest release and says why (#5208,
+    /// #5236, #5409).
     #[test]
     fn unreleased_rendering_pins_the_latest_release_with_an_honest_comment() -> Result<(), String> {
         let future = version_beyond_latest_release()?;
         let workflow = generated_workflow_for_version(&future);
+        assert_single_action_pin(&workflow, LATEST_RELEASED_VERSION);
         assert!(
-            workflow.contains(&format!("          version={LATEST_RELEASED_VERSION}\n")),
-            "must pin the latest release for the prebuilt download"
-        );
-        assert!(
-            workflow.contains(&format!(
-                "cargo install ripr --version {LATEST_RELEASED_VERSION} --locked"
-            )),
-            "must pin the latest release for the cargo fallback"
-        );
-        assert!(
-            !workflow.contains(&format!("version={future}"))
-                && !workflow.contains(&format!("--version {future}")),
+            !workflow.contains(&format!("@v{future}"))
+                && !workflow.contains(&format!("version: {future}")),
             "must not name the unreleased version"
         );
         assert!(
@@ -592,13 +525,23 @@ mod install_version_tests {
             !workflow.contains("Pinned to the ripr that generated this workflow"),
             "must not keep the self-pin claim"
         );
-        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
-        let installs: Vec<&str> = workflow
-            .lines()
-            .filter(|line| line.contains("cargo install ripr"))
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect();
-        assert_eq!(installs.len(), 1, "{installs:?}");
         Ok(())
+    }
+
+    /// The action the template names must accept the inputs it passes: an
+    /// `install-only` input that skips `ripr check`, and `version` (#5409).
+    #[test]
+    fn composite_action_accepts_the_template_inputs() {
+        let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
+        assert!(
+            action.contains("\n  install-only:\n"),
+            "no install-only input"
+        );
+        assert!(action.contains("\n  version:\n"), "no version input");
+        assert!(
+            action
+                .contains("    - name: Run ripr check\n      if: inputs.install-only != 'true'\n"),
+            "install-only must skip the check step"
+        );
     }
 }

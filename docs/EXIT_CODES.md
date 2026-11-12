@@ -373,6 +373,8 @@ whole analysis in one step, and the step does not swallow its exit code:
 
 ```yaml
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 ```
 

@@ -392,7 +392,12 @@ every release, permanently. The first post-release commit moves the package
 version to the next development version while the constant stays. Between
 the release commit and verified publication, a dev-built generator self-pins
 a version whose archive is not up yet — publish promptly, and refresh CI
-with the previous release until publication verifies. `cargo xtask release-readiness
+with the previous release until publication verifies. The generated workflow
+installs through `EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`
+(#5409), so the source repository's `v<version>` tag must carry
+`.github/actions/ripr-check/action.yml` with its `install-only` input; after
+tagging, confirm that path resolves at the tag before announcing the release.
+`cargo xtask release-readiness
 --version <version>` checks the constant as `init-pin-version`. Once CHANGELOG.md has
 the `## <version>` heading the cut's fold writes, a stable release fails until
 the constant equals the version; before the fold, the lag is the normal

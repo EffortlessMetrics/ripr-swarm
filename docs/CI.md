@@ -1727,8 +1727,13 @@ repository has chosen a baseline policy.
 
 A released `ripr` generates a workflow that installs the exact version
 that generated it, because its steps use that version's commands and flags;
-a later release does not change CI behavior until you regenerate. It
-downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
+a later release does not change CI behavior until you regenerate. Its
+`Install ripr` step runs the `ripr-check` composite Action from the same
+release tag (`EffortlessMetrics/ripr/.github/actions/ripr-check@v<version>`,
+`install-only: true`), so the installer lives in one place rather than being
+copied into every generated workflow (#5409). The tag is the same trust root as
+the release archive and checksum the installer downloads. That installer
+downloads the release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
 checksum mismatch, a missing checksum, or a malformed archive fails the step
@@ -1738,9 +1743,10 @@ Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
 (for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
-to install Rust or add a toolchain step. A development build newer than the
-latest release cannot pin itself — that version has no release archive and
-no crates.io package, so both install routes would fail. Instead it pins the
+to add a toolchain step. A `ripr` already on PATH is reused only when it
+reports exactly the pinned version. A development build newer than the
+latest release cannot pin itself — that version has no release tag, archive
+or crates.io package, so the install would fail. Instead it pins the
 latest release and warns on stderr, naming both versions and the refresh
 command (#5208); the installed release may be older than the generating
 steps, so review the workflow and regenerate with a released `ripr` when one
@@ -1851,7 +1857,8 @@ composite Action in `.github/actions/ripr-check`:
 - uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
 ```
 
-Inputs: `version` (default: the latest published release; installs that
+Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`;
+the generated workflow uses this), `version` (default: the latest published release; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
 exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
@@ -1862,8 +1869,8 @@ and ripr's own default-branch detection elsewhere. A checkout without
 The Action prints the report to the job log. For the summary comment, inline
 comments, SARIF upload and artifacts, use the generated workflow above.
 
-The Action's `Install ripr` step follows the same contract as the generated
-workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
+The Action's `Install ripr` step is the generated workflow's installer
+(#5409, #6245): Windows x64 installs the release `zip` (extracted with the
 `tar.exe` under `%SystemRoot%\System32`, flat-root listing only), Windows ARM64
 stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
@@ -2032,6 +2039,8 @@ partial result's widen instruction names the exact values. See
 
 ```yaml
       - name: Run RIPR
+        env:
+          RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
         run: ripr reports ci-packet --root .
 ```
 
@@ -2151,7 +2160,8 @@ Steps:
   that write there still work. ripr's analysis cache lives outside the
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
-  install takes the newest release, whose CLI may not match. It downloads that
+  install takes the newest release, whose CLI may not match. It runs the
+  `ripr-check` Action of that release tag with `install-only: true`, which downloads that
   release's prebuilt binary (a zip on Windows x64) and checks it against the
   published SHA-256 before extracting it, falls back to `cargo install` only
   where there is no prebuilt binary, and fails with the fix when the runner has

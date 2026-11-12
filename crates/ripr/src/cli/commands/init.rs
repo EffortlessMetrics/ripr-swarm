@@ -62,7 +62,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
             };
             let note = match ci {
                 InitCi::Github => format!(
-                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks what this workflow uses (its `ripr-check` action's `install-only` input, `ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
                 ),
                 InitCi::Gitlab => format!(
                     "ripr: note: this build of ripr ({generator}) is a development version, so the generated pipeline installs ripr {pinned}, the latest published release. Once {generator} is published, {follow_up}"
@@ -1060,9 +1060,8 @@ mod tests {
 
     /// W5: an unpinned install takes whatever release is latest, so CI
     /// could run an older ripr that lacks the commands this workflow calls,
-    /// or change behavior silently on a later release. Both install routes,
-    /// the prebuilt release download and the `cargo install` fallback, pin
-    /// an exact version; the fallback keeps `--locked`. #5208: released
+    /// or change behavior silently on a later release. The action tag and
+    /// its `version` input pin one exact version (#5409). #5208: released
     /// generators pin themselves; unreleased generators pin the latest
     /// release (their own version would neither download nor install),
     /// with a stderr warning at the `init` call site.
@@ -1070,27 +1069,38 @@ mod tests {
     fn generated_workflow_pins_a_resolvable_ripr_version() {
         let workflow = generated_github_actions_workflow();
         let version = workflow_install_version(env!("CARGO_PKG_VERSION"));
-        let download = format!("          version={version}\n");
-        assert!(workflow.contains(&download), "missing {download}");
-        let pinned = format!("cargo install ripr --version {version} --locked");
+        let pinned = format!(
+            "        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n        with:\n          version: {version}\n"
+        );
         assert!(workflow.contains(&pinned), "missing {pinned}");
-        let installs: Vec<&str> = workflow
-            .lines()
-            .filter(|line| line.contains("cargo install ripr"))
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect();
-        assert_eq!(installs, [format!("            {pinned}")]);
+        assert!(
+            !workflow.contains("cargo install"),
+            "a second install route"
+        );
     }
 
-    /// The install downloads the release archive for the runner and refuses
-    /// a mismatched checksum instead of falling back to a compile; only a
-    /// runner with no archive, or a failed download, takes `cargo install`.
+    /// #5409: the workflow installs through the release's `ripr-check`
+    /// action, whose `Install ripr` step downloads the release archive for
+    /// the runner and refuses a mismatched checksum instead of falling back
+    /// to a compile; only a runner with no archive, or a failed download,
+    /// takes `cargo install`. The generated step carries none of that shell.
     #[test]
     fn generated_workflow_installs_the_checksummed_release_binary() {
         let workflow = generated_github_actions_workflow();
-        let install = workflow
+        let step = workflow
             .split("\n\n")
             .find(|block| block.contains("      - name: Install ripr\n"))
+            .unwrap_or_default();
+        assert!(step.contains("        id: install\n"), "{step}");
+        assert!(step.contains("          install-only: true"), "{step}");
+        assert!(
+            !step.contains("run:"),
+            "the generated install step runs no shell: {step}"
+        );
+        let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
+        let install = action
+            .split_once("    - name: Install ripr\n")
+            .and_then(|(_, rest)| rest.split("    - name: Run ripr check").next())
             .unwrap_or_default();
         for needle in [
             "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
@@ -1102,7 +1112,10 @@ mod tests {
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
             r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
-            assert!(install.contains(needle), "install step missing {needle}");
+            assert!(
+                install.contains(needle),
+                "action install step missing {needle}"
+            );
         }
         // The mismatch branch exits before the `else` that compiles.
         let mismatch = install.find("does not match its published SHA-256");
@@ -1838,7 +1851,7 @@ mod tests {
         assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");
         let written = std::fs::read_to_string(&workflow)
             .map_err(|err| format!("read workflow failed: {err}"))?;
-        assert!(written.contains("--version"), "{written}");
+        assert!(written.contains("ripr-check@v"), "{written}");
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

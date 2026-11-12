@@ -3330,8 +3330,9 @@ const GENERATED_WORKFLOW_MAX_BYTES: u64 = 1024 * 1024;
 /// version (#4738). The 0.10-and-earlier template installed ripr unpinned,
 /// so after a release CI ran the new binary against the old steps; later
 /// templates pin the generating version. Advisory only: a stale template is
-/// not a failed check. It recognizes the template's own `cargo install ripr`
-/// step, not every way a hand-written workflow could install ripr.
+/// not a failed check. It recognizes the template's own install step (the
+/// ripr-check action tag, or the older `cargo install ripr` line), not every
+/// way a hand-written workflow could install ripr.
 fn generated_workflow_advisory(root: &Path) -> Option<String> {
     let path = root.join(GENERATED_WORKFLOW_PATH);
     // A repository can commit this path as a symlink (to `/dev/zero`, say);
@@ -3345,24 +3346,65 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
     generated_workflow_line(root, &workflow, env!("CARGO_PKG_VERSION"))
 }
 
-fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+/// The ripr-check action reference the generated workflow installs through
+/// (#5409); its tag names the pinned release.
+const GENERATED_INSTALL_ACTION: &str = "uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v";
+
+/// The action step's tag and `version` input, read from the lines after
+/// its `uses:`; the input is `None` when the step passes none.
+fn generated_install_action(workflow: &str) -> Option<(&str, Option<&str>)> {
+    let mut lines = workflow.lines();
+    let tag = lines.by_ref().find_map(|line| {
+        let rest = line.trim().strip_prefix(GENERATED_INSTALL_ACTION)?;
+        rest.split_whitespace().next()
+    })?;
+    let input = lines
+        .take_while(|line| !line.trim_start().starts_with("- "))
+        .find_map(|line| line.trim().strip_prefix("version:"))
+        .and_then(|value| value.split_whitespace().next())
+        .map(|value| value.trim_matches(|c| c == '\'' || c == '"'));
+    Some((tag, input))
+}
+
+/// The version the generated workflow's install step pins: `Some(Some(v))`
+/// for a pin, `Some(None)` for the unpinned 0.10-and-earlier `cargo install`,
+/// `None` when no generated install step is recognized. For the action
+/// route the `version` input is the release CI installs, so it wins over
+/// the tag (#5409); `generated_workflow_line` flags the two disagreeing.
+fn generated_workflow_pin(workflow: &str) -> Option<Option<&str>> {
+    if let Some((tag, input)) = generated_install_action(workflow) {
+        return Some(Some(input.unwrap_or(tag)));
+    }
     let install = workflow.lines().find_map(|line| {
         let command = line.trim().trim_start_matches("run:").trim();
         let rest = command.strip_prefix("cargo install ripr")?;
         (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
     })?;
     let words: Vec<&str> = install.split_whitespace().collect();
-    let pinned = words
-        .windows(2)
-        .find(|pair| pair[0] == "--version")
-        .map(|pair| pair[1])
-        .or_else(|| {
-            words
-                .iter()
-                .find_map(|word| word.strip_prefix("--version="))
-        });
+    Some(
+        words
+            .windows(2)
+            .find(|pair| pair[0] == "--version")
+            .map(|pair| pair[1])
+            .or_else(|| {
+                words
+                    .iter()
+                    .find_map(|word| word.strip_prefix("--version="))
+            }),
+    )
+}
+
+fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+    let pinned = generated_workflow_pin(workflow)?;
     let refresh =
         super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
+    if let Some((tag, Some(input))) = generated_install_action(workflow)
+        && tag != input
+    {
+        return Some(format!(
+            "{GENERATED_WORKFLOW_PATH} runs the ripr-check action from v{tag} but installs ripr {input}; the action and the release it installs should match; {refresh}"
+        ));
+    }
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
@@ -6103,6 +6145,36 @@ mod tests {
         assert_eq!(
             generated_workflow_line(Path::new("."), "jobs: {}\n", "0.11.0"),
             None
+        );
+        // #5409: the template installs through the release's ripr-check
+        // action, so its tag is the pin doctor compares.
+        let action = |tag: &str| {
+            format!(
+                "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{tag}\n        with:\n          version: {tag}\n"
+            )
+        };
+        assert_eq!(
+            generated_workflow_line(Path::new("."), &action("0.11.0"), "0.11.0"),
+            None
+        );
+        // The `version` input is what CI installs: a hand-edited input
+        // that leaves the tag behind is named, not hidden behind the tag.
+        let split = "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v0.11.0\n        with:\n          version: 0.12.0\n          install-only: true\n\n      - name: Run RIPR\n        run: ripr reports ci-packet --root .\n";
+        let split_line = generated_workflow_line(Path::new("."), split, "0.11.0");
+        assert!(
+            split_line.as_deref().is_some_and(|line| line
+                .contains("runs the ripr-check action from v0.11.0 but installs ripr 0.12.0")),
+            "{split_line:?}"
+        );
+        assert_eq!(generated_workflow_pin(split), Some(Some("0.12.0")));
+        let stale_action = generated_workflow_line(Path::new("."), &action(stale), current);
+        assert!(
+            stale_action
+                .as_deref()
+                .is_some_and(|line| line.contains(&format!(
+                    "installs ripr {stale}, but this is ripr {current}"
+                ))),
+            "{stale_action:?}"
         );
         assert_eq!(
             generated_workflow_line(
