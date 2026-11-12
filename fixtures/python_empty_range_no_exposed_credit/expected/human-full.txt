@@ -1,0 +1,63 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_empty_range_no_exposed_credit/input
+config: <cwd>/fixtures/python_empty_range_no_exposed_credit/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+NOTE src/lib.py:3
+  id: probe:src_lib.py:python_preview:31bd0ad3
+
+Changed
+  after:      for i in range(1, n):
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:src/lib.py::sum_to
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `sum_to`
+  - infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim
+  - propagation unknown: Static limit `unsupported_syntax` prevents a safe Python propagation claim
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator unknown: Static limit `unsupported_syntax` prevents a safe Python discriminator claim
+  - related test tests/test_lib.py:4 test_sum uses strong exact value oracle: assert sum_to(0) == 0
+
+Weakness
+  - Static limit `unsupported_syntax`: no strong related Python call establishes different old and new returned range sums. Both ranges may be empty or sum to the same value for the pinned input; other loop bodies, unreadable bounds, rebound names and unavailable source remain unresolved. Check an input that changes the iterations with a runtime test
+
+Stop reasons:
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  unsupported_syntax — The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
+  Next: Move the changed logic into a plain function and test that function, or report the syntax in an issue so ripr can model it.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_empty_range_no_exposed_credit/input --diff <cwd>/fixtures/python_empty_range_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:31bd0ad3
+  ripr context --root <cwd>/fixtures/python_empty_range_no_exposed_credit/input --diff <cwd>/fixtures/python_empty_range_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:31bd0ad3
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

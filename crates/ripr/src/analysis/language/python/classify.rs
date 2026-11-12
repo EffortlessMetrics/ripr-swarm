@@ -151,6 +151,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
     pub(super) pytest_import_unshadowed: bool,
+    /// This owner's loop header changed in a multi-line diff. Without an
+    /// isolated old-body witness, sibling edits cannot borrow oracle credit.
+    pub(super) compound_loop_edit: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -875,6 +878,17 @@ fn classify_change_for_owner_inner<'a>(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
+    .or_else(|| {
+        super::range_activation::loop_context_limit(
+            owner,
+            owner_source.unwrap_or(""),
+            line,
+            line_text,
+            old_line_text,
+            no_behavior.sole_line_replacement,
+            no_behavior.compound_loop_edit,
+        )
+    })
     // A pinned lambda body edit or dataclass default edit is read by the
     // module-value credit, which lifts only the limit its own reading answers.
     .filter(|limit| {
