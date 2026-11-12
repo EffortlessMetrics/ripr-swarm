@@ -4556,7 +4556,7 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// that namesake and run the namesake's same-named method. The relation's
 /// shadow check exempts a test file's own root, so this read rule refuses the
 /// whole file by a text scan instead. A test in the owner's own file refuses
-/// when that file declares a type of the name more than once or aliases one.
+/// unless the indexed workspace declares the name exactly once, unaliased.
 /// An owner without an impl type is unaffected.
 fn test_file_declares_owner_type_namesake(
     owner: &FunctionSummary,
@@ -4569,10 +4569,19 @@ fn test_file_declares_owner_type_namesake(
         return false;
     };
     match index.files().get(&test.file) {
-        // In the owner's own file, the owner's type is one declaration; a
-        // second one (an inline `mod tests` namesake) or an alias refuses.
-        Some(facts) if test.file == owner.file => {
-            super::owner_pin::source_declares_type_more_than_once(&facts.source, impl_type)
+        // In the owner's own file the owner's type must be the only
+        // declaration of its name across the indexed workspace: a second one
+        // (an inline `mod tests` namesake, even when the owner's type lives
+        // in another file) or an alias refuses.
+        Some(_) if test.file == owner.file => {
+            index
+                .files()
+                .values()
+                .map(|facts| {
+                    super::owner_pin::source_type_declaration_count(&facts.source, impl_type)
+                })
+                .sum::<usize>()
+                != 1
         }
         Some(facts) => super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type),
         // An unindexed test file cannot be shown free of a namesake.
@@ -4692,11 +4701,31 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
 }
 
 /// #14407: whether every whole-word mention of `binding` in masked `text` is
-/// either its `let` declaration or the receiver of a statement that starts
-/// `binding.<owner_name>(`. Anything else may write the field before the
-/// owner runs, so it refuses.
+/// either its `let` declaration or the receiver of a bare statement
+/// `binding.<owner_name>(..);` (nothing chained after the call, which might
+/// write the field through a returned `&mut Self`). Anything else may write
+/// the field before the owner runs, so it refuses.
 fn binding_mentioned_only_as_owner_receiver(text: &str, binding: &str, owner_name: &str) -> bool {
     let call = format!("{binding}.{owner_name}(");
+    let bare_call = |rest: &str| {
+        let Some(args) = rest.strip_prefix(&call) else {
+            return false;
+        };
+        let mut depth = 1usize;
+        for (at, ch) in args.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return args[at + 1..].trim_start().starts_with(';');
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    };
     super::owner_pin::whole_word_offsets(text, binding)
         .into_iter()
         .all(|offset| {
@@ -4709,7 +4738,7 @@ fn binding_mentioned_only_as_owner_receiver(text: &str, binding: &str, owner_nam
             let qualified = before_char.is_some_and(|ch| ch == '.' || ch == ':');
             !qualified
                 && (declared
-                    || (text[offset..].starts_with(&call)
+                    || (bare_call(&text[offset..])
                         && (before.is_empty() || before.ends_with([';', '{', '}']))))
         })
 }
@@ -12686,6 +12715,12 @@ assert_eq!(input.amount, 100);"#
             &[
                 "let mut c = Counter { n: 5 };",
                 "c . n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "if flag { c.reset().set_n(1); }",
                 "c.reset();",
                 "assert_eq!(c.n, 1);",
             ],

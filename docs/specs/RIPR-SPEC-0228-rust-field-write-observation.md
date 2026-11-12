@@ -793,15 +793,15 @@ changes `self.count += 2` to `self.count += 1`.
   plain literal, the assertion's expected operand must be a plain literal of
   a different value (a `const`, variable, expression or another binding's
   field may equal the seed), and before the read the receiver may appear
-  only in its `let` and as the receiver of top-level `recv.<owner>(..)`
+  only in its `let` and as the receiver of bare top-level `recv.<owner>(..);`
   statements (a setter, reassignment, `&mut recv` alias, `mem::replace` or
   earlier assertion refuses). Activation and the repository seam keep
   reading constructor-built receivers and do not read the constructor's
   field values. The
   same read also refuses when a test outside the owner's file declares or
   aliases a type named like the owner's impl type anywhere in that file, or
-  when a test in the owner's own file shares a file that declares that name
-  more than once or aliases it. A
+  when a test in the owner's own file runs in a workspace that does not
+  declare that name exactly once, unaliased. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.
