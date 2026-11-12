@@ -281,7 +281,7 @@ fn terminate_tree_after(
     let survivors = settled_group_survivors(group)?;
     assert!(
         survivors.is_empty(),
-        "descendants {survivors:?} of ripr survived the group kill after {delay_micros}us"
+        "descendants {survivors:?} of ripr remained after the group kill after {delay_micros}us"
     );
     Ok(status)
 }
