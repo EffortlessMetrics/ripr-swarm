@@ -866,29 +866,55 @@ pub(crate) fn config_error_summary(error: &str) -> String {
 
 fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
     let first = error.lines().next().unwrap_or(error).trim();
-    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+    let is_hint_line = |line: &str| {
         suggest::is_known_suggestion_line(line)
             || KEY_HOME_TABLES
                 .iter()
-                .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+                .any(|(key, table)| line == misplaced_key_hint_line(key, table))
             || retired
                 .iter()
-                .any(|entry| *line == retired_key_hint_line(entry))
-    });
-    // #14441: the parser's reason ("unclosed table", the keys ripr accepts)
-    // is what makes the line/column actionable for a machine reader; keep
-    // it only in a source-free form.
-    let reason = error
+                .any(|entry| line == retired_key_hint_line(entry))
+    };
+    let hint = error
         .lines()
         .skip(1)
         .map(str::trim)
-        .find_map(machine_safe_reason_line);
+        .find(|line| is_hint_line(line));
+    // #14441: the parser's reason ("unclosed table", the keys ripr accepts)
+    // is what makes the line/column actionable for a machine reader; keep
+    // it only in a source-free form.
+    let reason = parser_message_line(error, is_hint_line).and_then(machine_safe_reason_line);
     let mut summary = first.to_string();
     for part in [reason.as_deref(), hint].into_iter().flatten() {
         summary.push_str("; ");
         summary.push_str(part);
     }
     summary
+}
+
+/// The parser's reason when it is exactly one line, or `None` (#14441).
+///
+/// toml's `Display` with a span is fixed: the location line, a gutter line,
+/// one `N | <source line>` excerpt, the caret line, then the message. Only
+/// lines after those four can be the message, and the excerpt itself never
+/// reaches the reason. A decoded key or value may hold a raw newline, which
+/// splits serde's `unknown field `<key>`, ...` message into several lines,
+/// any of which a writer controls. So a reason is read only when the message
+/// is a single line (allowlisted hint lines aside); a multi-line message
+/// keeps the location alone. Without the location header (no span) there is
+/// no fixed layout to rely on, so nothing is read.
+fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Option<&str> {
+    let first = error.lines().next()?;
+    if !first.contains("TOML parse error at line ") {
+        return None;
+    }
+    let mut message = error
+        .lines()
+        .skip(4)
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !is_hint_line(line));
+    let only = message.next()?;
+    message.next().is_none().then_some(only)
 }
 
 /// A TOML/serde reason line in a form that carries no file content, or

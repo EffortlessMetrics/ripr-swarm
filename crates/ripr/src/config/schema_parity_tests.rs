@@ -442,6 +442,39 @@ fn source_free_summary_keeps_the_reason_without_file_content() {
     let summary = config_error_summary(&newline_key);
     assert!(!summary.contains("secret_canary_word"), "{summary}");
 
+    // A newline-split message is refused whole, whichever forged line a
+    // writer aims at the reason filters: a lowercase middle line, a trailing
+    // line, or a punctuation-only backticked token (review of #14449).
+    for key in [
+        "a\\nexpected hunter\\nz",
+        "a\\nexpected correct horse battery staple",
+        "a\\nexpected `!@#$`\\nz",
+        "a\\nunclosed table, expected hunter\\nz",
+    ] {
+        let error = parse_config(&format!("[analysis]\n\"{key}\" = 1\n"))
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("TOML parse error at line "), "{error}");
+        let summary = config_error_summary(&error);
+        for canary in ["hunter", "horse", "!@#$"] {
+            assert!(!summary.contains(canary), "{key}: {summary}");
+        }
+        assert!(!summary.contains("; expected"), "{key}: {summary}");
+        assert!(!summary.contains("; unclosed"), "{key}: {summary}");
+    }
+
+    // With the fixed layout, a lone safe reason passes; a second message
+    // line, even one that is itself safe, drops the reason.
+    let layout = "invalid ripr.toml: TOML parse error at line 1, column 1\n  |\n1 | x\n  | ^\n";
+    assert_eq!(
+        config_error_summary(&format!("{layout}expected `]`\n")),
+        "invalid ripr.toml: TOML parse error at line 1, column 1; expected `]`"
+    );
+    assert_eq!(
+        config_error_summary(&format!("{layout}junk\nexpected `]`\n")),
+        "invalid ripr.toml: TOML parse error at line 1, column 1"
+    );
+
     // Lines that merely look like reasons are refused.
     for forged in [
         "invalid ripr.toml: bad\nunknown field `x`, expected `secret value`",
