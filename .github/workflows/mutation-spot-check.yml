@@ -10,6 +10,7 @@ name: Mutation Spot Check
 # with read-only permissions and no secrets. Advisory: it never fails on
 # agreement numbers and never writes the default branch. The receipt is an
 # artifact; promote it through a reviewed PR (benchmarks/mutation_spot_check/README.md).
+# Run this deep proof only when explicitly selected; no recurring subscription.
 
 on:
   workflow_dispatch:
@@ -18,8 +19,6 @@ on:
         description: "Comma-separated corpus names to run (default: all)"
         required: false
         default: ""
-  schedule:
-    - cron: "23 4 * * 0"
 
 permissions:
   contents: read

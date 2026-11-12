@@ -2,7 +2,6 @@
 //! The incident-route suite keeps a separate process because it changes cwd.
 
 mod workflow_contracts {
-    mod ci_leaf_contract;
     mod docs_only_routing;
     mod hosted_cache_continuity;
     mod inventory_contract;

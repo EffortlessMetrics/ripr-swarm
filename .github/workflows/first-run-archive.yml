@@ -3,9 +3,9 @@ name: First-run archive install
 # Verifies the documented prebuilt-archive install snippets in
 # docs/QUICKSTART.md on hosted Linux, macOS and Windows runners, records how
 # long each takes, then walks the first-run path with the same released
-# archive (`cargo xtask first-run --install-archive`). Runs weekly and on
-# demand, never on a pull request. Scheduled runs (and dispatches with no
-# version) install the version the QUICKSTART snippets pin, so the weekly run
+# archive (`cargo xtask first-run --install-archive`). Runs on demand only,
+# never on a pull request. Dispatches with no version install the version
+# the QUICKSTART snippets pin, so the selected run
 # checks the install instructions exactly as a reader would follow them.
 # Read-only: it downloads a public release and publishes nothing (#5311). The walk step may fail on a platform bug without hiding the
 # snippet result; the report says which step failed.
@@ -18,8 +18,6 @@ on:
         required: false
         default: ""
         type: string
-  schedule:
-    - cron: "37 6 * * 2"
 
 permissions:
   contents: read

@@ -3,7 +3,8 @@
 Unpublished development-only sibling of `repo-policy` under ADR 0027.
 Neither package depends on the other. Pure workflow
 leaves share `workflow_contracts`; incident-route stays in the production package because it
-changes the process working directory. Grouped suites retain child-only
+changes the process working directory; the CI leaf remains there because it exercises
+the production workflow-lifecycle validator. Grouped suites retain child-only
 process environment/directory changes and distinct temporary namespaces.
 
 Run all: `cargo test --locked -p repo-policy -p repo-policy-contracts`.

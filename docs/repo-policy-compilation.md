@@ -7,10 +7,11 @@ There are no excluded files or selective-watch assumptions inside that boundary.
 The original cached-script/backdated-worktree behavioral discriminator is retained.
 
 Pure workflow contracts live in the sibling unpublished `repo-policy-contracts`
-test package. Eleven suites share one executable while retaining their modules,
+test package. Ten suites share one executable while retaining their modules,
 platform conditions and scratch namespaces. The incident-route suite stays in the production package with a separate
 executable because it changes its process working directory and uses the normal
-policy library. The pure contract package has no dependency on that library,
+policy library. The CI leaf suite also remains there because main now exercises
+the production workflow-lifecycle validator. The pure contract package has no dependency on that library,
 so focused workflow compilation does not bootstrap the production policy graph. A frozen
 native baseline map checks every grouped case and its ignored state; omission,
 duplication and changed-ignore controls must fail. Self-reexecution uses the
@@ -33,7 +34,8 @@ preflight receipt and resource-bound test executable must still reject that edit
 An unknown file anywhere inside the production package remains an implementation
 input and must cause ordinary Cargo recovery as well as retained-CLI refusal.
 Workspace nextest, all-target Clippy and doctests discover the new test package;
-source selectors, policy allowlists and wheel-workflow path filters retain it.
+source selectors and policy allowlists retain it. The wheel workflow has no
+development-event path filter after the auxiliary trigger retirement.
 
 Qualification records exact source/tree/lock identities, native case and ignore
 parity, cold/warm/leaf/shared/new-file controls, elapsed and CPU time, command and
