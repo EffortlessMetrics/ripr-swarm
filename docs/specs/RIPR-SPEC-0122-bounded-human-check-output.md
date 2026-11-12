@@ -381,8 +381,12 @@ selector is deterministic:
    routes.
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-6. Class, gap metadata, related tests, missing evidence, confidence, path, and
-   line provide stable tie-breakers.
+6. Gap metadata, related tests, missing evidence, confidence, exposure class,
+   path, and line provide stable tie-breakers, in that order. Class is
+   compared even when step 4 put both findings in the same repair-route
+   band, so two candidates equal through confidence order
+   `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
+   classes, then `exposed`, rather than by file path (#14266).
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a
