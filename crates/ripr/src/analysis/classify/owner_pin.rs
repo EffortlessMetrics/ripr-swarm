@@ -75,7 +75,7 @@ use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
-    SourceRoleProvenanceEdgeKind,
+    RustIncludeLimitation, SourceRoleProvenanceEdgeKind, literal_include_fragments,
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
@@ -2862,6 +2862,12 @@ struct TargetRoots {
     /// mount other crates that way, may compile any file into another
     /// crate, so no file is charged to one root.
     disabled: bool,
+    /// #14116: integration test, bench and example roots holding an
+    /// `include!` whose inert fragment may bind an assertion macro. The
+    /// binding lands in that crate only and nothing imports it, so files
+    /// under these roots are unplaced while every other crate keeps
+    /// placement.
+    tainted: BTreeSet<PathBuf>,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
@@ -3109,11 +3115,172 @@ fn member_own_file(declaring: &Path, literal: &str, member_dir: &Path) -> Option
     (target.is_file() && target.starts_with(member_dir)).then_some(target)
 }
 
+/// #14116: how far one include limitation reaches.
+enum IncludeReach {
+    /// The paste may compile unread source into any crate, or bind a macro
+    /// another crate can import: placement is off for the whole workspace.
+    Workspace,
+    /// The paste stays inside these crate roots, which lose placement. Empty
+    /// when every fragment is read and binds no assertion macro.
+    Roots(BTreeSet<PathBuf>),
+}
+
+/// #14116: the reach of an include limitation. Only an `include!` naming
+/// repository-local files by literal path (inside an inline module, or at
+/// file level with a target the index does not hold) is narrower than the
+/// workspace, and only when every fragment is inert: it declares no
+/// out-of-line module and names no `include!` or `#[path]`, so the paste
+/// compiles no further file.
+///
+/// - An indexed inert fragment that no `mod` edge or recognized target shape
+///   charges to a crate reaches nothing more: [`TargetRoots::roots`] answers
+///   `None` for it, so its macros, globs and bindings are read as sites of a
+///   file that may be compiled anywhere, exactly like the target of a
+///   resolved file-level `include!`.
+/// - An inert fragment the index does not hold (a `fixtures` directory, a
+///   file no module declares) is read from disk with the scan every indexed
+///   file gets. A fragment that binds no assertion macro reaches nothing.
+/// - One that may bind an assertion macro stays inside the including crate
+///   only when that crate is an integration test, bench or example, which
+///   no other crate can import: those roots lose placement and every other
+///   crate keeps it.
+///
+/// Everything else (a dynamic expression, a missing, unreadable or oversized
+/// target, a fragment that mounts files or is itself a module of some crate,
+/// a possible binding inside a library or binary) keeps the workspace-wide
+/// refusal.
+fn include_limitation_reach(
+    index: &RustIndex,
+    limitation: &RustIncludeLimitation,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> IncludeReach {
+    let Some(fragments) = literal_include_fragments(index, limitation) else {
+        return IncludeReach::Workspace;
+    };
+    let mut reach = BTreeSet::new();
+    for fragment in &fragments {
+        if let Some(facts) = index.files().get(fragment) {
+            if facts.used_lexical_fallback
+                || !facts.module_declarations.is_empty()
+                || !own_path_literals(&facts.source, false)
+                    .is_some_and(|literals| literals.is_empty())
+                || target_context_roots(fragment, index, src_dirs).is_some()
+            {
+                return IncludeReach::Workspace;
+            }
+            continue;
+        }
+        let Some(source) = unindexed_inert_fragment(index, fragment) else {
+            return IncludeReach::Workspace;
+        };
+        if fragment_binds_no_assertion_macro(index, &source) {
+            continue;
+        }
+        match target_context_roots(&limitation.parent, index, src_dirs) {
+            Some(roots)
+                if roots
+                    .iter()
+                    .all(|root| root_is_unimportable_target(index, root)) =>
+            {
+                reach.extend(roots);
+            }
+            _ => return IncludeReach::Workspace,
+        }
+    }
+    IncludeReach::Roots(reach)
+}
+
+/// The text of a fragment the index does not hold, when it resolves inside
+/// the repository and is readable, bounded, UTF-8 and mounts nothing.
+fn unindexed_inert_fragment(index: &RustIndex, fragment: &Path) -> Option<String> {
+    let root = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path())?;
+    // The same boundary the include producer keeps: a path that resolves
+    // outside the repository (a symlink) is never read.
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let target = std::fs::canonicalize(root.join(fragment)).ok()?;
+    if !target.starts_with(&canonical_root) {
+        return None;
+    }
+    let bytes = std::fs::read(&target).ok()?;
+    if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok().filter(|source| {
+        own_path_literals(source, false).is_some_and(|literals| literals.is_empty())
+            && !source_may_declare_file_module(source)
+    })
+}
+
+/// Whether the scan every indexed file gets finds no site in `source` that
+/// could bind an assertion macro: no definition, import, glob, opaque
+/// item-position expansion or prelude switch. No module or drop-in crate is
+/// taken as verified, and a file that does not parse reports a site.
+fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
+    let names = assertion_context_macros();
+    let (sites, _) = trusted_macro_binding_site_sets(
+        source,
+        index.macro_scope_crates(),
+        &names,
+        &names,
+        &|_, _| false,
+        &|_| false,
+    );
+    sites.is_empty()
+}
+
+/// Whether `root` is an integration test, bench or example crate root: a
+/// crate no other crate can depend on, so nothing it defines is importable.
+/// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
+/// root is importable and answers no.
+fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
+    !index.member_crates.is_custom_lib_path_root(root)
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|directory| {
+                directory == "tests" || directory == "benches" || directory == "examples"
+            })
+}
+
+/// Whether source text may hold an out-of-line `mod name;`, read lexically
+/// so a declaration inside a macro body counts too.
+fn source_may_declare_file_module(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    whole_word_offsets(&masked, "mod")
+        .into_iter()
+        .any(|offset| {
+            masked.get(offset + "mod".len()..).is_some_and(|rest| {
+                rest.trim_start()
+                    .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '#')
+                    .trim_start()
+                    .starts_with(';')
+            })
+        })
+}
+
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
-        let disabled = !index.include_limitations.is_empty()
+        let src_dirs: BTreeSet<PathBuf> = index
+            .files()
+            .iter()
+            .flat_map(|(path, _)| path.ancestors().skip(1))
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            .map(Path::to_path_buf)
+            .collect();
+        let mut tainted = BTreeSet::new();
+        let mut include_reaches_workspace = false;
+        for limitation in &index.include_limitations {
+            match include_limitation_reach(index, limitation, &src_dirs) {
+                IncludeReach::Workspace => include_reaches_workspace = true,
+                IncludeReach::Roots(roots) => tainted.extend(roots),
+            }
+        }
+        let disabled = include_reaches_workspace
             || unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
@@ -3122,15 +3289,9 @@ impl TargetRoots {
                         .iter()
                         .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
             });
-        let src_dirs = index
-            .files()
-            .iter()
-            .flat_map(|(path, _)| path.ancestors().skip(1))
-            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
-            .map(Path::to_path_buf)
-            .collect();
         Self {
             disabled,
+            tainted,
             src_dirs,
             memo: SyncMemo::default(),
             binary_macro_roots: SyncMemo::default(),
@@ -3144,7 +3305,8 @@ impl TargetRoots {
         if let Some(roots) = self.memo.borrow().get(file) {
             return roots.clone();
         }
-        let roots = target_context_roots(file, index, &self.src_dirs);
+        let roots = target_context_roots(file, index, &self.src_dirs)
+            .filter(|roots| roots.is_disjoint(&self.tainted));
         self.memo
             .borrow_mut()
             .insert(file.to_path_buf(), roots.clone());
@@ -3167,10 +3329,20 @@ impl TargetRoots {
         if self.disabled {
             return None;
         }
-        if site.crate_local
-            && let Some(roots) = self.roots(file, index)
-        {
-            return Some(roots);
+        if site.crate_local {
+            if let Some(roots) = self.roots(file, index) {
+                return Some(roots);
+            }
+            // #14116: a crate-local site cannot leave its crate, and a crate
+            // that only lost placement to its own unread include is still
+            // known. The site is charged to that crate instead of to every
+            // test in the workspace.
+            if !self.tainted.is_empty()
+                && let Some(roots) = target_context_roots(file, index, &self.src_dirs)
+                && !roots.is_disjoint(&self.tainted)
+            {
+                return Some(roots);
+            }
         }
         self.binary_roots(file, index)
     }
@@ -3184,6 +3356,7 @@ impl TargetRoots {
         }
         let roots = index.execution_context(file).and_then(|context| {
             (!context.roots.is_empty()
+                && context.roots.is_disjoint(&self.tainted)
                 && context
                     .roots
                     .iter()
@@ -4174,6 +4347,9 @@ fn macro_root_verified_in_contexts(
     let Some(context) = index.execution_context(path) else {
         return false;
     };
+    if !context.roots.is_disjoint(&roots.tainted) {
+        return false;
+    }
     // Import authority needs every approved placement, not a uniquely
     // recognized Cargo target. Unlinked source stems retain their physical
     // manifest check; they still cannot establish positive owner identity.
