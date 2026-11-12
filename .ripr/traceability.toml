@@ -10763,6 +10763,10 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_cyclic_replace_preserves_git_refusal",
   "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_with_deleted_head_tip_names_damage_not_ref_repair",
   "crates/ripr/tests/cli_smoke.rs::check_dirty_tree_with_deleted_head_tip_names_damage",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::manifest_lists_the_commit_and_push_hooks_on_separate_stages_without_filenames",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change",
+  "crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines",
 ]
 fixtures = []
 code = [
@@ -10794,6 +10798,7 @@ code = [
 outputs = [
   "docs/specs/RIPR-SPEC-0116-check-worktree-mode.md",
   "docs/OUTPUT_SCHEMA.md",
+  ".pre-commit-hooks.yaml",
 ]
 metrics = [
   "unit_test_pass_rate",
