@@ -35,6 +35,8 @@ jobs:
             exit 1
           }
 
+          git config user.name EffortlessSteven
+          git config user.email 15812269+EffortlessSteven@users.noreply.github.com
           git checkout --detach "$HOSTED_SOURCE"
           set +e
           git merge --no-commit --no-ff "$EXPECTED_MAIN"
