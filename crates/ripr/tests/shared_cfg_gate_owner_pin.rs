@@ -426,5 +426,42 @@ fn an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap() -> Result<()
         2,
     )?;
     assert_gap(&found, "a shared declaration gate that is provably off");
+
+    // A shared gated declaration, plus a gate only the test carries below it:
+    // the test needs `slow`, which the owner does not.
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            (
+                "src/v4/mod.rs",
+                "pub mod stamp;\n#[cfg(test)]\n#[cfg(feature = \"slow\")]\nmod tests;\n",
+            ),
+            ("src/v4/stamp.rs", STAMP),
+            (
+                "src/v4/tests.rs",
+                &format!("use super::stamp::stamp;\n\n{STAMP_TEST}"),
+            ),
+        ],
+        "src/v4/stamp.rs",
+        2,
+    )?;
+    assert_gap(&found, "a test-only declaration gate below the shared one");
+
+    // The same extra gate written on the test's inline module.
+    let extra_inline = format!(
+        "{STAMP}\n#[cfg(test)]\n#[cfg(feature = \"slow\")]\nmod tests {{\n    use super::stamp;\n\n{STAMP_TEST}}}\n"
+    );
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            ("src/v4.rs", &extra_inline),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_gap(
+        &found,
+        "a test-only inline gate under the shared declaration",
+    );
     Ok(())
 }

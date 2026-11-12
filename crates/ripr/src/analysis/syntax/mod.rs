@@ -27,7 +27,7 @@ pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
-pub(crate) use owner_pin::module_declaration_has_only_unestablished_cfg_gates;
+pub(crate) use owner_pin::module_declaration_unestablished_gate;
 pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,

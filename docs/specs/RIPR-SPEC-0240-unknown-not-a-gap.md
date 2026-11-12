@@ -106,9 +106,13 @@ test keep the gap. The out-of-line form follows the same rule (#14463): when
 the test's file is refused because a `mod name;` declaration on its module
 chain carries only `cfg` gates ripr cannot evaluate, and the changed owner's
 file is reached through that same declaration on a single module chain, the
-refusal is an analyzer limit. `#[cfg(feature = "v4")] mod v4;` with the owner
+refusal is an analyzer limit, provided every other declaration on the test's
+chain is either shared with the owner or available in every test build (no
+attribute, or `cfg(test)`), and the test's in-file `cfg` gates are a subset of
+the owner's. `#[cfg(feature = "v4")] mod v4;` with the owner
 and its tests in `src/v4.rs`, or in sibling files under `src/v4/`, reads
-`static_unknown`. A gated declaration only the test's chain carries, owner and
+`static_unknown`. A gated declaration only the test's chain carries (alone or
+below a shared one), an inline gate only the test's module carries, owner and
 test under different gated declarations, and a provably disabled declaration
 gate (`cfg(any())`) keep the gap.
 `cfg(false)` is read through the same shared evaluator, which does not yet

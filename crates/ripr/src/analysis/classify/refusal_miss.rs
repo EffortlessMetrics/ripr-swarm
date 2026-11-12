@@ -2,9 +2,10 @@
 
 use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
-use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
+use crate::analysis::facts::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::{RelatedTest, RelatedTestMiss};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
@@ -15,7 +16,7 @@ pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
     let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
     (refusal.is_analyzer_limit()
         || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test))
-        || owner_compiled_only_under_refused_declaration(context, refusal))
+        || owner_compiled_only_under_refused_declaration(context, test, refusal))
         && refusal
             .value_guard_subject()
             .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
@@ -44,12 +45,18 @@ fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -
 /// only through that same declaration, the owner is compiled exactly when the
 /// test is, so the gate cannot keep the test from checking the owner: the
 /// refusal is a limit of ripr's reading, as #9643 decided for an inline gated
-/// module. The declaration must carry only `cfg` gates ripr cannot evaluate
-/// (a provably-off gate such as `cfg(any())` keeps the gap, as it does for the
-/// inline form), and the owner's module ancestry must be one linear chain, so
-/// no other path can compile the owner without the gated declaration.
+/// module. Every gate on the test's side must be one the owner also carries:
+/// - the owner's module ancestry is one linear chain through the refused
+///   declaration, so no other path compiles the owner without it;
+/// - every declaration on the test's chain is either on the owner's chain and
+///   gated only by `cfg`s ripr cannot evaluate (or not gated), or not on it
+///   and available in every test build (no attribute, or `cfg(test)`); a
+///   provably-off gate such as `cfg(any())` keeps the gap, as it does for the
+///   inline form;
+/// - the test's in-file `cfg` gates are a subset of the owner's.
 fn owner_compiled_only_under_refused_declaration(
     context: &ProbeContext<'_>,
+    test: &TestSummary,
     refusal: &AssertionRefusal,
 ) -> bool {
     let (Some((parent, line, declaration)), Some(owner)) =
@@ -57,30 +64,70 @@ fn owner_compiled_only_under_refused_declaration(
     else {
         return false;
     };
-    let Some(owner_context) = context.index.execution_context(&owner.file) else {
+    let (Some(owner_context), Some(test_context)) = (
+        context.index.execution_context(&owner.file),
+        context.index.execution_context(&test.file),
+    ) else {
         return false;
     };
+    let owner_edges = owner_context
+        .edges
+        .iter()
+        .map(edge_key)
+        .collect::<BTreeSet<_>>();
     let children = owner_context
         .edges
         .iter()
         .map(|edge| edge.child.as_path())
-        .collect::<std::collections::BTreeSet<_>>();
-    let declared_with_unknown_gate = context.index.files().get(parent).is_some_and(|facts| {
-        !facts.used_lexical_fallback
-            && crate::analysis::syntax::module_declaration_has_only_unestablished_cfg_gates(
-                &facts.source,
-                line,
-            )
+        .collect::<BTreeSet<_>>();
+    if owner_context.roots.len() != 1
+        || children.len() != owner_context.edges.len()
+        || !owner_edges.contains(&(parent, line, declaration))
+    {
+        return false;
+    }
+    let gate_of = |edge: &SourceRoleProvenanceEdge| {
+        (edge.kind == SourceRoleProvenanceEdgeKind::Module)
+            .then(|| context.index.files().get(&edge.parent))
+            .flatten()
+            .filter(|facts| !facts.used_lexical_fallback)
+            .and_then(|facts| {
+                crate::analysis::syntax::module_declaration_unestablished_gate(
+                    &facts.source,
+                    edge.line,
+                )
+            })
+    };
+    let chain_admitted = test_context.edges.iter().all(|edge| match gate_of(edge) {
+        // Shared with the owner: any unevaluated gate binds both.
+        Some(_) if owner_edges.contains(&edge_key(edge)) => true,
+        // The test's own declaration must be on in every test build.
+        Some(false) => true,
+        _ => false,
     });
-    declared_with_unknown_gate
-        && owner_context.roots.len() == 1
-        && children.len() == owner_context.edges.len()
-        && owner_context.edges.iter().any(|edge| {
-            edge.kind == SourceRoleProvenanceEdgeKind::Module
-                && edge.parent == parent
-                && edge.line == line
-                && edge.declaration == declaration
-        })
+    let refused_is_unknown_gate = test_context
+        .edges
+        .iter()
+        .find(|edge| edge_key(edge) == (parent, line, declaration))
+        .and_then(gate_of)
+        == Some(true);
+    let in_file_gates = |file: &Path, name: &str, line: usize| {
+        let facts = context.index.files().get(file)?;
+        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
+    };
+    let in_file_shared = match (
+        in_file_gates(&test.file, &test.name, test.start_line),
+        in_file_gates(&owner.file, &owner.name, owner.start_line),
+    ) {
+        (Some(test_gates), Some(owner_gates)) => test_gates.is_subset(&owner_gates),
+        _ => false,
+    };
+    refused_is_unknown_gate && chain_admitted && in_file_shared
+}
+
+/// A module edge's identity: declaring file, line and declaration text.
+fn edge_key(edge: &SourceRoleProvenanceEdge) -> (&Path, usize, &str) {
+    (edge.parent.as_path(), edge.line, edge.declaration.as_str())
 }
 
 pub(in crate::analysis) fn related_test_miss_for_assertion_refusal(
