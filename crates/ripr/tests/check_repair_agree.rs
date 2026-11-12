@@ -777,7 +777,9 @@ fn limited_option_change_is_not_called_gripped_by_repair() -> Result<(), String>
         OPTION_OLD,
         OPTION_NEW,
         OPTION_TEST,
-        "Changed behavior: x % 2 == 0",
+        // #14266: the weak `.or(Some(0))` return gap leads Start here over
+        // the unknown predicate on the same line; both are non-exposed.
+        "Changed behavior: xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))",
         "different check than the one still open",
     )
 }
