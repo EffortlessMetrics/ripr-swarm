@@ -452,7 +452,7 @@ commit-time readiness projection. `selected` stays the full stored-selection
 count while `filtered` counts the narrowed set the page walks. With no
 `class`, `exposed` items that are not repair-ready are left out of `items` and
 `filtered` (they need no test-side action; repair-ready ones stay listed) and disclosed as `exposed_omitted` plus an `exposed_route`
-hint (both absent when zero or when `class` is given); `total`, `eligible`,
+hint (both absent when zero or when `class` is given; the default applies under `repair_ready: false` too); `total`, `eligible`,
 `selected` and `outcome` still describe the whole snapshot, and
 `class: "exposed"` lists them. An unknown
 `file` value is an empty disclosed page; an unknown `class` or `language` is

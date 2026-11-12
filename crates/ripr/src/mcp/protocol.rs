@@ -71,7 +71,7 @@ const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root 
 
 const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, exposed items needing no repair are left out and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, non-repair-ready exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one item's complete bounded analysis evidence from the snapshot. Prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. result_too_large means the item exceeds the response bound: follow the failure's CLI recovery (a bounded summary, not snapshot replay), because retrying ripr_get_gap cannot shrink the item. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}.";
 
@@ -2747,7 +2747,7 @@ mod tests {
         // status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 11174);
+        assert_eq!(total, 11172);
         Ok(())
     }
 
