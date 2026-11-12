@@ -20,7 +20,11 @@ jobs:
           fetch-depth: 1
 
       - name: Apply the reviewed hosted generation
-        run: python3 -I scripts/ci/apply_hosted_queue_repair_13865.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I scripts/ci/apply_hosted_queue_repair_13865.py
+          python3 -I scripts/ci/apply_hosted_queue_merge_subject_13865.py
 
       - name: Remove transaction-only files before repository policy
         shell: bash
@@ -29,6 +33,7 @@ jobs:
           rm .github/workflows/hosted-route-repair-13865.yml
           rm .github/workflows/hosted-route-policy-repair-13865.yml
           rm scripts/ci/apply_hosted_queue_repair_13865.py
+          rm scripts/ci/apply_hosted_queue_merge_subject_13865.py
 
       - name: Verify intended final source tree
         shell: bash
@@ -43,16 +48,17 @@ jobs:
           cargo run --locked -p repo-policy -- check-workflows
           git diff --check
           python3 - <<'PY'
-          from pathlib import Path
           expected = {
               '.github/actions/pr-candidate-admission/review_disposition.py',
               '.github/workflows/hosted-route-policy-repair-13865.yml',
               '.github/workflows/hosted-route-repair-13865.yml',
               '.github/workflows/routed-rust.yml',
               'changelog.d/14200-hosted-queue-route.md',
+              'scripts/ci/apply_hosted_queue_merge_subject_13865.py',
               'scripts/ci/apply_hosted_queue_repair_13865.py',
               'tools/repo-policy/src/queue_workflow.rs',
               'tools/repo-policy/tests/hosted_queue_route.rs',
+              'tools/repo-policy/tests/merge_group_subject.rs',
               'tools/repo-policy/tests/review_disposition_admission.rs',
           }
           import subprocess
