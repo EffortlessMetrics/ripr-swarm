@@ -313,7 +313,8 @@ then the human diagnostic explains how to fix or remove the candidate's file
 and rerun with a new candidate-tree identity; editing only the worktree file
 cannot repair that immutable subject. A config-free candidate uses the built-in
 defaults, not a parent or worktree config. The JSON refusal retains its redacted
-first-line message, config_invalid identity and analysis/config-load route.
+first-line message plus the parser's source-free reason (#14441), its
+config_invalid identity and analysis/config-load route.
 ```
 
 ### Unknown keys name the nearest valid key (#13682)
