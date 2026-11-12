@@ -917,7 +917,11 @@ fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Opti
         .lines()
         .skip(4)
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !is_hint_line(line));
+        // The candidate-tree recovery line is ripr's own fixed text, appended
+        // after the parser's message.
+        .filter(|line| {
+            !line.is_empty() && !is_hint_line(line) && *line != CANDIDATE_CONFIG_PARSE_HINT
+        });
     let only = message.next()?;
     message.next().is_none().then_some(only)
 }
