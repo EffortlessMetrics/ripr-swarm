@@ -2,6 +2,7 @@
 
 use super::owner_pin::{AssertionRefusal, OwnerPinSyntax};
 use crate::analysis::classify::{ProbeContext, direct_call_name};
+use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::{RelatedTest, RelatedTestMiss};
 use std::path::Path;
@@ -13,7 +14,8 @@ pub(in crate::analysis) fn assertion_refusal_counts_as_analyzer_limit(
 ) -> bool {
     let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
     (refusal.is_analyzer_limit()
-        || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
+        || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test))
+        || owner_compiled_only_under_refused_declaration(context, refusal))
         && refusal
             .value_guard_subject()
             .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
@@ -34,6 +36,51 @@ fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -
         return false;
     };
     !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
+}
+
+/// #14463: the test's file is refused because an out-of-line `mod name;`
+/// declaration on its module chain carries a gate ripr cannot evaluate
+/// (`#[cfg(feature = "x")] mod x;`). When the changed owner's file is reached
+/// only through that same declaration, the owner is compiled exactly when the
+/// test is, so the gate cannot keep the test from checking the owner: the
+/// refusal is a limit of ripr's reading, as #9643 decided for an inline gated
+/// module. The declaration must carry only `cfg` gates ripr cannot evaluate
+/// (a provably-off gate such as `cfg(any())` keeps the gap, as it does for the
+/// inline form), and the owner's module ancestry must be one linear chain, so
+/// no other path can compile the owner without the gated declaration.
+fn owner_compiled_only_under_refused_declaration(
+    context: &ProbeContext<'_>,
+    refusal: &AssertionRefusal,
+) -> bool {
+    let (Some((parent, line, declaration)), Some(owner)) =
+        (refusal.module_declaration_site(), context.owner_fn)
+    else {
+        return false;
+    };
+    let Some(owner_context) = context.index.execution_context(&owner.file) else {
+        return false;
+    };
+    let children = owner_context
+        .edges
+        .iter()
+        .map(|edge| edge.child.as_path())
+        .collect::<std::collections::BTreeSet<_>>();
+    let declared_with_unknown_gate = context.index.files().get(parent).is_some_and(|facts| {
+        !facts.used_lexical_fallback
+            && crate::analysis::syntax::module_declaration_has_only_unestablished_cfg_gates(
+                &facts.source,
+                line,
+            )
+    });
+    declared_with_unknown_gate
+        && owner_context.roots.len() == 1
+        && children.len() == owner_context.edges.len()
+        && owner_context.edges.iter().any(|edge| {
+            edge.kind == SourceRoleProvenanceEdgeKind::Module
+                && edge.parent == parent
+                && edge.line == line
+                && edge.declaration == declaration
+        })
 }
 
 pub(in crate::analysis) fn related_test_miss_for_assertion_refusal(

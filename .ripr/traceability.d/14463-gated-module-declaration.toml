@@ -1,0 +1,7 @@
+# A test under the same gated `mod name;` declaration as its owner reads static_unknown (#14463).
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::an_out_of_line_module_gate_shared_with_the_owner_is_unknown_not_a_gap",
+  "crates/ripr/tests/shared_cfg_gate_owner_pin.rs::an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap",
+]

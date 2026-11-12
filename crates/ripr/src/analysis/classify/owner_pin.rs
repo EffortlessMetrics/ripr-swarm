@@ -3509,6 +3509,19 @@ impl AssertionRefusal {
         matches!(self, Self::Syntax(AssertionContextRefusal::GatedItem(_)))
     }
 
+    /// The out-of-line `mod name;` declaration that refused the test's file:
+    /// the declaring file, its line and the declaration text (#14463).
+    pub(in crate::analysis) fn module_declaration_site(&self) -> Option<(&Path, usize, &str)> {
+        match self {
+            Self::ModuleDeclaration {
+                parent,
+                line,
+                declaration,
+            } => Some((parent.as_path(), *line, declaration.as_str())),
+            _ => None,
+        }
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         // Evidence text is host-independent: use the stable slash spelling
