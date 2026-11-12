@@ -1720,6 +1720,15 @@ impl Backend {
         }
     }
 
+    /// Forget the served pending route once committed payloads are served
+    /// (#14447 review): the client no longer holds a pending marker, so the
+    /// next pending transition must ask it to re-pull.
+    fn forget_pending_pull_marker_served(&self) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
+        }
+    }
+
     fn take_pending_push_marker_uris(&self) -> Vec<Uri> {
         self.pending_push_marker_uris
             .lock()
@@ -7657,6 +7666,7 @@ impl Backend {
             )
             .into());
         }
+        self.forget_pending_pull_marker_served();
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -7766,6 +7776,7 @@ impl Backend {
             self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }
+        self.forget_pending_pull_marker_served();
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()

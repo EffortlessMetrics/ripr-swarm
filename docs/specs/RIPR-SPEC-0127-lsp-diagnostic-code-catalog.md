@@ -301,8 +301,11 @@ test-sufficiency claim.
   pins the pull marker's `analysis_running` route while an attempt is queued
   or running and the return to `save_or_refresh` after a failed attempt;
   `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
-  pins the push marker on an unblocked didOpen and its retraction on commit
-  (#14447).
+  pins the push marker on an unblocked didOpen and its retraction on commit;
+  `lsp/tests.rs::framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis`
+  pins the return to `save_or_refresh` after a failed first attempt; and
+  `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
+  pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives

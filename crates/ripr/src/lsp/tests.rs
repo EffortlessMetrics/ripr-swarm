@@ -27205,6 +27205,7 @@ fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Resul
 }
 
 #[test]
+#[serial]
 fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
 -> Result<(), String> {
     // #14447 review: "in progress" must not outlive the attempt. When the
