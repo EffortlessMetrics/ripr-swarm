@@ -29,6 +29,20 @@ remain separate states.
 
 ## Who owns the change
 
+Development publication, updates and review use no Actions workflow after the
+#4842 auxiliary-trigger retirement. The two legacy label subscribers and the
+required caller's main cache writer remain explicit cutover obligations; source
+retirement alone does not establish the final zero-label/native-queue state.
+See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
+
+This source stage retains the installed required H producer. While GitHub still
+requires that check before enqueue, each delivery owner may request its
+`merge-ready` qualification for the selected, reviewed candidate. Native queue
+activation alone does not replace H qualification with cheap admission. The
+final caller cutover must qualify and enforce that replacement before retiring
+the label route; later publisher or control-profile prerequisites do not block
+this independently landable auxiliary-event retirement.
+
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
 One writer owns each candidate through its authorized issue-to-merge outcome,

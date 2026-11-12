@@ -3,13 +3,6 @@ name: Kani (bounded model checking)
 on:
   schedule:
     - cron: "41 4 * * *"
-  pull_request:
-    types: [labeled]
-    paths:
-      - "crates/ripr/src/**"
-      - "crates/ripr-contract/src/**"
-      - "xtask/src/kani_lane.rs"
-      - ".github/workflows/kani.yml"
   workflow_dispatch:
 
 permissions:
@@ -26,10 +19,9 @@ concurrency:
 # Kani lane (RIPR-SPEC-0371): bounded model checking of pure cores.
 #
 # "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
-# not run on ordinary pushes or PR updates. It runs nightly, on dispatch, and
-# when `merge-ready` is applied to a PR that touches ripr source (the `paths`
-# filter above). Kani compiles each owning library for verification, so a
-# run is minutes, not seconds.
+# runs only nightly and on explicit dispatch; the PR/label subscription is
+# retired. Kani compiles each owning library for verification, so a run is
+# minutes, not seconds.
 #
 # The pass/fail contract lives in `cargo xtask kani`, not in shell: a missing
 # tool, a missing verdict, an unreachable `cover!` or zero harnesses fails the
