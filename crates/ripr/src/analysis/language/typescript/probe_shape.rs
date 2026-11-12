@@ -305,6 +305,10 @@ pub(crate) fn presented_typescript_shape(
 /// predicate default. Quoted text is ignored when looking for those markers.
 pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
     let trimmed = line_text.trim();
+    // `export const x = ...;` declares the same plain value (#14391 review).
+    let trimmed = trimmed
+        .strip_prefix("export ")
+        .map_or(trimmed, str::trim_start);
     let Some(rest) = ["const ", "let ", "var "]
         .iter()
         .find_map(|keyword| trimmed.strip_prefix(keyword))
@@ -362,10 +366,15 @@ pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
     if initializer.contains("${") {
         return false;
     }
-    // Any whitespace run (tabs included) reads as one space, so the
-    // word-bounded markers below see `key\tin\tobj` as `key in obj`.
+    // Brackets are spaced out and any whitespace run (tabs included) reads
+    // as one space, so the word-bounded markers below see `key\tin\tobj`,
+    // `key in(obj)` and `typeof(value)` as their spaced forms.
     let code = without_quoted_text(initializer)
         .replace("?.", ".")
+        .replace('(', " ( ")
+        .replace(')', " ) ")
+        .replace('[', " [ ")
+        .replace(']', " ] ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");

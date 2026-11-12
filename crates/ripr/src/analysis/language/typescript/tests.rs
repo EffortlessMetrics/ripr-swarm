@@ -7510,6 +7510,8 @@ fn plain_value_declaration_recognizer_is_closed() {
         "  const $el = query('#root');",
         "  const quoted = 'it\\'s > x';",
         "  const spaced =\tbase\t-\tbonus;",
+        "  export const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  const total = sum(items.map(price));",
     ] {
         assert!(
             is_typescript_plain_value_declaration(line),
@@ -7547,6 +7549,12 @@ fn plain_value_declaration_recognizer_is_closed() {
         "  const present = key\tin\tobj;",
         "  const kind = typeof\tvalue;",
         "  const sum = a /* note */ + b;",
+        "  const kind = typeof(value);",
+        "  const has = key in(obj);",
+        "  const has = (key)in obj;",
+        "  const v = await(load());",
+        "  export const ok = a > b;",
+        "  export default value;",
     ] {
         assert!(
             !is_typescript_plain_value_declaration(line),
