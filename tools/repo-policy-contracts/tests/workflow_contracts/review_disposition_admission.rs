@@ -86,16 +86,24 @@ const BODIES: &[(&str, &[u8])] = &[
 ];
 
 fn canonical_resource(path: &std::path::Path) -> Result<PathBuf, String> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| format!("review resource {}: {e}", path.display()))?;
-    if canonical != path {
-        return Err(format!(
-            "review resource path is not canonical: {}",
-            path.display()
-        ));
+    if path
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("review resource path contains parent traversal".into());
     }
-    Ok(canonical)
+    for component in path.ancestors() {
+        let metadata = std::fs::symlink_metadata(component)
+            .map_err(|e| format!("review resource {}: {e}", component.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "review resource path is not canonical: {}",
+                component.display()
+            ));
+        }
+    }
+    path.canonicalize()
+        .map_err(|e| format!("review resource {}: {e}", path.display()))
 }
 
 fn resource_root() -> Result<PathBuf, String> {
