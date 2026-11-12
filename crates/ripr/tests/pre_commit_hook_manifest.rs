@@ -82,10 +82,25 @@ fn hooks(text: &str) -> Result<Vec<Hook>, String> {
     Ok(hooks)
 }
 
+/// Repository selectors a Git hook or wrapper exports. A test run launched
+/// from a hook must not let them point the fixture's git (or ripr) at the
+/// caller's repository or index.
+const GIT_SELECTORS: [&str; 4] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+];
+
+fn without_git_selectors(command: &mut Command) -> &mut Command {
+    for key in GIT_SELECTORS {
+        command.env_remove(key);
+    }
+    command
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let status = Command::new("git")
-        .current_dir(root)
-        .args(args)
+    let status = without_git_selectors(Command::new("git").current_dir(root).args(args))
         .status()
         .map_err(|error| format!("spawn git {args:?}: {error}"))?;
     status
@@ -101,13 +116,24 @@ const BASE_SOURCE: &str = "pub fn gate(x: i32) -> bool {\n    x > 10\n}\n\n#[cfg
 /// against `HEAD` (what `ripr` sees at commit time).
 fn project() -> Result<Scratch, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "ripr-pre-commit-manifest-{}-{}",
-        std::process::id(),
-        SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    // Create the fixture directory exclusively so a leftover from an
+    // interrupted run is never reused or removed by this run's cleanup.
+    let parent = std::env::temp_dir();
+    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+    let root = loop {
+        let candidate = parent.join(format!(
+            "ripr-pre-commit-manifest-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    };
     let scratch = Scratch(root.clone());
+    std::fs::create_dir(root.join("src")).map_err(|error| error.to_string())?;
     let excludes = root.join("empty-excludes");
     std::fs::write(&excludes, "").map_err(|error| error.to_string())?;
     std::fs::write(
@@ -115,12 +141,18 @@ fn project() -> Result<Scratch, String> {
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .map_err(|error| error.to_string())?;
-    std::fs::write(root.join(".gitignore"), "/target/\n/empty-excludes\n")
-        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join(".gitignore"),
+        "/target/\n/empty-excludes\n/no-hooks/\n",
+    )
+    .map_err(|error| error.to_string())?;
     std::fs::write(root.join("src/lib.rs"), BASE_SOURCE).map_err(|error| error.to_string())?;
     git(&root, &["init", "-q", "-b", "main"])?;
     git(&root, &["config", "user.email", "ripr@example.invalid"])?;
     git(&root, &["config", "user.name", "ripr tests"])?;
+    git(&root, &["config", "commit.gpgsign", "false"])?;
+    std::fs::create_dir(root.join("no-hooks")).map_err(|error| error.to_string())?;
+    git(&root, &["config", "core.hooksPath", "no-hooks"])?;
     git(
         &root,
         &[
@@ -155,11 +187,13 @@ fn run_entry(root: &Path, entry: &str) -> Result<Output, String> {
     if program != "ripr" {
         return Err(format!("entry must start with `ripr`: {entry}"));
     }
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
-        .args(words)
-        .output()
-        .map_err(|error| format!("spawn {entry}: {error}"))
+    without_git_selectors(
+        Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .current_dir(root)
+            .args(words),
+    )
+    .output()
+    .map_err(|error| format!("spawn {entry}: {error}"))
 }
 
 fn hook<'a>(hooks: &'a [Hook], id: &str) -> Result<&'a Hook, String> {

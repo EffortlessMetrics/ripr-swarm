@@ -205,10 +205,10 @@ without making a change, use the separate
 [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
-To run the same check on every commit or push, add the shipped pre-commit hook
-or a lefthook, husky or plain Git hook from
-[Integrations](INTEGRATIONS.md#pre-commit-framework). The hooks are advisory:
-findings exit 0.
+To get this advisory check on every commit or push, add the shipped
+[pre-commit hooks](INTEGRATIONS.md#pre-commit-framework) or a
+[lefthook, husky or plain Git hook](INTEGRATIONS.md#lefthook-husky-and-plain-git-hooks).
+Findings exit 0, so a hook never blocks on them.
 
 ### Reference: output mechanics and terms
 
