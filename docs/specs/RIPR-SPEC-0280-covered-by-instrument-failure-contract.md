@@ -247,11 +247,13 @@ continue native enumeration. No hosted result depends on this prerequisite.
 
 ## Test Mapping
 
+- `xtask/src/policy/file_policy.rs`: source-only declaration, path, pending,
+  and retained-subject controls for rule 7.
 - `xtask/src/policy/file_policy.rs`: rules 1 to 3 and the validator side of
   rule 5.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
-- `xtask/src/policy/file_policy.rs`: the policy side of rule 6 and source-only declaration, path, pending and retained-subject controls for rule 7.
+- `xtask/src/policy/file_policy.rs`: the policy side of rule 6.
 
 ## Implementation Mapping
 
