@@ -141,6 +141,7 @@ pub(crate) enum XtaskCommand {
     CheckAllowAttributes,
     CheckLocalContext,
     CheckFilePolicy,
+    CheckFilePolicySourceOnly,
     CheckCoveredBy,
     Kani(Vec<String>),
     RustConversionCandidates,
@@ -381,6 +382,7 @@ impl XtaskCommand {
             "check-allow-attributes" => Self::CheckAllowAttributes,
             "check-local-context" => Self::CheckLocalContext,
             "check-file-policy" => Self::CheckFilePolicy,
+            "check-file-policy-source-only" => Self::CheckFilePolicySourceOnly,
             "check-covered-by" => Self::CheckCoveredBy,
             "kani" => Self::Kani(rest),
             "rust-conversion-candidates" => Self::RustConversionCandidates,
@@ -753,6 +755,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-allow-attributes",
         "check-local-context",
         "check-file-policy",
+        "check-file-policy-source-only",
         "check-covered-by",
         "kani [--allow-empty] [--harness <name>] [--default-unwind <n>] [--timeout-secs <n>]",
         "rust-conversion-candidates",
@@ -2262,6 +2265,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks file policy.",
         ),
         command_entry(
+            "check-file-policy-source-only",
+            "non_mutating_check",
+            "target/ripr/reports/file-policy-source-only.md",
+            false,
+            false,
+            "Checks file-policy source declarations and paths; native test coverage proof remains pending.",
+        ),
+        command_entry(
             "check-covered-by",
             "non_mutating_check",
             "target/ripr/reports/covered-by.md",
@@ -3034,7 +3045,19 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_catalog, help_message, levenshtein};
+    use super::{XtaskCommand, command_catalog, help_message, levenshtein};
+
+    #[test]
+    fn source_only_file_policy_command_discloses_pending_proof() -> Result<(), String> {
+        assert!(matches!(
+            XtaskCommand::parse(["check-file-policy-source-only".to_string()]),
+            XtaskCommand::CheckFilePolicySourceOnly
+        ));
+        let help = help_message(&["check-file-policy-source-only".to_string()])?;
+        assert!(help.contains("native test coverage proof remains pending"));
+        assert!(!help.contains("CI-enforced: yes"));
+        Ok(())
+    }
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {

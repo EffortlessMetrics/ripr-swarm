@@ -57,7 +57,7 @@ pub(crate) use executable_files::check_executable_files;
 #[cfg(all(test, windows))]
 pub(crate) use file_policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET;
 pub(crate) use file_policy::{
-    CoverageEnumeration, check_file_policy, check_file_policy_with,
+    CoverageEnumeration, check_file_policy, check_file_policy_source_only, check_file_policy_with,
     is_covered_by_instrument_failure,
 };
 pub(crate) use fold_changelog::fold_changelog;
