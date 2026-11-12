@@ -2158,15 +2158,19 @@ impl PythonAdapter {
                 .and_then(no_behavior::multi_line_string_line_ranges);
             // #14156: the body of `if TYPE_CHECKING:` never runs, on either
             // side of the diff.
+            let typing_shadowed =
+                type_checking_block::workspace_may_shadow_typing(workspace_read.sources.keys());
             let type_checking_ranges = workspace_read
                 .sources
                 .get(&changed.path)
+                .filter(|_| !typing_shadowed)
                 .map(|source| {
                     type_checking_block::type_checking_only_line_ranges(&changed.path, source)
                 })
                 .unwrap_or_default();
             let old_type_checking_ranges = old_source
                 .as_deref()
+                .filter(|_| !typing_shadowed)
                 .map(|source| {
                     type_checking_block::type_checking_only_line_ranges(&changed.path, source)
                 })
@@ -2196,7 +2200,18 @@ impl PythonAdapter {
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
-                    || line_is_in_ranges(added.line, &type_checking_ranges)
+                    // A block line counts as quiet only when the line it
+                    // replaced did not run either; runtime code moved into a
+                    // block goes to the classifier, which keeps its probe.
+                    || (line_is_in_ranges(added.line, &type_checking_ranges)
+                        && counterparts.get(&added.line).is_none_or(|removed| {
+                            line_is_in_ranges(removed.line, &old_type_checking_ranges)
+                                || line_is_in_ranges(removed.line, &old_docstring_ranges)
+                                || line_is_in_ranges(removed.line, &old_import_ranges)
+                                || is_python_import_line(&removed.text)
+                                || is_python_no_behavior_line(&removed.text)
+                                || is_python_structural_line(&removed.text)
+                        }))
                     || is_added_import(added)
                     || is_python_no_behavior_line(&added.text)
                     || is_python_structural_line(&added.text)
