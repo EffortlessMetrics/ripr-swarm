@@ -495,6 +495,17 @@ fn unbound_namesake_routes_get_no_credit() -> Result<(), String> {
         ExposureClass::Exposed,
         "{test_crate_glob:#?}"
     );
+    let test_crate_reexport = finding_with_files(
+        OWNER,
+        "tests/t.rs",
+        &format!("mod common;\nuse self::common::*;\n{}", test_body(O_FIELD)),
+        &[("tests/common/mod.rs", "pub use extdep::Counter;\n")],
+    )?;
+    assert_ne!(
+        test_crate_reexport.class,
+        ExposureClass::Exposed,
+        "{test_crate_reexport:#?}"
+    );
     let inline_owner = "pub mod inner {\n    pub struct Counter {\n        pub n: u32,\n        pub m: u32,\n    }\n    impl Counter {\n        pub fn reset(&mut self) {\n            self.n = 1;\n        }\n    }\n}\npub use dep::Counter;\n";
     let found = finding_at(
         inline_owner,

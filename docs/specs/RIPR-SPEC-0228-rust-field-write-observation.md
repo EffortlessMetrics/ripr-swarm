@@ -815,7 +815,7 @@ changes `self.count += 2` to `self.count += 1`.
   is `super::*` or `crate::<owner module path>::*` in the owner's file, or
   `krate::*` elsewhere when the root binds no other type of the name, and
   any other `self`/`super`/`crate` glob needs no other indexed file to
-  declare the name; and `krate::Name { .. }` is spelled only when the root
+  name it in code (a declaration or an import); and `krate::Name { .. }` is spelled only when the root
   names the owner's type. A same-named type elsewhere in
   the workspace that the test does not bind does not withdraw the credit. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by

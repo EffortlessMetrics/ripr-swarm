@@ -4599,7 +4599,8 @@ fn test_file_declares_owner_type_namesake(
 /// - A glob must be `super::*` or `crate::<owner module>::*` in the owner's
 ///   file, or `krate::*` elsewhere when the library root binds no other type
 ///   of the name. Another glob rooted at `self`/`super`/`crate` is admitted
-///   only when no indexed file but the owner's declares the name; any other
+///   only when no indexed file but the owner's and the test's names it in
+///   code (a declaration or an import such as `pub use dep::Name;`); any other
 ///   glob (`use foreign::*;`, `use std::x::*;`) refuses.
 pub(in crate::analysis) fn test_binds_owner_type(
     owner: &FunctionSummary,
@@ -4652,12 +4653,20 @@ pub(in crate::analysis) fn test_binds_owner_type(
     let crate_module = joined("crate");
     let krate_module = krate.and_then(joined);
     // A glob rooted at `self`/`super`/`crate` may reach any module of its
-    // crate: it is admitted only when no indexed file other than the owner's
-    // declares, aliases or renames the name.
+    // crate, which may declare or import (`pub use dep::Name;`) its own type
+    // of the name: it is admitted only when no indexed file other than the
+    // owner's and the test's mentions the name in code at all, and the
+    // test's own file is scanned item by item below.
     let elsewhere_free = || {
         index.files().iter().all(|(file, facts)| {
             file == &owner.file
-                || super::owner_pin::source_type_declaration_count(&facts.source, impl_type) == 0
+                || file == &test.file
+                || !facts.source.contains(impl_type)
+                || super::owner_pin::whole_word_offsets(
+                    &crate::analysis::extract::mask_comments_and_strings(&facts.source),
+                    impl_type,
+                )
+                .is_empty()
         })
     };
     super::reveal::flattened_use_paths(&test_facts.source)
