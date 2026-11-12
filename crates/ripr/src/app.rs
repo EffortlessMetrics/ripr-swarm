@@ -20,7 +20,6 @@ pub(crate) mod kani_import;
 mod navigation;
 pub mod pr_evidence;
 mod progress;
-pub use impacted_evidence::run_impacted_evidence_at;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -352,6 +351,14 @@ pub struct CheckOutput {
     /// does not link Python tests to Rust changes. Never serialized; no
     /// verdict, class or gate reads it.
     pub(crate) unlinked_python_tests: Option<crate::analysis::UnlinkedPythonTests>,
+    /// Findings withheld because their changed owner opted out (#13819):
+    /// `#[mutants::skip]` on the owner function, directly or through
+    /// `cfg_attr`. Like suppressed findings, they stay in `findings` (marked
+    /// by renderers) while the per-class `summary` buckets count only
+    /// findings that are neither suppressed nor withheld. A finding already
+    /// suppressed by `--suppression-policy` is not listed again. Empty when
+    /// no owner opted out.
+    pub(crate) owner_opt_outs: Vec<crate::analysis::owner_opt_out::OwnerOptOut>,
     /// Suppression-policy application outcome (#1441). `Some` only when the
     /// caller passed `--suppression-policy`; findings named here stay in
     /// `findings` (visible, marked suppressed by renderers) while the
@@ -370,6 +377,11 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// Producer-owned Rust file-fact cache stats for this check run (#4975).
+    /// `None` when the Rust index path did not observe cache work (repo-scope
+    /// stub output, or no Rust analysis). Verbose JSON and `-v` stderr project
+    /// this; default JSON omits it.
+    pub(crate) file_fact_cache: Option<crate::analysis::seam_cache::FileFactCacheStats>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.
@@ -420,5 +432,26 @@ impl CheckOutput {
     /// ambiguous provenance. Unknown individual origins stay `None`.
     pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
         self.value_origins.files(finding)
+    }
+
+    /// Ids of every finding withheld from actionable output: those an
+    /// explicit `--suppression-policy` suppressed (#1441) and those whose
+    /// changed owner opted out (#13819). The one set every findings-based
+    /// renderer filters on, so the two sources cannot drift apart.
+    pub(crate) fn withheld_finding_ids(&self) -> std::collections::BTreeSet<&str> {
+        self.suppression
+            .iter()
+            .flat_map(|outcome| {
+                outcome
+                    .suppressed
+                    .iter()
+                    .map(|entry| entry.finding_id.as_str())
+            })
+            .chain(
+                self.owner_opt_outs
+                    .iter()
+                    .map(|opt_out| opt_out.finding_id.as_str()),
+            )
+            .collect()
     }
 }

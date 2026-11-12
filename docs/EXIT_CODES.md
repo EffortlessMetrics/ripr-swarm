@@ -13,7 +13,9 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
-after writing its report. Do not build a CI gate on `check`'s exit code; read
+after writing its report. `ripr gate check --base REV` runs `review-comments`
+and then the same evaluation, with the same exit codes. If `review-comments`
+cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -70,8 +72,13 @@ reached the caller.
 ## When you see exit code 2
 
 - **Analysis error**: the diff could not be read (a missing or unreadable
-  `--diff` path, or a directory), the diff exceeded the hard
-  `RIPR_MAX_DIFF_*` guards (`diff_scope_oversized` with no analysis run), the
+  `--diff` path, or a directory), the diff exceeded a hard language-neutral
+  guard (the parse guards such as `RIPR_MAX_DIFF_CHANGED_LINES`, or the
+  index guard `RIPR_MAX_DIFF_INDEX_FILES`: `diff_scope_oversized` with no
+  analysis run), no changed file fits its language's changed-line limit
+  (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `_PYTHON_LINES` or
+  `_TYPESCRIPT_LINES`; when any file fits, the run degrades into a partial
+  scope that exits `0`, #13641), the
   base ref could not be resolved, or the workspace root could not be
   determined. A read diff whose typed outcome is `unsupported_input`
   (for example malformed input or a truncated declared hunk) exits `2`
@@ -86,8 +93,10 @@ reached the caller.
   drill-in commands rather than pointing to that unwritten artifact.
   A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
-  over the smaller partial budget (its limitation is also named
-  `diff_scope_oversized`), a changed Rust file the parser refused and read
+  over the partial budget or over a per-language changed-line limit while
+  some file still fits (a `limited_partial_scope` run; its limitation is
+  named `diff_scope_oversized`, and files over their own limit are listed in
+  `over_limit_files`), a changed Rust file the parser refused and read
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
@@ -162,8 +171,9 @@ reached the caller.
 
 ## When you see exit code 3
 
-- **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
-  the PR; the full report was still written to `--out`.
+- **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
+  successfully and blocked the PR; the full report was still written to
+  `--out`.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A

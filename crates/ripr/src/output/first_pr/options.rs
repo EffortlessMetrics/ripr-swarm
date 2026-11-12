@@ -92,9 +92,14 @@ impl Default for FirstPrOptions {
 /// unknown-argument suggestions, so accepted flags have to appear as
 /// option-list lines, not only inside the usage brackets.
 pub(crate) const FIRST_PR_HELP: &str = "\
-Create the start-here packet for one PR from existing RIPR artifacts.
-By default first-pr runs no analysis: it prints the next command for a missing
-artifact. Pass --run-chain to have it run the missing-artifact chain itself.
+Summarize what to fix in one PR from existing ripr reports.
+
+Answers \"what should I do first on this PR?\" first-pr reads reports that
+earlier ripr commands wrote (check output, the gap list, review comments,
+receipts) and writes one start-here page (the start-here packet:
+start-here.md and start-here.json), naming a single next step. A gap is
+changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
+it prints the command that creates it. Pass --run-chain to run those commands.
 
 Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
 
@@ -104,40 +109,42 @@ Options:
                              `ripr check`: origin/HEAD, then origin/main,
                              origin/master, main, and master.
   --head <rev>               PR head revision. Defaults to HEAD.
-  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
+  --check-output <path>      Existing `ripr check --json` output to build the gap list from.
                              Without --run-chain, first-pr never runs analysis itself.
-  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --gap-ledger <path>        Gap list (gap-decision ledger) JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
   --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
-  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
+  --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
-  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
+  --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
-  --check                    Verify the existing start-here packet is up to date.
-  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
-                             report (a `ripr check` run on a Python or TypeScript root without a
-                             Cargo manifest), the gap ledger, then the review cards, each only when missing
-                             and each exactly the command first-pr prints, with the resolved
-                             --base and --head. This runs analysis (cost scales with the repository),
-                             writes the missing artifacts (by default under target/ripr/) and
-                             uses no network. The first failing step stops the chain with exit 2 and
-                             no start-here packet is written from partial artifacts. Cannot be
-                             combined with --check or --check-output.
+  --check                    Verify the existing start-here page is up to date; write nothing.
+  --run-chain                Run the commands for missing reports first, each only when its
+                             report is missing and each exactly the command first-pr prints,
+                             with the resolved --base and --head: the repo-exposure report (a
+                             `ripr check` run on a Python or TypeScript root without a Cargo
+                             manifest), the gap list, then the review cards. This runs analysis
+                             (cost scales with the repository), writes the missing reports (by
+                             default under target/ripr/) and uses no network. The first failing
+                             step stops with exit 2 and no start-here page is written from
+                             partial reports. Cannot be combined with --check or --check-output.
 
 Exit status:
-  0  the start-here packet was written, or --check found a current, unblocked packet
-  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
-     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
-  Write mode exits 0 after composing a packet, including a recovery packet; read its
+  0  the start-here page was written, or --check found a current, unblocked page
+  2  usage error, unresolvable input, or --check found a missing, stale or malformed page,
+     or a current page that records a blocked state (wrong root, missing or malformed reports)
+  Write mode exits 0 after composing a page, including a recovery page; read its
   State line (or the JSON `selected.output_state`), or run --check, to gate on
-  the packet state.
+  the page state.
 
 Start-here language:
   - start here: open target/ripr/reports/start-here.md first when it exists
-  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
-  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
-  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
-  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
+  - safe next action: fix one named gap, regenerate a missing report, or stop because nothing needs doing
+  - missing artifact / stale evidence / wrong root / malformed artifact: a report is absent, out of date,
+    from another directory or unreadable; first-pr stops before suggesting any fix
+  - no actionable gap: nothing to fix was found; advisory, not a promise that the tests catch every bug
+  - preview-limited evidence: from a syntax-only preview analysis; advisory, with its limits stated before any fix
   - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
-  - verify command / receipt command / receipt path: static movement proof rail
+  - verify command / receipt command / receipt path: the commands that recheck a fix and record its
+    before/after result, and where that record is written
 ";

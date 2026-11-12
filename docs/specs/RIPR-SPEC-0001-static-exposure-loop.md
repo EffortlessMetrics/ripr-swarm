@@ -18,7 +18,11 @@ legend cost, independent of encounter order. The selected set shares the field
 overhead once; marginal byte savings alone do not admit an entry. The 24-byte
 threshold is UTF-8 length, which may differ from schema character length. Singletons
 stay inline. Its marker is always emitted; token cost and overall byte savings
-are not guaranteed. The precise fields, alias behavior, and decoding rules are
+are not guaranteed. A finding-level `observed_values` or `missing_discriminators`
+array is omitted only when it is non-empty and equal to the same array in that
+finding's `activation`, and each omitted alias name is listed once in
+`dropped_aliases` so the value is restored from `activation`; unequal, empty or
+activation-less copies stay verbatim. `canonical_gap_id` is likewise omitted when it equals `canonical_gap.id`, and `evidence_stages` when it is exactly the basis-free five rows `ripr` yields; both are listed in `dropped_aliases`. The precise fields, alias behavior, and decoding rules are
 specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
 
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,
@@ -147,6 +151,18 @@ initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
 reads as a declaration; so does `A + B` between two bound names and a
 parenthesised single path `(a)`.
+A parameter line of a `fn` written in a macro call body (`feature! { fn f(
+a: u32, ) {} }`) is a declaration under the same type-syntax allowlist
+(#13983). Its `( .. )` tree must directly follow `fn name` or `fn name<..>`;
+the generic list must balance, may hold `Item = u8` and `Fn() -> u8` bounds,
+and fails closed on `;` or `=>`. The parameter list must sit in an item
+position of the macro call: the call's own token tree, or below it only
+`{ .. }` trees that are each an `impl`, `trait` or `mod` body or the body of a
+nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
+(`fn(..)`), a call argument (`make(a: 1,)`), a macro arm, a struct literal and
+a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
+line (`&self,`) has no type and is not classified by this rule, and a fn nested
+inside another fn body in a macro keeps `field_construction`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -393,6 +409,19 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+Every readable direct free-owner call contributes its own input row, including
+repeated or nested calls on one source line (#13373). The source line shared by
+call facts is a location, not a limit of one input. A nested call's input is
+separate from its result: reading the inner literal does not evaluate the outer
+call argument. Same-named methods, sibling owners, shadowed names, strings and
+comments cannot supply the changed free owner's input; unresolved identity keeps
+the existing conservative reading.
+On a multi-call free-owner line, boundary pairing selects the call occurrence
+whose return is actually observed. It does not borrow an inner call from a call
+argument, arithmetic, a message or an unsupported wrapper/operator. A readable
+inner input remains evidence; a missing observer association is not a missing
+boundary input. An independently observed direct boundary call retains credit.
+
 An edit that adds or removes a `&&` or `||` operand (`other > 0 && 100 <=
 points` to `100 < points`, in an `if` or a match guard) changes more than the
 surviving comparison. An input at that comparison's boundary says nothing
@@ -624,6 +653,7 @@ Fixture coverage:
 - `unresolved_boundary_input_is_unknown_not_weak`
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
+- `given_field_assignment_to_named_constant_then_reversed_predicate_credits_boundary`
 - `constant_offset_operands_name_the_constant_and_signed_offset`
 - `offset_integer_values_add_only_to_plain_decimal_constants`
 - `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`

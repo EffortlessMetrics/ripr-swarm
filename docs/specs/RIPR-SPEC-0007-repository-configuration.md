@@ -127,9 +127,10 @@ command `ripr`, args `mcp`, `--stdio`, and
 `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. The slim listing omits only each tool's
 `outputSchema` (docs/interop/mcp.md), cutting the `tools/list` every agent
 session pays at start; results still carry `structuredContent`. An existing
-`ripr` entry is left alone without `--force`, doctor ignores `env`, and a host
-that validates results against `outputSchema` deletes the `env` line to get the
-full listing. Acceptance: the init unit tests compare the written entry with
+`ripr` entry is left alone without `--force`, and doctor ignores `env`. Slim is
+the server default since #13803; the explicit value keeps older ripr builds
+slim, and a host that validates results against `outputSchema` sets it to
+`full`. Acceptance: the init unit tests compare the written entry with
 this value for both files.
 
 ### Suppression manifest declarations
@@ -328,6 +329,21 @@ source-free summary keeps the hint only when it names a known key.
 Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,
 then their keys, types, enums and integer floors equal what the parser accepts.
+```
+
+### Rejected closed-set values name the nearest accepted value (#14176)
+
+```text
+Given ripr.toml sets analysis.mode, an [oracles] strength, a [severity.*]
+severity or a [languages] enabled entry to a value that is an accepted
+spelling in another case, padded with whitespace, or one small edit away,
+such as `mode = "Draft"` or `enabled = ["Rust"]`,
+when ripr loads the config,
+then the load still fails (values stay case-sensitive) and the error ends
+with `(did you mean `draft`?)`, built only from that key's fixed accepted
+values; an unrelated value such as `mode = "slow"` gets no suggestion, a
+[severity.findings] value is never pointed at `off`, and the typed diagnostic
+keeps the same span, rejected value and accepted-value list.
 ```
 
 ### Per-crate overrides (#2671)
@@ -601,6 +617,9 @@ not the symlink spelling.
 
 - `crates/ripr/src/config/schema_parity_tests.rs` (#13682) pins nearest-key
   suggestions, the source-free summary allowlist, and schema/parser/docs parity.
+- `crates/ripr/src/config/value_hint_tests.rs` (#14176) pins nearest-value
+  suggestions for closed-set values, the unrelated-value and oversized-value
+  negatives, and the unchanged typed diagnostic.
 
 - `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
 - `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`

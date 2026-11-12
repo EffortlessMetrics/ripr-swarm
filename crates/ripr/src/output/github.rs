@@ -9,7 +9,7 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
 use crate::output::workflow_escape::{
     escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
-    unplaced_location_prefix,
+    stable_path_has_non_utf8_marker, unplaced_location_prefix, unplaced_non_utf8_location_prefix,
 };
 
 /// Render findings as GitHub Actions workflow command annotations.
@@ -38,11 +38,23 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld the same way and counted under its own reason.
+    let withheld_ids: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
     let mut suppressed = 0usize;
+    let mut withheld = 0usize;
     let mut not_current = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
+            continue;
+        }
+        if withheld_ids.contains(finding.id.as_str()) {
+            withheld += 1;
             continue;
         }
         // Candidate-actionable eligibility (#3281): annotations are current
@@ -176,7 +188,22 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         // `file` arrives via `repository_display_path` (stable text, `%`
         // pre-encoded); `title` is raw text.
         let display_path = repository_display_path(&output.root, &finding.probe.location.file);
-        let (placement, message) = if path_is_unplaceable(&display_path) {
+        let (placement, message) = if stable_path_has_non_utf8_marker(&display_path) {
+            // `%XX` is not decoded by the runner, so `file=` would name a
+            // different file (#13961). Omit placement; name the path.
+            (
+                String::new(),
+                format!(
+                    "{}{message}",
+                    unplaced_non_utf8_location_prefix(
+                        // Keep `%25` (a literal `%`) distinct from a `%XX`
+                        // byte marker; `escape_data` encodes each `%` once.
+                        &display_path,
+                        &finding.probe.location.line.to_string()
+                    )
+                ),
+            )
+        } else if path_is_unplaceable(&display_path) {
             // A property cannot carry a control or bidi character, so omit
             // `file=`/`line=` and name the escaped location in the message.
             (
@@ -281,10 +308,11 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         *per_level.entry("warning").or_default() += 1;
         out.push_str(warning);
     }
-    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
+    if !output.findings.is_empty() && (suppressed > 0 || withheld > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
             suppressed,
+            withheld,
             not_current,
         ));
     }
@@ -588,10 +616,11 @@ fn display_limit_notice(
 fn unannotated_denominator_notice(
     output: &CheckOutput,
     suppressed: usize,
+    withheld: usize,
     not_current: usize,
 ) -> String {
     let total = output.findings.len();
-    let annotated = total - suppressed - not_current;
+    let annotated = total - suppressed - withheld - not_current;
     let mut parts = Vec::new();
     if suppressed > 0 {
         let policy = output
@@ -600,6 +629,16 @@ fn unannotated_denominator_notice(
             .map(|outcome| outcome.policy_path.as_str())
             .unwrap_or_default();
         parts.push(format!("{suppressed} suppressed by policy {policy}"));
+    }
+    if withheld > 0 {
+        let reason = output
+            .owner_opt_outs
+            .first()
+            .map(|opt_out| opt_out.reason.as_str())
+            .unwrap_or_default();
+        parts.push(format!(
+            "{withheld} withheld by owner opt-out ({reason}: the changed function carries #[mutants::skip])"
+        ));
     }
     if not_current > 0 {
         parts.push(format!(
@@ -754,9 +793,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1249,6 +1291,58 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn render_omits_file_placement_for_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"src/a_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("file=") && !rendered.contains("line=13"),
+            "a non-UTF-8 path must not claim a placement: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Location (file name is not valid UTF-8, so not placed): src/a_%25FF.rs:13. "
+            ),
+            "the %XX location must lead the message: {rendered}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_literal_percent_distinct_from_non_utf8_marker() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"a%FF_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        // Wire `%2525FF_%25FF` decodes to `%25FF_%FF`: literal `%` stays `%25`.
+        assert!(
+            rendered.contains("not placed): a%2525FF_%25FF.rs:13. "),
+            "literal percent and byte marker must differ: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_keeps_placement_for_literal_percent_hex_paths() {
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/a%FF.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("file=src/a%25FF.rs,line=13"),
+            "a literal %FF name stays placeable: {rendered}"
+        );
+    }
+
     #[test]
     fn render_omits_file_placement_for_control_character_paths() {
         // #6309: GitHub decodes only %25 %0D %0A %3A %2C in property values,
@@ -1399,9 +1493,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1479,9 +1576,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1732,6 +1832,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&output);
@@ -1758,6 +1859,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&typescript);
@@ -1785,6 +1887,7 @@ mod tests {
             sample_paths: vec!["src/a.js".to_string()],
             javascript_file_count: 1,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&javascript);
@@ -2241,9 +2344,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2604,9 +2710,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 

@@ -37,6 +37,8 @@ fn exact_classifier_accepts_supported_test_defining_attributes() {
         "#[test]",
         "#[ tokio :: test (flavor = \"multi_thread\") ]",
         "#[async_std::test]",
+        "#[actix_rt::test]",
+        "#[::actix_web::test]",
         "#[rstest]",
         "#[rstest::rstest]",
         "#[quickcheck]",
@@ -65,6 +67,9 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
     let unsupported = [
         "#[tokio::test_helper]",
         "#[async_std::test_config]",
+        "#[actix_rt::test_helper]",
+        "#[actix_web::rt::test]",
+        "#[actix::test]",
         "#[rstest_helper]",
         "#[quickcheck_config]",
         "#[wasm_bindgen_test_helper]",
@@ -1957,4 +1962,86 @@ fn proof_harness_attribute_paths_are_exact_and_never_tests() {
             .all(|path| !PROOF_HARNESS_ATTRIBUTE_PATHS.contains(path)),
         "proof-harness paths must stay out of the executable-test list"
     );
+}
+
+#[test]
+fn mutants_skip_attribute_path_is_exact_and_admits_cfg_attr() {
+    for attribute in [
+        "#[mutants::skip]",
+        "#[::mutants::skip]",
+        "#[mutants :: skip]",
+        "#[cfg_attr(test, mutants::skip)]",
+        "#[cfg_attr(test, ::mutants::skip)]",
+        "#[cfg_attr(test, inline, :: mutants :: skip)]",
+        "#[cfg_attr(not(test), mutants::skip)]",
+        "#[cfg_attr(feature = \"slow\", mutants::skip)]",
+        "#[cfg_attr(all(test, feature = \"a,b\"), inline, mutants::skip)]",
+    ] {
+        assert!(
+            attributes_define_mutants_skip([attribute]),
+            "should be a mutants skip: {attribute}"
+        );
+        assert!(
+            !attributes_define_test([attribute]),
+            "a mutants skip is never a test: {attribute}"
+        );
+    }
+    for attribute in [
+        "#[inline]",
+        "#[my::mutants::skip]",
+        "#[cfg_attr(test, my::mutants::skip)]",
+        "#[cfg_attr(test, ::my::mutants::skip)]",
+        "#[cfg_attr(test, ::::mutants::skip)]",
+        "#[skip]",
+        "#[mutants::skipped]",
+        "#[mutants::exclude]",
+        "#[cfg_attr(test, inline)]",
+        "#[cfg_attr(mutants::skip, inline)]",
+        "#[cfg_attr(feature = \"x, mutants::skip\", inline)]",
+        "#[doc = \"mutants::skip\"]",
+        "#[cfg(test)]",
+        "#[test]",
+    ] {
+        assert!(
+            !attributes_define_mutants_skip([attribute]),
+            "should not be a mutants skip: {attribute}"
+        );
+    }
+}
+
+/// Devin on #13874: string contents are opaque however the literal is
+/// spelled. A raw, byte or escaped-quote literal that merely mentions
+/// `mutants::skip` must not withhold the owner's findings, and an attribute
+/// that does not parse cleanly is never a skip (fail closed).
+#[test]
+fn mutants_skip_ignores_paths_spelled_inside_any_string_literal() {
+    for attribute in [
+        r##"#[cfg_attr(test, doc = r#"note ", mutants::skip, " text"#)]"##,
+        r###"#[cfg_attr(test, doc = r##"a "#, mutants::skip, "# b"##)]"###,
+        r##"#[cfg_attr(test, doc = r"x \", mutants::skip, \" y")]"##,
+        r##"#[cfg_attr(test, doc = br#"x ", mutants::skip, " y"#)]"##,
+        r#"#[cfg_attr(test, doc = b"x \", mutants::skip, \" y")]"#,
+        r#"#[cfg_attr(test, doc = "x \", mutants::skip, \" y")]"#,
+        // Unterminated raw literal: unparseable, so never a skip.
+        r##"#[cfg_attr(test, doc = r#"x", mutants::skip)]"##,
+        // More than one attribute in the text.
+        "#[cfg_attr(test, inline)] #[cfg_attr(test, mutants::skip)]",
+        // Introduced as a key, not as an attribute path.
+        "#[cfg_attr(test, mutants::skip = \"yes\")]",
+    ] {
+        assert!(
+            !attributes_define_mutants_skip([attribute]),
+            "should not be a mutants skip: {attribute}"
+        );
+    }
+    for attribute in [
+        r##"#[cfg_attr(test, doc = r#"note "quoted""#, mutants::skip)]"##,
+        r#"#[cfg_attr(test, doc = br"bytes", mutants::skip)]"#,
+        r#"#[cfg_attr(test, doc = "esc \" quote", mutants::skip)]"#,
+    ] {
+        assert!(
+            attributes_define_mutants_skip([attribute]),
+            "should be a mutants skip: {attribute}"
+        );
+    }
 }

@@ -34,6 +34,7 @@ Linked issues:
   regex)
 - #9181 (CommonJS function export reached through `require()`)
 - #9182 (`var`/`let` CommonJS runner bindings)
+- #14088 (class imported by a named `require()`; re-declared `var` import)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1016,9 +1017,35 @@ object holds the top-level function (or `const` arrow function; a `let` or
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test file must use `local` for nothing but calls of
-that one member, anywhere in the file (setup hooks and file-level code
-included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+every owner unmarked, and so does a top-level name declared more than once.
+A sibling member called as `local.other()` could replace the owner before
+the asserted call (#13694 review), so each owner records the siblings whose
+declaration is unsafe: it contains `this`, `import(...)`, `import.meta`, a
+reference to `require`, `module`, `exports`, `globalThis`, `global`,
+`window`, `self`, `eval`, `Function`, `arguments`, `define`, `process`,
+`__filename` or `__dirname`, a reference
+to any imported binding (relative or package), or a reference to another
+unsafe top-level name (fixpoint; references match by name, so shadowing only
+over-approximates). A member that is not a top-level declaration of the
+module (an import, whose body is not scanned) and a name assigned anywhere in
+the module are unsafe as well. A module with an `import x = require(...)`, a
+namespace, or another top-level statement that escapes or hoists a `var`
+marks no owner; bodiless overload signatures are not second declarations.
+A test file that calls any unsafe sibling of the owner
+through `local` gets no rule-5 relation for that owner; a test that never
+calls one keeps it. When the owner has any unsafe sibling, a second binding of
+the owner's module in the test file (another default local, a named or
+namespace import, `import { default as u2 }`, a `require()`, or a dynamic `import()`/`require()`/`requireActual()`/`importActual()` of the owner's module string anywhere in the test file, hooks and top level included; a non-literal or `${}` template argument is not detected, and the literal prefix of a concatenated argument is treated as a load) also withholds
+the relation, since it could reach the sibling outside `local.member(` calls
+(`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
+fail-closed rule, not a check of which names the second binding uses (#13750).
+Known limits: a second binding whose source the import resolver cannot match
+to the owner module, and a sibling that reaches the module only through a
+path alias such as `@/utils` (only sources starting with `.` count as possibly
+self-reachable), are not covered. The test file must use `local` for nothing but direct
+calls `local.member(` (any number of distinct members, each credited only to
+the owner it names; amended #6653), anywhere in the file (setup hooks and
+file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
@@ -1535,6 +1562,24 @@ sits. A
 `let` or `var` binding that the file assigns to again
 (`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
 records no import. A `const` binding cannot be reassigned and is unchanged.
+
+A `var` binding that another file-level declaration re-declares records no
+import either (#14088): after `var { f } = require("./lib")`, a second `var f`,
+a `function f() {}` or a function a sloppy block hoists leaves `f` holding
+whichever value was written last, which the scan does not order. Two
+`require()` declarations of one name are both still recorded; a class relation
+that needs one module refuses a local two records bind differently.
+
+A class imported by a named `require()` is the owner's class for rule 5's
+receivers (#14088). `const { Cart } = require("./cart")` (also the renamed,
+member and `let`/`var` forms above) declares a file-level binding named like
+the import's own local; that binding is the import, not a rebind, so
+`new Cart()` constructs the owner's class and a method called on the receiver,
+or the constructor itself, relates as it does for `import { Cart }`. A binding
+of the name in a `describe` body, a hook, a parameter or the test body still
+shadows it, a file-level class of the same name without the import stays
+unrelated, and a whole-module namespace (`const shop = require("./cart")`,
+`new shop.Cart()`) is not credited, because its members can be replaced.
 
 A test registration picked off a whole-module `require()` namespace is a named
 runner import too (#10477): `const runner = require("node:test"); const test =

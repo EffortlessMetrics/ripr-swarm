@@ -437,8 +437,10 @@ or `libraries/*` has one. JavaScript-led repositories can also qualify through a
 root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
-Work from a TypeScript repository on a branch with a change to inspect, with
-`/target/ripr/` in `.gitignore` as above, and run:
+Work from a TypeScript repository on a branch with a change to inspect.
+First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
+`agent repair` write reports under `target/ripr`, and ignoring it keeps
+`git add -A` from committing them. Then run:
 
 ```bash
 ripr check
@@ -510,10 +512,13 @@ ripr init --ci github
 ```
 
 Review the generated files before committing them: `init` writes a `ripr.toml`
-beside the workflow. That file pins `[languages] enabled = ["rust"]`, which
-turns off the Python and TypeScript previews for the repository. `init` warns
-when the root looks like a Python or TypeScript project; add that language to
-`enabled` or delete the `[languages]` section. The workflow
+beside the workflow. Its `[languages] enabled` list starts at `["rust"]` and
+adds `python` or `typescript` when `init` detects that project (for example
+`enabled = ["rust", "python"]`). Once the file exists that list is
+authoritative: a preview language it does not name is no longer auto-enabled.
+Add a language you start using later. Marker-based detection applies only
+when no `ripr.toml` exists: a file without an `enabled` list analyzes Rust
+alone. The workflow
 installs the ripr version that generated it. An unreleased development build
 instead pins the latest release and says so in a note; after
 upgrading ripr, refresh with `ripr init --ci github --force`. Preview the

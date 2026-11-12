@@ -264,13 +264,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         // Stdout stays empty on every refusal: the release negative corpus
         // (RIPR-SPEC-0134) treats a rendered stdout on rejection as a breach,
         // because the verify command's stdout is the verify artifact.
-        AgentCommand::Verify(options) => run_agent_verify(options).map_err(|error| {
-            if agent_verify_error_is_typed_refusal(&error) {
-                CommandError::Decision(error)
-            } else {
-                CommandError::Failure(error)
-            }
-        }),
+        AgentCommand::Verify(options) => {
+            run_agent_verify(options).map_err(AgentVerifyError::into_command_error)
+        }
         // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
         AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
@@ -1130,13 +1126,109 @@ fn render_agent_packet_for_seam_with_report(
     Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
 }
 
-fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
+fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), AgentVerifyError> {
     let rendered = render_agent_verify(&options)?;
     print!("{rendered}");
     Ok(())
 }
 
-fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
+/// Deliberate named refusals from `render_agent_verify`; exit mapping reads
+/// this type, not message prefixes (#12102). The no-movement refusal is
+/// classified from the producer's typed `AgentVerifyMovementError` (#14021),
+/// so a reworded rendering can no longer flip its class; drift and gap-binding
+/// stay prose-keyed (#12102) until their producers carry types too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AgentVerifyRefusalKind {
+    InputDrift,
+    NoMovement,
+    GapBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AgentVerifyError {
+    Operational(String),
+    Refusal {
+        kind: AgentVerifyRefusalKind,
+        message: String,
+    },
+}
+
+impl AgentVerifyError {
+    pub(super) fn message(&self) -> &str {
+        match self {
+            Self::Operational(message) | Self::Refusal { message, .. } => message,
+        }
+    }
+
+    pub(super) fn into_command_error(self) -> CommandError {
+        match self {
+            Self::Operational(message) => CommandError::Failure(message),
+            Self::Refusal { message, .. } => CommandError::Decision(message),
+        }
+    }
+}
+
+impl std::fmt::Display for AgentVerifyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl From<String> for AgentVerifyError {
+    fn from(message: String) -> Self {
+        Self::Operational(message)
+    }
+}
+
+impl From<AgentVerifyError> for String {
+    fn from(error: AgentVerifyError) -> Self {
+        error.message().to_string()
+    }
+}
+
+/// Exact `render_agent_verify` error for drifted analysis inputs.
+const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
+    "agent verify artifacts are incomparable: analysis input identities differ";
+
+pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyError {
+    if error == "analysis input identities differ" {
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            message: AGENT_VERIFY_INPUT_DRIFT_ERROR.to_string(),
+        }
+    } else {
+        AgentVerifyError::Operational(format!("agent verify artifacts are incomparable: {error}"))
+    }
+}
+
+/// #14021: the no-movement refusal classifies from the producer's typed
+/// `AgentVerifyMovementError`, not a substring of the rendered message. The
+/// producer carries exactly one variant, so every movement error it reports
+/// is the named refusal; the rendered text stays byte-identical to the prose
+/// the old `format!` added.
+pub(super) fn classify_verify_movement_error(
+    error: crate::agent::artifact::AgentVerifyMovementError,
+) -> AgentVerifyError {
+    AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: format!("agent verify {error}"),
+    }
+}
+
+pub(super) fn classify_gap_binding_error(error: String) -> AgentVerifyError {
+    if error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX) {
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            message: error,
+        }
+    } else {
+        AgentVerifyError::Operational(error)
+    }
+}
+
+pub(super) fn render_agent_verify(
+    options: &AgentVerifyOptions,
+) -> Result<String, AgentVerifyError> {
     let before_path =
         validate_agent_verify_snapshot_path(&options.root, &options.before, "--before")?;
     let after_path = validate_agent_verify_snapshot_path(&options.root, &options.after, "--after")?;
@@ -1147,11 +1239,15 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let after_identity =
         crate::agent::artifact::validate_verify_snapshot(&options.root, &after_json, "after")?;
     crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
-        .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
+        .map_err(classify_incomparable_pair_error)?;
     crate::agent::artifact::validate_pair_lineage(&options.root, &before_identity, &after_identity)
-        .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
+        .map_err(|error| {
+            AgentVerifyError::Operational(format!(
+                "agent verify artifacts are incomparable: {error}"
+            ))
+        })?;
     crate::agent::artifact::validate_verify_movement(&before_identity, &after_identity)
-        .map_err(|error| format!("agent verify {error}"))?;
+        .map_err(classify_verify_movement_error)?;
     // `--gap-id` adds a positive closure requirement on top of the pair
     // checks: the named gap must be open before and `exposed` after.
     let bound_gap = options
@@ -1164,6 +1260,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
                 &after_json,
                 gap_id,
             )
+            .map_err(classify_gap_binding_error)
         })
         .transpose()?;
     let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
@@ -1205,25 +1302,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &binding,
         bound_gap.as_ref(),
     )
-}
-
-/// Exact `render_agent_verify` error for drifted analysis inputs.
-const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
-    "agent verify artifacts are incomparable: analysis input identities differ";
-
-/// Prefix of the `render_agent_verify` error for a no-movement refusal.
-const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
-    "agent verify no repository movement between before and after artifacts";
-
-/// True when a `render_agent_verify` error is a deliberate named refusal
-/// (input-identity drift or a no-movement verify refusal) rather than an
-/// operational failure. Matched on the whole message or its leading clause,
-/// never a substring: path-bearing operational errors echo user-supplied
-/// paths, and a path must not turn an unreadable input into a refusal.
-fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error == AGENT_VERIFY_INPUT_DRIFT_ERROR
-        || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
-        || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
+    .map_err(AgentVerifyError::from)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -1275,9 +1354,10 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
             Some(&packet_path),
             None,
             None,
-        );
+        )
+        .map_err(|error| error.message());
     }
-    run_agent_receipt_for_attempt(options, None, None, None, None)
+    run_agent_receipt_for_attempt(options, None, None, None, None).map_err(|error| error.message())
 }
 
 fn run_agent_receipt_for_attempt(
@@ -1289,7 +1369,7 @@ fn run_agent_receipt_for_attempt(
         &crate::app::repair_attempt::RepairAttemptAfter,
         &mut crate::app::repair_attempt::FocusedEvaluationCustody,
     )>,
-) -> Result<(), String> {
+) -> Result<(), crate::app::repair_attempt::ReceiptBindingError> {
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
@@ -1319,9 +1399,11 @@ fn run_agent_receipt_for_attempt(
     if gap_subject
         && output::agent_receipt::bound_gap_for_seam(&validated.verify, &options.seam_id).is_none()
     {
-        return Err(format!(
-            "agent receipt for gap `{}` requires an agent verify document bound to that gap (`ripr agent verify --gap-id`) that records it closed; an unbound pair, an open gap or an absent gap is not closure evidence",
-            options.seam_id
+        return Err(crate::app::repair_attempt::ReceiptBindingError::Other(
+            format!(
+                "agent receipt for gap `{}` requires an agent verify document bound to that gap (`ripr agent verify --gap-id`) that records it closed; an unbound pair, an open gap or an absent gap is not closure evidence",
+                options.seam_id
+            ),
         ));
     }
     if let Some(attempt_id) = attempt_id {
@@ -1420,7 +1502,8 @@ fn run_agent_receipt_for_attempt(
     match options.out {
         Some(path) => {
             let path = resolve_agent_receipt_out_path(&options.root, &path)?;
-            super::write_text_file(&path, &rendered)
+            super::write_text_file(&path, &rendered)?;
+            Ok(())
         }
         None => {
             print!("{rendered}");
@@ -1732,6 +1815,7 @@ fn run_agent_repair_with_identity_ctx(
             error,
             &after_refusal_reason(error, &refusal.narration),
             refusal.terminal_finish.is_some(),
+            refusal.trusted_surface_receipt,
         )
     {
         eprintln!(
@@ -1808,11 +1892,15 @@ fn record_after_phase_refusal(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
-    error: &str,
+    _error: &str,
     reason: &str,
     observed_terminal_finish: bool,
+    trusted_surface_receipt: bool,
 ) -> Result<(), String> {
-    if error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL) {
+    // #12102: the record authority routes on the typed refusal class the
+    // receipt publication produced, not on the refusal tail appearing in the
+    // flattened message text; rewording the message cannot move the record.
+    if trusted_surface_receipt {
         crate::app::repair_attempt::record_repair_attempt_terminal_receipt_refusal_from(
             root, store, attempt_id, reason,
         )
@@ -1868,6 +1956,12 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set when the receipt publication refused on trusted-surface grounds
+    /// (#5262), from the typed [`crate::app::repair_attempt::ReceiptBindingError`]
+    /// class — never re-detected from the flattened error text (#12102). The
+    /// refusal record routes to the terminal receipt-refusal authority on
+    /// this flag.
+    trusted_surface_receipt: bool,
     /// Set when a before phase refused to start because the selected inline
     /// target is an uncommitted production file (#9033), before any
     /// workflow artifact or attempt existed.
@@ -3067,50 +3161,51 @@ fn run_agent_repair_phase(
             let rendered_verify = match render_agent_verify(&verify_options) {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    // Only deliberate named refusals are typed (exit 3):
-                    // drifted analysis inputs and a no-movement verify
-                    // refusal. Snapshot canonicalization, reads, artifact
-                    // validation, and rendering failures are operational
-                    // (exit 2) even though the attempt was already selected.
-                    if agent_verify_error_is_typed_refusal(&error) {
-                        if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
-                            for line in
-                                repair_after_input_drift_lines(&caller_root, store_ref, &attempt)
-                            {
-                                refusal.narrate(line);
+                    // Deliberate named refusals are typed (exit 3) from
+                    // [`AgentVerifyError`], not message-prefix matching (#12102).
+                    // The no-movement arm is producer-typed (#14021): the
+                    // class rides on `AgentVerifyMovementError`, so a reworded
+                    // rendering cannot reroute this narration.
+                    if let AgentVerifyError::Refusal { kind, message } = &error {
+                        match kind {
+                            AgentVerifyRefusalKind::InputDrift => {
+                                for line in repair_after_input_drift_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
-                        } else if error
-                            .starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
-                        {
-                            // The named gap did not close: it is absent, was
-                            // never open, or still reads open. Counts against
-                            // the same retry budget as a no-movement refusal.
-                            refusal.narrate(format!("{error}."));
-                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
-                            for line in repair_after_no_movement_lines(
-                                &caller_root,
-                                store_ref,
-                                &attempt,
-                                &cage_policy,
-                                prior_refusals,
-                            ) {
-                                refusal.narrate(line);
+                            AgentVerifyRefusalKind::GapBinding => {
+                                refusal.narrate(format!("{message}."));
+                                refusal.code = Some(no_movement_refusal_code(prior_refusals));
+                                for line in repair_after_no_movement_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                    &cage_policy,
+                                    prior_refusals,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
-                        } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
-                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
-                            for line in repair_after_no_movement_lines(
-                                &caller_root,
-                                store_ref,
-                                &attempt,
-                                &cage_policy,
-                                prior_refusals,
-                            ) {
-                                refusal.narrate(line);
+                            AgentVerifyRefusalKind::NoMovement => {
+                                refusal.code = Some(no_movement_refusal_code(prior_refusals));
+                                for line in repair_after_no_movement_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                    &cage_policy,
+                                    prior_refusals,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
                         }
                         refusal.typed = true;
                     }
-                    return Err(error);
+                    return Err(error.message().to_string());
                 }
             };
             refusal
@@ -3240,6 +3335,9 @@ fn run_agent_repair_phase(
                         cage_after.verdict.status
                     );
                 }
+                if let Some(line) = line_ending_only_note(&cage_after) {
+                    refusal.narrate(line);
+                }
                 for line in repair_after_cage_recovery_lines(
                     &caller_root,
                     store_ref,
@@ -3290,40 +3388,46 @@ fn run_agent_repair_phase(
                 // verify document closed (`bound_gap`); a cage that did not
                 // admit the edit is a terminal refusal with no closure
                 // reported, so no receipt is attempted for it.
-                let receipt_result = if gap_bound
-                    && cage_after.verdict.status
-                        != crate::edit_cage::EditCageVerdictStatus::Compliant
-                {
-                    Err(gap_bound_rejected_attempt_message(
-                        cage_after.attempt_id.as_str(),
-                        cage_after.verdict.status,
-                        &attempt.seam_id,
-                    ))
-                } else {
-                    run_agent_receipt_for_attempt(
-                        AgentReceiptOptions {
-                            root: root.clone(),
-                            root_explicit: true,
-                            verify_json: verify_json.clone(),
-                            seam_id: attempt.seam_id.clone(),
-                            attempt_id: None,
-                            test_changed,
-                            commands_run: Vec::new(),
-                            json: true,
-                            out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-                        },
-                        Some(cage_after.attempt_id.as_str()),
-                        Some(&packet_path),
-                        store_ref,
-                        evaluation_custody
-                            .as_mut()
-                            .map(|custody| (&cage_after, custody)),
-                    )
-                };
+                let receipt_result: Result<(), crate::app::repair_attempt::ReceiptBindingError> =
+                    if gap_bound
+                        && cage_after.verdict.status
+                            != crate::edit_cage::EditCageVerdictStatus::Compliant
+                    {
+                        Err(crate::app::repair_attempt::ReceiptBindingError::from(
+                            gap_bound_rejected_attempt_message(
+                                cage_after.attempt_id.as_str(),
+                                cage_after.verdict.status,
+                                &attempt.seam_id,
+                            ),
+                        ))
+                    } else {
+                        run_agent_receipt_for_attempt(
+                            AgentReceiptOptions {
+                                root: root.clone(),
+                                root_explicit: true,
+                                verify_json: verify_json.clone(),
+                                seam_id: attempt.seam_id.clone(),
+                                attempt_id: None,
+                                test_changed,
+                                commands_run: Vec::new(),
+                                json: true,
+                                out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                            },
+                            Some(cage_after.attempt_id.as_str()),
+                            Some(&packet_path),
+                            store_ref,
+                            evaluation_custody
+                                .as_mut()
+                                .map(|custody| (&cage_after, custody)),
+                        )
+                    };
 
                 if let Err(error) = &receipt_result
                     && cage_after.focused_result.is_some()
-                    && !error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
+                    && !matches!(
+                        error,
+                        crate::app::repair_attempt::ReceiptBindingError::TrustedSurfaceUntrusted { .. }
+                    )
                 {
                     return match crate::app::repair_attempt::restore_owned_focused_evaluation_from(
                         &root,
@@ -3555,19 +3659,26 @@ fn run_agent_repair_phase(
                 // the narration ride into the attempt record that
                 // `agent status` reports.
                 if let Err(error) = &receipt_result
-                    && error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
+                    && matches!(
+                        error,
+                        crate::app::repair_attempt::ReceiptBindingError::TrustedSurfaceUntrusted { .. }
+                    )
                 {
                     for line in repair_after_trusted_surface_recovery_lines(
                         &caller_root,
                         store_ref,
                         &attempt,
-                        error,
+                        &error.message(),
                     ) {
                         refusal.narrate(line);
                     }
+                    // The class, not the message text, marks this refusal
+                    // typed (#12102): rewording the narration cannot flip the
+                    // exit code an agent branches on.
                     refusal.typed = true;
+                    refusal.trusted_surface_receipt = true;
                 }
-                receipt_result?;
+                receipt_result.map_err(|error| error.message())?;
                 apply_record_result?;
 
                 if let Some(record) = &focused_run
@@ -3835,6 +3946,49 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
 /// Upper bound on cage violations the after-phase narration lists; the attempt
 /// manifest retains all of them.
 const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// Names the files the edit cage left out of the attempt because their only
+/// change was a git-invisible line-ending flip (#13833), so a file the user
+/// knows was rewritten is not silently missing from the verdict. Bounded like
+/// the violation list; the attempt manifest keeps every path.
+fn line_ending_only_note(after: &crate::app::repair_attempt::RepairAttemptAfter) -> Option<String> {
+    let paths = &after.line_ending_only_paths;
+    if paths.is_empty() {
+        return None;
+    }
+    let listed = paths
+        .iter()
+        .take(CAGE_RECOVERY_MAX_VIOLATIONS)
+        // A repository file name is untrusted text: escape control characters
+        // (a newline included) so a crafted name cannot forge another
+        // narration line.
+        .map(|path| {
+            let shown: String = path
+                .chars()
+                .flat_map(|ch| {
+                    if ch.is_control() {
+                        ch.escape_default().collect::<Vec<_>>()
+                    } else {
+                        vec![ch]
+                    }
+                })
+                .collect();
+            format!("`{shown}`")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if paths.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+        format!(
+            " (and {} more; see the attempt manifest)",
+            paths.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "not counted as edits: {listed}{more}; only the line endings changed, and Git normalizes these files (`core.autocrlf` or a `text` attribute), so `git status` does not show the change either."
+    ))
+}
 
 /// The receipt's `test_changed` for an after phase: the attempt's selected
 /// test file, named only when the edit cage measured it changing and found
@@ -4611,6 +4765,57 @@ pub(in crate::cli) fn before_phase_stdout(
         }
     }
     Ok(document)
+}
+
+/// Whether the human before-phase stdout already carries the whole start
+/// result: the target, the one edit surface with its terminality, and the one
+/// next command (#13803). Only then may stderr drop its copies of them, so an
+/// agent reading both streams sees each fact once. `--json`, an ambiguous
+/// baseline, or a packet the summary cannot read keeps the stderr lines.
+pub(in crate::cli) fn before_phase_stdout_owns_start_result(
+    packet: &str,
+    json: bool,
+    continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
+) -> bool {
+    // `edit_directive: true` matches the stdout producer, which passes
+    // `!continuation.baseline_ambiguous`: this predicate already requires an
+    // unambiguous baseline, so both calls render the same summary.
+    !json
+        && !continuation.baseline_ambiguous
+        && before_phase_summary(packet, "", true).is_some()
+        && summary_target_is_the_cage_target(packet)
+}
+
+/// The stdout summary names `recommended_test.file`; the cage binds
+/// `allowed_edit_surface[0]` when the packet carries one. Stderr may drop its
+/// directive only when both name the same file, so the sole remaining
+/// instruction never points at a file the cage refuses (#13803 review).
+fn summary_target_is_the_cage_target(packet: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(packet) else {
+        return false;
+    };
+    let Some(item) = value
+        .get("packets")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|packets| packets.first())
+    else {
+        return false;
+    };
+    let summary_target = item
+        .pointer("/recommended_test/file")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim);
+    match item.get("allowed_edit_surface") {
+        None => summary_target.is_some(),
+        Some(surface) => {
+            let cage_target = surface
+                .as_array()
+                .and_then(|paths| paths.first())
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim);
+            summary_target.is_some() && summary_target == cage_target
+        }
+    }
 }
 
 /// The stdout trailer for an attempt born with an ambiguous baseline
@@ -5598,6 +5803,7 @@ mod tests {
                 &trusted_error,
                 "repair receipt observed repository path outside trusted edit surface: src/lib.rs. To recover: commit the production change, then start a new attempt.",
                 false,
+                true,
             )?;
             let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
             let refusal = recorded
@@ -5617,7 +5823,15 @@ mod tests {
             // caller attests its own tail committed the verdict.
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed", true)?;
+            record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                other_error,
+                "changed",
+                true,
+                false,
+            )?;
             let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
             match rerouted.last_after_refusal {
                 Some(refusal) if refusal.reason == "changed" => {}
@@ -5643,6 +5857,7 @@ mod tests {
                 other_error,
                 "losing phase narration",
                 false,
+                false,
             );
             if lost.is_ok() {
                 return Err(
@@ -5656,6 +5871,100 @@ mod tests {
                 other => {
                     return Err(format!(
                         "the losing phase's narration replaced the winner's record: {other:?}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        result
+    }
+
+    /// #12102 discriminator: the record authority routes on the typed refusal
+    /// class, not the message text. A reworded narration that no longer
+    /// carries the historical trusted-surface tail still records through the
+    /// terminal receipt authority when the class says trusted-surface, and a
+    /// message that still carries the tail no longer routes there when the
+    /// class says otherwise — rewording the message cannot move the record.
+    #[test]
+    fn after_phase_refusal_recording_reads_the_typed_class_not_the_message() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            TRUSTED_SURFACE_REFUSAL_TAIL, load_repair_attempt_manifest,
+        };
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let root = unique_command_test_dir("refusal-recording-typed-class");
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        run_git(&root, &["init"]).map_err(|error| format!("fixture git init: {error}"))?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )
+        .map_err(|error| format!("fixture git email: {error}"))?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])
+            .map_err(|error| format!("fixture git name: {error}"))?;
+        let readme = root.join("README.md");
+        std::fs::write(&readme, "# test\n")
+            .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        run_git(&root, &["add", "."]).map_err(|error| format!("fixture git add: {error}"))?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])
+            .map_err(|error| format!("fixture git commit: {error}"))?;
+        let result = (|| -> Result<(), String> {
+            let manifest = prepare_and_finish_sample_attempt(&root, "typed-class")?;
+            let attempt_id = &manifest.repair_attempt_id;
+
+            // Class trusted-surface with text that does NOT contain the
+            // historical tail: the terminal receipt authority accepts the
+            // record on the finished attempt, where the resumable authority
+            // would refuse — so success proves the class routed it.
+            record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                "reworded trusted-surface narration without the historical tail",
+                "reworded trusted-surface reason",
+                false,
+                true,
+            )?;
+            let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
+            match recorded.last_after_refusal {
+                Some(refusal) if refusal.reason == "reworded trusted-surface reason" => {}
+                other => {
+                    return Err(format!(
+                        "the typed trusted-surface class must route to the terminal receipt authority: {other:?}"
+                    ));
+                }
+            }
+
+            // Class other with text that DOES contain the tail: it must not
+            // route to the receipt authority. On the finished attempt, without
+            // a terminal finish attestation the resumable guard refuses, so an
+            // error is the proof the tail text no longer routes.
+            let tail_text = format!(
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: src/lib.rs"
+            );
+            let misrouted = record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                &tail_text,
+                "tail text without the class",
+                false,
+                false,
+            );
+            if misrouted.is_ok() {
+                return Err(
+                    "tail text without the trusted-surface class must not reach the terminal receipt authority"
+                        .to_string(),
+                );
+            }
+            let guarded = load_repair_attempt_manifest(&root, attempt_id)?;
+            match guarded.last_after_refusal {
+                Some(refusal) if refusal.reason == "reworded trusted-surface reason" => {}
+                other => {
+                    return Err(format!(
+                        "the tail-text call replaced the typed-class record: {other:?}"
                     ));
                 }
             }
@@ -6074,6 +6383,80 @@ mod tests {
     }
 
     #[test]
+    fn line_ending_only_note_names_skipped_files_and_stays_silent_without_them()
+    -> Result<(), String> {
+        let mut after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            focused_result: None,
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Compliant,
+                changed_paths: vec!["tests/target.rs".to_string()],
+                violations: Vec::new(),
+            },
+        };
+        if let Some(line) = line_ending_only_note(&after) {
+            return Err(format!("no skipped file must narrate nothing: {line}"));
+        }
+        after.line_ending_only_paths = vec!["src/lib.rs".to_string()];
+        let line = line_ending_only_note(&after).ok_or("a skipped file must be named")?;
+        if !line.contains("`src/lib.rs`")
+            || !line.contains("only the line endings changed")
+            || line.contains("tests/target.rs")
+            || line.contains("more")
+        {
+            return Err(format!("unexpected note: {line}"));
+        }
+        // The manifest records the list beside the verdict and round-trips
+        // it; an attempt with no skipped file keeps its manifest bytes
+        // unchanged (the key is absent).
+        let recorded = serde_json::to_value(&after).map_err(|err| err.to_string())?;
+        if recorded
+            .pointer("/line_ending_only_paths/0")
+            .and_then(|v| v.as_str())
+            != Some("src/lib.rs")
+            || recorded
+                .pointer("/verdict/line_ending_only_paths")
+                .is_some()
+        {
+            return Err(format!("unexpected manifest shape: {recorded}"));
+        }
+        let reread: crate::app::repair_attempt::RepairAttemptAfter =
+            serde_json::from_value(recorded).map_err(|err| err.to_string())?;
+        if reread != after {
+            return Err("the recorded list must round-trip".to_string());
+        }
+        let mut none = after.clone();
+        none.line_ending_only_paths.clear();
+        let recorded = serde_json::to_value(&none).map_err(|err| err.to_string())?;
+        if recorded.get("line_ending_only_paths").is_some() {
+            return Err(format!("an empty list must not be serialized: {recorded}"));
+        }
+        after.line_ending_only_paths = vec!["src/a\nripr: forged.rs".to_string()];
+        let line = line_ending_only_note(&after).ok_or("a skipped file must be named")?;
+        if line.contains('\n') || !line.contains("`src/a\\nripr: forged.rs`") {
+            return Err(format!("a control character must be escaped: {line:?}"));
+        }
+        after.line_ending_only_paths = (0..12).map(|index| format!("src/f{index}.rs")).collect();
+        let line = line_ending_only_note(&after).ok_or("skipped files must be named")?;
+        if !line.contains("`src/f9.rs`")
+            || line.contains("`src/f10.rs`")
+            || !line.contains("(and 2 more; see the attempt manifest)")
+        {
+            return Err(format!("the note must stay bounded: {line}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repair_after_cage_recovery_repeats_explicit_store() -> Result<(), String> {
         let after = crate::app::repair_attempt::RepairAttemptAfter {
             attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
@@ -6085,6 +6468,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: false,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,
@@ -6129,6 +6513,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,
@@ -6188,6 +6573,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,
@@ -6978,6 +7364,130 @@ mod before_phase_stdout_tests {
              receipt: /repo/target/ripr/reports/agent-receipt.json\n  \
              verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
         );
+    }
+
+    /// `PACKET` with one member of its first packet replaced or added.
+    fn packet_with(member: &str, value: serde_json::Value) -> Result<String, String> {
+        let mut document: serde_json::Value = serde_json::from_str(PACKET)
+            .map_err(|error| format!("fixture packet must parse: {error}"))?;
+        document
+            .pointer_mut("/packets/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "fixture packet must carry one packet object".to_string())?
+            .insert(member.to_string(), value);
+        serde_json::to_string(&document).map_err(|error| error.to_string())
+    }
+
+    fn owns_start_result(packet: &str) -> bool {
+        super::before_phase_stdout_owns_start_result(packet, false, &continuation())
+    }
+
+    /// #13803: stderr may drop its copy of the start result only when the
+    /// human stdout summary carries it for a scorable attempt.
+    #[test]
+    fn stdout_owns_the_start_result_only_for_a_human_scorable_readable_summary()
+    -> Result<(), String> {
+        assert!(
+            owns_start_result(PACKET),
+            "a readable packet on the human route owns the start result"
+        );
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, true, &continuation()),
+            "--json prints the packet document, not the summary"
+        );
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..continuation()
+        };
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, false, &ambiguous),
+            "an ambiguous baseline keeps the stderr lines"
+        );
+        // Packets the stdout summary cannot read fall back to the one-line
+        // pointer, which names neither the target nor the edit surface.
+        assert!(!owns_start_result("not json"));
+        assert!(!owns_start_result(r#"{"packets": []}"#));
+        assert!(!owns_start_result(&packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?));
+        assert!(!owns_start_result(&packet_with(
+            "seam_id",
+            serde_json::json!("  "),
+        )?));
+        Ok(())
+    }
+
+    /// #13803 review: the summary names `recommended_test.file` while the cage
+    /// binds `allowed_edit_surface[0]`; stdout owns the result only when both
+    /// name the same file.
+    #[test]
+    fn stdout_does_not_own_the_start_result_when_the_cage_binds_another_file() -> Result<(), String>
+    {
+        let surface = |value: serde_json::Value| packet_with("allowed_edit_surface", value);
+
+        let same = surface(serde_json::json!(["tests/pricing.rs"]))?;
+        assert!(
+            owns_start_result(&same),
+            "the cage target is the summary target"
+        );
+        assert!(super::summary_target_is_the_cage_target(&same));
+
+        for (label, other) in [
+            (
+                "another file",
+                serde_json::json!(["tests/other_pricing.rs"]),
+            ),
+            (
+                "the summary target is not first",
+                serde_json::json!(["tests/other_pricing.rs", "tests/pricing.rs"]),
+            ),
+            ("an empty surface", serde_json::json!([])),
+            ("a non-array surface", serde_json::json!("tests/pricing.rs")),
+            ("a null surface", serde_json::Value::Null),
+        ] {
+            let packet = surface(other)?;
+            // The summary itself still renders and names the recommended
+            // file, so only the cage comparison can withhold ownership.
+            let summary = before_phase_stdout(
+                &packet,
+                "target/ripr/workflow/agent-packet.json",
+                false,
+                &continuation(),
+            )?;
+            assert!(
+                summary.contains("edit one test file: tests/pricing.rs"),
+                "{label}: the summary must still name its target:\n{summary}"
+            );
+            assert!(
+                !super::summary_target_is_the_cage_target(&packet),
+                "{label}: the cage does not bind the summary target"
+            );
+            assert!(
+                !owns_start_result(&packet),
+                "{label}: stderr must keep its directive"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_target_check_needs_a_first_packet_with_a_recommended_file() -> Result<(), String> {
+        assert!(super::summary_target_is_the_cage_target(PACKET));
+        assert!(!super::summary_target_is_the_cage_target("not json"));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": []}"#
+        ));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": {}}"#
+        ));
+        // No recommended file and no surface: nothing to compare.
+        let no_file = packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?;
+        assert!(!super::summary_target_is_the_cage_target(&no_file));
+        Ok(())
     }
 }
 

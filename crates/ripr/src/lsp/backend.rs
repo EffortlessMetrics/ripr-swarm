@@ -1467,8 +1467,8 @@ impl Backend {
             .keys()
             .filter(|uri| {
                 documents
-                    .state_for_uri(uri)
-                    .is_some_and(DocumentState::is_quarantined)
+                    .state_or_untracked(uri)
+                    .is_some_and(|state| state.is_quarantined())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1906,8 +1906,8 @@ impl Backend {
             .documents
             .lock()
             .ok()?
-            .state_for_uri(uri)
-            .map(project)
+            .state_or_untracked(uri)
+            .map(|state| project(&state))
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -2017,6 +2017,21 @@ impl Backend {
             return None;
         };
         snapshot.as_ref().map(|value| value.as_ref().clone())
+    }
+
+    /// Run `f` against the live document store the real `didOpen` /
+    /// `didChange` / `didClose` handlers mutate, so a handler-level test can
+    /// stage store occupancy or limits without 4,096 notifications (#11666).
+    #[cfg(test)]
+    pub(super) fn with_documents_for_test<R>(
+        &self,
+        f: impl FnOnce(&mut super::state::DocumentStore) -> R,
+    ) -> Option<R> {
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .map(|mut documents| f(&mut documents))
     }
 
     #[cfg(test)]
@@ -3823,7 +3838,7 @@ impl Backend {
             .ok()
             .and_then(|documents| {
                 documents
-                    .state_for_uri(uri)
+                    .state_or_untracked(uri)
                     .map(|state| state.buffer_authority_unknown)
             })
             .unwrap_or(false)
@@ -3854,6 +3869,9 @@ impl Backend {
                 }
                 DocumentStalenessReason::InvalidIncrementalChange => {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
+                }
+                DocumentStalenessReason::DocumentStoreLimitReached => {
+                    "ripr tracks a bounded number of open documents and did not track this one; saving cannot fix this. Close other open files, then reopen this file so ripr can track it."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
@@ -4134,6 +4152,14 @@ impl Backend {
                 self.restore_document_diagnostics(uri, was_disclosed, decision_version)
                     .await;
             }
+            QuarantineTransition::ReasonChanged => {
+                // Still quarantined, but under a different reason: the
+                // marker the client holds names the old one. Re-withdraw so
+                // it names the current reason; the once-per-episode
+                // disclosure is already recorded and is not repeated.
+                self.withdraw_document_diagnostics(uri, decision_version)
+                    .await;
+            }
             QuarantineTransition::Unchanged => {
                 // An edit that advances the version while quarantine holds
                 // must re-clear (#1747): the earlier decision-versioned
@@ -4239,6 +4265,42 @@ impl Backend {
         }
     }
 
+    /// The per-batch publication decision for one URI: pending quarantine,
+    /// bound version and current quarantine, from one state projection. A
+    /// URI with no stored state reads through the latch-aware accessor, so an
+    /// untracked overflow buffer is withdrawn rather than published
+    /// (#11666).
+    fn transaction_publication_projection(
+        &self,
+        uri: &Uri,
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+    ) -> (
+        Option<(PathBuf, DocumentStalenessReason)>,
+        Option<i32>,
+        bool,
+    ) {
+        self.with_document_state(uri, |state| {
+            let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+            let version = if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            };
+            (pending, version, quarantine_from_state(state).is_some())
+        })
+        .unwrap_or((None, None, false))
+    }
+
+    #[cfg(test)]
+    pub(super) fn transaction_publication_projection_for_test(
+        &self,
+        uri: &Uri,
+    ) -> (bool, Option<i32>, bool) {
+        let (pending, version, quarantined) =
+            self.transaction_publication_projection(uri, &BTreeMap::new());
+        (pending.is_some(), version, quarantined)
+    }
+
     /// Publish one document's selection-filtered diagnostics during a
     /// refresh transaction, honoring the dirty-buffer quarantine against the
     /// transaction's pending analyzed identity (#1970/#7771): a document
@@ -4258,17 +4320,8 @@ impl Backend {
         // edit cannot make analyzed diagnostics look current. Unknown
         // buffer authority binds no version (see the pending-entered
         // pass).
-        let (pending_quarantine, raw_version, is_quarantined) = self
-            .with_document_state(uri, |state| {
-                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
-                let version = if state.buffer_authority_unknown {
-                    None
-                } else {
-                    state.version
-                };
-                (pending, version, quarantine_from_state(state).is_some())
-            })
-            .unwrap_or((None, None, false));
+        let (pending_quarantine, raw_version, is_quarantined) =
+            self.transaction_publication_projection(uri, pending_analyzed);
         let version = self.negotiated_version(raw_version);
         if pending_quarantine.is_some() {
             if !diagnostics.is_empty() {
@@ -6922,6 +6975,12 @@ impl LanguageServer for Backend {
         // Mirror the root-change path: dropping the tracked URIs without
         // publishing leaves stale diagnostics in the client (#5202).
         let uris = self.clear_all_diagnostic_uris();
+        // Shutdown is the only reset of untracked-overflow saturation: a root
+        // transition keeps the documents (and the client's untracked buffers),
+        // so it must not end the fail-closed withdrawal (#11666).
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.clear_untracked_overflow();
+        }
         if !self.pull_diagnostics_enabled() {
             for uri in uris {
                 self.client
@@ -9012,6 +9071,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
         }
+        DocumentStalenessReason::DocumentStoreLimitReached => {
+            "close other open files, then reopen this file so ripr can track it"
+        }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
         }
@@ -10138,6 +10200,8 @@ mod top_limitation_selection_tests {
             stop_reason: PartialDiffStopReason::FileBudget,
             next_file_changed_lines: Some(3),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -13113,6 +13177,20 @@ mod quarantine_message_tests {
     }
 
     #[test]
+    fn quarantine_messages_name_the_open_document_limit_not_an_edit_failure() {
+        let reason = DocumentStalenessReason::DocumentStoreLimitReached;
+        let log = quarantine_withdrawal_log_message(Path::new("/workspace/src/lib.rs"), reason);
+        assert!(log.contains("document_store_limit_reached"));
+        assert!(log.contains("open-document limit was reached"));
+        assert!(log.contains("close other open files"));
+        assert!(!log.contains("incremental"));
+        assert!(!log.contains("save the file"));
+        let marker = crate::lsp::diagnostics::quarantine_withdrawal_diagnostic(reason);
+        assert!(marker.message.contains("open-document limit was reached"));
+        assert!(!marker.message.contains("incremental"));
+    }
+
+    #[test]
     fn quarantine_restored_log_message_names_path() {
         let message = quarantine_restored_log_message(Path::new("/workspace/src/lib.rs"));
         assert!(message.contains("/workspace/src/lib.rs"));
@@ -14679,11 +14757,12 @@ thread_local! {
     static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Resets this thread's read counter. The digest cache itself is process-wide
+/// and the tests run in parallel, so clearing it here would evict another
+/// test's entry between that test's two lookups and make it count a second
+/// read. Each test digests its own per-thread temp path, so no clear is needed.
 #[cfg(test)]
 fn reset_disk_equality_read_cache_for_tests() {
-    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
-        cache.clear();
-    }
     DISK_EQUALITY_READS.with(|reads| reads.set(0));
 }
 

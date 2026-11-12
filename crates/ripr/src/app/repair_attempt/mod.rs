@@ -327,6 +327,13 @@ pub(crate) struct RepairAttemptAfter {
     pub(crate) focused_result: Option<PendingFocusedResult>,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
+    /// Paths whose only change was a git-invisible line-ending flip on a path
+    /// Git normalizes (`core.autocrlf` or a `text` attribute), so the cage
+    /// did not count them as edits (#7377, #13833). Recorded beside the
+    /// verdict, not in it, so the receipt binding's verdict comparison is
+    /// unchanged. Absent when there were none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) line_ending_only_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -412,7 +419,7 @@ pub(crate) fn receipt_binding_from(
     seam_id: &str,
     packet_path: &Path,
     attempt_id: Option<&str>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ReceiptBindingError> {
     // Refusals name the root the caller typed, bound lexically against the
     // working directory so a pasted command runs from anywhere (#3999), never
     // the canonicalized verbatim path the store resolver hands back below
@@ -432,11 +439,11 @@ pub(crate) fn receipt_binding_from(
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
         if loaded.1.seam_id != seam_id {
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
                 attempt_id.as_str(),
                 loaded.1.seam_id
-            ));
+            )));
         }
         loaded
     } else {
@@ -476,9 +483,9 @@ pub(crate) fn receipt_binding_from(
                     matches.len()
                 )
             };
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "receipt requires exactly one repair attempt for seam `{seam_id}`: {detail} (`ripr agent status` lists the attempts)"
-            ));
+            )));
         }
         matches.pop().ok_or_else(|| {
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
@@ -512,14 +519,14 @@ pub(crate) fn receipt_binding_from(
         } else {
             " (repository HEAD moved since the after phase recorded its verdict; `ripr agent status` reads which head)".to_string()
         };
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt {} is not receipt-ready: state `{}`, current {}{}, verdict `{}`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
             manifest.repair_attempt_id.as_str(),
             repair_attempt_state_label(&manifest.state),
             after.current,
             current_gloss,
             after.verdict.status.as_label(),
-        ));
+        )));
     }
     // The receipt names the after head the finish recorded. That head is the
     // prepared head, or a descendant reached only by commits the edit cage
@@ -533,7 +540,7 @@ pub(crate) fn receipt_binding_from(
                 &current_head,
             )?)
     {
-        return Err("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string());
+        return Err(ReceiptBindingError::Other("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string()));
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
     let packet_artifact_bytes = std::fs::read(root.join(&packet_artifact.path))
@@ -542,7 +549,9 @@ pub(crate) fn receipt_binding_from(
         || packet_artifact.sha256 != packet_sha256
         || after.packet_sha256 != packet_sha256
     {
-        return Err("repair attempt packet binding is tampered or replayed".to_string());
+        return Err(ReceiptBindingError::Other(
+            "repair attempt packet binding is tampered or replayed".to_string(),
+        ));
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
@@ -566,7 +575,7 @@ pub(crate) fn receipt_binding_from(
         // A staging name an interrupted writer left beside a retained artifact
         // is the one cause with a one-step fix, so name it first.
         let residue = staged_residue_cause(&root, &manifest);
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
              {residue}Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
              Next: `{status}` reads the attempt's state.\n\
@@ -578,7 +587,7 @@ pub(crate) fn receipt_binding_from(
              3. Run `{restart}`; if it fails, put your copy back.\n\
              4. Re-apply your edit and run the new --attempt command it prints.\n\
              Write command output outside the repository."
-        ));
+        )));
     }
     validate_trusted_head_surface(
         &root,
@@ -2073,10 +2082,10 @@ fn complete_repair_attempt(
                         package,
                     } => limitations.push(match kind {
                         crate::analysis::new_test_target::NewTestKind::Integration => format!(
-                            "target preflight: the proposed test file `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                            "target preflight: at the before phase, the proposed test file `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
                         ),
                         crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
-                            "target preflight: the proposed inline test module in `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                            "target preflight: at the before phase, the proposed test in the existing inline test module in `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
                         ),
                     }),
                     crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
@@ -3172,6 +3181,8 @@ pub(crate) fn edit_cage_policy_from_packet(
     // verdict admits only a pure insertion of test functions into it.
     let inline_test_module_target = !is_test_surface_path(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
+    let external_test_file_target = is_test_surface_path(selected_target_text)
+        && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
@@ -3305,6 +3316,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        external_test_file_target,
         new_test_proposal,
     })
 }
@@ -3941,7 +3953,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, _, captured_digest) =
+    let (mut delta, _, captured_digest, line_ending_only_paths) =
         crate::edit_cage::evaluate_repository_edit_cage_with_captured_digest(
             &baseline,
             movement,
@@ -4003,6 +4015,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         focused_result: pending_focused,
         current,
         verdict,
+        line_ending_only_paths,
     };
     manifest.after = Some(after.clone());
     // This after phase reached the durable finish, so an earlier refusal no
@@ -5339,24 +5352,72 @@ fn validate_manifest_at(
 /// phase (for example a `Cargo.lock` an earlier build generated) is not an
 /// attempt write, and the cage's compliant verdict already reported it as
 /// unchanged, so refusing it here would contradict the cage's own delta.
+/// Typed refusal class for repair-receipt admission (#12102): which record
+/// authority a refusal narrates into, whether the focused evaluation restores,
+/// and whether the refusal maps to the decision exit code are all read from
+/// this type at the call sites, never re-derived from message text. The
+/// rendered messages stay byte-identical to the historical strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReceiptBindingError {
+    /// The repository differs from the attempt's trusted edit surface
+    /// (#5262); carries the first refusing path. This is the deliberate named
+    /// refusal: the attempt is terminal and the recovery is to commit or
+    /// remove the observed change first.
+    TrustedSurfaceUntrusted {
+        /// The repository-relative path outside the allowed edit surface.
+        path: String,
+    },
+    /// Every other admission refusal (stale or tampered binding, wrong seam,
+    /// not receipt-ready, ambiguous attempt selection). The message text is
+    /// the full contract for these.
+    Other(String),
+}
+
+impl ReceiptBindingError {
+    /// The refusal message exactly as the historical `String` errors rendered
+    /// it, so consumers that log or persist the text see unchanged bytes.
+    pub(crate) fn message(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl std::fmt::Display for ReceiptBindingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TrustedSurfaceUntrusted { path } => write!(
+                formatter,
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
+            ),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ReceiptBindingError {}
+
+impl From<String> for ReceiptBindingError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
 fn validate_trusted_head_surface(
     root: &Path,
     policy: &EditCagePolicy,
     observed_changes: &[String],
     before_head: &str,
-) -> Result<(), String> {
+) -> Result<(), ReceiptBindingError> {
     match trusted_head_surface_violations(root, policy, observed_changes, before_head)?.as_slice() {
         [] => Ok(()),
-        [path, ..] => Err(format!(
-            "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
-        )),
+        [path, ..] => Err(ReceiptBindingError::TrustedSurfaceUntrusted { path: path.clone() }),
     }
 }
 
 /// The stable tail of the receipt's trusted-surface admission refusal. The
-/// after phase matches it to narrate the commit-first recovery when the
-/// refusal still fires mid-loop, so the shared vocabulary cannot drift
-/// between the refusing validator and its narration (#5262).
+/// after phase's narration names this same vocabulary (through
+/// [`ReceiptBindingError::message`]) when the refusal still fires mid-loop, so
+/// the shared vocabulary cannot drift between the refusing validator and its
+/// narration (#5262).
 pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surface";
 
 /// The repository paths a receipt would refuse for this head: tracked paths
@@ -5369,18 +5430,62 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
 fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
-    git_paths(
+    let repo_top_paths = git_paths(
         root,
         &[
             "diff",
             "--no-renames",
             "--no-ext-diff",
+            // A user's `diff.relative=true` would otherwise spell paths from
+            // the working directory and drop changes outside it.
+            "--no-relative",
             "--name-only",
             "-z",
             head,
             "--",
         ],
-    )
+    )?;
+    // `git diff --name-only` spells paths from the repository top, while every
+    // rule they meet (packet surface, operational subtrees) and the untracked
+    // inventory are relative to `root` (#13947). Translate once here.
+    let prefix = git_paths_prefix(root)?;
+    Ok(repo_top_paths
+        .into_iter()
+        .map(|path| root_relative_dirty_path(&prefix, &path))
+        .collect())
+}
+
+/// `git rev-parse --show-prefix`: the root's own path below the repository
+/// top, with a trailing `/`, or empty when the root is the repository top.
+fn git_paths_prefix(root: &Path) -> Result<String, String> {
+    let args = ["rev-parse", "--show-prefix"];
+    let output = crate::git::run_git_output_with_deadline(root, &args, Some(GIT_PATHS_DEADLINE))
+        .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|_error| "git rev-parse --show-prefix output is not valid UTF-8".to_string())?;
+    Ok(text.trim_end_matches(['\n', '\r']).to_string())
+}
+
+/// Respells one repository-top path relative to the root. A path below the
+/// root loses the prefix; a path outside the root climbs out with `../`, so no
+/// root-relative rule can match a namesake and the refusal pathspec still
+/// resolves from inside the root.
+fn root_relative_dirty_path(prefix: &str, repo_top_path: &str) -> String {
+    if prefix.is_empty() {
+        return repo_top_path.to_string();
+    }
+    if let Some(inside) = repo_top_path.strip_prefix(prefix) {
+        return inside.to_string();
+    }
+    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
+    format!("{}{repo_top_path}", "../".repeat(depth))
 }
 
 /// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
@@ -6250,6 +6355,7 @@ mod tests {
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Compliant,
@@ -7346,7 +7452,8 @@ mod tests {
                 .map_err(|error| format!("write test: {error}"))?;
             run_git(&root, &["add", "tests/target.rs"])?;
             run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
-            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)?;
+            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)
+                .map_err(|error| error.message())?;
 
             std::fs::write(root.join("src.rs"), "pub fn moved() {}\n")
                 .map_err(|error| format!("write production file: {error}"))?;
@@ -7358,7 +7465,9 @@ mod tests {
                 return Err("the production change must be committed".to_string());
             }
             match validate_trusted_head_surface(&root, &policy, &[], &prepared_head) {
-                Err(error) if error.contains("outside trusted edit surface: src.rs") => Ok(()),
+                Err(ReceiptBindingError::TrustedSurfaceUntrusted { path }) if path == "src.rs" => {
+                    Ok(())
+                }
                 other => Err(format!(
                     "a committed production change must block the receipt: {other:?}"
                 )),
@@ -7430,6 +7539,110 @@ mod tests {
         result
     }
 
+    /// Builds a repository whose `--root` is the `crate/` subdirectory, with a
+    /// committed production file at both `crate/src/plain.rs` and the
+    /// repository-level `src/plain.rs`, then dirties both and one operational
+    /// file under `crate/target/ripr`.
+    fn subdir_root_fixture(name: &str) -> Result<(PathBuf, PathBuf), String> {
+        let top = test_repo_root(name)?;
+        let sub = top.join("crate");
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            let path = top.join(file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, "pub fn f() {}\n").map_err(|e| e.to_string())?;
+        }
+        run_git(&top, &["add", "-A"])?;
+        run_git(&top, &["commit", "--no-gpg-sign", "-qm", "subdir"])?;
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            std::fs::write(top.join(file), "pub fn g() {}\n").map_err(|e| e.to_string())?;
+        }
+        Ok((top, sub))
+    }
+
+    /// #13947: under a subdirectory `--root`, tracked dirty paths are spelled
+    /// relative to the root. The tracked operational file is exempted (positive),
+    /// the root's own production file is named root-relative, and the
+    /// repository-level namesake is named outside the root rather than
+    /// collapsing onto the same spelling (discriminating negative).
+    #[test]
+    fn dirty_premise_preflight_matches_root_relative_rules_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "expected the namesake outside the root and the root's file root-relative, never the operational file: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: a user's `diff.relative=true` must not change which dirty paths
+    /// the preflight names or how they are spelled under a subdirectory root.
+    #[test]
+    fn dirty_premise_preflight_ignores_a_diff_relative_setting_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-diff-relative")?;
+        let result = (|| -> Result<(), String> {
+            run_git(&top, &["config", "diff.relative", "true"])?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "diff.relative must not change the inventory: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: the exact check admits the confined target only for the root's
+    /// own file. The repository-level namesake `src/plain.rs` is refused even
+    /// though the packet allows the root-relative `src/plain.rs`.
+    #[test]
+    fn trusted_surface_does_not_admit_a_repository_level_namesake_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("trusted-surface-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["src/plain.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = trusted_head_surface_violations(&sub, &policy, &[], &head)?;
+            if violations != vec!["../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "only the repository-level namesake may violate: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
     /// The terminal receipt-refusal authority records the narration beside a
     /// committed after verdict (#5262 review): the late trusted-surface
     /// refusal fires only after `finish_repair_attempt`, so the resumable
@@ -7477,6 +7690,7 @@ mod tests {
             }
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_receipt_refusal_from(
                 &root,
@@ -7528,6 +7742,7 @@ mod tests {
 
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_after_refusal_from(
                 &root,
@@ -8461,14 +8676,17 @@ mod tests {
             let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
             let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("no post-change path identity binding") => {}
+                Err(error)
+                    if error
+                        .message()
+                        .contains("no post-change path identity binding") => {}
                 other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
             }
             std::fs::write(&prepared.manifest_path, manifest_bytes)
                 .map_err(|error| error.to_string())?;
 
             // The selected path already appears in the finished delta. A
-            // second edit keeps its kind (Added) but changes its identity.
+            // second edit keeps its kind (Modified) but changes its identity.
             let selected = root.join("tests/target.rs");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
             std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
@@ -8478,7 +8696,7 @@ mod tests {
                 return Err("second edit to bound selected path remained current".to_string());
             }
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
             }
             std::fs::write(&selected, original).map_err(|error| error.to_string())?;
@@ -8541,7 +8759,7 @@ mod tests {
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
             }
             std::fs::remove_file(&production)
@@ -8552,7 +8770,8 @@ mod tests {
                     "reverting the drift must restore current: {restored:?}"
                 ));
             }
-            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))
+                .map_err(|error| error.message())?;
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
@@ -8563,20 +8782,38 @@ mod tests {
     fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
         let root = test_repo_root("ignored-bound-test")?;
         let result = (|| -> Result<(), String> {
-            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+            std::fs::write(root.join(".gitignore"), "tests/target.py\n")
                 .map_err(|error| error.to_string())?;
             run_git(&root, &["add", ".gitignore"])?;
             run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
-            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
-            let finished = finish_sample_attempt(&root, &prepared)?;
+            // Rust external targets must already be committed; an ignored
+            // Python test retains the path-only content-identity control.
+            let prepared = prepare_sample_attempt_for_target(
+                &root,
+                "seam:sample",
+                "ignored",
+                "tests/target.py",
+            )?;
+            std::fs::write(root.join("tests/target.py"), "def test_focused(): pass\n")
+                .map_err(|error| error.to_string())?;
+            let packet =
+                root.join(&find_manifest_artifact(&prepared.manifest, "agent_packet")?.path);
+            finish_repair_attempt(
+                &root,
+                &prepared.manifest.repair_attempt_id,
+                &packet,
+                HeadMovement::AdmitDescendantCommits,
+            )?;
+            let finished =
+                load_repair_attempt_manifest(&root, &prepared.manifest.repair_attempt_id)?;
             let head = crate::agent::artifact::current_git_head(&root)?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
             {
                 return Err("ignored selected test was not initially current".to_string());
             }
-            let selected = root.join("tests/target.rs");
+            let selected = root.join("tests/target.py");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
-            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+            std::fs::write(&selected, b"def test_changed(): pass\n")
                 .map_err(|error| error.to_string())?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
             {
@@ -8654,6 +8891,15 @@ mod tests {
         seam_id: &str,
         label: &str,
     ) -> Result<BeginRepairAttemptResult, String> {
+        prepare_sample_attempt_for_target(root, seam_id, label, "tests/target.rs")
+    }
+
+    fn prepare_sample_attempt_for_target(
+        root: &Path,
+        seam_id: &str,
+        label: &str,
+        target: &str,
+    ) -> Result<BeginRepairAttemptResult, String> {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
@@ -8677,7 +8923,7 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", before.display()))?;
         let packet_value = serde_json::json!({
             "seam_id": seam_id,
-            "allowed_edit_surface": ["tests/target.rs"],
+            "allowed_edit_surface": [target],
             "forbidden_files": []
         });
         let packet_text = serde_json::to_string_pretty(&packet_value)
@@ -8721,6 +8967,13 @@ mod tests {
         let readme = root.join("README.md");
         std::fs::write(&readme, "# test\n")
             .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        // The external Rust cage requires a committed selected target at
+        // before-time. An empty Rust file is a clean insertion surface for
+        // the lifecycle fixtures that add focused() after preparing an attempt.
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests dir failed: {error}"))?;
+        std::fs::write(root.join("tests/target.rs"), "")
+            .map_err(|error| format!("write baseline target failed: {error}"))?;
         run_git(&root, &["add", "."])?;
         run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
         Ok(root)
@@ -10589,6 +10842,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: String::new(),
+            line_ending_only_paths: Vec::new(),
             current,
             verdict: crate::edit_cage::EditCageVerdict {
                 status,

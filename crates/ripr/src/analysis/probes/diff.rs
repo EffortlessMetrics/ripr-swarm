@@ -49,6 +49,12 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
+    // #13736: a file only an out-of-line `#[cfg(kani)] mod` compiles is
+    // verification source; its changed lines are disclosed through
+    // `changed_verification_only_lines`, never probed as production.
+    if super::verification_erased::in_cfg_kani_module(index, &changed.path) {
+        return Vec::new();
+    }
     let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -7149,6 +7155,121 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #13983: parameter lines of a fn declared in a macro invocation body are
+    /// declarations, never `field_construction`; the fn body keeps its probe,
+    /// the same list outside a macro behaves as before, and a real record
+    /// initializer in a macro body still probes as `field_construction`.
+    #[test]
+    fn macro_body_fn_parameters_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let families = |source: &str, lines: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: lines.iter().map(|(n, t)| line(*n, t)).collect(),
+                removed_lines: Vec::new(),
+            };
+            let index = macro_source_index(&path, source);
+            probes_for_file(Path::new("workspace"), &changed, &index)
+                .iter()
+                .map(|probe| (probe.location.line, probe.family.clone()))
+                .collect::<Vec<_>>()
+        };
+        let params = [
+            (3, "    pub fn mul3("),
+            (4, "        a: u32,"),
+            (5, "        b: u32,"),
+            (6, "        c: u32,"),
+            (7, "    ) -> u32 {"),
+            (8, "        a * b * c"),
+        ];
+        let in_macro = "macro_rules! feature { ($($i:item)*) => { $($i)* } }\nfeature! {\n    pub fn mul3(\n        a: u32,\n        b: u32,\n        c: u32,\n    ) -> u32 {\n        a * b * c\n    }\n}\n";
+        let found = families(in_macro, &params);
+        assert!(
+            !found
+                .iter()
+                .any(|(l, f)| (4..=6).contains(l) && *f == ProbeFamily::FieldConstruction),
+            "macro fn parameter probed as field_construction: {found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, _)| *l == 8),
+            "fn body in the macro keeps a probe: {found:?}"
+        );
+
+        // Control: the same list outside a macro never reads as a field.
+        let plain =
+            "pub fn mul3(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n    a * b * c\n}\n";
+        let found = families(
+            plain,
+            &[(2, "    a: u32,"), (3, "    b: u32,"), (4, "    c: u32,")],
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|(_, f)| *f == ProbeFamily::FieldConstruction),
+            "plain fn parameter probed as field_construction: {found:?}"
+        );
+
+        // Negative control: a record initializer in a macro body still probes.
+        let record = "wrap! {\n    Task {\n        buffered: None,\n    }\n}\n";
+        let found = families(record, &[(3, "        buffered: None,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body construction lost its probe: {found:?}"
+        );
+
+        // A call (not a fn header) in a macro body is not a parameter list.
+        let call = "wrap! {\n    make(\n        a: 1,\n    )\n}\n";
+        let found = families(call, &[(3, "        a: 1,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body call argument lost its probe: {found:?}"
+        );
+    }
+
+    /// #13983 remainder: the same holds behind a generic list with `=`/`->`
+    /// bounds, in a macro-wrapped `impl`/`trait` body and in a nested item
+    /// macro; a call argument in a method body there keeps its probe.
+    #[test]
+    fn macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "feature! {\n    pub fn assoc<I: Iterator<Item = u8>, F: Fn() -> u8>(\n        it: I,\n    ) -> usize {\n        it.count()\n    }\n    impl Foo {\n        pub fn method(\n            n: u32,\n        ) -> u32 {\n            make(\n                n: 1,\n            )\n        }\n    }\n    pub trait Tr {\n        fn req(\n            m: u32,\n        ) -> u32;\n    }\n    feature! {\n        pub fn nested(\n            z: u32,\n        ) -> u32 {\n            z\n        }\n    }\n}\n";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: source
+                .lines()
+                .enumerate()
+                .map(|(index, text)| ChangedLine {
+                    line: index + 1,
+                    new_side_line: index + 1,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let fields = probes
+            .iter()
+            .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        // Lines 3, 9, 18 and 23 are parameters; line 12 is a call argument.
+        assert_eq!(fields, vec![12], "all probes: {probes:?}");
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 5),
+            "fn body in the macro keeps a probe: {probes:?}"
         );
     }
 

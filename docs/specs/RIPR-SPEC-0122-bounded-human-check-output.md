@@ -513,7 +513,7 @@ literal the owner does not return are refused by name.
 | State | Meaning |
 | --- | --- |
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. |
-| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. |
+| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
@@ -980,7 +980,10 @@ most one `limit=` line, exactly one terminal line, and a scope-bound
   reach-only limit that still carries a weak related test), using the same
   predicates as `check --format agent`;
 - `done=` only for a candidate-current, unsuppressed `exposed` finding that is
-  not limited;
+  not limited. A preview-language (Python/TypeScript) exposed finding takes
+  `done=` with the preview advisory qualifier, on this surface and as the
+  `check --format agent` terminal when it is the selected finding without a
+  repair start (#13803);
 - `stop=` for everything else. A base-deleted, moved or unresolved-subject
   finding (`Finding::is_candidate_actionable` false) never prints `open=` or
   `done=`; its `stop=` names the source currentness. A policy-suppressed finding
@@ -998,6 +1001,12 @@ apply that policy. Context and other commands do not inherit the option (#13157)
 
 `--format json` is refused toward `ripr context`, which remains the JSON packet.
 The format adds no verdict and claims no runtime outcome.
+
+Like `check --format agent`, the agent format is silent on a non-terminal
+stderr by default (`RIPR_PROGRESS` restores the stream; `--quiet` and
+`RIPR_QUIET` always silence it), so following the printed `next=ripr explain`
+line adds no progress lines to an agent's merged output. Human explain keeps
+its progress (#13803).
 
 ### Zero-gap limited records in `check --format agent` (#13594)
 
@@ -1029,6 +1038,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_record_cannot_be_forged_and_stays_static`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_non_current_findings_fail_closed_with_a_currentness_stop`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is`
+- `crates/ripr/src/output/human/agent_tests.rs::check_agent_exposed_preview_finding_reads_done_not_stop` (#13803)
+- `crates/ripr/tests/cli_progress.rs::explain_agent_format_on_a_pipe_is_silent_by_default` (#13803)
 - `crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused`
 - `crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command`
 
@@ -1050,6 +1061,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
 - `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
+- `crates/ripr/src/output/human.rs::tests::evidence_path_keeps_the_assertion_not_credited_reason_beside_flow_rows`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_python_literals.rs::bare_token_message_prints_as_written`
@@ -1130,7 +1142,7 @@ report with zero records still carries its route.
 | Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
-| First-pr command options | `crates/ripr/src/cli/commands/first_pr.rs` |
+| First-pr command parser and options | `crates/ripr/src/cli/commands/first_pr.rs` (parser); `crates/ripr/src/output/first_pr/options.rs` (`FirstPrOptions` and helpers) |
 | Full-human fixture projection guard | `xtask/src/main.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Human golden fixtures | `fixtures/*/expected/human.txt` |

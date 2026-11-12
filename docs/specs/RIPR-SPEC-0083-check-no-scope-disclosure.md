@@ -247,6 +247,15 @@ covers ranges that only delete files, change submodule pointers or touch ripr
 artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
 no assurance that no behavior changed.
 
+### Symlink type changes (#13659)
+
+A tracked file that becomes, or stops being, a symlink (git mode `120000`) is
+not source and is never analyzed. The diff parser counts each symlink file
+section once, and `check` prints on stderr
+`ripr: skipped N symlink change(s); ...` stating that the empty result does not
+mean the behavior is covered. The stdout surfaces keep their existing
+empty-scope wording; the stderr line is the type-change disclosure.
+
 A submodule with uncommitted changes counts as a submodule pointer change too.
 Git renders it as an adjacent `-Subproject commit <sha>` and
 `+Subproject commit <sha>-dirty` pair with no `160000` mode or `index` header,
@@ -341,6 +350,8 @@ a gitlink (#10648).
 - `crates/ripr/src/output/human/agent_tests.rs::agent_no_scope_outcome_is_not_done_but_complete_no_findings_is` (#13658: agent format refuses `done` on a `NoScope` outcome; a complete no-findings run still says `done`)
 - `crates/ripr/tests/cli_smoke.rs::check_empty_diff_file_is_not_a_clean_result_in_agent_and_github` (#13658: end-to-end — an empty `--diff` file in agent and GitHub formats carries the stop/warning, never the clean-result claim)
 
+- `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
+
 ## Implementation Mapping
 
 - `crates/ripr/src/app.rs` — `CheckOutput::no_scope_provided` field (additive, default `false`).
@@ -375,6 +386,23 @@ a gitlink (#10648).
   --root . --format repo-exposure-md` does a real repo scan (Scope: repo) and
   shows NO guidance; (e) bare `ripr check` that analyzed changed files with 0
   probes shows NO guidance in any form (#4012).
+
+- (f) bare `ripr check --format human` (the default; `human-full` excluded)
+  on a clean checkout of the resolved base branch analyzes the last commit
+  (`--base HEAD~1`) and labels that on stderr (#13644). It applies only when
+  HEAD is that branch at the same commit (or `origin/<branch>` is the base and
+  `<branch>` is `main`/`master` or no other base candidate exists, so a
+  feature-branch clone keeps the #7644 base hedge),
+  `HEAD~1` exists, no tracked source edit or untracked source file is
+  pending (tracked, untracked or ignored), and no scope, output directory or artifact was requested. Drill-in
+  commands then name `--base 'HEAD~1'`. Rationale (#13644): agents otherwise
+  spend a dead-end call on "nothing in scope" before `--base HEAD~1`. Machine
+  formats (JSON, SARIF, GitHub) keep the empty-range contract so CI runs on
+  `main` are unchanged. When the retry fails or finds no changed file, the
+  original empty result and its `--base HEAD~1` next action are kept. The
+  retry spends only the remaining `--timeout` (skipped below one second) and
+  is labeled on stderr only after its result replaces the output, never
+  through the progress stream; its git probes honor `--git-timeout`.
 
 ## Metrics
 

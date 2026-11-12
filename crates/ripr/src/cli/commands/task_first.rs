@@ -75,50 +75,65 @@ This is the ordinary route into the repair transaction. The advanced
 spelling `ripr agent repair --seam-id ID --phase before` runs the same
 before phase with explicit phase vocabulary."#;
 
-pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
+pub(in crate::cli) const CONTINUE_HELP: &str = r#"After the test edit, check whether it closed the gap.
+
+Run this after `ripr repair` has named a gap (changed behavior no current test
+appears to check) and you have edited the focused test it pointed at. ripr
+re-reads your tests, compares the evidence with what it recorded when the
+repair started, and writes a receipt: a JSON record of the before and after
+result. ripr does not run your tests and never edits your source or test files.
 
 Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
-  --attempt ID     Select one repair attempt by ID.
+  --attempt ID     Continue this repair attempt. Without it, continue runs
+                   only when exactly one current attempt exists under the
+                   root; with several it lists them with a retry command
+                   and picks none.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --json           Print the after-phase JSON document, or the attempt's
-                   status JSON when it is already complete. A typed after-phase
-                   refusal or failure prints its JSON document on stdout
+  --json           Print the result as JSON, or the attempt's status JSON
+                   when it is already complete. A refusal or failure inside
+                   the check also prints its JSON document on stdout
                    (`repair_after_refusal`, `repair_after_failure`, or the
                    verify document) beside the stderr prose and the same
-                   exit code. Selection refusals (no current attempt,
-                   several attempts, an ended attempt, a blocked baseline,
-                   an unanchored root) and operational errors before
-                   the verify step keep stdout empty. An unknown flag or
-                   stray argument prints the `cli_refusal` JSON document
-                   on stdout beside its exit 2 stderr prose.
-  --quiet          Drop the after phase's progress narration and `wrote
-                   <path>` lines from stderr. Refusal prose and the result
-                   stay. `RIPR_QUIET` does the same.
+                   exit code. Refusals that stop before the check (no
+                   current attempt, several attempts, an ended attempt, a
+                   blocked baseline, an unanchored root) and operational
+                   errors before the verify step keep stdout empty. An
+                   unknown flag or stray argument prints the `cli_refusal`
+                   JSON document on stdout beside its exit 2 stderr prose.
+  --quiet          Drop progress lines and `wrote <path>` lines from stderr.
+                   Refusals and the result stay. `RIPR_QUIET` does the same.
 
-Without an ID, continue runs only when exactly one current attempt is
-eligible under the selected root. Several current attempts print a bounded
-selection list with a retry command instead of selecting one implicitly;
-no current attempt reports that honestly. An explicitly selected attempt
-whose status confirms a compliant receipt reports its already-complete
-status instead of running again; one that ended without a receipt (stale,
-failed, or incomparable), and one whose finished state no compliant
-receipt confirms (unissued, unavailable, or compatibility-only), reports
-its state and refuses with exit 3 instead of claiming completion.
+What it checks, in order:
+  1. Nothing moved underneath: HEAD and the analysis inputs still match the
+     start of the attempt.
+  2. Only the test file (or inline test module) the repair allowed changed.
+  3. Whether the static evidence now shows a test that would notice the
+     changed behavior being wrong. The receipt records the answer.
+A moved HEAD, changed analysis input, or refused verification stops with a
+named refusal and the command to restart or recover.
 
-Continue runs the accepted after path: currentness admission, the edit
-cage, verification composition, and the receipt. A stale head, drifted
-analysis input, or refused verification ends in the canonical typed
-refusal with its restart or recovery route.
+An attempt that is already confirmed complete prints its status and exits 0
+without running again. One that ended without a receipt (stale, failed, or
+incomparable), or finished without a receipt that confirms it (unissued,
+unavailable, or compatibility-only), prints its state and exits 3; no
+completion is claimed.
 
-This is the ordinary route through the repair transaction. The advanced
-spelling `ripr agent repair --attempt ID --phase after` runs the same
-after phase with explicit phase vocabulary."#;
+Exit status:
+  0  the check ran and wrote its result, or the attempt was already complete
+  2  usage or operational error, or the edit check rejected the attempt:
+     files outside the allowed test changed, HEAD moved, or the files could
+     not be compared (that attempt is over; start again with `ripr repair`)
+  3  a named refusal, such as no edit yet (make it and rerun); for a coded
+     refusal, stderr ends with `ripr: refusal code=<code> disposition=<disposition>`
 
-pub(in crate::cli) const STATUS_HELP: &str = r#"Report the current repair state and the one next action.
+The advanced spelling `ripr agent repair --attempt ID --phase after` runs the
+same step."#;
+
+pub(in crate::cli) const STATUS_HELP: &str = r#"Show where the current repair stands and what to run next.
 
 Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]
 
@@ -520,13 +535,20 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // advanced route serves. The attempt is already published here, so a
     // card failure must name the started attempt and its recovery
     // instead of implying no attempt exists.
-    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
-        root: options.root.clone(),
-        root_explicit: true,
-        seam_id: seam_id.clone(),
-        json: false,
-    })
+    let card_stdout = super::agent_card::agent_card_stdout_after_start(
+        AgentCardOptions {
+            root: options.root.clone(),
+            root_explicit: true,
+            seam_id: seam_id.clone(),
+            json: false,
+        },
+        &before_stdout,
+    )
     .map_err(|error| {
+        // The held start summary is the only copy of the edit target, cage
+        // and next command on this route (#13803 dropped the stderr copies),
+        // so a card failure moves it to stderr; stdout stays empty (#7032).
+        eprint!("{before_stdout}");
         CommandError::Decision(crate::app::task_first::card_after_publish_message(
             &attempt_id,
             &seam_id,
@@ -1951,7 +1973,15 @@ mod tests {
 
 #[cfg(test)]
 mod facade_status_message_tests {
-    use super::facade_status_message;
+    use super::{
+        ContinueFacadeCommand, RepairFacadeCommand, StatusFacadeCommand, facade_status_message,
+        parse_continue_args, parse_repair_args, parse_status_args,
+    };
+    use std::path::Path;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
 
     #[test]
     fn status_facade_errors_name_the_status_command() {
@@ -1981,5 +2011,84 @@ mod facade_status_message_tests {
             facade_status_message("could not read store".to_string()),
             "could not read store"
         );
+    }
+
+    /// A second, different `--root` is refused with the owning command's name;
+    /// an identical repeat is absorbed. Each facade command names itself.
+    #[test]
+    fn conflicting_roots_are_refused_naming_the_command() -> Result<(), String> {
+        let conflict = |parse: Result<(), String>, command: &str| match parse {
+            Err(message) if message.contains(&format!("{command} takes --root once")) => Ok(()),
+            other => Err(format!(
+                "{command}: expected a --root conflict, got {other:?}"
+            )),
+        };
+        let argv = args(&["--root", "a", "--root", "b"]);
+        conflict(parse_repair_args(&argv).map(|_| ()), "repair")?;
+        conflict(parse_continue_args(&argv).map(|_| ()), "continue")?;
+        conflict(parse_status_args(&argv).map(|_| ()), "status")?;
+        let same = args(&["--root", "a", "--root", "a"]);
+        match parse_status_args(&same)? {
+            StatusFacadeCommand::Status(options) => {
+                assert_eq!(options.root, Path::new("a"));
+                assert!(options.root_explicit);
+            }
+            StatusFacadeCommand::Help => return Err("roots must not print help".to_string()),
+        }
+        Ok(())
+    }
+
+    /// Refusal prose names the offending input so the caller can correct it.
+    #[test]
+    fn repair_refusals_name_the_offending_input() {
+        let second = parse_repair_args(&args(&["one", "two"]));
+        assert!(
+            matches!(&second, Err(m) if m.contains("already selected `one`")),
+            "{second:?}"
+        );
+        let blank = parse_repair_args(&args(&["  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("non-empty item")),
+            "{blank:?}"
+        );
+        let blank_base = parse_repair_args(&args(&["--base", ""]));
+        assert!(
+            matches!(&blank_base, Err(m) if m.contains("non-empty --base")),
+            "{blank_base:?}"
+        );
+        let missing = parse_repair_args(&args(&["--root"]));
+        assert!(
+            matches!(&missing, Err(m) if m.contains("missing value for --root")),
+            "{missing:?}"
+        );
+        // Negative control: a single, well-formed item parses.
+        assert!(matches!(
+            parse_repair_args(&args(&["one"])),
+            Ok(RepairFacadeCommand::Repair(options)) if options.item.as_deref() == Some("one")
+        ));
+    }
+
+    /// A blank `--attempt` is refused with the owning command's name, and
+    /// `root_explicit` stays false until `--root` is typed.
+    #[test]
+    fn blank_attempt_and_default_root_flags() {
+        let blank = parse_status_args(&args(&["--attempt", "  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("status --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        let blank = parse_continue_args(&args(&["--attempt", ""]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("continue --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        assert!(matches!(
+            parse_status_args(&args(&[])),
+            Ok(StatusFacadeCommand::Status(o)) if !o.root_explicit && !o.json && o.attempt_id.is_none()
+        ));
+        assert!(matches!(
+            parse_continue_args(&args(&["--root", "."])),
+            Ok(ContinueFacadeCommand::Continue(o)) if o.root_explicit && !o.quiet
+        ));
     }
 }

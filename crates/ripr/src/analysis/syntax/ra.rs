@@ -1527,7 +1527,8 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 }
 
 /// Whether a function carries a test-framework attribute (`#[test]`,
-/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// `#[tokio::test]`, `#[async_std::test]`, `#[actix_rt::test]`,
+/// `#[actix_web::test]`, `#[rstest]`). Parser-backed, so
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
@@ -1537,7 +1538,9 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
         if let Some(path) = attribute_harness_path(&attr)
             && (names_exact_harness_path(&path, "test")
                 || names_exact_harness_path(&path, "tokio::test")
-                || names_exact_harness_path(&path, "async_std::test"))
+                || names_exact_harness_path(&path, "async_std::test")
+                || names_exact_harness_path(&path, "actix_rt::test")
+                || names_exact_harness_path(&path, "actix_web::test"))
         {
             return true;
         }
@@ -5062,6 +5065,8 @@ const TRUSTED: &str = std::include_str!("data.json");
     fn one_scan_serves_every_scope_without_reparsing() -> Result<(), String> {
         // The same scan answers for different package scopes: only the scope
         // decides `shadowed`, so the producer parses each file once.
+        use crate::analysis::syntax::nesting::CLEAN_PARSE_CALLS;
+        let before = CLEAN_PARSE_CALLS.with(|calls| calls.get());
         let scan = rust_embed_file_scan(r#"const D: &str = include_str!("d.json");"#, 16);
         assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
         assert!(scan.directives(shadows_of("macro_rules! include_str { () => {}; }"))?[0].shadowed);
@@ -5070,6 +5075,14 @@ const TRUSTED: &str = std::include_str!("data.json");
         );
         // The scan itself is not changed by a scope query.
         assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
+        // The discriminator: scanning and four scope queries parse exactly once.
+        // `shadows_of` parses its own scope source, so count those separately.
+        let after = CLEAN_PARSE_CALLS.with(|calls| calls.get());
+        assert_eq!(
+            after - before,
+            3,
+            "one parse for the scan plus one per scope source, none per query"
+        );
         Ok(())
     }
 }

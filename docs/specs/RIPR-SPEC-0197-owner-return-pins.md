@@ -288,7 +288,10 @@ wrong credits.
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
    a panic does, so they refuse. The same completion rule applies under
    `#[async_std::test]` when `async_std` is the crate in the test's module and
-   the attribute carries no arguments (#5040). An `async` owner's return value is then read
+   the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
+   and `#[actix_web::test]` on the same terms (#14073): the exact
+   crate-qualified path, the crate not rebound in the test's module, and no
+   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -1674,7 +1677,10 @@ payload with `expected`, so each reads as the unwrapped pin above
    import evidence the macro earns no credit and no grade.
 2. Shape. One plain invocation whose first operand is exactly the owner call
    and whose second operand is a literal (`4`, `-1.5`, `'x'`, `true`,
-   `"text"`, `String::from("text")`). Further arguments are the panic
+   `"text"`, `String::from("text")`), or, for a whole-value field pin
+   (RIPR-SPEC-0225), the struct literal of the owner's type that gate reads
+   (`assert_ok_eq!(config(2), Config { retries: 3 })` beside an
+   `Ok(Config { .. })` tail). Further arguments are the panic
    message and decide nothing. An owner call in the second operand, a
    non-literal expected operand (a binding, a constant, a call, a value
    computed from the owner) and an owner call wrapped in anything refuse.
@@ -1687,8 +1693,9 @@ payload with `expected`, so each reads as the unwrapped pin above
    or `None` as a value refuses, as for the unwrapped pin.
 5. Grade. The oracle extractor stays text-only and reads the line
    `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
-   strong for one probe, and only for the `return_value` family, when this
-   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   strong for one probe, and only for the `return_value` family and the
+   whole-value field pin of the `field_construction` family (#12394 item 5),
+   when this pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
    finding's related test. Analyses that read the extracted oracle list
    directly (test-grip evidence, the refusal notes) still see no oracle on
    that line.
@@ -1720,9 +1727,33 @@ change.
    another integer, or take an `Err(..)` or `None` exit that the pin names as
    `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
    claims `assert_ok_eq!` / `assert_some_eq!` alike.
-4. Fail open to today's reading. A call or owner outside the subset, an
+4. Whole-value field pins (#12394 item 5). For a RIPR-SPEC-0225 whole-value
+   field pin the same question is asked of the changed field alone: the text
+   after `field:` on the changed line (the diff's old text for the old
+   version) is read as an integer expression over the owner's parameters, in
+   the field's declared integer type, which must match the parameters' type.
+   Straight-line `let name = expr;` bindings above the field are substituted
+   into it (`let n = n + 1;` above `retries: n + 1` reads as `(n + 1) + 1`); a
+   guard, a mutation, a `mut` or typed binding, or a binding inside the
+   literal leaves the owner unread. When the pinned struct literal gives the field a decimal integer that
+   neither version computes for the call's literal arguments, the pin does not
+   credit; the other fields of the literal are not read. This applies to
+   `assert_eq!` and the claims `assert_ok_eq!` / `assert_some_eq!` alike.
+5. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every
    pin either version agrees with keep their current result.
+6. Tuple-struct owners and operands both versions agree on (#12808). When the
+   changed tail is the whole `T(e)` / `Self(e)` of a one-field built-in
+   integer tuple struct, the owner is lowered to the same subset (every `T`
+   or `Self` parameter and `self` becomes the field's integer, `p.0` becomes
+   `p`, the constructor is dropped; a parameter named `self_` or a repeated
+   name is not lowered) and the call must pass only `T(<decimal literal>)`
+   operands, receiver first. When both versions return the same value for
+   those operands, and differ for some operand vector drawn from `1, 2, 3, 5,
+   -2`, no assertion on that call can tell the change apart and the pin does
+   not credit. A rewrite equal on every probed vector (`a + b` to `b + a`)
+   and anything outside the subset keep their current result. This is a
+   bounded static check, not a proof of equivalence.
 
 ### Bool-owner pins
 
@@ -2962,6 +2993,12 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Tuple-struct owners and agreeing operands (#12808):
+  `crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs`
+  (agreeing operands withheld, distinguishing and unreadable operands kept,
+  free-function form, operand order, an equal-on-every-input rewrite, a
+  `self_` alias) and the verdict corpus trap case
+  `trap-tuple-agreeing-operands`.
 - Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
   covers direct and added-owner paths, the named guard, input/return-path
   controls, assertion identity and execution order, distinct evidence rows
@@ -2978,6 +3015,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
   `predicate` probe and therefore stay `unknown` on purpose; the
   return-value twins are in the test above.
+  (#13558) The same file pins that the claims forms do not credit the
+  `field_construction` clone and err-variant gates (`assert_ok_eq!` /
+  `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
+  struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
+  on the same subjects.
 - Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,

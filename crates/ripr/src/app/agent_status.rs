@@ -403,7 +403,7 @@ pub(crate) fn build_agent_status_report_from(
     };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
     let (store_flag, store_locator) = match resolve_store(
@@ -2967,7 +2967,7 @@ pub(crate) fn selected_attempt_status_reading(
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
     let workflow_receipt = read_workflow_receipt(root);
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let view = status_repair_attempt(
         command_root,
         store_locator,
@@ -5405,6 +5405,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: EditCageVerdict {
                 status: EditCageVerdictStatus::Compliant,
@@ -5568,6 +5569,7 @@ mod tests {
                 receipt_projection_predecessor: None,
                 focused_result: None,
                 packet_sha256: "sha256:packet".to_string(),
+                line_ending_only_paths: Vec::new(),
                 current: true,
                 verdict: EditCageVerdict {
                     status: EditCageVerdictStatus::Compliant,
@@ -5606,6 +5608,16 @@ mod tests {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        // The selected external test file is pure-insertion confined (#8710),
+        // so the baseline needs it committed and clean at HEAD.
+        if !root.join("tests/target.rs").exists() {
+            write_file(&root.join("tests/target.rs"), "#[test]\nfn existing() {}\n")?;
+            run_git(root, &["add", "tests/target.rs"])?;
+            run_git(
+                root,
+                &["commit", "--no-gpg-sign", "-m", "baseline external test"],
+            )?;
+        }
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
         let baseline = workflow.join("baseline-status-honesty.json");

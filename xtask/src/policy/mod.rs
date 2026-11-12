@@ -34,6 +34,8 @@ mod static_language;
 mod test_inventory;
 mod text_encoding;
 mod workflows;
+mod workspace_lint_inheritance;
+mod workspace_lints;
 
 pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
@@ -54,7 +56,10 @@ pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
 #[cfg(all(test, windows))]
 pub(crate) use file_policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET;
-pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
+pub(crate) use file_policy::{
+    CoverageEnumeration, check_file_policy, check_file_policy_with,
+    is_covered_by_instrument_failure,
+};
 pub(crate) use fold_changelog::fold_changelog;
 pub(crate) use install_receipt::install_receipt;
 pub(crate) use local_context::check_local_context;
@@ -69,6 +74,8 @@ pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
 pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};
 pub(crate) use workflows::check_workflows;
+pub(crate) use workspace_lint_inheritance::workspace_lint_inheritance_violations;
+pub(crate) use workspace_lints::parse_workspace_lints_section;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {
     let mut failures = Vec::new();

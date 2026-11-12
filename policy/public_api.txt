@@ -306,6 +306,7 @@ pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
 pub use ripr::analysis::LanguageRun
 pub use ripr::analysis::LanguageRunStatus
+pub use ripr::analysis::OverLimitFile
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
@@ -354,7 +355,7 @@ pub use ripr::app::pr_summary::render_evidence_summary_md
 pub use ripr::app::pr_summary::render_pr_evidence_summary_json
 pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::app::repo_seam_inventory_input
-pub use ripr::app::run_impacted_evidence_at
+pub use ripr::cli::run_impacted_evidence_at
 pub use ripr::check_workspace
 pub use ripr::check_workspace_with_config
 pub use ripr::collect_context

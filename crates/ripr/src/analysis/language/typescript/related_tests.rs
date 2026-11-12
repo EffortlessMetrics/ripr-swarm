@@ -1719,7 +1719,10 @@ pub(crate) fn module_export_facts(
             facts.enum_bindings.push((name, members));
         }
     }
-    let code = enum_member_guard::enum_member_use_code(body, source);
+    // Built only when the module has a root to check: the mask re-parses the
+    // whole module, which a module with no import and no readable enum
+    // never needs.
+    let mut enum_use: Option<enum_member_guard::EnumMemberUse> = None;
     for name in facts
         .enum_imports
         .iter()
@@ -1730,7 +1733,9 @@ pub(crate) fn module_export_facts(
             .enum_imports
             .iter()
             .any(|import| import.local == *name && import.namespace);
-        if !enum_member_guard::enum_member_root_is_read_only(&code, name, namespace) {
+        let enum_use =
+            enum_use.get_or_insert_with(|| enum_member_guard::EnumMemberUse::new(body, source));
+        if !enum_use.root_is_read_only(name, namespace) {
             facts.unstable_enum_roots.push(name.clone());
         }
     }
@@ -2214,6 +2219,9 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
+        if default_object_second_binding(import, test, owner, alias_map, workspace_root) {
+            return false;
+        }
         import_references_owner_call(import, test, owner)
     }) {
         // A namespace import synthesized from `export * as ns from` reached
@@ -2514,6 +2522,7 @@ pub(crate) fn module_entry_owner(
             class_default_export: decorated.default_export,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2530,6 +2539,7 @@ pub(crate) fn module_entry_owner(
             owner_kind: OwnerKind::Method,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2550,6 +2560,7 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -2642,6 +2653,64 @@ fn module_value_use_relation(
     })
 }
 
+/// `true` when the test imports a binding whose local name is `class_name`
+/// and that binding is not the owner's own class: a namespace import, a
+/// source that does not resolve to the owner's module, a name imported from
+/// the owner's module under a different exported name, or a default import of
+/// the owner's module when the owner is not its default export.
+fn class_name_bound_to_other_import(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    class_name: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    test.imports_in_file.iter().any(|import| {
+        if import.local != class_name {
+            return false;
+        }
+        let is_owner_import = !import.namespace
+            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+            && ((!owner.class_default_export && import.imported.as_deref() == Some(class_name))
+                || (owner.class_default_export && import.imported.as_deref() == Some("default")));
+        !is_owner_import
+    })
+}
+
+/// `true` when the body declares `class <name>` (the lexical shadow scan
+/// recognizes `const|let|var|function` declarators, not class declarations).
+fn body_declares_class_named(body_text: &str, name: &str) -> bool {
+    let masked = super::classifier::ts_mask_literals_and_comments(body_text);
+    masked.match_indices("class").any(|(at, keyword)| {
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+        let before_ok = masked
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident(c));
+        let rest = &masked[at + keyword.len()..];
+        let trimmed = rest.trim_start();
+        before_ok
+            && trimmed.len() < rest.len()
+            && trimmed.starts_with(name)
+            && trimmed[name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_ident(c))
+    })
+}
+
+/// `true` when the test body or an enclosing scope declares its own binding
+/// named `class_name` (a local `class`/`const`, a parameter), so a bare
+/// `new <name>()` reaches that binding and not the owner's class.
+fn class_name_shadowed_in_test(test: &TypeScriptTest, class_name: &str) -> bool {
+    local_identifier_declared_in_test_body(&test.body_text, class_name)
+        || body_declares_class_named(&test.body_text, class_name)
+        || test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == class_name)
+}
+
 pub(crate) fn receiver_owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -2670,8 +2739,24 @@ pub(crate) fn receiver_owner_call_relation(
                 .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
         }
         let mut constructor_names = Vec::new();
-        if let Some(class_name) = owner.class_name.as_deref() {
+        // The bare class name is a name match inside the owner's package. When
+        // the test imports a binding with that very name, the binding must be
+        // the owner's own class; a same-named class of another module that
+        // the test imports and constructs does not run this constructor
+        // (#13726). Unbound and same-file names keep the bare-name fallback.
+        if let Some(class_name) = owner.class_name.as_deref()
+            && !class_name_bound_to_other_import(test, owner, class_name, alias_map, workspace_root)
+            && !class_name_shadowed_in_test(test, class_name)
+        {
             constructor_names.push(class_name.to_string());
+        }
+        // Named-import aliases (`import { Url as Link }`) and resolved default
+        // imports, exactly as the cross-package branch reads them (#13726).
+        // Namespace members (`new shop.Url()`) are named there too but
+        // `contains_new_expression_call` never matches a dotted name, so they
+        // stay uncredited.
+        for name in constructor_names_for_method_owner(test, owner, alias_map, workspace_root) {
+            push_unique_string(&mut constructor_names, name);
         }
         // Default-import alias (review #4138): `import Bar from './cart'` +
         // `new Bar(...)` runs the constructor of `export default class Cart`
@@ -2720,6 +2805,15 @@ pub(crate) fn receiver_owner_call_relation(
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
     }
+    // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
+    // "origin", "get").mockReturnValue(...)`) is not the getter as written,
+    // so neither reading nor calling through it can notice a mutation of the
+    // getter body (#13726). Checked before any call or read needle: fail
+    // closed on any file-wide replacement, spy or member assignment that
+    // names the getter.
+    if owner.method_kind == TypeScriptMethodKind::Getter && getter_replaced_in_test(test, owner) {
+        return false;
+    }
     if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
@@ -2739,6 +2833,19 @@ pub(crate) fn receiver_owner_call_relation(
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// `true` when anything in the test file may replace the owner's accessor:
+/// a file-wide member replacement naming it (or any member), a fabricating
+/// spy, a member assignment, or a `spyOn` naming it.
+fn getter_replaced_in_test(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    test.member_replacements_in_file
+        .iter()
+        .any(|n| n == super::tests_extract::MEMBER_REPLACEMENT_ANY || n == &owner.name)
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+        || class_entries::assigns_member_named(&masked, &owner.name)
+        || spies_on_member_named(&test.body_text, &owner.name)
 }
 
 /// Getter owner reached through an exported factory that returns a fresh
@@ -3193,11 +3300,33 @@ pub(crate) fn constructor_names_for_method_owner(
         return Vec::new();
     };
     let mut names = Vec::new();
+    // Locals a named or default import binds to the owner's class.
+    let mut imported_class_locals: Vec<String> = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file) {
         push_unique_string(&mut names, class_name.to_string());
     }
     for import in &test.imports_in_file {
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            continue;
+        }
+        // Two `var` requires may bind one local to different exports
+        // (`var { Cart } = require('./cart'); var { Cart } =
+        // require('./other')`); which one the test constructs is not read.
+        // Two spellings of the owner's module (`'./cart'`, `'./cart.js'`)
+        // bind the same export and are not a conflict.
+        if test.imports_in_file.iter().any(|other| {
+            other.local == import.local
+                && (other.imported != import.imported
+                    || other.namespace != import.namespace
+                    || (other.source != import.source
+                        && !import_source_matches_owner(
+                            other,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )))
+        }) {
             continue;
         }
         if import.namespace {
@@ -3206,22 +3335,36 @@ pub(crate) fn constructor_names_for_method_owner(
             if !owner.class_default_export {
                 push_unique_string(&mut names, format!("{}.{class_name}", import.local));
             }
-        } else if import.imported.as_deref() == Some(class_name)
+        } else if (!owner.class_default_export && import.imported.as_deref() == Some(class_name))
             || (owner.class_default_export && import.imported.as_deref() == Some("default"))
         {
+            // A default-exported class is reachable only through the default
+            // import: a named import spelled like the class names a
+            // different export (`export { Other as Url }`), never this
+            // class (#13726).
             // A named import, or a default import of the owner's
             // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
+            push_unique_string(&mut imported_class_locals, import.local.clone());
         }
     }
     // A constructor name the test scope or body rebinds (`const Cart =
     // class {}`, `const shop = {...}`) constructs something else.
+    //
+    // A file-level binding of an imported class local is not a rebind: it is
+    // the CommonJS import itself (`const { Cart } = require('./cart')`
+    // declares the very local the import record names, #14088), as the
+    // static-method path reads it (`class_names_for_class_method_owner`). A
+    // namespace receiver (`shop.Cart`) and a same-file class name keep the
+    // strict rule: a `const shop = require(...)` object is mutable, and a
+    // class binding can be reassigned.
     names.retain(|name| {
         let local = name.split('.').next().unwrap_or(name);
+        let imported_class = imported_class_locals.contains(name);
         !test
             .scope_bindings
             .iter()
-            .any(|binding| binding.name == local)
+            .any(|binding| binding.name == local && !(imported_class && binding.file_level))
             && !local_identifier_declared_in_test_body(&test.body_text, local)
     });
     names
@@ -4037,7 +4180,7 @@ fn dynamic_import_member_call(
 
 /// The quoted literal (single, double, or backtick) starting at `from`,
 /// allowing whitespace between the paren and the quote (`import( "./x" )`).
-fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
+pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
     let rest = body.get(from..)?.trim_start();
     let quote = rest.chars().next()?;
     if !matches!(quote, '"' | '\'' | '`') {
@@ -4643,6 +4786,49 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// RIPR-SPEC-0243 rule 5 (#13694 review, #13750): when the owner's default
+/// object has a sibling that could replace it, any second binding of the
+/// owner's module in the test file (another import local, a named or
+/// namespace import, a `require()`) could reach that sibling outside the
+/// `local.member(` calls rule 5 checks, so the rule-5 relation is withheld.
+pub(crate) fn default_object_second_binding(
+    import: &TypeScriptImport,
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.default_object_member
+        && !owner.default_object_unsafe_siblings.is_empty()
+        && import.imported.as_deref() == Some("default")
+        && !import.namespace
+        && (test.imports_in_file.iter().any(|other| {
+            !std::ptr::eq(other, import)
+                && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
+        }) || file_loads_owner_module(test, owner, alias_map, workspace_root))
+}
+
+/// A dynamic `import("...")`, `require("...")`, `requireActual("...")` or
+/// `importActual("...")` anywhere in the test file (body, hooks, describe
+/// bodies, top level, sibling tests) whose literal specifier resolves to the
+/// owner's module is a second binding that produces no static import record
+/// (#13750). Detection is textual and whole-file, so it can only
+/// over-withhold; a non-literal or `${}` template argument is not detected.
+fn file_loads_owner_module(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let owner_module = normalized_module_path(&owner.file);
+    test.dynamic_load_specifiers_in_file
+        .iter()
+        .any(|specifier| {
+            normalized_relative_import_module(&test.file, specifier, alias_map, workspace_root)
+                .is_some_and(|module| module == owner_module)
+        })
+}
+
 /// A literal `require()` binding (recorded as a default-named namespace
 /// binding) of a module whose whole export is the owner function
 /// (`module.exports = <function>`, RIPR-SPEC-0243 rule 19).
@@ -4681,6 +4867,12 @@ fn import_references_owner_call(
             .default_member_only_locals_in_file
             .iter()
             .any(|(local, member)| *local == import.local && *member == owner.name)
+            && !test
+                .default_member_only_locals_in_file
+                .iter()
+                .any(|(local, member)| {
+                    *local == import.local && owner.default_object_unsafe_siblings.contains(member)
+                })
             && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner
@@ -4761,8 +4953,8 @@ fn nearer_paths_config_dir_uncached(root: &Path, dir: &Path) -> Option<PathBuf> 
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
         let js_config = dir.join("jsconfig.json");
-        let declares = (ts_config.is_file() && config_file_owns_paths(&ts_config))
-            || (js_config.is_file() && config_file_owns_paths(&js_config));
+        let declares = (ts_config.is_file() && config_file_owns_paths(root, &ts_config))
+            || (js_config.is_file() && config_file_owns_paths(root, &js_config));
         if declares {
             return (dir != root).then_some(dir);
         }
@@ -4804,7 +4996,7 @@ pub(crate) fn unavailable_config_claims(
     specifier: &str,
 ) -> bool {
     (root_map.has_tsconfig() && root_map.paths_key_matches(specifier))
-        || super::tsconfig::package_config_claims(config_dir, specifier)
+        || super::tsconfig::package_config_claims(root_map.root(), config_dir, specifier)
 }
 
 /// The alias map that governs `importer`'s non-relative specifiers.
@@ -6936,9 +7128,10 @@ mod nested_config_withhold_tests {
         Ok(())
     }
 
-    /// A package config that inherits `paths` through a same-directory
-    /// `extends` resolves; a cross-directory base, an unparseable config, and
-    /// a directory where both `tsconfig.json` and `jsconfig.json` declare
+    /// A package config that inherits `paths` or `baseUrl` through a relative
+    /// in-workspace `extends` resolves (an inherited `baseUrl` at its
+    /// declaring config); a base outside the workspace, an unparseable config,
+    /// and a directory where both `tsconfig.json` and `jsconfig.json` declare
     /// `paths` stay unresolved rather than guessing.
     #[test]
     fn nested_config_fails_closed_when_it_cannot_be_modeled_exactly() -> Result<(), String> {
@@ -6997,7 +7190,23 @@ mod nested_config_withhold_tests {
                     "packages/tsconfig.base.json",
                     r#"{"compilerOptions":{"baseUrl":"."}}"#,
                 ),
+                ("packages/src/owner.ts", "export function owner() {}"),
             ],
+        )?;
+        // #11204: the inherited `baseUrl` stays anchored at the base that
+        // declares it (`packages/`), as `tsc` resolves it, not at the
+        // extending package directory.
+        if cross.as_deref() != Some("packages/src/owner") {
+            return Err(format!(
+                "cross-directory extends must resolve at the base anchor, got {cross:?}"
+            ));
+        }
+        let escaping = check(
+            "escaping-extends",
+            &[(
+                "packages/a/tsconfig.json",
+                r#"{"extends":"../../../outside.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            )],
         )?;
         let unparseable = check(
             "unparseable",
@@ -7020,7 +7229,7 @@ mod nested_config_withhold_tests {
             ],
         )?;
         for (label, verdict) in [
-            ("cross-directory extends", cross),
+            ("extends base outside the workspace", escaping),
             ("unparseable config", unparseable),
             ("tsconfig.json + jsconfig.json both declaring", both),
         ] {
@@ -7117,6 +7326,33 @@ mod nested_config_withhold_tests {
             ));
         }
         Ok(())
+    }
+
+    /// #11204: the common monorepo layout — a package config that only
+    /// extends a shared base two directories up — resolves through the base's
+    /// own `baseUrl` anchor (the shared root), not the package directory.
+    #[test]
+    fn package_extending_a_shared_base_resolves_at_the_base_anchor() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"extends":"../../tsconfig.base.json"}"#)?;
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["packages/a/src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "expected the base-anchored package owner, got {other:?}"
+            )),
+        }
     }
 
     /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,

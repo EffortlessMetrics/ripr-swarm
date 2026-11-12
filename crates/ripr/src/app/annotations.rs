@@ -10,23 +10,20 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
     escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
 };
 
-use super::subcommand::{
-    NonEmptyPlaceholder, invocation_repo_root_with_directory_hint, non_empty_arg,
-};
+use super::subcommand::invocation_repo_root_with_directory_hint;
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct AnnotationOptions {
-    comments: String,
-    out: String,
-    check: bool,
+pub(crate) struct AnnotationOptions {
+    pub(crate) comments: String,
+    pub(crate) out: String,
+    pub(crate) check: bool,
 }
 
 impl Default for AnnotationOptions {
@@ -39,12 +36,9 @@ impl Default for AnnotationOptions {
     }
 }
 
-pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+/// Run `ripr annotations` for parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::annotations`).
+pub(crate) fn execute_annotations(options: AnnotationOptions) -> Result<(), String> {
     let repo = invocation_repo_root_with_directory_hint()?;
     let generated = render_annotations(&repo, &options)?;
     let out = repo.join(&options.out);
@@ -53,43 +47,6 @@ pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
     } else {
         write_annotations(&out, &generated, &options)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
-    let mut options = AnnotationOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--comments" => {
-                i += 1;
-                options.comments = non_empty_arg(
-                    "annotations",
-                    args,
-                    i,
-                    "--comments",
-                    NonEmptyPlaceholder::Path,
-                )?
-                .to_string();
-            }
-            "--out" => {
-                i += 1;
-                options.out =
-                    non_empty_arg("annotations", args, i, "--out", NonEmptyPlaceholder::Path)?
-                        .to_string();
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("annotations", other)),
-        }
-        i += 1;
-    }
-    Ok(options)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(ANNOTATIONS_HELP, &[])
-    );
 }
 
 /// Help body for `ripr annotations`. Also the flag source for unknown-argument
@@ -113,7 +70,7 @@ fn render_annotations(
     // One direct read determines presence: `NotFound` is the intended
     // optional-comments-file state; every other I/O failure (permission
     // denied, directory input, invalid UTF-8) stays an explicit error.
-    let text = match fs::read_to_string(&comments_path) {
+    let text = match crate::bounded_input::read_to_string(&comments_path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AnnotationOutput {
@@ -234,7 +191,7 @@ fn check_annotations(
         println!("RIPR annotations skipped: {} is missing", options.comments);
         return Ok(());
     }
-    let actual = fs::read_to_string(path).map_err(|err| {
+    let actual = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "missing or unreadable {}: {err}; run `ripr annotations` to write it",
             options.out
@@ -281,32 +238,6 @@ fn write_annotations(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-
-    #[test]
-    fn parse_supports_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--comments".to_string(),
-            "comments.json".to_string(),
-            "--out".to_string(),
-            "annotations.txt".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.comments, "comments.json");
-        assert_eq!(parsed.out, "annotations.txt");
-        assert!(parsed.check);
-        match parse_options(&["--comments".to_string(), "".to_string()]) {
-            Err(msg) if msg.contains("non-empty") => Ok(()),
-            other => Err(format!("expected non-empty error, got {other:?}")),
-        }
-    }
-
-    #[test]
-    fn parse_rejects_unknown_arg() -> Result<(), String> {
-        match parse_options(&["--bogus".to_string()]) {
-            Err(msg) if msg.contains("--bogus") => Ok(()),
-            other => Err(format!("expected unknown-arg error, got {other:?}")),
-        }
-    }
 
     fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
         let nanos = std::time::SystemTime::now()
