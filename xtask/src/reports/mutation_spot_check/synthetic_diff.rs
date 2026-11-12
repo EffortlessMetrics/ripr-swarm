@@ -282,7 +282,13 @@ const LIMITATIONS_THAT_EXPLAIN_NO_FINDING: &[&str] =
 
 /// Read the verdict for lines `first_line..=last_line` of `file` from a
 /// `ripr check --format json` report.
-pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line: u64) -> Verdict {
+pub(crate) fn read_verdict(
+    check: &Value,
+    file: &str,
+    first_line: u64,
+    last_line: u64,
+    language: &str,
+) -> Verdict {
     let matched: Vec<&Value> = check
         .get("findings")
         .and_then(Value::as_array)
@@ -354,15 +360,35 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
         .collect();
     let mut distinct = verdicts.into_iter();
     match (distinct.next(), distinct.next()) {
-        (Some((token, owner)), None) if !token.is_empty() => Verdict::Class {
-            token: token.to_string(),
-            owner: owner.to_string(),
-            expression: matched
-                .first()
-                .and_then(|finding| finding.pointer("/probe/expression"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
+        (Some((token, owner)), None) if !token.is_empty() => {
+            let has_transitive_reach_limit = matched.iter().any(|finding| {
+                finding.get("static_limit_kind").and_then(Value::as_str)
+                    == Some("python_transitive_reach_unresolved")
+                    || (language == "python"
+                        && finding
+                            .get("stop_reasons")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .any(|reason| reason.as_str() == Some("transitive_reach_unresolved")))
+            });
+            if token == "no_static_path" && has_transitive_reach_limit {
+                // The producer explicitly could not trace a bounded method
+                // path, so this is an honest unknown, not evidence that a
+                // caught mutant lacked a discriminator.
+                Verdict::Limited("python_transitive_reach_unresolved")
+            } else {
+                Verdict::Class {
+                    token: token.to_string(),
+                    owner: owner.to_string(),
+                    expression: matched
+                        .first()
+                        .and_then(|finding| finding.pointer("/probe/expression"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                }
+            }
+        }
         _ => Verdict::Ambiguous,
     }
 }
@@ -586,7 +612,13 @@ pub(crate) fn score_mutants(
                 }
             };
             records.push(
-                match read_verdict(&check, file, edit.first_line, edit.last_line) {
+                match read_verdict(
+                    &check,
+                    file,
+                    edit.first_line,
+                    edit.last_line,
+                    profile.language,
+                ) {
                     Verdict::Class {
                         token,
                         owner,
@@ -1044,14 +1076,17 @@ mod tests {
             None,
         );
         assert_eq!(
-            read_verdict(&check, "a.ts", 2, 2),
+            read_verdict(&check, "a.ts", 2, 2, "typescript"),
             Verdict::Class {
                 token: "exposed".to_string(),
                 owner: "typescript:a.ts::f".to_string(),
                 expression: Some("  if (qty > 10) {".to_string()),
             }
         );
-        assert_eq!(read_verdict(&check, "a.ts", 5, 6), Verdict::NoFinding);
+        assert_eq!(
+            read_verdict(&check, "a.ts", 5, 6, "typescript"),
+            Verdict::NoFinding
+        );
     }
 
     #[test]
@@ -1063,10 +1098,13 @@ mod tests {
             None,
         );
         assert!(matches!(
-            read_verdict(&check, "src/lib.rs", 2, 2),
+            read_verdict(&check, "src/lib.rs", 2, 2, "rust"),
             Verdict::Class { ref token, .. } if token == "weakly_exposed"
         ));
-        assert_eq!(read_verdict(&check, "lib.rs", 2, 2), Verdict::NoFinding);
+        assert_eq!(
+            read_verdict(&check, "lib.rs", 2, 2, "rust"),
+            Verdict::NoFinding
+        );
     }
 
     fn rust_check_json(findings: &[(&str, u64, Option<&str>)]) -> Value {
@@ -1085,17 +1123,17 @@ mod tests {
     fn rust_owner_comes_from_the_canonical_gap_and_unowned_pairs_fail_closed() {
         let distinct = rust_check_json(&[("exposed", 2, Some("f")), ("exposed", 3, Some("g"))]);
         assert_eq!(
-            read_verdict(&distinct, "src/lib.rs", 2, 3),
+            read_verdict(&distinct, "src/lib.rs", 2, 3, "rust"),
             Verdict::Ambiguous
         );
         let one = rust_check_json(&[("exposed", 2, Some("f"))]);
         assert!(matches!(
-            read_verdict(&one, "src/lib.rs", 2, 2),
+            read_verdict(&one, "src/lib.rs", 2, 2, "rust"),
             Verdict::Class { ref owner, .. } if owner == "f"
         ));
         let unowned = rust_check_json(&[("exposed", 2, None), ("exposed", 3, None)]);
         assert_eq!(
-            read_verdict(&unowned, "src/lib.rs", 2, 3),
+            read_verdict(&unowned, "src/lib.rs", 2, 3, "rust"),
             Verdict::Ambiguous
         );
     }
@@ -1110,20 +1148,26 @@ mod tests {
             true,
             None,
         );
-        assert_eq!(read_verdict(&mixed, "a.ts", 2, 3), Verdict::Ambiguous);
+        assert_eq!(
+            read_verdict(&mixed, "a.ts", 2, 3, "typescript"),
+            Verdict::Ambiguous
+        );
         let owners = check_json(
             &[("exposed", "a.ts", 2, "o1"), ("exposed", "a.ts", 3, "o2")],
             true,
             None,
         );
-        assert_eq!(read_verdict(&owners, "a.ts", 2, 3), Verdict::Ambiguous);
+        assert_eq!(
+            read_verdict(&owners, "a.ts", 2, 3, "typescript"),
+            Verdict::Ambiguous
+        );
         let same = check_json(
             &[("exposed", "a.ts", 2, "o"), ("exposed", "a.ts", 3, "o")],
             true,
             None,
         );
         assert!(matches!(
-            read_verdict(&same, "a.ts", 2, 3),
+            read_verdict(&same, "a.ts", 2, 3, "typescript"),
             Verdict::Class { .. }
         ));
     }
@@ -1132,18 +1176,58 @@ mod tests {
     fn verdict_names_adapter_limitations_and_incomplete_runs() {
         let limited = check_json(&[], true, Some("language_adapter_unavailable"));
         assert_eq!(
-            read_verdict(&limited, "a.ts", 2, 2),
+            read_verdict(&limited, "a.ts", 2, 2, "typescript"),
             Verdict::Limited("language_adapter_unavailable")
         );
         let scope = check_json(&[], true, Some("language_scope_unsupported"));
         assert_eq!(
-            read_verdict(&scope, "a.ts", 2, 2),
+            read_verdict(&scope, "a.ts", 2, 2, "typescript"),
             Verdict::Limited("language_scope_unsupported")
         );
         let incomplete = check_json(&[], false, None);
-        assert_eq!(read_verdict(&incomplete, "a.ts", 2, 2), Verdict::Incomplete);
+        assert_eq!(
+            read_verdict(&incomplete, "a.ts", 2, 2, "typescript"),
+            Verdict::Incomplete
+        );
         let partial = check_json(&[("exposed", "a.ts", 2, "o")], false, None);
-        assert_eq!(read_verdict(&partial, "a.ts", 2, 2), Verdict::Incomplete);
+        assert_eq!(
+            read_verdict(&partial, "a.ts", 2, 2, "typescript"),
+            Verdict::Incomplete
+        );
+    }
+
+    #[test]
+    fn python_transitive_reach_limits_are_honest_unknowns_not_false_gaps() {
+        let mut by_kind = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_kind["findings"][0]["static_limit_kind"] = json!("python_transitive_reach_unresolved");
+        assert_eq!(
+            read_verdict(&by_kind, "a.py", 2, 2, "python"),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let mut by_stop_reason = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        by_stop_reason["findings"][0]["stop_reasons"] = json!(["transitive_reach_unresolved"]);
+        assert_eq!(
+            read_verdict(&by_stop_reason, "a.py", 2, 2, "python"),
+            Verdict::Limited("python_transitive_reach_unresolved")
+        );
+
+        let unlimited = check_json(&[("no_static_path", "a.py", 2, "o")], true, None);
+        assert!(matches!(
+            read_verdict(&unlimited, "a.py", 2, 2, "python"),
+            Verdict::Class { .. }
+        ));
+    }
+
+    #[test]
+    fn rust_transitive_reach_keeps_its_own_verdict_and_language_identity() {
+        let mut rust = check_json(&[("no_static_path", "src/lib.rs", 2, "o")], true, None);
+        rust["findings"][0]["static_limit_kind"] = json!("rust_transitive_reach_unresolved");
+        rust["findings"][0]["stop_reasons"] = json!(["transitive_reach_unresolved"]);
+        assert!(matches!(
+            read_verdict(&rust, "src/lib.rs", 2, 2, "rust"),
+            Verdict::Class { .. }
+        ));
     }
 
     /// #14083 T9: the verdict join reads a real `ripr check --diff` JSON

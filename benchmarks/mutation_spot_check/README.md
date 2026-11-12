@@ -239,7 +239,11 @@ excluded; the receipt's `sampling` records `eligible` and `selected`),
 `ripr_check_failed`, `analysis_incomplete`, `no_finding_on_mutated_lines`,
 `ambiguous_verdict`, and `language_adapter_unavailable` /
 `language_scope_unsupported` when ripr names that limitation for an empty
-result.
+result. A Python `no_static_path` carrying
+`static_limit_kind: python_transitive_reach_unresolved` or the matching stop
+reason is also an exclusion: it is an honest bounded-reach unknown, not a
+scoreable claim that no test would catch the mutant. Ordinary `no_static_path`
+remains scoreable under the table above.
 
 The receipt stays `ripr-mutation-spot-check-v2`; these repos add
 `language: "typescript"`, `agreement_method: "synthetic_diff_verdict"` and the
@@ -300,11 +304,72 @@ receipt, exclusions and claim boundary is as for TypeScript, with
 `.github/workflows/mutation-spot-check-python.yml` runs it on demand and
 weekly on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
 distributor, pytest). Third-party code (the packages and cosmic-ray) runs only
-there, never in an agent sandbox. **That workflow and corpus have not run**:
-no package is confirmed to install, pass its baseline or finish a session, and
-the cosmic-ray dump field names were taken from its source, not from a real
-dump. The first run is the first evidence; it uploads the raw dumps beside the
-receipt so a parser mismatch can be diagnosed.
+there, never in an agent sandbox. Run 42538508465 installed python-semver,
+passed its baseline, produced a session and scored 853 mutants (#13776).
+cachetools remains unconfirmed in the recorded corpus. The job uploads the raw
+dumps beside the receipt so a parser mismatch can be diagnosed.
+
+## Python: real mutmut mutants (same join)
+
+`--mutmut-dump <name>=<file>` (with the matching `--repo <name>=<checkout>`)
+scores Python mutmut (3.x) outcomes through the same join (#13842). mutmut
+has no machine-readable export of a mutant's location, so the workflow writes
+the file: for each mutant listed by `mutmut results --all true` it records
+`mutmut show <name>` as one `{"name", "status", "diff"}` JSON line. That diff
+compares the original function with the mutant function from mutmut's own
+module, so it is the real mutation, but its line numbers count from the
+function and a method is dedented to column 0. The parser (`mutmut.rs`) finds
+the hunk's original side (context and removed lines) in the checkout at one
+constant indent (a line inside a multi-line string may also match verbatim)
+and requires exactly one placement, so code repeated verbatim in two places
+(`unlocatable_ambiguous`) is never scored, and neither is a hunk with no
+placement (`unlocatable_diff`: a dump from another revision, or a package not
+indented with 4 spaces, since `mutmut show` re-renders blocks at 4 spaces per
+level). The replaced range is the smallest span (common prefix and
+suffix removed) between the dump's own removed and added lines, mapped onto
+the checkout (a line matched through the indent shifts by it, a line inside a
+multi-line string does not), so multi-line mutants are located exactly; a diff with several changed hunks
+is `unlocatable_multihunk`. A record with an empty diff has no path, so it is
+counted by status in the receipt's `mutation_tool.records_without_diff` rather
+than dropped. `--mutmut-version` records the version; the workflow passes the
+corpus pin.
+
+`mutmut apply` is deliberately not used. In mutmut 3.8.1 it replaces the first
+function of the mutant's name anywhere in the module (any class's `__init__`,
+or an `@overload` stub), and on the first hosted run it garbled the file for
+about a third of itsdangerous and cachetools mutants.
+
+Status mapping: mutmut's detected status is `caught` and its undetected status
+is `missed`; `timeout`, `no tests`, `skipped`, `not checked`, `suspicious`,
+`segfault` and the type-checker rejection (the tests never ran) are never
+scored. As with cosmic-ray, a mutant that breaks import also reads as detected,
+so `caught` is an upper bound on tests discriminating. One run scores one tool:
+`--mutmut-dump` together with `--cosmic-ray-dump` or `--stryker-report` is
+refused.
+
+The `mutmut` job of `.github/workflows/mutation-spot-check-python.yml` runs it
+weekly beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
+`corpus-python-mutmut.json` (isodate, itsdangerous, tomli, python-slugify, and
+cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
+must pass its own tests before mutmut runs, and mutmut must pass them again
+under its trampoline: humanize was dropped because it does not (see the corpus
+note), tomli skips its two recursion-limit tests (the trampoline's extra
+frames overflow them) and python-slugify skips one test that cannot run there.
+The job passes each package's pytest arguments as `--mutmut-test-args`, so the
+receipt records them per repo (`mutation_tool.test_args`, `excluded_tests`,
+`reduced_suite`). A left-out test cannot kill a mutant, so a mutant only it
+would catch reads as missed: the language figure then lists those repos under
+`reduced_suite_repos` and the markdown says it is computed under a reduced
+suite. pytest is pinned in the corpus beside mutmut, and both jobs build xtask
+with the repository's pinned Rust toolchain.
+The recall figure the scoreboard reads is
+`recall_of_missed.by_language.python`: of the runtime-missed mutants with a
+scoreable verdict, the strict share ripr calls a gap and the share it calls a
+gap, weak or unknown. Every spot-check run also writes
+`mutation-spot-check-records.jsonl`, one line per located mutant with its
+disposition, verdict, outcome, file and line, so a located miss can be traced
+without re-running the join. A mutmut record with no diff has no location or
+JSONL row; its status is counted in `records_without_diff`.
 
 ## Pilot top recommendations
 
