@@ -130,6 +130,10 @@ tests = [
   "crates/ripr/tests/removed_field_declaration.rs::removed_item_macro_empty_array_value_keeps_field_construction",
   "crates/ripr/tests/removed_field_declaration.rs::removed_item_macro_identifier_element_list_keeps_field_construction",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_wrapped_struct_field_is_a_declaration_but_a_construction_is_not",
+  "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_wrapped_fn_parameter_is_a_declaration_but_a_call_argument_is_not",
+  "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_fn_parameter_reads_through_generic_bounds_and_item_containers",
+  "crates/ripr/src/analysis/probes/diff.rs::macro_body_fn_parameters_are_not_field_construction_probes",
+  "crates/ripr/src/analysis/probes/diff.rs::macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::enum_variant_fields_preserve_trivia_and_byte_identity",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::enum_variant_declaration_authority_rejects_expressions_and_shared_lines",
   "crates/ripr/tests/removed_field_declaration.rs::removed_only_struct_field_is_static_unknown",
@@ -1255,6 +1259,10 @@ tests = [
   "crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use",
   "crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode",
   "crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml",
+  "crates/ripr/src/config/value_hint_tests.rs::near_miss_values_name_the_accepted_value",
+  "crates/ripr/src/config/value_hint_tests.rs::unrelated_values_get_no_hint",
+  "crates/ripr/src/config/value_hint_tests.rs::hint_does_not_change_the_typed_diagnostic",
+  "crates/ripr/src/config/value_hint_tests.rs::oversized_value_fails_without_a_hint",
   "crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_an_empty_path",
   "crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_nul_without_echoing_the_path",
   "crates/ripr/src/config/perl_executable_tests.rs::perl_executable_preserves_valid_paths_and_the_opt_in_boundary",
@@ -15270,6 +15278,9 @@ tests = [
 
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_actix_test_runtime_runs_an_async_test_body_and_other_shapes_refuse",
+  "crates/ripr/tests/actix_async_test_attribute.rs::an_actix_async_test_pins_the_owner_like_a_tokio_test",
+  "crates/ripr/tests/actix_async_test_attribute.rs::shapes_that_may_not_run_the_body_credit_nothing",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_case_table_with_literal_rows_runs_the_body_once_per_row",
@@ -20949,6 +20960,10 @@ tests = [
   "xtask/src/precommit_v2.rs::tests::deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure",
   "xtask/src/precommit_v2.rs::tests::composition_with_deferred_instrument_failure_is_infrastructure_after_remaining_stages",
   "xtask/src/precommit_v2.rs::tests::composition_with_real_policy_failure_and_instrument_failure_is_not_infrastructure",
+  "xtask/src/precommit_v2.rs::tests::coverage_enumeration_is_skipped_only_for_an_unaffected_local_change_set",
+  "xtask/src/precommit_v2.rs::tests::composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip",
+  "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject",
+  "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_is_disclosed_as_not_enumerated_never_as_coverage",
 ]
 fixtures = []
 code = [

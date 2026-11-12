@@ -6,11 +6,17 @@
 
 use std::process::Command;
 
-fn catalog() -> Result<serde_json::Value, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["help", "--json"])
+/// Run the real binary with no stdin, so a command that reads it sees EOF.
+fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(args)
+        .stdin(std::process::Stdio::null())
         .output()
-        .map_err(|error| format!("failed to run ripr help --json: {error}"))?;
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+fn catalog() -> Result<serde_json::Value, String> {
+    let output = run_ripr(&["help", "--json"])?;
     if !output.status.success() {
         return Err(format!("help --json failed: {:?}", output.status));
     }
@@ -157,5 +163,109 @@ fn rows_without_a_help_body_are_scoped_no_help_body() -> Result<(), String> {
         .filter(|row| row["flags_scope"] == "no_help_body")
         .count();
     assert!(no_body >= 10, "expected body-less rows, got {no_body}");
+    Ok(())
+}
+
+/// #14086: `gate check` and `gate evaluate` print the gate help, so their rows
+/// carry its flags. The body documents both subcommands, so all three gate
+/// rows say `shared_help_body` rather than claiming the union as their own.
+#[test]
+fn gate_rows_carry_the_shared_gate_flags() -> Result<(), String> {
+    let document = catalog()?;
+    let commands = document["commands"].as_array().ok_or("commands missing")?;
+    for path in ["gate", "gate check", "gate evaluate"] {
+        let row = commands
+            .iter()
+            .find(|row| row["path"] == path)
+            .ok_or_else(|| format!("{path} missing from help --json"))?;
+        assert_eq!(row["flags_scope"], "shared_help_body", "{path}");
+        let flags = row["flags"].as_array().ok_or("flags missing")?;
+        for name in ["--base", "--mode", "--root", "--pr-guidance", "--out-md"] {
+            let flag = flags
+                .iter()
+                .find(|flag| flag["name"] == name)
+                .ok_or_else(|| format!("{path} lost {name}: {:?}", flag_names(row)))?;
+            assert_eq!(flag["takes_value"], true, "{path} {name}");
+        }
+    }
+    Ok(())
+}
+
+/// A row that claims its help body as its own lists the flags that command
+/// accepts. Run each one through the real parser, followed by a token no
+/// command accepts: the parser reads left to right and refuses the first
+/// argument it does not know, so the refusal names the sentinel, never the
+/// documented flag. The sentinel also ends every probe at argument parsing,
+/// before any analysis or write.
+///
+/// `gate` used to fail this: its row listed `gate check`'s `--base` and
+/// `--head`, which the bare command rejects (#14086).
+#[test]
+fn every_flag_an_own_body_row_lists_is_accepted_by_the_parser() -> Result<(), String> {
+    const SENTINEL: &str = "--zz-not-a-ripr-flag";
+    // `check --all` is the help modifier (`ripr check --help --all`), listed
+    // among check's options but meaningful only next to `--help`.
+    const HELP_ONLY: &[(&str, &str)] = &[("check", "--all")];
+    // Listed in the help body as rejected, with the reason.
+    const DOCUMENTED_AS_REJECTED: &[(&str, &str)] =
+        &[("feedback record", "--file"), ("feedback record", "--line")];
+    const DUMMY: &str = "zzdummy";
+    let document = catalog()?;
+    let commands = document["commands"].as_array().ok_or("commands missing")?;
+    let mut probed = 0;
+    let mut reached_sentinel = 0;
+    let mut rejected: Vec<String> = Vec::new();
+    for row in commands {
+        if row["flags_scope"] != "own_help_body" {
+            continue;
+        }
+        let path = row["path"].as_str().ok_or("path missing")?;
+        for flag in row["flags"].as_array().ok_or("flags missing")? {
+            let name = flag["name"].as_str().ok_or("flag name missing")?;
+            if HELP_ONLY.contains(&(path, name)) || DOCUMENTED_AS_REJECTED.contains(&(path, name)) {
+                continue;
+            }
+            let mut args: Vec<&str> = path.split(' ').collect();
+            args.push(name);
+            if flag["takes_value"] == true {
+                args.push(flag["values"][0].as_str().unwrap_or(DUMMY));
+            }
+            args.push(SENTINEL);
+            let output = run_ripr(&args)?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains(&format!("unknown {path} argument {name:?}")) {
+                rejected.push(format!("ripr {}: {}", args.join(" "), stderr.trim()));
+            }
+            if stderr.contains(&format!("unknown {path} argument {SENTINEL:?}")) {
+                reached_sentinel += 1;
+            } else if !(output.status.success()
+                || stderr.contains(&format!("{DUMMY:?}"))
+                || stderr.contains(name))
+            {
+                // A probe that stops before the sentinel must show the flag
+                // was read: the run succeeded (`--help`, `--version`), or the
+                // refusal is about the flag's value, quoting the dummy or
+                // naming the flag. A refusal that mentions neither did not
+                // come from reading this flag.
+                rejected.push(format!("ripr {}: {}", args.join(" "), stderr.trim()));
+            }
+            probed += 1;
+        }
+    }
+    assert!(
+        rejected.is_empty(),
+        "help documents flags the parser rejects:\n{}",
+        rejected.join("\n")
+    );
+    // Guards the stimulus, not the surface: a short count means the probe
+    // stopped reaching the parsers. Some flags end the run before the
+    // sentinel is read (`--help`, an eagerly validated value); each of
+    // those is checked above, so the sentinel floor sits below the probe
+    // floor.
+    assert!(probed >= 300, "only {probed} documented flags were probed");
+    assert!(
+        reached_sentinel >= 250,
+        "only {reached_sentinel} of {probed} probes were refused at the sentinel"
+    );
     Ok(())
 }
