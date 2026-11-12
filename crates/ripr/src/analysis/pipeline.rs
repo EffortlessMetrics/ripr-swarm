@@ -1,3 +1,5 @@
+#[cfg(any(feature = "lang-perl", feature = "lang-python"))]
+use super::language::LanguageAdapter;
 #[cfg(feature = "lang-perl")]
 use super::language::PerlAdapter;
 #[cfg(feature = "lang-python")]
@@ -5,9 +7,8 @@ use super::language::PythonAdapter;
 #[cfg(feature = "lang-typescript")]
 use super::language::TypeScriptAdapter;
 use super::language::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
-    unanalyzed_source_language,
+    LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope, RustAdapter,
+    diff_limit_env, is_script_language, positive_limit_from_env, route, unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,

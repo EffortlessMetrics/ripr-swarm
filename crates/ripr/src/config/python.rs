@@ -73,6 +73,7 @@ pub(crate) fn is_python_excluded_dir_everywhere(name: &str) -> bool {
 /// (`ExcludedEnvironment`) instead of silently vanishing from the run
 /// accounting. Environment, cache, and build subtrees are pruned at
 /// directory granularity and contribute no file count.
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn is_python_dir_pruned_from_repo_discovery(name: &str) -> bool {
     PYTHON_EXCLUDED_DIRS.contains(&name)
 }
@@ -124,6 +125,7 @@ pub(crate) fn is_declared_handwritten_python_path(declared: &[String], path: &Pa
 /// pruning an excluded-name directory: a declared hand-written file keeps
 /// its ancestor directories reachable so the file can be read and indexed
 /// (#7386).
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn declared_python_handwritten_under(declared: &[String], dir: &Path) -> bool {
     let mut prefix = crate::output::path::path_identity_key_on(dir, cfg!(windows), false);
     if !prefix.is_empty() && !prefix.ends_with('/') {

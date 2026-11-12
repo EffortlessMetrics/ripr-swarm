@@ -38,9 +38,11 @@ mod typescript;
 pub(crate) use typescript::TypeScriptFileFactStore;
 
 pub(crate) use adapter::{
-    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats, RepoCapFired,
-    RepoFileAccounting, RepoLimitingStage,
+    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats,
+    RepoFileAccounting,
 };
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use adapter::{RepoCapFired, RepoLimitingStage};
 pub(crate) use id::LanguageId;
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use perl::{

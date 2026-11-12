@@ -43,6 +43,7 @@ pub use ripr_contract::domain::ComparisonCoverage;
 pub(crate) use ripr_contract::domain::CompletedAnalysisSnapshotId;
 pub use ripr_contract::domain::Confidence;
 pub(crate) use ripr_contract::domain::ConfidenceBasisEntry;
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use ripr_contract::domain::ConfidenceBasisInputs;
 pub use ripr_contract::domain::ConfidenceCap;
 pub(crate) use ripr_contract::domain::ContinuationId;
@@ -105,6 +106,8 @@ pub(crate) use ripr_contract::domain::PERL_FACT_EXPORTER;
 pub use ripr_contract::domain::Probe;
 pub use ripr_contract::domain::ProbeFamily;
 pub use ripr_contract::domain::ProbeId;
+#[cfg(any(test, feature = "lang-python"))]
+pub(crate) use ripr_contract::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX;
 pub use ripr_contract::domain::REQUIRED_TAXONOMY_KINDS;
 pub(crate) use ripr_contract::domain::RIPR_INTERVENTION_STUDY_SCHEMA_VERSION;
 pub(crate) use ripr_contract::domain::ReferenceState;
@@ -176,14 +179,16 @@ pub(crate) use ripr_contract::domain::normalize_transport_path;
 pub(crate) use ripr_contract::domain::perl_fact_packet_guidance;
 pub(crate) use ripr_contract::domain::python_pytest_verify_display;
 pub(crate) use ripr_contract::domain::python_unittest_verify_display;
+#[cfg(feature = "lang-python")]
 pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
 pub(crate) use ripr_contract::domain::rust_markers_at;
+#[cfg(feature = "lang-typescript")]
+pub(crate) use ripr_contract::domain::ts_oracle_kind_matches_seam;
 pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare;
 pub(crate) use ripr_contract::domain::why_capped_line;
 pub(crate) use ripr_contract::domain::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
-    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, SourceUnitFactV1, TestEnvironmentFactV1,
-    python_headline_related_test, ts_oracle_kind_matches_seam,
+    SourceUnitFactV1, TestEnvironmentFactV1, python_headline_related_test,
     typescript_script_preview_related_test,
 };
 

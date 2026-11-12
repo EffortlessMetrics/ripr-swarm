@@ -29,6 +29,7 @@ pub use load::{
 };
 pub(crate) use parse::parse_unified_diff_with_metadata;
 
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,

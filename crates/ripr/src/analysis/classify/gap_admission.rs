@@ -75,6 +75,7 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
 /// withheld as `static_unknown` under a limit that names both bounds.
 /// Findings that have a related test, and findings another limit already
 /// withheld, are untouched. Returns `true` when rewritten.
+#[cfg(feature = "lang-typescript")]
 pub(in crate::analysis) fn withhold_truncated_discovery_gap(
     finding: &mut Finding,
     source_cap: usize,
@@ -103,6 +104,7 @@ pub(in crate::analysis) fn withhold_truncated_discovery_gap(
 /// #11985: a complete file walk is still an incomplete evidence index when
 /// workspace reads refuse sources under either byte cap. Preserve findings
 /// backed by observed tests and limits another producer already established.
+#[cfg(any(test, feature = "lang-typescript"))]
 pub(in crate::analysis) fn withhold_read_limited_workspace_gap(
     finding: &mut Finding,
     unread_sources: usize,

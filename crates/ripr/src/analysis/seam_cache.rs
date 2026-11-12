@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -4610,6 +4611,7 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
 /// is that value's compact serialization, so a reader can verify integrity
 /// over the stored bytes it already read instead of re-serializing the
 /// decoded body on every warm read.
+#[cfg(feature = "lang-python")]
 pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
