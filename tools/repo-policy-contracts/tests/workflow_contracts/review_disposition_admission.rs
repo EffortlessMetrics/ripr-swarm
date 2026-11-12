@@ -85,6 +85,19 @@ const BODIES: &[(&str, &[u8])] = &[
     ),
 ];
 
+fn canonical_resource(path: &std::path::Path) -> Result<PathBuf, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("review resource {}: {e}", path.display()))?;
+    if canonical != path {
+        return Err(format!(
+            "review resource path is not canonical: {}",
+            path.display()
+        ));
+    }
+    Ok(canonical)
+}
+
 fn resource_root() -> Result<PathBuf, String> {
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
         .ok_or("review resource runtime missing CARGO_MANIFEST_DIR")?;
@@ -92,9 +105,7 @@ fn resource_root() -> Result<PathBuf, String> {
     if !manifest.is_absolute() {
         return Err("review resource manifest must be absolute".into());
     }
-    let manifest = manifest
-        .canonicalize()
-        .map_err(|e| format!("review resource manifest: {e}"))?;
+    let manifest = canonical_resource(&manifest)?;
     let root = manifest
         .parent()
         .and_then(|p| p.parent())
@@ -107,10 +118,12 @@ fn resource_root() -> Result<PathBuf, String> {
         return Err("review resource manifest mismatch".into());
     }
     let script = root.join(SCRIPT);
+    canonical_resource(&script)?;
     if std::fs::read(&script).map_err(|e| format!("review resource script: {e}"))? != SCRIPT_BYTES {
         return Err("review resource script differs from compiled subject".into());
     }
     let dir = root.join("tools/repo-policy/tests/fixtures/review_bodies");
+    canonical_resource(&dir)?;
     let mut count = 0;
     for entry in std::fs::read_dir(&dir).map_err(|e| format!("review resource corpus: {e}"))? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -954,15 +967,65 @@ fn relocated_receiver_resources_are_executed_or_refused() -> Result<(), String> 
     let corpus_case = "full_real_review_bodies_admit_or_refuse_as_recorded";
     check(script_case, true)?;
     check(corpus_case, true)?;
+    let missing_manifest = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .arg(format!(
+            "workflow_contracts::review_disposition_admission::{script_case}"
+        ))
+        .args(["--exact", "--test-threads=1"])
+        .env_remove("CARGO_MANIFEST_DIR")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if missing_manifest.status.success()
+        || !String::from_utf8_lossy(&missing_manifest.stdout)
+            .contains("review resource runtime missing")
+    {
+        return Err("missing manifest was not refused".into());
+    }
+    #[cfg(unix)]
+    {
+        let alias = root.join("manifest-alias");
+        std::os::unix::fs::symlink(source.join("tools/repo-policy-contracts"), &alias)
+            .map_err(|e| e.to_string())?;
+        let output = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+            .arg(format!(
+                "workflow_contracts::review_disposition_admission::{script_case}"
+            ))
+            .args(["--exact", "--test-threads=1"])
+            .env("CARGO_MANIFEST_DIR", &alias)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success()
+            || !String::from_utf8_lossy(&output.stdout)
+                .contains("review resource path is not canonical")
+        {
+            return Err("symlinked manifest was not refused".into());
+        }
+    }
     std::fs::write(&script, "raise SystemExit(97)\n").map_err(|e| e.to_string())?;
     check(script_case, false)?;
     std::fs::remove_file(&script).map_err(|e| e.to_string())?;
     check(script_case, false)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source.join(SCRIPT), &script).map_err(|e| e.to_string())?;
+        check(script_case, false)?;
+        std::fs::remove_file(&script).map_err(|e| e.to_string())?;
+    }
     std::fs::copy(source.join(SCRIPT), &script).map_err(|e| e.to_string())?;
     std::fs::write(corpus.join(BODIES[0].0), "corrupt").map_err(|e| e.to_string())?;
     check(corpus_case, false)?;
     std::fs::remove_dir_all(&corpus).map_err(|e| e.to_string())?;
     check(corpus_case, false)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            source.join("tools/repo-policy/tests/fixtures/review_bodies"),
+            &corpus,
+        )
+        .map_err(|e| e.to_string())?;
+        check(corpus_case, false)?;
+        std::fs::remove_file(&corpus).map_err(|e| e.to_string())?;
+    }
     std::fs::create_dir(&corpus).map_err(|e| e.to_string())?;
     check(corpus_case, false)?;
     std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
