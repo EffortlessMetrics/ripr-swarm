@@ -2182,11 +2182,42 @@ fn await_publish_for(
     session: &mut LspSession,
     expected: &Path,
     waiting_for: &str,
+    pending_response: Option<u64>,
     accept: impl Fn(usize) -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
-    loop {
-        let message = session.await_message(deadline, waiting_for)?;
+    await_publish_and_response(
+        || session.await_message(deadline, waiting_for),
+        expected,
+        pending_response,
+        accept,
+    )
+}
+
+/// A refresh publishes diagnostics and returns a response on independent
+/// output paths. Observe both before issuing another request; neither arrival
+/// order may discard the other obligation. No response is expected for a
+/// watched-file notification.
+fn await_publish_and_response(
+    mut next: impl FnMut() -> Result<serde_json::Value, String>,
+    expected: &Path,
+    mut pending_response: Option<u64>,
+    accept: impl Fn(usize) -> bool,
+) -> Result<(), String> {
+    let mut published = false;
+    while !published || pending_response.is_some() {
+        let message = next()?;
+        if message.get("result").is_some() || message.get("error").is_some() {
+            let id = message.get("id").and_then(serde_json::Value::as_u64);
+            if pending_response.is_none() || id != pending_response {
+                return Err(format!(
+                    "unexpected response while awaiting publication: {message}"
+                ));
+            }
+            expect_result(&message, "ripr.refresh")?;
+            pending_response = None;
+            continue;
+        }
         if message.get("method").and_then(serde_json::Value::as_str)
             != Some("textDocument/publishDiagnostics")
         {
@@ -2197,15 +2228,17 @@ fn await_publish_for(
             .and_then(serde_json::Value::as_str)
             .and_then(editor_uri_path)
             .is_some_and(|path| path.ends_with(expected));
-        let count = message
+        let accepted = message
             .pointer("/params/diagnostics")
             .and_then(serde_json::Value::as_array)
-            .map_or(0, Vec::len);
-        if names_expected && accept(count) {
-            return Ok(());
-        }
+            .is_some_and(|diagnostics| accept(diagnostics.len()));
+        published |= names_expected && accepted;
     }
+    Ok(())
 }
+
+#[path = "lsp_lifecycle/publication_response_order.rs"]
+mod publication_response_order;
 
 /// #14099: a file that is not open has no document-sync path. Deleting it
 /// outside the editor reaches the server only as a watched-file event, and
@@ -2239,14 +2272,18 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     )?;
     expect_result(&initialize, "initialize")?;
     session.notify("initialized", Some(serde_json::json!({})))?;
-    fire(
+    let refresh_id = fire(
         &mut session,
         "workspace/executeCommand",
         serde_json::json!({"command": "ripr.refresh", "arguments": []}),
     )?;
-    await_publish_for(&mut session, &relative, "the first diagnostics", |count| {
-        count > 0
-    })?;
+    await_publish_for(
+        &mut session,
+        &relative,
+        "the first diagnostics and refresh response",
+        Some(refresh_id),
+        |count| count > 0,
+    )?;
 
     // Unchanged bytes: nothing to refresh. Then the real deletion.
     session.notify(
@@ -2262,6 +2299,7 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
         &mut session,
         &relative,
         "the retraction for the deleted file (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
