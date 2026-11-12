@@ -1,14 +1,24 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.179 after #12757 (#12801)
+## Pending — corpus cache generation 1.181 after #12757 (#12801)
 
 Success-only assertions no longer discriminate a failure seam, which bumps the
-analyzer cache schema to 1.179. Move the portable unchanged-attempt snapshots
-to 1.179, recompute the `raw_json_placeholder_v1` artifact content commitment,
+analyzer cache schema to 1.181. Move the portable unchanged-attempt snapshots
+to 1.181, recompute the `raw_json_placeholder_v1` artifact content commitment,
 then the dependent verify commitments and receipt byte hashes. Weak grip,
 unchanged movement, historical currentness, incomplete receipt status and
 fail-closed first-action routing remain unchanged. No other fixture output is
 regenerated.
+
+## Pending — corpus cache generation 1.180 after #14326
+
+A constructed field spelled with a logical-or no longer reads as an opaque
+closure, which bumps the analyzer cache schema to 1.180. Move the portable
+unchanged-attempt snapshots to 1.180, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.177 after #13432 (#13956)
 

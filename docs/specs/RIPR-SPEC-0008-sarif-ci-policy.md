@@ -22,6 +22,16 @@ suppression handling, and conservative defaults.
 The SARIF layer is a renderer over existing analyzer evidence. It must not
 classify findings or seams itself.
 
+The generated GitHub workflow (`ripr init --ci github`) uploads one of the two
+per event, so code scanning shows one alert per changed line (#14300): a pull
+request renders and uploads only the diff-scoped `ripr-findings` category,
+and a manual run renders and uploads only the repo-scoped `ripr-seams`
+category. The job summary names the file that is absent by design on that
+event and reports the expected one as `missing or skipped` when it did not
+render. `ci_packet.rs::repo_seam_sarif_renders_on_manual_runs_only`,
+`manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif` and the empty-root
+summary test pin this split.
+
 ### Cross-surface conformance (#12925)
 
 The same producer finding retains its class, canonical identity and contract

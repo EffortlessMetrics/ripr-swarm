@@ -166,9 +166,10 @@ For one finding, pick by what the consumer is:
 `ripr check --quiet --format agent` for the same root, base and saved source
 used by the loop. Use that single report for both verification and the done
 decision; if inputs change, run the check again. Read its last line, not just
-`done=`, an empty gap list or the human message `State: no gap selected for
-repair`. That `verify=` record is projected from the producer's outcome and
-full summary counts, never from the displayed subset:
+`done=`, an empty gap list or the human messages `State: no test gap found`
+and `State: no gap selected for repair`. That `verify=` record is projected
+from the producer's outcome and full summary counts, never from the displayed
+subset:
 
 - `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
   `complete_no_findings` or `complete_with_findings`, the full
@@ -179,7 +180,7 @@ full summary counts, never from the displayed subset:
   Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the
