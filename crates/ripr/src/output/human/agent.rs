@@ -1088,13 +1088,25 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         .or_else(|| finding.missing.first().map(String::as_str))
         .filter(|_| with_missing)
         .unwrap_or("-");
+    // The row shows one fact; `(+N more)` tells a reader that explain has the
+    // rest, so a single code value is never mistaken for the whole check.
+    let more = finding
+        .activation
+        .missing_discriminators
+        .len()
+        .saturating_sub(1);
+    let missing = if with_missing && more > 0 {
+        format!("{} (+{more} more)", clip(missing))
+    } else {
+        clip(missing)
+    };
     let test = test_ref.map_or_else(|| "-".to_string(), |index| format!("t{index}"));
     format!(
         "{}|{}|{}|missing={}|test={}|id={}",
         finding.class.as_str(),
         field(&location),
         field(&clip(&finding.probe.expression)),
-        field(&clip(missing)),
+        field(&missing),
         test,
         finding.id
     )

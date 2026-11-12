@@ -87,6 +87,10 @@ The default contract is:
   producer-owned `verify=` record enforces complete outcome, equal full
   findings/exposed counts and source/scope currentness. A missing, refused or
   cut-off record cannot establish completion. JSON drilldown is not required.
+  The DETAIL step (`ripr explain`, then `ripr context`) is skipped only when a
+  gap row's `missing=` is one complete code value; it is followed when
+  `missing=` is `-`, prose, clipped (`…`) or carries the renderer's
+  `(+N more)` count of further missing facts.
   A language counts
   only when it is both detected and enabled in the effective
   `[languages].enabled` (the config this run writes, else the one it keeps,

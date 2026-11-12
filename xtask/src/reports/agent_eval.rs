@@ -430,7 +430,12 @@ fn needs_detail(report: &str, args: &[String]) -> bool {
                 .find_map(|field| field.strip_prefix("missing="))
                 .map(|field| field.replace('\u{1f}', "|"))
         });
-    missing.is_none_or(|value| value == "-" || reads_as_sentence(&value))
+    missing.is_none_or(|value| {
+        value == "-"
+            || value.ends_with('…')
+            || value.ends_with(" more)")
+            || reads_as_sentence(&value)
+    })
 }
 
 /// A `missing=` entry written as prose ("No strong discriminator was
@@ -444,10 +449,12 @@ fn reads_as_sentence(value: &str) -> bool {
     let value = value.strip_prefix("if ").unwrap_or(value);
     let tokens: Vec<&str> = value.split_whitespace().collect();
     // The first word takes no `:` (`verbose: flag` is a field init) and is
-    // longer than one letter (`x as u32` is a cast); the second may end a
-    // clause (`Check unconfirmed:`).
+    // longer than one letter (`x as u32` is a cast) unless it is `a` or `I`;
+    // the second may end a clause (`Check unconfirmed:`).
     tokens.windows(2).any(|pair| {
-        bare(pair[0]) && pair[0].chars().count() > 1 && bare(pair[1].trim_end_matches([':', ',']))
+        let first = pair[0];
+        let first_ok = first.chars().count() > 1 || first == "a" || first == "A" || first == "I";
+        bare(first) && first_ok && bare(pair[1].trim_end_matches([':', ',']))
     })
 }
 
@@ -1423,7 +1430,9 @@ mod tests {
 weakly_exposed|src/lib.rs:6|d * 3|missing=No strong discriminator was detected|test=t2|id=probe:b\n\
 reachable_unrevealed|src/lib.rs:9|x|missing=-|test=-|id=probe:c\n\
 weakly_exposed|src/lib.rs:10|v|missing=No a \\|\\| b|test=t1|id=probe:d\n\
-weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=probe:e\n";
+weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=probe:e\n\
+weakly_exposed|src/lib.rs:12|v|missing=Err(TooLong) (+1 more)|test=t1|id=probe:f\n\
+weakly_exposed|src/lib.rs:13|v|missing=x == 1…|test=t1|id=probe:g\n";
         let explain = |id: &str| strings(&["explain", "--format", "agent", id]);
         assert!(!needs_detail(report, &explain("probe:a")));
         assert!(needs_detail(report, &explain("probe:b")));
@@ -1431,6 +1440,8 @@ weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=
         assert!(needs_detail(report, &explain("probe:d")));
         // The escaped `\|` keeps the field whole: "b words here" is prose.
         assert!(needs_detail(report, &explain("probe:e")));
+        assert!(needs_detail(report, &explain("probe:f")));
+        assert!(needs_detail(report, &explain("probe:g")));
         assert!(needs_detail(report, &explain("probe:unknown")));
         assert!(needs_detail(report, &[]));
         for prose in [
@@ -1442,6 +1453,8 @@ weakly_exposed|src/lib.rs:11|v|missing=v: a == x \\|\\| b words here|test=t1|id=
             "non-zero discount",
             "exact discount payload",
             "call `f` without x",
+            "a discount",
+            "I think",
         ] {
             assert!(reads_as_sentence(prose), "{prose}");
         }
