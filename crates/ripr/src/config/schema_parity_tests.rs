@@ -483,6 +483,21 @@ fn source_free_summary_keeps_the_reason_without_file_content() {
         ),
         "x: `TOML parse error at line 1, column 1` is not supported"
     );
+    // The worktree and candidate loaders append fixed recovery lines after
+    // the parser's message; the reason still reads through them.
+    let unclosed_error = parse_config("[analysis\nmode = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    for wrapped in [
+        config_load_parse_error_for_host(Path::new("repo/ripr.toml"), &unclosed_error, false),
+        format!("candidate tree ripr.toml: {unclosed_error}\n{CANDIDATE_CONFIG_PARSE_HINT}"),
+    ] {
+        assert!(
+            config_error_summary(&wrapped).ends_with("; unclosed table, expected `]`"),
+            "{wrapped}"
+        );
+    }
+
     let crlf = parse_config("[analysis\r\nmode = \"draft\"\r\n")
         .err()
         .unwrap_or_default();
