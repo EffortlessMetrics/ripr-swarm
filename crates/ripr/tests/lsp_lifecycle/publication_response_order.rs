@@ -49,13 +49,24 @@ fn refresh_requires_both_obligations() {
 
 #[test]
 fn refresh_rejects_error_wrong_id_and_duplicate_response() {
-    for response in [
-        json!({"id": 2, "error": {"code": -32603}}),
-        json!({"id": 99, "result": null}),
+    let valid = json!({"id": 2, "result": null});
+    let published = publication("file:///repo/src/lib.rs", json!([{}]));
+    for (response, reason) in [
+        (
+            json!({"id": 2, "error": {"code": -32603}}),
+            "expected a result",
+        ),
+        (json!({"id": 99, "result": null}), "unexpected response"),
     ] {
-        assert!(observe(vec![response], Some(2), true).is_err());
+        let result = observe(
+            vec![response, valid.clone(), published.clone()],
+            Some(2),
+            true,
+        );
+        assert!(matches!(result, Err(message) if message.contains(reason)));
     }
-    assert!(observe(vec![json!({"id": 2, "result": null}); 2], Some(2), true).is_err());
+    let result = observe(vec![valid.clone(), valid, published], Some(2), true);
+    assert!(matches!(result, Err(message) if message.contains("unexpected response")));
 }
 
 #[test]
