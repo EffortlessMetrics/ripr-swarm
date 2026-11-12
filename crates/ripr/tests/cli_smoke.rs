@@ -10980,9 +10980,9 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 /// missing diff file exits 2, like the diff-scoped formats. #7332 changed
 /// what the two JSON repo formats write on that refusal: `repo-exposure-json`
 /// and `agent-seam-packets-json` render their format's refusal document
-/// (`run_status: "refused"`) on stdout instead of zero bytes, while
-/// `repo-sarif` still has no honest refusal shape and stays empty. A
-/// resolvable base keeps working.
+/// (`run_status: "refused"`) on stdout instead of zero bytes, and since
+/// #14499 `repo-sarif` renders the refusal SARIF run (scope `repo_seam`,
+/// `run.properties.run_status: "refused"`). A resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -11023,10 +11023,15 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 String::from_utf8_lossy(&output.stderr)
             );
             if format == "repo-sarif" {
-                assert!(
-                    output.stdout.is_empty(),
-                    "{format} {bad:?} wrote stdout on a failed invocation"
+                // #14499: the refusal SARIF run, never zero bytes.
+                let sarif: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let run = &sarif["runs"][0];
+                assert_eq!(
+                    run["properties"]["run_status"], "refused",
+                    "{format} {bad:?}"
                 );
+                assert_eq!(run["properties"]["scope"], "repo_seam", "{format} {bad:?}");
+                assert_eq!(run["results"], serde_json::json!([]), "{format} {bad:?}");
             } else {
                 // #7332: the JSON repo formats carry their refusal document
                 // on stdout rather than zero bytes.
