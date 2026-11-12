@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    NativeDeadline, TestCoverageObservation, accept_file_policy_coverage, covered_by_listing_args,
-    validate_test_covered_by_recorded_budgeted,
+    NativeDeadline, TestCoverageObservation, accept_file_policy_coverage, capture_with_remaining,
+    covered_by_listing_args, validate_test_covered_by_recorded_budgeted,
 };
 
 pub(crate) const RECEIPT_NAME: &str = "file-policy-native-receipt.json";
@@ -226,10 +226,11 @@ fn file_hash(path: &str) -> Result<String, String> {
 
 fn snapshot(context_path: &str, deadline: &NativeDeadline) -> Result<Snapshot, String> {
     let bounded = |program: &str, args: &[&str]| -> Result<Vec<u8>, String> {
-        let timeout = deadline.timeout(PROBE_TIMEOUT)?;
-        let result = bounded_probe(program, args, timeout);
-        deadline.remaining()?;
-        result
+        capture_with_remaining(
+            || deadline.remaining(),
+            PROBE_TIMEOUT,
+            |timeout| bounded_probe(program, args, timeout),
+        )
     };
     let git = |args: &[&str]| -> Result<String, String> {
         String::from_utf8(bounded("git", args)?)

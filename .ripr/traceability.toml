@@ -20969,6 +20969,8 @@ tests = [
   "xtask/src/policy/file_policy.rs::tests::source_only_refuses_unremovable_native_subject",
   "xtask/src/policy/file_policy.rs::tests::source_only_report_cannot_claim_full_success",
   "xtask/src/policy/file_policy.rs::tests::native_deadline_stops_lock_retry_and_starts_no_more_children",
+  "xtask/src/policy/file_policy.rs::tests::native_deadline_preserves_cleanup_error_and_stops_after_warmup",
+  "xtask/src/policy/file_policy.rs::tests::native_deadline_real_hung_child_is_terminated",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::aggregate_deadline_exhaustion_never_publishes_or_starts_native",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::aggregate_deadline_clamps_each_child_and_refuses_exhaustion",
   "xtask/src/policy/file_policy.rs::tests::source_selector_preparation_preserves_native_argv_and_rejects_missing_operand",

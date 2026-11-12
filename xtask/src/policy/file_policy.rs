@@ -551,28 +551,29 @@ fn validate_test_covered_by_recorded_budgeted(
     // preparations below compile one package at a time. One combined build
     // per package set lets Cargo schedule each set's targets together; it
     // only pre-fills the cache.
-    for args in combined_preparation_builds(commands, host) {
-        let timeout = match deadline {
-            Some(deadline) => deadline.timeout(TEST_COVERED_BY_BUILD_TIMEOUT)?,
-            None => TEST_COVERED_BY_BUILD_TIMEOUT,
-        };
-        let captured = announce_cargo_child(
-            &cargo_child_label("test-valued covered_by combined build", &args),
-            || {
-                capture_output_with_timeout(
-                    "cargo",
-                    &args,
-                    &[],
-                    timeout,
-                    "test-valued covered_by combined build",
-                )
-            },
-        );
-        diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
-        if let Some(deadline) = deadline {
-            deadline.remaining()?;
-        }
-    }
+    run_combined_preparations(
+        combined_preparation_builds(commands, host),
+        deadline.is_some(),
+        |args| {
+            let captured =
+                capture_with_native_deadline(deadline, TEST_COVERED_BY_BUILD_TIMEOUT, |timeout| {
+                    announce_cargo_child(
+                        &cargo_child_label("test-valued covered_by combined build", args),
+                        || {
+                            capture_output_with_timeout(
+                                "cargo",
+                                args,
+                                &[],
+                                timeout,
+                                "test-valued covered_by combined build",
+                            )
+                        },
+                    )
+                });
+            diagnostics.push(CommandDiagnostic::captured("cargo", args, &captured));
+            captured.map(|_| ())
+        },
+    )?;
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
         // This closure runs again for every lock-wait retry; each gets only the
         // current remaining envelope, never the original child budget.
@@ -582,6 +583,40 @@ fn validate_test_covered_by_recorded_budgeted(
             })
         })
     })
+}
+
+fn run_combined_preparations(
+    plans: Vec<Vec<String>>,
+    budgeted: bool,
+    mut capture: impl FnMut(&[String]) -> Result<(), String>,
+) -> Result<(), String> {
+    for args in plans {
+        finish_combined_capture(budgeted, capture(&args))?;
+    }
+    Ok(())
+}
+
+/// The standalone warmup remains a best-effort cache fill. The receipt's
+/// bounded path cannot launch another child after a capture/cleanup error.
+fn finish_combined_capture<T>(budgeted: bool, captured: Result<T, String>) -> Result<(), String> {
+    if budgeted {
+        captured.map(|_| ())
+    } else {
+        Ok(())
+    }
+}
+
+/// Preserve both errors when the capture's cleanup failed at the deadline.
+fn preserve_capture_and_deadline<T>(
+    captured: Result<T, String>,
+    remaining: Result<Duration, String>,
+) -> Result<T, String> {
+    match (captured, remaining) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Ok(_), Err(deadline)) => Err(deadline),
+        (Err(capture), Ok(_)) => Err(capture),
+        (Err(capture), Err(deadline)) => Err(format!("{capture}; {deadline}")),
+    }
 }
 
 fn capture_with_native_deadline<T>(
@@ -602,8 +637,7 @@ fn capture_with_remaining<T>(
 ) -> Result<T, String> {
     let timeout = nominal.min(remaining()?);
     let result = capture(timeout);
-    remaining()?;
-    result
+    preserve_capture_and_deadline(result, remaining())
 }
 
 fn validate_test_covered_by_recorded_with(
@@ -2657,6 +2691,86 @@ mod tests {
         if first_selector != 11_000 {
             return Err(format!("lock-wait attempts lost time: {first_selector}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn native_deadline_preserves_cleanup_error_and_stops_after_warmup() -> Result<(), String> {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let budget = Duration::from_secs(10);
+        let mut calls = 0;
+        let result = super::run_combined_preparations(
+            vec![vec!["first".into()], vec!["second".into()]],
+            true,
+            |_| {
+                calls += 1;
+                super::capture_with_remaining(
+                    || super::remaining_native_budget(budget, elapsed.get()),
+                    budget,
+                    |_| {
+                        elapsed.set(budget);
+                        Err::<(), _>("owned-process cleanup incomplete".to_string())
+                    },
+                )
+            },
+        );
+        let error = result.err().ok_or("failed warmup proceeded")?;
+        assert!(
+            error.contains("owned-process cleanup incomplete"),
+            "{error}"
+        );
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert_eq!(calls, 1, "later selector must not start");
+        let mut standalone_calls = 0;
+        super::run_combined_preparations(vec![vec![], vec![]], false, |_| {
+            standalone_calls += 1;
+            Err("old cache fill failure".to_string())
+        })?;
+        assert_eq!(standalone_calls, 2);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_deadline_real_hung_child_is_terminated() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-deadline-child");
+        let marker = root.join("descendant.pid");
+        let marker_value = marker.to_str().ok_or("non-UTF-8 marker path")?;
+        let args = vec!["-c".to_string(),
+            r#"sleep 30 & child=$!; printf '%s' "$child" > "$RIPR_NATIVE_DEADLINE_PID"; wait "$child""#.to_string()];
+        let started = std::time::Instant::now();
+        let budget = Duration::from_secs(5);
+        let timed_out = std::cell::Cell::new(false);
+        let result = super::capture_with_remaining(
+            || super::remaining_native_budget(budget, started.elapsed()),
+            budget,
+            |timeout| {
+                let output = crate::capture_output_with_timeout(
+                    "sh",
+                    &args,
+                    &[("RIPR_NATIVE_DEADLINE_PID", marker_value)],
+                    timeout,
+                    "native deadline child control",
+                )?;
+                timed_out.set(output.timed_out);
+                Ok(())
+            },
+        );
+        assert!(timed_out.get(), "hung child did not reach its timeout");
+        let error = result.err().ok_or("expired child unexpectedly succeeded")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        let pid = std::fs::read_to_string(&marker).map_err(|e| e.to_string())?;
+        let pid: u32 = pid
+            .parse()
+            .map_err(|e| format!("invalid descendant pid: {e}"))?;
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            let state = stat
+                .rsplit_once(") ")
+                .and_then(|(_, tail)| tail.chars().next());
+            assert_eq!(state, Some('Z'), "owned descendant remains live: {stat}");
+        }
+        std::fs::remove_file(&marker).map_err(|e| e.to_string())?;
+        std::fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 

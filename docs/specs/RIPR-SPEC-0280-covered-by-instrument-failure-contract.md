@@ -220,7 +220,11 @@ the budget is exhausted. The remaining 30 seconds of the 1,200-second envelope
 are reserved for owned-child termination and drain. Blocking filesystem calls,
 OS scheduling and cleanup failures prevent this cooperative mechanism from
 proving a hard wall-clock limit; any real run still needs independently admitted
-outer process-tree containment and deadline.
+outer cgroup/session-aware descendant containment and deadline. A plain
+parent-process or single-group timeout is not sufficient because owned native
+children can establish their own process groups. If capture and deadline both
+fail, retain both errors; budgeted warmup capture/cleanup errors stop the
+producer before another selector. Standalone best-effort warmup remains unchanged.
 A broad selector may still match a neighboring test after an intended test is
 deleted; the existing generic validator has no exact intended identity for
 that case. Packet-specific exact-subject rules remain unchanged.
