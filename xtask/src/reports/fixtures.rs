@@ -628,6 +628,19 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     // the CHANGELOG. A bless over unchanged output used to append a `Pending`
     // block claiming an update that did not happen.
     let applied = apply_bless_outputs(&expected, &run, name, reason)?;
+    let body = bless_report_body(&fixture, reason, &run, &applied);
+    write_report("goldens-bless.md", &body)
+}
+
+/// The body of `goldens-bless.md`, including the no-change outcome (#14498).
+/// Split out so a test can assert that outcome reaches the report, not just the
+/// `BlessedOutputs` a caller sees.
+fn bless_report_body(
+    fixture: &Path,
+    reason: &str,
+    run: &FixtureRun,
+    applied: &BlessedOutputs,
+) -> String {
     let mut actual_outputs = format!(
         "- `{}`\n- `{}`\n",
         normalize_path(&run.check_json),
@@ -648,11 +661,10 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     } else {
         String::new()
     };
-    let body = format!(
+    format!(
         "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\n{outcome}Actual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
-        normalize_path(&fixture)
-    );
-    write_report("goldens-bless.md", &body)
+        normalize_path(fixture)
+    )
 }
 
 /// One blessed output surface: the run-side file, the golden it writes to, and
@@ -666,6 +678,12 @@ struct BlessSurface {
 impl BlessSurface {
     /// Whether blessing this surface would change a byte. A missing golden is a
     /// change; an unreadable one is an error, not a silent overwrite.
+    ///
+    /// This is a raw-byte comparison on purpose (#14498): `goldens check`
+    /// compares normalized text, so the two can disagree. A golden that differs
+    /// only where the gate normalizes (a Windows python-verify projection, for
+    /// example) can be blessed and reported changed here while `check` still
+    /// calls it unchanged. Aligning the two is #14509; this claim does not.
     fn differs(&self) -> Result<bool, String> {
         let target = match fs::read(&self.target) {
             Ok(bytes) => bytes,
@@ -3899,6 +3917,10 @@ mod tests {
             outcome.contains("CHANGELOG.md` was left untouched"),
             "{outcome}"
         );
+        // The outcome must reach the report, not just the return value.
+        let body = super::bless_report_body(&dir.join("fixture"), "no-op", &run, &applied);
+        assert!(body.contains("No change:"), "{body}");
+        assert!(body.contains("was left untouched"), "{body}");
 
         // Negative control: a real change still records exactly one block.
         write(actual.join("human.txt"), "# report\nchanged\n")?;
@@ -3912,6 +3934,10 @@ mod tests {
             "an unchanged surface must not be named: {after}"
         );
         assert_eq!(read_text(expected.join("check.json"))?, "{\"findings\":[]}");
+        let body = super::bless_report_body(&dir.join("fixture"), "change", &run, &applied);
+        assert!(!body.contains("No change:"), "{body}");
+        assert!(body.contains("expected/human.txt"), "{body}");
+        assert!(body.contains("CHANGELOG.md"), "{body}");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
