@@ -2904,6 +2904,13 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("PricingError::Boundary"));
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
+    // #14464: the fix instruction is its own paragraph, not a lazy
+    // continuation of the last witness bullet.
+    assert!(
+        markup.value.contains("\n\n**Fix instruction:** "),
+        "fix instruction must follow a blank line: {}",
+        markup.value
+    );
 
     let context_packet = crate::output::json::render_context_packet(
         &finding,

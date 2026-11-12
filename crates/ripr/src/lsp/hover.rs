@@ -770,6 +770,9 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+        // A blank line ends the witness list; without it Markdown folds this
+        // line into the last bullet (#14464).
+        lines.push(String::new());
         lines.push(format!(
             "**Fix instruction:** {}",
             fix_instruction_label(&summary)
