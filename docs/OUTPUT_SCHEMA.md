@@ -1084,7 +1084,7 @@ diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
-#ripr agent static-advisory base=BASE findings=N gaps=G [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
+#ripr agent static-advisory base=BASE findings=N gaps=G [folded_gaps=F] [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
@@ -1124,6 +1124,21 @@ verify=complete|outcome=O|findings=N|exposed=N
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
+- `folded_gaps=F` follows `gaps=` (#14338) when some gap findings would
+  print identical records: the same class, `FILE:LINE`, changed expression,
+  `missing=` value, strongest related test (its whole `tK=` line) and
+  `stages=` row, differing only in `id=` (for example an `error_path` and a
+  `return_value` probe on one `return Err(..)` line). The comparison uses the
+  unclipped values and every missing discriminator (its value, shape and
+  flow sink), not only the printed one; the explanatory `missing` prose is
+  compared only when no discriminator is named, since it is then what
+  `missing=` prints. One test closes all of
+  them, so they print as one row, kept by the first finding in triage order,
+  and `gaps=` counts rows: `gaps=G` is the number of tests to write and
+  `G + F` the number of gap findings. Any printed difference keeps the rows
+  separate. Folding is display-only: every folded finding is still a gap (it
+  never moves to `limits=`) and still counts in `verify=`; `--format json`
+  lists each finding.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
