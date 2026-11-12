@@ -49,13 +49,7 @@ jobs:
             exit 1
           }
 
-          expected_conflicts="$(cat <<'EOF'
-.github/actions/pr-candidate-admission/review_disposition.py
-.github/workflows/routed-rust.yml
-tools/repo-policy/tests/review_disposition_admission.rs
-xtask/tests/rust_gate_workflow_contract.rs
-EOF
-)"
+          expected_conflicts=$'.github/actions/pr-candidate-admission/review_disposition.py\n.github/workflows/routed-rust.yml\ntools/repo-policy/tests/review_disposition_admission.rs\nxtask/tests/rust_gate_workflow_contract.rs'
           actual_conflicts="$(git diff --name-only --diff-filter=U | LC_ALL=C sort)"
           [ "$actual_conflicts" = "$expected_conflicts" ] || {
             echo "::error::conflict set changed"
