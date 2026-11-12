@@ -21,16 +21,14 @@ jobs:
           persist-credentials: true
 
       - name: Construct exact two-parent reconciliation
+        id: construct
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
           EXPECTED_MAIN: c5d50a38ba94799d6da3954fef004839fae5489c
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD || {
-            echo "::error::rehearsal history lost hosted source $HOSTED_SOURCE"
-            exit 1
-          }
+          git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD
           git fetch --no-tags origin main
           actual_main="$(git rev-parse FETCH_HEAD)"
           [ "$actual_main" = "$EXPECTED_MAIN" ] || {
@@ -119,22 +117,56 @@ jobs:
             xtask/tests/rust_gate_workflow_contract.rs
           test -z "$(git diff --name-only --diff-filter=U)"
 
-      - name: Prove the reconciled source tree
+      - name: Review-disposition self-test
+        id: parser
+        continue-on-error: true
+        run: python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+
+      - name: Normalize and check formatting
+        id: format
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
-          python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
           cargo fmt --all
           cargo fmt --all -- --check
-          cargo test --locked -p repo-policy --all-targets
-          cargo test --locked -p xtask --test rust_gate_workflow_contract --test routed_queue_resolution
-          cargo run --locked -p repo-policy -- check-workflows
+
+      - name: Repository policy test surface
+        id: repo_policy
+        continue-on-error: true
+        run: cargo test --locked -p repo-policy --all-targets
+
+      - name: Affected xtask workflow contracts
+        id: xtask_contracts
+        continue-on-error: true
+        run: cargo test --locked -p xtask --test rust_gate_workflow_contract --test routed_queue_resolution
+
+      - name: Actual workflow checker
+        id: workflow_checker
+        continue-on-error: true
+        run: cargo run --locked -p repo-policy -- check-workflows
+
+      - name: Final tree hygiene
+        id: hygiene
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
           git diff --check
           test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
           test ! -e .ci/staged/4838-current-main-conflicts-c5d50a38.txt
           test ! -e .ci/staged/4838-conflicts-c5d50a38
 
-      - name: Create tested merge object and publish if permitted
+      - name: Publish independently passing reconciliation
+        id: publish
+        if: >-
+          steps.construct.outcome == 'success' &&
+          steps.parser.outcome == 'success' &&
+          steps.format.outcome == 'success' &&
+          steps.repo_policy.outcome == 'success' &&
+          steps.xtask_contracts.outcome == 'success' &&
+          steps.workflow_checker.outcome == 'success' &&
+          steps.hygiene.outcome == 'success'
         shell: bash
         env:
           TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-c5d50a38
@@ -163,3 +195,24 @@ jobs:
             exit 0
           fi
           exit "$push_status"
+
+      - name: Refuse incomplete reconciliation proof
+        if: >-
+          always() &&
+          (steps.construct.outcome != 'success' ||
+           steps.parser.outcome != 'success' ||
+           steps.format.outcome != 'success' ||
+           steps.repo_policy.outcome != 'success' ||
+           steps.xtask_contracts.outcome != 'success' ||
+           steps.workflow_checker.outcome != 'success' ||
+           steps.hygiene.outcome != 'success')
+        shell: bash
+        run: |
+          echo "construct=${{ steps.construct.outcome }}"
+          echo "parser=${{ steps.parser.outcome }}"
+          echo "format=${{ steps.format.outcome }}"
+          echo "repo_policy=${{ steps.repo_policy.outcome }}"
+          echo "xtask_contracts=${{ steps.xtask_contracts.outcome }}"
+          echo "workflow_checker=${{ steps.workflow_checker.outcome }}"
+          echo "hygiene=${{ steps.hygiene.outcome }}"
+          exit 1
