@@ -233,6 +233,8 @@ tests = [
   "crates/ripr/src/analysis/value_resolution.rs::tests::field_assignment_values_fail_closed_for_unresolved_or_ambiguous_expressions",
   "crates/ripr/src/analysis/probes/classify.rs::tests::structural_delimiter_lines_are_recognized",
   "crates/ripr/src/analysis/probes/diff.rs::tests::an_identical_line_inside_a_replacement_block_seeds_no_probe",
+  "crates/ripr/src/analysis/probes/classify.rs::tests::plain_extern_crate_is_ignored_but_a_rename_is_not",
+  "crates/ripr/src/analysis/probes/classify.rs::tests::diff_producer_ignores_plain_extern_crate_but_probes_a_rename",
   "crates/ripr/src/analysis/probes/diff.rs::tests::identical_line_suppression_is_fail_closed",
   "crates/ripr/src/analysis/probes/diff.rs::tests::a_replaced_bare_literal_adds_no_base_side_static_unknown_twin",
   "crates/ripr/src/analysis/probes/diff.rs::tests::bare_literal_lines_are_single_literals_only",
