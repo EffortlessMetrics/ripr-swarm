@@ -1,0 +1,966 @@
+schema=hosted-main-conflict-file.v1
+hosted_source=50d9bb94921b0f4f7b3d840093a596eed7059852
+expected_main=c5d50a38ba94799d6da3954fef004839fae5489c
+
+path=.github/workflows/routed-rust.yml
+
+name: Trusted queue qualification
+
+# Immutable reusable control authority. The merge-queue entrypoint pins this
+# entire workflow, not just its evaluator. Required control and product jobs use
+# deterministic GitHub-hosted execution; no runner inventory or candidate-selected
+# host participates. No event base, candidate workflow, input, or mutable branch
+# selects controller or policy code.
+on:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.merge_group.head_sha }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CI_LIFECYCLE_GENERATION: merge-queue-v1
+
+jobs:
+  intake:
+    name: Authenticate native queue intake
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested' && github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    outputs:
+      pr: ${{ steps.verify.outputs.pr }}
+      pr_id: ${{ steps.verify.outputs.pr_id }}
+      head: ${{ steps.verify.outputs.head }}
+      queue_entry: ${{ steps.verify.outputs.queue_entry }}
+      admission_id: ${{ steps.verify.outputs.admission_id }}
+      intake_json: ${{ steps.verify.outputs.intake_json }}
+      intake_identity: ${{ steps.verify.outputs.intake_identity }}
+    steps:
+      - name: Check out protected intake evaluator only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: 1b6bae558bd5895057726544b9c6baca63effb97
+          path: .queue-trusted
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            policy/queue-publisher.toml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Authenticate exact head and acknowledged queue entry
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.queue-trusted"
+          [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ && "$(git -C "$trusted" rev-parse HEAD)" == "$TRUSTED_SHA" ]]
+          for path in .github/actions/pr-candidate-admission/queue_intake.py policy/queue-publisher.toml; do
+            [[ -f "$trusted/$path" && ! -L "$trusted/$path" ]]
+            [[ "$(git hash-object --no-filters "$trusted/$path")" == "$(git -C "$trusted" rev-parse "$TRUSTED_SHA:$path")" ]]
+          done
+          python3 -I "$trusted/.github/actions/pr-candidate-admission/queue_intake.py" --policy "$trusted/policy/queue-publisher.toml"
+
+  detect-docs-only:
+    name: Detect Docs-Only Surface
+    needs: [intake]
+    if: needs.intake.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      docs_only: ${{ steps.check.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Check whether every changed file is docs/spec/markdown
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          docs_only=false reason=not_pull_request
+          classify() {
+            [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ] || return 0
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            # Checkout stays on the integration commit. Full history is requested
+            # above; recover missing event objects with their ancestry, not depth 1.
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            [ "$(git rev-parse --is-shallow-repository)" = "false" ] || return 0
+            [ "$(git cat-file -t "$BASE_SHA" 2>/dev/null)" = "commit" ] && [ "$(git cat-file -t "$HEAD_SHA" 2>/dev/null)" = "commit" ] || return 0
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
+            changed="$(mktemp)"
+            trap 'rm -f "$changed"' EXIT
+            reason=diff_failed
+            # No rename collapsing: both the removed and added path must qualify.
+            # Read only successful output; a failing diff may have written paths.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=non_docs
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
+                *) return 0 ;;
+              esac
+            done < "$changed"
+            docs_only=true reason=docs_only
+          }
+          classify
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
+
+  admission:
+    name: Admit PR Candidate
+    needs: [intake, detect-docs-only]
+    if: needs.intake.result == 'success' && needs.detect-docs-only.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      status: ${{ steps.candidate.outputs.status }}
+      reason: ${{ steps.candidate.outputs.reason }}
+      detail: ${{ steps.candidate.outputs.detail }}
+      cut_status: ${{ steps.candidate.outputs.cut_status }}
+      cut_reason: ${{ steps.candidate.outputs.cut_reason }}
+      cut_detail: ${{ steps.candidate.outputs.cut_detail }}
+      claim: ${{ steps.candidate.outputs.claim }}
+      acceptance_delta: ${{ steps.candidate.outputs.acceptance_delta }}
+      competing_prs: ${{ steps.candidate.outputs.competing_prs }}
+      concurrent_claims: ${{ steps.candidate.outputs.concurrent_claims }}
+      changed_files: ${{ steps.candidate.outputs.changed_files }}
+      changed_lines: ${{ steps.candidate.outputs.changed_lines }}
+      labels: ${{ steps.entry.outputs.labels }}
+      trusted_sha: ${{ steps.trusted.outputs.sha }}
+      pr: ${{ steps.entry.outputs.pr }}
+      head: ${{ steps.entry.outputs.head }}
+      queue_entry: ${{ steps.entry.outputs.queue_entry }}
+      request: ${{ steps.entry.outputs.request }}
+      pr_id: ${{ steps.entry.outputs.pr_id }}
+      base: ${{ steps.group.outputs.base }}
+      merge: ${{ steps.group.outputs.merge }}
+      tree: ${{ steps.group.outputs.tree }}
+      subject_json: ${{ steps.group.outputs.subject-json }}
+      subject_identity: ${{ steps.group.outputs.subject-identity }}
+    steps:
+      # Candidate files are data only; no candidate action or script runs here.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Select trusted admission source
+        id: trusted
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=1b6bae558bd5895057726544b9c6baca63effb97
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission source SHA is missing or invalid"; exit 1; }
+          if [ -e "$GITHUB_WORKSPACE/.admission-trusted" ] || [ -L "$GITHUB_WORKSPACE/.admission-trusted" ]; then
+            echo "::error::trusted admission destination is present in the candidate checkout"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check out trusted admission bundle
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ steps.trusted.outputs.sha }}
+          path: .admission-trusted
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            .github/actions/verify-merge-group-subject
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify trusted admission bundle
+        shell: bash
+        env:
+          TRUSTED_ADMISSION_SHA: ${{ steps.trusted.outputs.sha }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::trusted admission bundle is missing or differs from the immutable source"; exit 1; }
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
+          for path in .github/actions/pr-candidate-admission/{action.yml,candidate_admission.py,release_cut_admission.py,review_disposition.py} .github/actions/verify-merge-group-subject/action.yml; do
+            [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
+            expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
+            actual="$(git hash-object --no-filters "$trusted/$path")" || refuse
+            [ "$actual" = "$expected" ] || refuse
+          done
+      - name: Exercise admission discriminators
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
+        with:
+          mode: self-test
+          max-changed-files: '160'
+          max-changed-lines: '3000'
+      - name: Resolve queued PR
+        id: entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id || '' }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          INTAKE_PR: ${{ needs.intake.outputs.pr }}
+          INTAKE_PR_ID: ${{ needs.intake.outputs.pr_id }}
+          INTAKE_HEAD: ${{ needs.intake.outputs.head }}
+          INTAKE_ENTRY: ${{ needs.intake.outputs.queue_entry }}
+        run: |
+          set -euo pipefail
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" pr_id="$PR_NODE_ID" labels="$PR_LABELS" queue_entry="" tree=""
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            # The queue branch is named .../pr-<number>-<sha>. The PR comes from
+            # the name; the exact head is the PR's live head, which must match
+            # the name's sha when that sha is a PR head (a push after enqueue)
+            # and may equal the group's base otherwise. Admission is per PR: the
+            # queued commit must be one squash commit of that PR directly on the
+            # group's base, so the workflow itself refuses a batch (fail closed)
+            # even if the ruleset group size is misconfigured. Its tree must be
+            # that head merged onto the base (checked below).
+            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-([0-9a-f]{40})$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
+            pr="${BASH_REMATCH[1]}" ref_sha="${BASH_REMATCH[2]}"
+            current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
+            head="$(jq -r '.head.sha' <<<"$current")"
+            pr_id="$(jq -er '.node_id | select(type == "string" and length > 0)' <<<"$current")"
+            { [ "$ref_sha" = "$head" ] || [ "$ref_sha" = "$GROUP_BASE_SHA" ]; } || { echo "::error::queue ref sha $ref_sha is neither the live head $head of PR #${pr} (pushed after enqueue) nor the group base $GROUP_BASE_SHA"; exit 1; }
+            commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
+            parents="$(jq -r '.parents | length' <<<"$commit")"
+            subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"
+            parent="$(jq -r '.parents[0].sha // empty' <<<"$commit")"
+            # A group's base is the parent of its first commit, so a one-entry
+            # group has base == the queued commit's parent; a batch does not.
+            { [ "$parents" = "1" ] && [ "$parent" = "$GROUP_BASE_SHA" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents, parent $parent, base $GROUP_BASE_SHA: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
+            # The ref sha and commit dates do not bind the live head to the queued
+            # commit, so bind by content: the queued tree must be exactly the live
+            # head merged onto the group base. The head comes from the PR's own
+            # ref and must still be the head read above; no match, merge conflict
+            # or missing history refuses (fail closed).
+            { [ "$(git rev-parse --is-shallow-repository)" = false ] || git fetch --no-tags --unshallow origin; } || { echo "::error::cannot complete history to bind the queued commit to PR #${pr}"; exit 1; }
+            fetched="$(git fetch --no-tags origin "refs/pull/${pr}/head" && git rev-parse FETCH_HEAD)" && [ "$fetched" = "$head" ] || { echo "::error::refs/pull/${pr}/head (${fetched:-unfetched}) is not the live head $head of PR #${pr}"; exit 1; }
+            merged="$(git merge-tree --write-tree "$GROUP_BASE_SHA" "$head")" && [ "${merged%%$'\n'*}" = "$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")" ] || { echo "::error::queued commit ${GROUP_HEAD_SHA} is not PR #${pr} head $head merged onto base $GROUP_BASE_SHA"; exit 1; }
+            queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$pr")
+            queue_entry=$(jq -er --arg head "$head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
+            tree="$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")"
+            labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
+          fi
+          [[ "$pr" == "$INTAKE_PR" && "$pr_id" == "$INTAKE_PR_ID" && "$head" == "$INTAKE_HEAD" && "$queue_entry" == "$INTAKE_ENTRY" ]]
+          { echo "pr=$pr"; echo "pr_id=$pr_id"; echo "head=$head"; echo "tree=$tree"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+      # The composition must use the exact H/entry authenticated before allocation.
+      - name: Freeze actual native group subject
+        id: group
+        if: github.event_name == 'merge_group'
+        uses: ./.admission-trusted/.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ steps.entry.outputs.head }}
+          base-sha: ${{ github.event.merge_group.base_sha }}
+          subject-sha: ${{ github.event.merge_group.head_sha }}
+          subject-tree: ${{ steps.entry.outputs.tree }}
+          workflow-generation: ${{ github.workflow_sha }}
+          request-id: ${{ steps.entry.outputs.request }}
+          constituent-pr-number: ${{ steps.entry.outputs.pr }}
+          constituent-pr-node-id: ${{ steps.entry.outputs.pr_id }}
+          constituent-head-sha: ${{ steps.entry.outputs.head }}
+      - name: Write native group observation
+        if: github.event_name == 'merge_group'
+        env:
+          SUBJECT: ${{ steps.group.outputs.subject-json }}
+          IDENTITY: ${{ steps.group.outputs.subject-identity }}
+          QUEUE_ENTRY: ${{ steps.entry.outputs.queue_entry }}
+        run: |
+          set -euo pipefail
+          jq -cnS --argjson subject "$SUBJECT" --arg identity "$IDENTITY" --arg entry "$QUEUE_ENTRY" \
+            '{version:1,subject:$subject,subject_identity:$identity,queue_entry:$entry,mandatory_portfolio:["rust","windows-subset","python-wheel","ci-feature","printed-command"]}' \
+            > "$RUNNER_TEMP/ripr-queue-subject.json"
+      - name: Retain native group observation
+        if: github.event_name == 'merge_group'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-queue-subject-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ripr-queue-subject.json
+          if-no-files-found: error
+          retention-days: 5
+      - name: Admit exact candidate
+        id: candidate
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          pr-number: ${{ steps.entry.outputs.pr }}
+          expected-head: ${{ steps.entry.outputs.head }}
+          docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
+          max-changed-files: '160'
+          max-changed-lines: '3000'
+
+      # #8157: a source review of record must attest the exact head. Refuse at
+      # request time so a missing attestation does not cost a full test run; the
+      # Result job repeats the read from the same trusted bundle after the tests.
+      - name: Require source review disposition at request time
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          PR_HEAD: ${{ steps.entry.outputs.head }}
+        run: |
+          set -euo pipefail
+          python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$PR_HEAD"
+      # Unresolved review threads fail the end-of-run eligibility recheck about an
+      # hour later, after every test shard went green. Refuse at request time
+      # instead, naming the threads. A read failure is only a warning: the final
+      # recheck remains the authority and fails closed on its own.
+      - name: Refuse unresolved review threads at request time
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+        run: |
+          set -uo pipefail
+          warn() { echo "::warning::review-thread pre-check $1; leaving it to the final eligibility recheck"; exit 0; }
+          q='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved comments(first:1){nodes{url}}}pageInfo{hasNextPage endCursor}}}}}'
+          threads=""
+          cursor=""
+          page=0
+          while :; do
+            page=$((page + 1))
+            [ "$page" -le 20 ] || warn "read more than 20 pages"
+            if [ -n "$cursor" ]; then
+              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER" -F cursor="$cursor") || warn "could not read threads"
+            else
+              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER") || warn "could not read threads"
+            fi
+            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")' <<<"$frame" >/dev/null || warn "got an unexpected response"
+            threads+=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | "- " + (.comments.nodes[0].url // "unknown thread")' <<<"$frame")$'\n'
+            [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame")" = true ] || break
+            cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$frame")
+          done
+          threads=$(printf '%s' "$threads" | sed '/^$/d')
+          if [ -n "$threads" ]; then
+            count=$(printf '%s\n' "$threads" | wc -l)
+            echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then request fresh qualification through the installed route."
+            printf '%s\n' "$threads"
+            exit 1
+          fi
+
+<<<<<<< HEAD
+  rust-owned:
+    name: Ripr Rust on hosted qualification
+||||||| 2ab9f908bc
+  rust-cx43:
+    name: Ripr Rust Small on CX43
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
+      cargo-build-jobs: "12"
+      disk-guard-threshold: 35
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cx43
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-cpx42:
+    name: Ripr Rust Small on CPX42
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
+      cargo-build-jobs: "8"
+      disk-guard-threshold: 35
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cpx42
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-cx53:
+    name: Ripr Rust Small on CX53
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
+      cargo-build-jobs: "12"
+      disk-guard-threshold: 50
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cx53
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-github:
+    name: Ripr Rust Small on GitHub Hosted
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
+    # Use the not-cancelled status check here, never the unconditional one:
+    # both still run after a skipped or tempfailed self-hosted job, but an
+    # unconditional job also survives cancellation, so a repeated merge-ready
+    # request left the obsolete head's full gate running and queued the
+    # new head's run behind it (#6729).
+    if: >-
+      !cancelled() &&
+      needs.admission.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.admission.outputs.docs_only != 'true' &&
+      (needs.route.outputs.router_target == 'github' ||
+      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '"ubuntu-latest"'
+      cargo-build-jobs: "8"
+      disk-guard-threshold: 0
+      use-scratch: false
+      # The hosted gates leave the nextest step to rust-github-tests (#10507).
+      test-shards: 4
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-github
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  # The hosted required test phase as four nextest partitions, after every
+  # hosted gate passed (#10507). The self-hosted routes keep the one-command step
+  # inside their own rust-gates job, so this runs only behind a succeeded
+  # rust-github job; `result` fails the required context unless it passes too.
+  rust-github-tests:
+    name: Ripr Rust Small tests on GitHub Hosted
+    needs: [rust-github]
+    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}
+    uses: ./.github/workflows/rust-test-shards.yml
+    with:
+      artifact-name: ripr-rust-small-github
+
+  # #12252: the extension e2e is a job of this run, so the Result reads it as a
+  # `needs` result bound to this run id and request, with no cross-workflow
+  # correlation. Selection is the diff of the admitted PR against its base plus
+  # the `full-ci`/`vscode` labels; anything unclassifiable selects (#12122).
+  vscode-select:
+    name: vscode surface
+=======
+  rust-cx43:
+    name: Ripr Rust Small on CX43
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
+      cargo-build-jobs: "12"
+      disk-guard-threshold: 35
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cx43
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-cpx42:
+    name: Ripr Rust Small on CPX42
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
+      cargo-build-jobs: "8"
+      disk-guard-threshold: 35
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cpx42
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-cx53:
+    name: Ripr Rust Small on CX53
+    needs: [admission, route, detect-docs-only]
+    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
+      cargo-build-jobs: "12"
+      disk-guard-threshold: 50
+      use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-cx53
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  rust-github:
+    name: Ripr Rust Small on GitHub Hosted
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
+    # Use the not-cancelled status check here, never the unconditional one:
+    # both still run after a skipped or tempfailed self-hosted job, but an
+    # unconditional job also survives cancellation, so a repeated merge-ready
+    # request left the obsolete head's full gate running and queued the
+    # new head's run behind it (#6729).
+    if: >-
+      !cancelled() &&
+      needs.admission.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.admission.outputs.docs_only != 'true' &&
+      (needs.route.outputs.router_target == 'github' ||
+      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '"ubuntu-latest"'
+      cargo-build-jobs: "8"
+      disk-guard-threshold: 0
+      use-scratch: false
+      # The hosted gates leave the nextest step to rust-github-tests (#10507).
+      test-shards: 4
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      artifact-name: ripr-rust-small-github
+      # 120min hard deadline: the rust-gates PR-evidence producer itself
+      # allows 3600s (#3731), so the job envelope must exceed it.
+      job-timeout-minutes: 120
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+
+  # The hosted required test phase as four nextest partitions (#10507). It starts
+  # with the hosted gates job, not after it: the merge queue ejects an entry
+  # whose required context is still pending at its status-check timeout, and
+  # gates-then-shards (about 44 + 32 minutes) outlived it on every code entry
+  # (#4838). The condition is the hosted gates job's own, so the shards run
+  # exactly when that job does; `result` still fails the required context unless
+  # both pass. A gate failure now costs the shard minutes already spent (#10346
+  # traded for latency). The self-hosted routes keep the one-command step inside
+  # their own rust-gates job.
+  rust-github-tests:
+    name: Ripr Rust Small tests on GitHub Hosted
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
+    if: >-
+      !cancelled() &&
+      needs.admission.result == 'success' &&
+      needs.detect-docs-only.result == 'success' &&
+      needs.admission.outputs.docs_only != 'true' &&
+      (needs.route.outputs.router_target == 'github' ||
+      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
+      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
+    uses: ./.github/workflows/rust-test-shards.yml
+    with:
+      artifact-name: ripr-rust-small-github
+
+  # #12252: the extension e2e is a job of this run, so the Result reads it as a
+  # `needs` result bound to this run id and request, with no cross-workflow
+  # correlation. Selection is the diff of the admitted PR against its base plus
+  # the `full-ci`/`vscode` labels; anything unclassifiable selects (#12122).
+  vscode-select:
+    name: vscode surface
+>>>>>>> c5d50a38ba94799d6da3954fef004839fae5489c
+    needs: [admission]
+    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      proof-profile: merge-group
+      execution-profile: legacy
+      head-sha: ${{ needs.admission.outputs.head }}
+      base-sha: ${{ needs.admission.outputs.base }}
+      subject-sha: ${{ needs.admission.outputs.merge }}
+      subject-tree: ${{ needs.admission.outputs.tree }}
+      workflow-generation: ${{ github.workflow_sha }}
+      subject-json: ${{ needs.admission.outputs.subject_json }}
+      subject-identity: ${{ needs.admission.outputs.subject_identity }}
+      constituent-pr-number: ${{ needs.admission.outputs.pr }}
+      constituent-pr-node-id: ${{ needs.admission.outputs.pr_id }}
+      constituent-head-sha: ${{ needs.admission.outputs.head }}
+      runner-config: '"ubuntu-latest"'
+      cargo-build-jobs: '8'
+      use-scratch: false
+      test-shards: 1
+      artifact-name: ripr-rust-hosted
+      job-timeout-minutes: 20
+      pr-labels: ${{ needs.admission.outputs.labels }}
+      run-advisory-reports: false
+      upload-success-artifacts: false
+
+  windows-subset:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/windows-subset-qualification.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  python-wheel:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/python-wheel-qualification.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  ci-feature:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/ci.yml
+    with:
+      runner_config: '"ubuntu-latest"'
+      control_runner_config: '"ubuntu-latest"'
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+      # Full frozen #8082 portfolio; no applicability narrowing in this stage.
+      run_rust_only: true
+      run_release_proof: true
+      run_msrv: true
+      run_vscode: true
+
+  printed-command:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/printed-command-paste.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  result:
+    name: Ripr Rust Small Result
+    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Check out trusted admission bundle for the review recheck
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: 1b6bae558bd5895057726544b9c6baca63effb97
+          path: .admission-trusted
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            policy/queue-publisher.toml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Recheck source review disposition for the admitted head
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          TRUSTED_ADMISSION_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          path=.github/actions/pr-candidate-admission/review_disposition.py
+          # Same immutable-source binding as the admission job's bundle check.
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission SHA is missing"; exit 1; }
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] && [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] \
+            && [ "$(git hash-object --no-filters "$trusted/$path")" = "$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" ] \
+            || { echo "::error::trusted review-disposition verifier differs from the immutable source"; exit 1; }
+          python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
+      - name: Recheck initially admitted eligibility
+        id: eligibility
+        timeout-minutes: 2
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
+          EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
+          ADMISSION_REASON: ${{ needs.admission.outputs.reason }}
+          EVENT_NAME: ${{ github.event_name }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          # Bind live eligibility to initial admission, never a newly adopted H.
+          # This does not authenticate the caller or establish G's composition.
+          current_eligibility() {
+            local pr frame cursor=null more page=0
+            why=admission_binding
+            [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
+            [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
+            [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
+            read_pr() {
+              local response status_line headers http=unframed native=0
+              pr=
+              # Preserve the final LF of a bodyless frame and the native exit.
+              response=$(read_exit=0; timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null || read_exit=$?; printf '.'; exit "$read_exit") || native=$?
+              response=${response%.}
+              # gh writes an LF status line, CRLF headers, then a CRLF blank line.
+              # Keep provider body/stderr out of logs; classify retries only from the frame.
+              status_line=${response%%$'\n'*}
+              if [[ "$response" != *$'\n'* ]] || ! [[ "$status_line" =~ ^HTTP/[0-9]+\.[0-9]+\ ([0-9]{3})\ [[:print:]]+$ ]]; then
+                echo "::error::PR read has an invalid HTTP frame (native exit $native)"
+                return "$((native == 0 ? 1 : native))"
+              fi
+              http=${BASH_REMATCH[1]}
+              headers=${response#*$'\n'}
+              if [[ "$headers" == $'\r\n'* ]]; then pr=${headers#$'\r\n'}
+              elif [[ "$headers" == *$'\r\n\r\n'* ]]; then
+                pr=${headers#*$'\r\n\r\n'}
+                headers=${headers%%$'\r\n\r\n'*}
+                if ! printf '%s' "$headers" | jq -Rse 'split("\r\n") | all(test("^[^[:space:]:]+: [^\\r\\n]*$"))' >/dev/null; then
+                  echo "::error::PR read has invalid HTTP headers (native exit $native, HTTP $http)"
+                  pr=; return "$((native == 0 ? 1 : native))"
+                fi
+              else
+                echo "::error::PR read has an incomplete HTTP frame (native exit $native, HTTP $http)"
+                return "$((native == 0 ? 1 : native))"
+              fi
+              if [ "$native" -ne 0 ]; then
+                echo "::error::PR read failed at stage $why (native exit $native, HTTP $http, collection $collection/3)"
+                [[ "$native:$http" =~ ^1:(502|503|504)$ ]] && retry_pr_read=true
+                pr=; return "$native"
+              fi
+              [ "$http" = 200 ] || { pr=; return 1; }
+              jq -se 'length == 1 and (.[0] | type == "object")' <<<"$pr" >/dev/null || return
+              # A history-sync admission (#12437) also needs its label to still be present.
+              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
+                .number == $number and .state == "open" and .draft == false and
+                .head.sha == $head and .head.repo.full_name == $repo and
+                .base.ref == "main" and .base.repo.full_name == $repo and
+                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready"))) and
+                ($reason != "history_sync_admitted" or ($event == "pull_request" and (.labels | type == "array" and any(.name == "history-sync"))))
+              ' <<<"$pr" >/dev/null
+            }
+            # Same-head succession (#4986, #8082): a newer run of this workflow for
+            # the same head (merge group: same queue-entry commit) and request
+            # kind, or a newer attempt of this run, revokes this invocation. Every
+            # read is paginated and any failure, truncation or ambiguity refuses.
+            # An ordinary label event is another run title, so it revokes nothing;
+            # re-applying `merge-ready` creates a new run and intentionally
+            # supersedes the older request. The read is last, so it is as late as
+            # this step can make it; it is not atomic with check publication.
+            read_succession() {
+              local run run_head title wf number spage=0 seen=0 total=0 list got all=""
+              run=$(gh api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID") || return
+              if [ "$EVENT_NAME" = merge_group ]; then run_head=$GROUP_HEAD_SHA title="Merge queue $GROUP_HEAD_SHA"
+              else run_head=$EXPECTED_HEAD title="Merge-ready request $EXPECTED_HEAD"; fi
+              [[ "$run_head" =~ ^[0-9a-f]{40}$ ]] || return 1
+              jq -e --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
+                .id == $id and .run_attempt == $attempt and .head_sha == $head and .event == $event and
+                .display_title == $title and .repository.full_name == $repo and
+                (.run_number | type == "number" and . > 0) and (.workflow_id | type == "number")
+              ' <<<"$run" >/dev/null || return
+              wf=$(jq -er '.workflow_id' <<<"$run") || return
+              number=$(jq -er '.run_number' <<<"$run") || return
+              while :; do
+                spage=$((spage + 1)); [ "$spage" -le 10 ] || return 1
+                list=$(gh api "repos/$REPOSITORY/actions/workflows/$wf/runs?head_sha=$run_head&event=$EVENT_NAME&per_page=100&page=$spage") || return
+                jq -e '(.total_count | type == "number") and (.workflow_runs | type == "array")' <<<"$list" >/dev/null || return
+                total=$(jq -r '.total_count' <<<"$list") || return
+                got=$(jq -r '.workflow_runs | length' <<<"$list") || return
+                all+=$(jq -c '.workflow_runs[]' <<<"$list")$'\n' || return
+                seen=$((seen + got))
+                [ "$seen" -lt "$total" ] || break
+                [ "$got" -gt 0 ] || return 1
+              done
+              jq -s -e --argjson seen "$seen" --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson wf "$wf" --argjson number "$number" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
+                length == $seen and
+                all(.[]; (.id | type == "number") and (.run_number | type == "number") and (.run_attempt | type == "number") and
+                  (.workflow_id | type == "number") and (.head_sha | type == "string") and (.event | type == "string") and
+                  (.display_title | type == "string") and (.repository.full_name | type == "string")) and
+                ([.[].id] | unique | length) == length and
+                ([.[] | select(.id == $id and .run_number == $number and .run_attempt == $attempt)] | length) == 1 and
+                ([.[] | select(.workflow_id == $wf and .head_sha == $head and .event == $event and .display_title == $title and
+                  .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
+              ' <<<"$all" >/dev/null
+            }
+            why=pull_request_state
+            read_pr || return
+            why=review_decision_and_threads
+            while :; do
+              page=$((page + 1)); [ "$page" -le 100 ] || return 1
+              frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
+              jq -e --arg head "$EXPECTED_HEAD" --arg event "$EVENT_NAME" --arg entry "$EXPECTED_QUEUE_ENTRY" '
+                .errors == null and (.data.repository.pullRequest |
+                  has("reviewDecision") and .headRefOid == $head and
+                  (.reviewDecision as $decision | [null,"APPROVED","REVIEW_REQUIRED"] | index($decision) != null) and
+                  ($event != "merge_group" or ($entry != "" and .mergeQueueEntry.id == $entry)) and
+                  (.reviewThreads.nodes | type == "array" and all(.isResolved == true)) and
+                  (.reviewThreads.pageInfo.hasNextPage | type == "boolean"))
+              ' <<<"$frame" >/dev/null || return
+              more=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame") || return
+              [ "$more" = true ] || break
+              cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
+            done
+            why=pull_request_state_after_threads
+            read_pr || return
+            why=same_head_succession
+            read_succession
+          }
+          # Name the refused stage in the job log. The step already fails closed;
+          # without this the log shows only an exit code (#8858).
+          why=before_check
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
+          # Retry only a classified PR transport failure, within this admission.
+          # Re-entering discards every prior PR, review page and pagination cursor.
+          collection=0
+          while :; do
+            collection=$((collection + 1)); retry_pr_read=false
+            if current_eligibility; then break; else rc=$?; fi
+            if [ "$retry_pr_read" != true ] || [[ "$why" != pull_request_state && "$why" != pull_request_state_after_threads ]] || [ "$collection" -ge 3 ]; then exit "$rc"; fi
+            echo "::warning::Retrying the complete eligibility collection after a transient PR read; admission $EXPECTED_REQUEST is unchanged"
+            sleep 1
+          done
+      - name: Recheck native intake authority
+        id: intake
+        if: needs.admission.result == 'success' && needs.intake.result == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: 1b6bae558bd5895057726544b9c6baca63effb97
+          EXPECTED_INTAKE: ${{ needs.intake.outputs.intake_json }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ && "$(git -C "$trusted" rev-parse HEAD)" == "$TRUSTED_SHA" ]]
+          for path in .github/actions/pr-candidate-admission/queue_intake.py policy/queue-publisher.toml; do
+            [[ -f "$trusted/$path" && ! -L "$trusted/$path" ]]
+            [[ "$(git hash-object --no-filters "$trusted/$path")" == "$(git -C "$trusted" rev-parse "$TRUSTED_SHA:$path")" ]]
+          done
+          python3 -I "$trusted/.github/actions/pr-candidate-admission/queue_intake.py" --policy "$trusted/policy/queue-publisher.toml" --expected-env EXPECTED_INTAKE
+      - name: Require complete native group portfolio
+        id: group_proof
+        if: always() && github.event_name == 'merge_group'
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          SUBJECT: ${{ needs.admission.outputs.subject_json }}
+          IDENTITY: ${{ needs.admission.outputs.subject_identity }}
+          HEAD: ${{ needs.admission.outputs.head }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP: ${{ github.event.merge_group.head_sha }}
+          GENERATION: ${{ github.workflow_sha }}
+          OWNED_RESULT: ${{ needs.rust-owned.result }}
+          WINDOWS_RESULT: ${{ needs.windows-subset.result }}
+          WHEEL_RESULT: ${{ needs.python-wheel.result }}
+          CI_RESULT: ${{ needs.ci-feature.result }}
+          PRINTED_RESULT: ${{ needs.printed-command.result }}
+        run: |
+          set -euo pipefail
+          [ "$ADMISSION_RESULT" = success ]
+          canonical=$(jq -cS . <<< "$SUBJECT")
+          [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+          jq -e --arg head "$HEAD" --arg base "$BASE" --arg group "$GROUP" --arg generation "$GENERATION" --arg request "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            '.version == 3 and .kind == "merge-group" and .head == $head and .base == $base and .merge == $group and .workflow_generation == $generation and .request_id == $request' <<< "$canonical" >/dev/null
+          for result in "$OWNED_RESULT" "$WINDOWS_RESULT" "$WHEEL_RESULT" "$CI_RESULT" "$PRINTED_RESULT"; do
+            [ "$result" = success ] || { echo "::error::mandatory native-G leaf concluded ${result:-missing}"; exit 1; }
+          done
+      - name: Summarize routed result
+        if: always()
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          ADMISSION_STATUS: ${{ needs.admission.outputs.status }}
+          CUT_STATUS: ${{ needs.admission.outputs.cut_status }}
+          ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
+          GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}
+          INTAKE_RECHECK: ${{ steps.intake.outcome }}
+          OWNED_RESULT: ${{ needs.rust-owned.result }}
+        run: |
+          set -euo pipefail
+          [[ "$ADMISSION_RESULT" == success && "$ADMISSION_STATUS" == admitted && "$CUT_STATUS" != refused ]]
+          [[ "$ELIGIBILITY_RESULT" == success && "$GROUP_PROOF_RESULT" == success && "$OWNED_RESULT" == success && "$INTAKE_RECHECK" == success ]]
+          printf 'Native-G portfolio, authenticated H intake and current eligibility passed. Protected publication and resulting M observation remain publisher obligations.\n' >> "$GITHUB_STEP_SUMMARY"
