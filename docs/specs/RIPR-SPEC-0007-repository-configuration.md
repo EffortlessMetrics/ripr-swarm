@@ -331,6 +331,21 @@ reference table,
 then their keys, types, enums and integer floors equal what the parser accepts.
 ```
 
+### Rejected closed-set values name the nearest accepted value (#14176)
+
+```text
+Given ripr.toml sets analysis.mode, an [oracles] strength, a [severity.*]
+severity or a [languages] enabled entry to a value that is an accepted
+spelling in another case, padded with whitespace, or one small edit away,
+such as `mode = "Draft"` or `enabled = ["Rust"]`,
+when ripr loads the config,
+then the load still fails (values stay case-sensitive) and the error ends
+with `(did you mean `draft`?)`, built only from that key's fixed accepted
+values; an unrelated value such as `mode = "slow"` gets no suggestion, a
+[severity.findings] value is never pointed at `off`, and the typed diagnostic
+keeps the same span, rejected value and accepted-value list.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -467,6 +482,16 @@ renders `!`, exits 3, and emits a `doctor_recovery` canonical action naming
 genuine unborn branch retains the advisory and first-commit guidance, with
 exit 0 when the other checks pass. An unanswered probe never claims unborn.
 
+When `HEAD` resolves but RIPR-SPEC-0084's default-base search finds no
+candidate (a depth-1 CI checkout that fetched only its own commit, a
+repository whose branch is neither `main` nor `master` with no `origin/HEAD`),
+a bare `ripr check` stops with that search's message. Doctor records an
+advisory `git_default_base` check whose evidence ends with that same message,
+keeps exit 0 when the other checks pass, and recommends
+`ripr check --base REF` bound to the diagnosed root instead of a bare
+`ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
+never produces the advisory, and a failed prerequisite still outranks it.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -602,6 +627,9 @@ not the symlink spelling.
 
 - `crates/ripr/src/config/schema_parity_tests.rs` (#13682) pins nearest-key
   suggestions, the source-free summary allowlist, and schema/parser/docs parity.
+- `crates/ripr/src/config/value_hint_tests.rs` (#14176) pins nearest-value
+  suggestions for closed-set values, the unrelated-value and oversized-value
+  negatives, and the unchanged typed diagnostic.
 
 - `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
 - `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
@@ -609,6 +637,10 @@ not the symlink spelling.
 - `hostile_repos::looping_ref_without_base_is_not_reported_as_unborn`
 - `hostile_repos::unreadable_ref_without_base_is_not_reported_as_unborn`
 - `output::doctor::tests::unborn_head_verdict_claims_nothing_when_the_probe_never_answered`
+- `output::doctor::tests::unresolvable_default_base_is_advised_and_not_sent_to_bare_ripr_check`
+- `output::doctor::tests::shallow_checkout_without_a_base_branch_is_advised`
+- `output::doctor::tests::no_default_base_recommendation_names_explicit_base_bound_to_root`
+- `generated_review_workflow::doctor_packet_refresh_and_first_check_preserve_physical_root_identity`
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.

@@ -508,12 +508,14 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
             finish({
               kind: 'transport_failure',
               url: target,
-              message: error instanceof Error ? error.message : String(error)
+              // A body cut off by the peer arrives here as "aborted" with
+              // the reset only in `code`; keep both and name the URL.
+              message: requestErrorMessage(target, error instanceof Error ? error : new Error(String(error)))
             });
           });
         });
         request.on('error', (error) => {
-          finish({ kind: 'transport_failure', url: target, message: error.message });
+          finish({ kind: 'transport_failure', url: target, message: requestErrorMessage(target, error) });
         });
         request.setTimeout(30_000, () => {
           request.destroy(new Error(`Timed out while fetching ${target}.`));
@@ -528,6 +530,27 @@ export function fetchManifestBytesOverHttps(url: string, maxBytes = MANIFEST_MAX
     };
     attempt(url, 0);
   });
+}
+
+/**
+ * The text of a failed request. A raw socket error ("getaddrinfo ENOTFOUND
+ * host") does not say what was being fetched, so the URL is added unless the
+ * error already names it (the fetch timeout does). When a host has several
+ * addresses and every connection attempt fails, Node reports an
+ * AggregateError whose own message is empty and whose cause is only in
+ * `code`; the code is kept so the failure still reads, and still classifies,
+ * as a connection problem (#13638).
+ */
+export function requestErrorMessage(target: string, error: Error): string {
+  const code = (error as NodeJS.ErrnoException).code;
+  const text = error.message.trim();
+  const detail = typeof code === 'string' && code.length > 0 && !text.includes(code)
+    ? `${code} ${text}`.trim()
+    : text;
+  if (detail.includes(target)) {
+    return detail;
+  }
+  return `Could not fetch ${target}: ${detail.length > 0 ? detail : 'the request failed without a reported cause'}`;
 }
 
 async function fetchBuffer(url: string): Promise<Buffer> {
