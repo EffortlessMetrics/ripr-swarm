@@ -29801,6 +29801,42 @@ fn production_source_excludes_all_test_and_keeps_not_test() {
 }
 
 #[test]
+fn production_source_handles_cfg_forms_and_doc_comments() {
+    // The forms the brace scanner could not model: a trailing comment on the
+    // attribute, a doc comment between the attribute and its item, and a
+    // compound `cfg(all(test, ...))` gate.
+    let cases = [
+        (
+            "trailing comment",
+            "fn before() {}\n#[cfg(test)] // keep\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+        (
+            "doc comment between",
+            "fn before() {}\n#[cfg(test)]\n/// docs\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+        (
+            "cfg(all(test, unix))",
+            "fn before() {}\n#[cfg(all(test, unix))]\nfn gated() {\n    eprintln!(\"x\");\n}\nfn after() {}\n",
+        ),
+    ];
+    for (label, source) in cases {
+        let production = production_source(source).expect("parses");
+        assert!(
+            !mentions_stderr_macro(&production),
+            "{label}: a gated stderr write must stay excluded: {production}"
+        );
+        assert!(
+            !production.contains("fn gated()"),
+            "{label}: the gated item must stay excluded: {production}"
+        );
+        assert!(
+            production.contains("fn after()"),
+            "{label}: production after the gated item must be scanned: {production}"
+        );
+    }
+}
+
+#[test]
 fn production_source_fails_closed_on_an_unparseable_file() {
     assert!(production_source("fn broken( {").is_none());
 }
