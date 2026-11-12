@@ -17541,6 +17541,33 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }
 }
 
+/// The TypeScript producer also serves JavaScript findings, so their step
+/// opens with "TypeScript preview advisory:"; the Problems row still says
+/// "preview" once, under the finding's own language (#14353).
+#[test]
+fn javascript_preview_diagnostic_strips_the_typescript_producer_prefix() {
+    let mut finding = sample_finding();
+    finding.language = Some(LanguageId::JavaScript);
+    finding.language_status = Some(LanguageStatus::Preview);
+    finding.recommended_next_step =
+        Some("TypeScript preview advisory: add or strengthen a focused assertion.".to_string());
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert!(
+        diagnostic
+            .message
+            .starts_with("JavaScript preview (advisory): add or strengthen"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
+    );
+}
+
 #[test]
 fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String> {
     let mut finding = sample_finding();

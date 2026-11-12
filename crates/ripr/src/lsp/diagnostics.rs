@@ -4729,7 +4729,9 @@ fn lsp_message(finding: &Finding) -> String {
     {
         // The Problems panel row is often the only text shown, so say
         // "preview" once: the producer's own step usually opens with
-        // "Python preview:" or "TypeScript preview advisory:" already.
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
         // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
@@ -4738,6 +4740,8 @@ fn lsp_message(finding: &Finding) -> String {
         let step = [
             format!("{language} preview advisory: "),
             format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
         ]
         .iter()
         .find_map(|prefix| base.strip_prefix(prefix.as_str()))

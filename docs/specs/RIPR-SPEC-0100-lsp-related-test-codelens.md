@@ -97,12 +97,19 @@ A lens click does something useful for its own row (#13389):
   `ripr.showRelatedTest` (also carrying the snapshot `input_identity`) for a
   `window/showDocument` client. A client with neither route, or a snapshot with
   no input identity for the server route, keeps refresh.
-- The target is chosen from the finding's own `related_tests`, the same list
-  the title count comes from, with the code action's rule: a strong-oracle
-  test first, else the lowest relation-confidence rank, ties to the earliest
-  listed. (The code action ranks the seam's related tests; the data source
-  differs, the rule is the same.) Preview-tier (TypeScript, Python) findings
-  navigate the same way and keep their `preview:` title.
+- The target is the witness fix site (`DiagnosticWitness::selected_related_test`),
+  chosen from the finding's own `related_tests`, the same list the title count
+  comes from, so the lens opens the test hover and related information name. A
+  test linked only by proximity (same test file, same module, a token
+  substring) is never the target; among the rest the strongest oracle wins,
+  then the lowest relation-confidence rank, ties to the earliest listed.
+  Python and Perl findings whose producer declares a suggested test keep that
+  declared target. With only proximity-linked tests the lens keeps refresh, and
+  the title count may then exceed the tests it can open (#5354). The seam code
+  action ranks the seam's related tests with the same proximity exclusion but
+  its own order (a strong oracle first, else the lowest relation-confidence
+  rank). Preview-tier (TypeScript, Python) findings navigate the same way and
+  keep their `preview:` title.
 - The title ends `· open TEST_NAME`. The name has whitespace and control
   characters collapsed to single spaces and is cut at 48 characters with an
   ellipsis. A name containing any forbidden title word (see Honesty rules, for
@@ -311,6 +318,11 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function`
+- `crates/ripr/src/lsp/lens.rs::tests::lens_click_never_opens_a_proximity_only_test_over_a_calling_one`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_call_bearing_test_over_a_proximity_only_oracle`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::a_suggested_proximity_only_test_is_not_the_fix_site`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::proximity_only_related_tests_never_become_the_fix_site`
+- `crates/ripr/src/lsp/tests.rs::seam_code_actions_skip_proximity_only_related_tests`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`
