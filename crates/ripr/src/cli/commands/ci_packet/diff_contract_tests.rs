@@ -278,22 +278,21 @@ fn side_route_diff_contract() -> Result<(), String> {
         } else {
             "--no-ext-diff"
         };
-        assert!(
-            git(
-                root,
-                &[
-                    "-c",
-                    "diff.renameLimit=1000",
-                    "-c",
-                    "diff.orderFile=/dev/null",
-                    "diff",
-                    helper,
-                    other,
-                    &range
-                ]
-            )
-            .is_err()
-        );
+        git(
+            root,
+            &[
+                "-c",
+                "diff.renameLimit=1000",
+                "-c",
+                "diff.orderFile=/dev/null",
+                "diff",
+                helper,
+                other,
+                &range,
+            ],
+        )
+        .err()
+        .ok_or("enabled diff helper unexpectedly succeeded")?;
     }
     // Git parses malformed repository values before command-line overrides.
     // Ref resolution still succeeds, but both diff subprocesses must fail
@@ -312,7 +311,9 @@ fn side_route_diff_contract() -> Result<(), String> {
         error.contains("failed with") && error.contains("diff.renamelimit"),
         "{error}"
     );
-    assert!(load_diff_range(root, &base, "HEAD").is_err());
+    load_diff_range(root, &base, "HEAD")
+        .err()
+        .ok_or("analysis accepted a failed diff")?;
     git(root, &["config", "--local", "diff.renameLimit", "1"])?;
     // Explicit -M on immutable candidates remains independent of ordinary
     // diff's accepted diff.renames=false setting.
@@ -340,9 +341,15 @@ fn side_route_diff_contract() -> Result<(), String> {
     git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
     assert!(capture(root)?.is_empty());
     git(root, &["update-ref", "-d", "refs/remotes/origin/main"])?;
-    assert!(capture(root).is_err());
-    assert!(candidate(root, "missing-base").is_err());
-    assert!(load_diff_range(root, "missing-base", "HEAD").is_err());
+    capture(root)
+        .err()
+        .ok_or("packet accepted missing origin/main")?;
+    candidate(root, "missing-base")
+        .err()
+        .ok_or("candidate accepted missing base")?;
+    load_diff_range(root, "missing-base", "HEAD")
+        .err()
+        .ok_or("analysis accepted missing base")?;
     println!("{DONE}");
     Ok(())
 }
