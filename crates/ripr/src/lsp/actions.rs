@@ -2517,6 +2517,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         diagnostic.code.as_ref(),
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
@@ -2835,6 +2836,26 @@ mod tests {
             vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
             "the client can execute the copy command for an ordinary finding"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_pending_marker_has_no_finding_context_action() -> Result<(), String> {
+        // #14447: the pre-snapshot marker is not a finding, so an "Inspect
+        // finding" action on it would copy a context packet for nothing.
+        let marker = super::super::diagnostics::analysis_pending_diagnostic(
+            super::super::diagnostics::AnalysisPendingRecovery::AnalysisRunning,
+        );
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
         Ok(())
     }
 
