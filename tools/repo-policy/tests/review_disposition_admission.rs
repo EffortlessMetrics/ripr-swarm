@@ -683,6 +683,49 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
             name,
         )?;
     }
+    // #11566: a competing field inside the description itself refuses whatever list
+    // markup leads it, with no reviews at all; prose and a clean line still admit.
+    for (index, (name, extra, admit)) in [
+        (
+            "numbered competing field",
+            "1. disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "paren-numbered competing field",
+            "1) disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "task-list competing field",
+            "- [ ] disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "bulleted competing field",
+            "- disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "numbered prose",
+            "1. Recorded the earlier disposition in the issue.",
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("OWNER", "o/r", &head, &format!("{line}\n{extra}")),
+                &head,
+                &format!("list-{index}"),
+            )?,
+            admit,
+            name,
+        )?;
+    }
     // An older-head ready review plus an unfilled description admits nothing.
     expect_outcome(
         &check_reviews_with_pull(

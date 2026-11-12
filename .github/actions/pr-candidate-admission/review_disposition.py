@@ -125,7 +125,9 @@ BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0
 # A second, competing state field in the description. The review-body form is a
 # ``disposition:`` line, so a description that carries one (whatever its value, and
 # however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
-BODY_COMPETING_FIELD = re.compile(r"^[ \t>*\-+_`#~]*disposition[ \t*_`]*:", re.IGNORECASE)
+# The leading markup is the state-line prefix, so numbered (``1.``, ``1)``) and task
+# (``- [ ]``) list items carry a competing field too (#11566).
+BODY_COMPETING_FIELD = re.compile(STATE_LINE_PREFIX + r"disposition[ \t*_`]*:", re.IGNORECASE)
 
 
 def normalize_body(body: str) -> str:
@@ -638,6 +640,11 @@ def self_test() -> None:
         (f"{line}\n- **Disposition:** REVIEW_INCOMPLETE", False),
         (f"{line}\n> disposition: REVIEW_READY", False),  # ambiguous even when positive
         (f"{line}\n```\ndisposition: REPAIR_REQUIRED\n```", False),
+        (f"{line}\n1. disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n1) disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n- [ ] disposition: REPAIR_REQUIRED", False),
+        (f"{line}\n- [x] Disposition: REVIEW_READY", False),  # ambiguous even when positive
+        (f"{line}\n1. Recorded the earlier disposition in the issue.", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),
     ]
