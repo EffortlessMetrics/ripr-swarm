@@ -1014,7 +1014,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "the --out directory",
             false,
             true,
-            "Verifies the hosted required test phase run as nextest count partitions (#10507): every shard must retain status 0, a run context naming this repository, checkout, run, attempt, profile, partition and command with nextest_exit=0, and a complete JUnit report with no failure or error whose testcases are exactly the shard's partition list; the partition lists must be a disjoint cover of the full workspace list. On success writes the combined junit.xml and run-context.txt the unpartitioned step retained, and always writes shards-summary.txt; any missing, stale, malformed or wrong-subject evidence exits non-zero. With --all-features the expected partition command is the Test Analytics all-features variant (#12916); every other conservation check is unchanged. The three native receipt options must be provided together; diagnostic native receipt mode always refuses full proof while effective context and provenance remain unverified.",
+            "Verifies the hosted required test phase run as nextest count partitions (#10507): every shard must retain status 0, a run context naming this repository, checkout, run, attempt, profile, partition and command with nextest_exit=0, and a complete JUnit report with no failure or error whose testcases are exactly the shard's partition list; the partition lists must be a disjoint cover of the full workspace list. On success writes the combined junit.xml and run-context.txt the unpartitioned step retained, and always writes shards-summary.txt; any missing, stale, malformed or wrong-subject evidence exits non-zero. With --all-features the expected partition command is the Test Analytics all-features variant (#12916); every other conservation check is unchanged. The three native receipt options must be provided together. Diagnostic mode compares unauthenticated GitHub Actions environment identity with the requested current attempt, requires a unique xtask binary from the selected shard-one artifact matching the reopened current_exe path, and refuses verifier-only reruns using an older producer. These checks do not authenticate provenance, and diagnostic native receipt mode always refuses full proof.",
         ),
         command_entry(
             "windows-advisory-isolated-summary --dir <path>",
@@ -3053,6 +3053,12 @@ mod tests {
         assert!(help.contains("--native-receipt-context"));
         assert!(help.contains("--native-producer-result"));
         assert!(help.contains("--native-verifier-attempt"));
+        assert!(help.contains("GitHub Actions environment identity"));
+        assert!(help.contains("requested current attempt"));
+        assert!(help.contains("unique xtask binary from the selected shard-one artifact"));
+        assert!(help.contains("reopened current_exe path"));
+        assert!(help.contains("refuses verifier-only reruns"));
+        assert!(help.contains("do not authenticate provenance"));
         assert!(help.contains("always refuses full proof"));
         Ok(())
     }
