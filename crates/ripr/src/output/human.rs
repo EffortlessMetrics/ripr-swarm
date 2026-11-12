@@ -304,6 +304,20 @@ fn no_changed_files_in_range(output: &CheckOutput) -> bool {
         })
 }
 
+/// True when the range held no changed files because the compared base
+/// already contains `HEAD` (#14265): the branch is behind its base or merged
+/// into it, so the diff from their merge base is empty by construction.
+fn head_already_in_base(output: &CheckOutput) -> bool {
+    output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0)
+        && output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+}
+
 /// #13036: a range with changed files but no checkable behavior is usually a
 /// tests-only diff (the agent committed its tests, then used the commit before
 /// them as the base). Say so and name the fix, without claiming which it is.
@@ -340,6 +354,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         // no behavior; say what was not checked instead of "No findings".
         // #13036: an empty diff is a different cause from "no analyzable
         // language"; name the real one so the reader looks at the base.
+        // #14265: a base that already contains HEAD is a third cause; name
+        // it so the reader looks at which branch they are on, not at languages.
+        _ if no_source_examined(output) && head_already_in_base(output) => {
+            "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) && no_changed_files_in_range(output) => {
             "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
         }
@@ -796,13 +815,28 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             // #10691: the preview-language note below names the real recovery
             // (the `ripr.toml` block to add), so the default view drops the
             // stage/kind-flavoured Limitation line and keeps one plain pointer.
-            match limitation.affected_items {
-                Some(count) => out.push_str(&format!(
-                    "  Not analyzed: {count} changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
-                )),
-                None => out.push_str(
-                    "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n",
-                ),
+            // #14152: that pointer is only true when such a note follows. No
+            // note is written without a preview advisory, and none covers
+            // Rust switched off in `[languages]`, so those print the
+            // producer's own recovery instead of pointing at nothing.
+            let note_follows = !output.preview_language_advisories.is_empty()
+                && !limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(crate::analysis::is_rust_excluded_by_config_detail);
+            let subject = match limitation.affected_items {
+                Some(count) => format!("{count} changed file(s)"),
+                None => "changed files".to_string(),
+            };
+            if note_follows {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
+                    limitation.recovery.detail
+                ));
             }
             continue;
         }
@@ -982,6 +1016,12 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
             "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
              the first selected file alone exceeded it and was analyzed whole"
         ),
+        crate::analysis::PartialDiffStopReason::FileExceedsAnalysisLimit => format!(
+            "the changed-line limit ({}); every enabled-language file that fits was selected \
+             and {} file(s) that each exceed their language's limit on their own were left out",
+            scope.over_limit_envs().join(", "),
+            scope.over_limit_files.len()
+        ),
     };
     out.push_str(&format!(
         "Partial scope: run state {} — analysis stopped at {stopped_at}; \
@@ -1011,6 +1051,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         // The raw path stays on the scope record for identities/JSON; only
         // the terminal-facing display is escaped (#2142 review).
         out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
+    }
+    for file in &scope.over_limit_files {
+        out.push_str(&format!(
+            "  over limit (not analyzed): {} ({} changed lines over {}={})\n",
+            escape_terminal_display(&file.path),
+            file.changed_lines,
+            file.limit_env,
+            file.limit
+        ));
     }
     for disclosure in &scope.budget_disclosures {
         out.push_str(&format!("  budget: {disclosure}\n"));
@@ -1815,6 +1864,62 @@ mod tests {
             assert!(rendered.contains("analysis incomplete"));
             assert!(rendered.contains("this is not a clean result"));
             assert!(!rendered.contains("ripr checked no changed behavior"));
+        }
+        Ok(())
+    }
+
+    /// #14265: a base that already contains HEAD (a branch behind its base,
+    /// or merged into it) gets its own headline in both human forms. The
+    /// three neighbouring states keep theirs: base commit equal to HEAD
+    /// (#13036), the same commits read through the working tree, and a
+    /// range that did change files.
+    #[test]
+    fn a_base_that_already_contains_head_names_that_cause_in_the_headline() -> Result<(), String> {
+        const CONTAINED: &str = "Nothing to check: HEAD is already contained in the comparison base, so the diff from their merge base is empty (no changed files) and ripr examined no behavior.\n";
+        const EMPTY_DIFF: &str = "Nothing to check: the diff against the comparison base is empty";
+        const NO_LANGUAGE: &str =
+            "Nothing to check: no changed source file in a language ripr analyzes was available";
+        let config = RiprConfig::default();
+        let no_scope = crate::analysis_outcome::AnalysisOutcomeKind::NoScope;
+        let behind = |working_tree: bool| crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("9f8e7d6c5b4a".to_string()),
+            merge_base_commit: Some("1a2b3c4d5e6f".to_string()),
+            loaded_diff_origin: None,
+            head_commit: Some("1a2b3c4d5e6f".to_string()),
+            working_tree,
+        };
+
+        let mut contained = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        contained.analyzed_revisions = Some(behind(false));
+        let same_commit = empty_range_output(Some("origin/main"), no_scope, 0)?;
+        let mut working_tree = contained.clone();
+        working_tree.analyzed_revisions = Some(behind(true));
+        // A docs-only range: files changed, none in an analyzed language.
+        let mut changed_files = empty_range_output(
+            Some("origin/main"),
+            crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines,
+            1,
+        )?;
+        changed_files.analyzed_revisions = Some(behind(false));
+
+        for (label, output, headline) in [
+            ("contained", &contained, CONTAINED),
+            ("same commit", &same_commit, EMPTY_DIFF),
+            ("working tree", &working_tree, NO_LANGUAGE),
+            ("changed files", &changed_files, NO_LANGUAGE),
+        ] {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(rendered.contains(headline), "{label}: {rendered}");
+                for other in [CONTAINED, EMPTY_DIFF, NO_LANGUAGE] {
+                    if other != headline {
+                        assert!(!rendered.contains(other), "{label}: {rendered}");
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2637,9 +2742,10 @@ mod tests {
     }
 
     /// #10691: a changed language with no analyzer renders one plain
-    /// `Not analyzed:` pointer on the bounded surface (the preview-language
-    /// note carries the `ripr.toml` recovery); the full surface keeps the
-    /// glossed kind/stage/recovery tokens.
+    /// `Not analyzed:` line on the bounded surface, without the kind/stage
+    /// tokens; the full surface keeps the glossed kind/stage/recovery tokens.
+    /// #14152: this output has no preview advisory, so no note follows and
+    /// the line carries the producer's recovery instead of pointing at one.
     #[test]
     fn bounded_adapter_unavailable_limitation_is_one_plain_pointer() -> Result<(), String> {
         use crate::analysis_outcome::{
@@ -2668,10 +2774,11 @@ mod tests {
         let rendered = render(&output);
         assert!(
             rendered.contains(
-                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze.\n  Fix: Enable the python preview adapter and re-run the analysis.\n"
             ),
             "{rendered}"
         );
+        assert!(!rendered.contains("see the note below"), "{rendered}");
         for leaked in [
             "Limitation:",
             "language_adapter_unavailable",
@@ -6715,6 +6822,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6774,6 +6883,7 @@ mod tests {
             PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
             PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
             PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
+            PartialDiffStopReason::FileExceedsAnalysisLimit => (7, 35, None),
         };
         CheckOutput {
             value_origins: Default::default(),
@@ -6809,6 +6919,8 @@ mod tests {
                 stop_reason,
                 next_file_changed_lines,
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6924,6 +7036,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,

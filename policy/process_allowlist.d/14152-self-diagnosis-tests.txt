@@ -1,0 +1,6 @@
+crates/ripr/tests/check_not_analyzed_note_pointer.rs|Command::new|2|self-diagnosis-tests|Black-box test: runs git to stage a scratch repository and the built ripr binary on it with fixed arguments; no shell or network.
+crates/ripr/tests/check_not_analyzed_note_pointer.rs|use std::process::Command|1|self-diagnosis-tests|Import for the two fixed git and ripr invocations above.
+crates/ripr/tests/explain_location_miss_cause.rs|Command::new|2|self-diagnosis-tests|Black-box test: runs git to stage a scratch repository and the built ripr binary on it with fixed arguments; no shell or network.
+crates/ripr/tests/explain_location_miss_cause.rs|use std::process::Command|1|self-diagnosis-tests|Import for the two fixed git and ripr invocations above.
+crates/ripr/tests/troubleshooting_guide.rs|Command::new|3|self-diagnosis-tests|Black-box test: runs git to stage scratch repositories and the built ripr binary on them with fixed arguments; no shell or network.
+crates/ripr/tests/troubleshooting_guide.rs|use std::process::Command|1|self-diagnosis-tests|Import for the fixed git and ripr invocations above.
