@@ -4720,7 +4720,7 @@ fn changed_range_reconciles_executed_review_cases() -> Result<(), String> {
                 "{before} / {tests}: {finding:?}"
             );
             assert_eq!(finding.ripr.infect.state, StageState::Unknown);
-            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+            assert_ne!(finding.class, ExposureClass::WeaklyExposed);
         }
         for write in [
             "module.range = lambda *args: []",
@@ -4890,7 +4890,7 @@ fn changed_range_preserves_integer_types_before_offset_normalization() -> Result
         );
         if !exposed {
             assert_eq!(finding.ripr.infect.state, StageState::Unknown);
-            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+            assert_ne!(finding.class, ExposureClass::WeaklyExposed);
         }
     }
     // Integer input types are required in every position and on both sides.

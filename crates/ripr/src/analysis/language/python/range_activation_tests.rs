@@ -69,8 +69,8 @@ fn changed_range_combined_body_edits_withhold_every_finding() -> Result<(), Stri
         assert_eq!(findings.len(), 2, "{findings:?}");
         for finding in findings {
             assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+            assert_ne!(finding.class, ExposureClass::WeaklyExposed);
             assert_eq!(finding.ripr.infect.state, StageState::Unknown);
-            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
         }
     }
     Ok(())
