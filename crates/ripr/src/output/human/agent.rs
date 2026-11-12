@@ -1028,8 +1028,9 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     // the fallback `missing=` prints, since its wording differs by probe
     // family ("no exact error variant" vs "no strong discriminator") for
     // one value.
-    // Each fact also keys its shape and flow sink: one value asserted at two
-    // different sinks is two tests.
+    // Each fact also keys its shape, flow sink and drafted boundary call: one
+    // value asserted at two different sinks, or drafted against two different
+    // calls, is two tests.
     let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
         finding.missing.clone()
     } else {
@@ -1037,7 +1038,12 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
             .activation
             .missing_discriminators
             .iter()
-            .map(|fact| format!("{:?} {:?} {:?}", fact.value, fact.shape, fact.flow_sink))
+            .map(|fact| {
+                format!(
+                    "{:?} {:?} {:?} {:?}",
+                    fact.value, fact.shape, fact.flow_sink, fact.drafted_boundary
+                )
+            })
             .collect()
     };
     let test = strongest_test(finding).map(|test| {

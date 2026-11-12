@@ -4,10 +4,10 @@ use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-    RelatedTestMiss, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-    StageEvidence, StageState, StaticLimitKind,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, DraftedBoundaryAssertion,
+    ExposureClass, Finding, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence,
+    RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind,
 };
 use std::path::PathBuf;
 
@@ -1063,6 +1063,28 @@ fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
     let mut other_shape = return_value.clone();
     other_shape.activation.missing_discriminators[0].shape = DiscriminatorShape::Other;
     let text = rendered(&output(vec![error_path.clone(), other_shape]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value flowing to a different sink is a different test.
+    let mut other_sink = return_value.clone();
+    other_sink.activation.missing_discriminators[0].flow_sink = Some(FlowSinkFact {
+        kind: FlowSinkKind::ErrorVariant,
+        text: "Err(DiscountError::Range)".to_string(),
+        line: 12,
+        owner: None,
+    });
+    let text = rendered(&output(vec![error_path.clone(), other_sink]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value drafted against a different boundary call is a different
+    // test.
+    let mut other_draft = return_value.clone();
+    other_draft.activation.missing_discriminators[0].drafted_boundary =
+        Some(DraftedBoundaryAssertion {
+            arguments: vec!["50".to_string(), "100".to_string()],
+            expected: None,
+        });
+    let text = rendered(&output(vec![error_path.clone(), other_draft]));
     assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
 
     // A different strongest related test keeps both rows.
