@@ -440,3 +440,51 @@ fn a_match_arm_with_intermediate_arithmetic_is_not_folded_or_contradicted() -> R
     assert!(!contradicted, "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_range_in_a_match_arm_body_is_gated() -> Result<(), String> {
+    // The arrow on this arm line is not a bare arm head, so the line is
+    // compared whole and its range is found in the arm body. An unread
+    // input keeps an earlier fold from settling it.
+    let lib = "/// Sum or zero.\npub fn pick(k: u32, n: u32) -> u32 {\n    match k {\n        1 => 0,\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("let k = std::env::args().count() as u32;\n    assert_eq!(pick(2, k), 0);"),
+    )?;
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::*;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
+    let findings = findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", test)?;
+    assert_ne!(infection_states(&findings), vec!["Yes".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn an_arrow_inside_a_comment_does_not_hide_a_range_bound() -> Result<(), String> {
+    // An unread input keeps an earlier fold from settling it: the gate itself
+    // must still read the change as a range-bound change.
+    let findings = findings_on_changed_line(
+        &sum_to("(/* => */ 0..=n).sum()"),
+        "    (/* => */ 0..=n).sum()",
+        "    (/* => */ 0..n).sum()",
+        &test_calling("let k = std::env::args().count() as u32;\n    assert_eq!(sum_to(k), 0);"),
+    )?;
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}

@@ -1079,14 +1079,16 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
-            } else if let Some(before) = probe
-                .before
-                .as_deref()
-                .filter(|before| changes_only_a_range_bound(before, &probe.expression))
-            {
+            } else if let Some((before, after)) = probe.before.as_deref().and_then(|before| {
+                // A match-arm probe carries only the arm head (`_ =>`) even
+                // when the edit sits in the arm body; read the whole arm line.
+                let after = full_arm_line(owner, &probe.expression, before)
+                    .unwrap_or_else(|| probe.expression.clone());
+                changes_only_a_range_bound(before, &after).then(|| (before, after))
+            }) {
                 range_bound_infection(
                     owner.filter(|_| !assertion_macros_rebound),
-                    &aligned_range_texts(before, &probe.expression),
+                    &aligned_range_texts(before, &after),
                     related_tests,
                     owner_has_other_callers,
                 )
@@ -1214,18 +1216,55 @@ pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str)
     }
 }
 
-/// `before` and `after` trimmed, and cut to their arm heads when both are
-/// match arms: a match-arm probe may carry only the head (`0..5 =>`) while
-/// its baseline carries the whole line (`1..5 => 1,`).
+/// `before` and `after` trimmed, and cut to their arm heads when one is a
+/// bare match-arm head: a match-arm probe may carry only the head
+/// (`0..5 =>`) while its baseline carries the whole line (`1..5 => 1,`).
+/// The other side is cut at its first `=>` outside strings and comments.
+/// Anything else (a one-line `match k { 1 => 0, _ => (1..n).sum() }`, an
+/// arrow inside a string) is compared whole.
 pub(in crate::analysis) fn aligned_range_texts(before: &str, after: &str) -> (String, String) {
+    use crate::analysis::language::mask_rust_comments_and_strings;
     let (before, after) = (before.trim(), after.trim());
-    match (before.find("=>"), after.find("=>")) {
-        (Some(left), Some(right)) => (
-            before[..left + 2].to_string(),
-            after[..right + 2].to_string(),
-        ),
+    let is_head = |text: &str| {
+        let masked = mask_rust_comments_and_strings(text);
+        masked.ends_with("=>") && masked.matches("=>").count() == 1
+    };
+    let head_of = |text: &str| -> Option<String> {
+        let masked = mask_rust_comments_and_strings(text);
+        let at = masked.find("=>")?;
+        text.get(..at + 2).map(str::to_string)
+    };
+    match (is_head(before), is_head(after)) {
+        (true, false) => match head_of(after) {
+            Some(head) => (before.to_string(), head),
+            None => (before.to_string(), after.to_string()),
+        },
+        (false, true) => match head_of(before) {
+            Some(head) => (head, after.to_string()),
+            None => (before.to_string(), after.to_string()),
+        },
         _ => (before.to_string(), after.to_string()),
     }
+}
+
+/// The owner's whole current arm line for a head-only match-arm probe
+/// (`_ =>`) whose baseline is a whole arm line with the same head
+/// (`_ => (0..n).sum(),`): the one other owner line starting with that head.
+/// `None` when the probe is not a bare head, the head itself changed, or the
+/// line is not unique.
+fn full_arm_line(owner: Option<&FunctionSummary>, head: &str, before: &str) -> Option<String> {
+    let owner = owner?;
+    let (head, before) = (head.trim(), before.trim());
+    if !head.ends_with("=>") || before == head || !before.starts_with(head) {
+        return None;
+    }
+    let mut lines = owner
+        .body
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with(head) && *line != before);
+    let line = lines.next()?;
+    lines.next().is_none().then(|| line.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1279,43 +1318,53 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
         usize::from(covered.start()) <= offset + span.start
             && offset + span.end <= usize::from(covered.end())
     };
-    // A match arm line (`1..5 => 1,`) parses inside a `match`; a range
-    // pattern there is a membership test, which absorbs every element away
-    // from the moved bound.
-    if text.contains("=>") {
-        // A probe may carry only the arm head (`0..5 =>`); give it a body.
-        let body = if text.trim_end().ends_with("=>") {
-            " {},"
-        } else {
-            ""
-        };
-        let source = format!("{ARM_PREFIX}{text}{body}\n_ => {{}}\n}}\n}}\n");
-        if let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source)
-            && parse
-                .tree()
-                .syntax()
-                .descendants()
-                .filter(|node| ast::RangePat::can_cast(node.kind()))
-                .any(|node| covers(&node, ARM_PREFIX.len()))
-        {
-            return Some(RangeConsumer::Absorbing);
-        }
-    }
-    // A block header (`for i in 1..n {`, `if (0..n).contains(&x) {`) parses
-    // once its block is closed.
-    let closing = if text.trim_end().ends_with('{') {
+    // A match arm line (`1..5 => 1,`, `_ => (0..n).sum(),`) parses inside a
+    // `match`; a range pattern there is a membership test, which absorbs
+    // every element away from the moved bound. A block header
+    // (`for i in 1..n {`, `if (0..n).contains(&x) {`) parses once its block
+    // is closed.
+    let trimmed = text.trim_end();
+    let closing = if trimmed.ends_with("=>") {
+        " {},"
+    } else if trimmed.ends_with('{') {
         "}"
     } else {
         ""
     };
-    let source = format!("{PREFIX}{text}{closing}\n}}\n");
-    let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let arm = text
+        .contains("=>")
+        .then(|| {
+            let source = format!("{ARM_PREFIX}{text}{closing}\n_ => {{}}\n}}\n}}\n");
+            crate::analysis::syntax::parse_clean_source_file(&source)
+        })
+        .flatten();
+    if let Some(parse) = &arm
+        && parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::RangePat::can_cast(node.kind()))
+            .any(|node| covers(&node, ARM_PREFIX.len()))
+    {
+        return Some(RangeConsumer::Absorbing);
+    }
+    let (parse, offset) = match arm {
+        Some(parse) => (parse, ARM_PREFIX.len()),
+        None => {
+            let closing = if trimmed.ends_with('{') { "}" } else { "" };
+            let source = format!("{PREFIX}{text}{closing}\n}}\n");
+            (
+                crate::analysis::syntax::parse_clean_source_file(&source)?,
+                PREFIX.len(),
+            )
+        }
+    };
     let range = parse
         .tree()
         .syntax()
         .descendants()
         .filter_map(ast::RangeExpr::cast)
-        .filter(|range| covers(range.syntax(), PREFIX.len()))
+        .filter(|range| covers(range.syntax(), offset))
         .last()?;
     let mut node = range.syntax().clone();
     while let Some(parent) = node.parent() {

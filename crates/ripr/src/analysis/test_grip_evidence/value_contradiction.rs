@@ -1109,8 +1109,8 @@ fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
 }
 
 /// Whether the test body holds a `use` item naming `owner_name`
-/// (`use crate::rival::f;` in a nested block): the bare call may then name
-/// the imported function, not the owner.
+/// (`use crate::rival::f;` in a nested block) or a glob import: the bare
+/// call may then name the imported function, not the owner.
 fn body_imports_same_name(test: &TestSummary, owner_name: &str) -> bool {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())
     else {
@@ -1119,7 +1119,9 @@ fn body_imports_same_name(test: &TestSummary, owner_name: &str) -> bool {
     };
     parse.tree().syntax().descendants().any(|node| {
         ast::Use::cast(node).is_some_and(|item| {
-            count_name_tokens(&item.syntax().text().to_string(), owner_name) > 0
+            let text = item.syntax().text().to_string();
+            // A glob (`use crate::rival::*;`) may bring in the name too.
+            text.contains('*') || count_name_tokens(&text, owner_name) > 0
         })
     })
 }
