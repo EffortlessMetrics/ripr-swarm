@@ -24,12 +24,14 @@ Linked issues:
 - #8793 (the lock-wait instrument failure and `precommit` deferral)
 - #8939 (the lock-wait wall-clock ceiling)
 - #8198 (eliminate repeated policy preparation)
+- #13705 (local `precommit` skips enumeration for an unaffected change set)
 
 Linked PRs:
 
 - #8905 (lock-wait retry and the `covered_by_lock_wait_timeout` class)
 - #8941 (90-minute ceiling and the `precommit-v2` composition tests)
 - #13481 (reuse successful combined preparation within one invocation)
+- #14185 (rule 6, the local skip for an unaffected change set)
 
 Support-tier impact:
 
@@ -41,7 +43,8 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- The failure rules state the contract implemented by #8905 and #8941. The
+- Rules 1 to 5 state the contract implemented by #8905 and #8941. Rule 6
+  specifies the local skip for an unaffected change set added by #14185. The
   preparation-reuse subsection specifies the boundary added by #13481, with
   its test mapping in `.ripr/traceability.d/8198-combined-preparation.toml`.
   RIPR-SPEC-0191 continues to govern host-scoped `covered_by` selection.
@@ -185,6 +188,31 @@ The validator stores no reusable success or executable across invocations
 or jobs. Fewer preparation calls alone establish no compilation, memory or
 whole-lane timing reduction.
 
+### Rule 6: local `precommit` skips enumeration for an unaffected change set
+
+Enumeration builds test binaries, and the `ripr` library test build alone
+holds about 13.8 GB. A selector's listing depends only on Rust sources,
+manifests, the workspace-wide Rust control files and the policy declarations.
+
+The local `precommit-v2` composition skips enumeration only when all of these
+hold:
+
+- the composition is not `ci-policy`;
+- the change set is complete;
+- the impact plan names no package and no workspace widening;
+- no changed path, including the old path of a rename, is a Rust source, a
+  `Cargo.toml` or a `build.rs`, or lies under `policy/`.
+
+Every other run enumerates. Hosted `ci-policy` and the standalone
+`cargo xtask check-file-policy` always enumerate.
+
+A skipped run still parses the selectors, so a malformed declaration fails. It
+starts no Cargo build, claims no coverage and retains no coverage subject
+sidecar; a stale sidecar is removed. `file-policy.md` carries one row starting
+`not_enumerated;` in place of coverage observations, and the `precommit-v2`
+report lists the skipped enumeration under `skipped`. The row carries none of
+the `selected=` tokens the retained-evidence readers accept.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -200,6 +228,11 @@ whole-lane timing reduction.
 4. **Reuse preparation, retain native acceptance.** Only successful, explicit
    members in the same launch context may omit their redundant build. The
    native listing and each selector's validation still decide acceptance.
+
+5. **Skip by change-set premise, disclosed.** Adopted: the premise that
+   already skips local Clippy, with the skip written into both reports.
+   Rejected: enumerating on every local run (the build does not fit a 15 GB
+   container), and skipping silently or on an incomplete change set.
 
 ## Required Evidence
 
@@ -226,10 +259,19 @@ whole-lane timing reduction.
   builds or headroom within the listing deadline. Performance claims require
   measured compilation or elapsed time for the claimed scope.
 
+- The skip decision is pinned as a table in both directions, including a
+  rename away from a Rust or policy path, an incomplete change set and
+  `ci-policy`. A composition test observes the decision handed to the policy
+  leg and the published `skipped` row. Unit tests pin that the skipped mode
+  never calls the enumerator, still refuses a malformed declaration, retains
+  no subject, and publishes a row that cannot be read as coverage.
+
 ## Non-Goals
 
 - Changing any retry bound, the ceiling, a classification prefix, or the
   deferral behavior.
+- Scoping enumeration to the packages a Rust change impacts, or lowering the
+  memory the library test build needs.
 - Enumeration budgets for non-lock timeouts, or the host-scoped selection
   rules (RIPR-SPEC-0191).
 - Killing or inspecting the process that holds the lock.
@@ -258,11 +300,18 @@ whole-lane timing reduction.
    cannot be matched: affected members retain their individual preparation.
    A later missing selected test still fails even if preparation succeeded.
 
+9. Local `precommit` with only `docs/guide.md` changed: no test binary is
+   built, `file-policy.md` has the `not_enumerated;` row, the run can pass.
+   With `crates/a/src/lib.rs` or `policy/non-rust-allowlist.toml` changed, or
+   under `ci-policy`, enumeration runs.
+
 ## Test Mapping
 
 - `xtask/src/policy/file_policy.rs`: rules 1 to 3 and the validator side of
   rule 5.
-- `xtask/src/precommit_v2.rs`: rules 4 and 5.
+- `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
+  composition side of rule 6.
+- `xtask/src/policy/file_policy.rs`: the policy side of rule 6.
 - `xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_replaces_only_member_builds`:
   successful member reuse, failed exit, timeout, missing status and capture
   error, with both native listings retained.
@@ -287,7 +336,10 @@ whole-lane timing reduction.
 - `xtask/src/main.rs`: `check_file_policy_deferring`,
   `finish_precommit_policy`, `PRECOMMIT_INSTRUMENT_PREFIX`.
 - `xtask/src/precommit_v2.rs`: the deferred-instrument handling in
-  `run_composition_in`.
+  `run_composition_in`; `coverage_enumeration` (rule 6).
+- `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
+  `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
+  `coverage_disclosure_items` (rule 6).
 
 ## Metrics
 
