@@ -4589,15 +4589,18 @@ fn test_file_declares_owner_type_namesake(
 /// - The owner's file must declare the name exactly once (no alias or
 ///   rename), before the owner, so a later inline-module namesake cannot be
 ///   the one declaration.
-/// - A test in the owner's file then binds it.
-/// - A test elsewhere must be in the root package's integration tests, and
-///   every `use` in its file that could bind the name must reach the owner's
-///   type: a rename to the name refuses, and a named import of it must spell
-///   `krate::<owner module path>::Name`, or `krate::Name` when the library
-///   root names the owner's type ([`super::related_tests::root_library_names_owner_type`]);
-///   a glob import must be rooted at `self`/`super`/`crate`, or at `krate`
-///   when the library root binds no other type of the name. Any other glob
-///   (`use foreign::*;`, `use std::x::*;`) may bring a namesake in and refuses.
+/// - The owner's `impl` is a top-level item of its file.
+/// - Every `use` in the test's file that could bind the name must reach the
+///   owner's type. A rename to the name refuses. In the owner's own file a
+///   named import must spell `super::Name` or `crate::<owner module>::Name`;
+///   elsewhere `krate::<owner module>::Name`, or `krate::Name` when the
+///   library root names the owner's type
+///   ([`super::related_tests::root_library_names_owner_type`]).
+/// - A glob must be `super::*` or `crate::<owner module>::*` in the owner's
+///   file, or `krate::*` elsewhere when the library root binds no other type
+///   of the name. Another glob rooted at `self`/`super`/`crate` is admitted
+///   only when no indexed file but the owner's declares the name; any other
+///   glob (`use foreign::*;`, `use std::x::*;`) refuses.
 pub(in crate::analysis) fn test_binds_owner_type(
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -4620,46 +4623,79 @@ pub(in crate::analysis) fn test_binds_owner_type(
     {
         return false;
     }
-    if test.file == owner.file {
-        return true;
+    // The owner's `impl` must be a top-level item of its file, so the file's
+    // module path names it (an inline-module owner is not at that path).
+    if !super::related_tests::owner_impl_is_top_level_item(index, owner) {
+        return false;
     }
-    let Some(krate) = index.root_library_name.as_deref() else {
-        return false;
-    };
-    let Some(module) = super::related_tests::library_module_path(&owner.file) else {
-        return false;
-    };
+    let module = super::related_tests::library_module_path(&owner.file);
     let Some(test_facts) = index.files().get(&test.file) else {
         return false;
     };
+    let same_file = test.file == owner.file;
+    let krate = index.root_library_name.as_deref();
+    if !same_file && (krate.is_none() || module.is_none()) {
+        return false;
+    }
     let root_names_owner =
         super::related_tests::root_library_names_owner_type(index, owner, impl_type);
-    let full: String = std::iter::once(krate)
-        .chain(module.iter().map(String::as_str))
-        .chain(std::iter::once(impl_type))
-        .collect::<Vec<_>>()
-        .join("::");
-    let root_spelling = format!("{krate}::{impl_type}");
+    let joined = |head: &str| {
+        module.as_ref().map(|module| {
+            std::iter::once(head)
+                .chain(module.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("::")
+        })
+    };
+    // In-crate spellings of the owner's module, and the external one (a
+    // binary target's file has neither).
+    let crate_module = joined("crate");
+    let krate_module = krate.and_then(joined);
+    // A glob rooted at `self`/`super`/`crate` may reach any module of its
+    // crate: it is admitted only when no indexed file other than the owner's
+    // declares, aliases or renames the name.
+    let elsewhere_free = || {
+        index.files().iter().all(|(file, facts)| {
+            file == &owner.file
+                || super::owner_pin::source_type_declaration_count(&facts.source, impl_type) == 0
+        })
+    };
     super::reveal::flattened_use_paths(&test_facts.source)
         .iter()
         .all(|item| {
             let path = item.path.trim_start_matches("::");
             if let Some(prefix) = path.strip_suffix("::*") {
                 let first = prefix.split("::").next().unwrap_or(prefix);
-                return matches!(first, "self" | "super" | "crate")
-                    || (prefix == krate
-                        && (root_names_owner
-                            || !super::related_tests::library_root_binds_type_name(
-                                index, impl_type,
-                            )));
+                if same_file && (prefix == "super" || Some(prefix) == crate_module.as_deref()) {
+                    return true;
+                }
+                if matches!(first, "self" | "super" | "crate") {
+                    return elsewhere_free();
+                }
+                return !same_file
+                    && Some(prefix) == krate
+                    && (root_names_owner
+                        || !super::related_tests::library_root_binds_type_name(index, impl_type));
             }
             let binding = item
                 .alias
                 .as_deref()
                 .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path));
-            binding != impl_type
-                || (item.alias.is_none()
-                    && (path == full || (path == root_spelling && root_names_owner)))
+            if binding != impl_type {
+                return true;
+            }
+            if item.alias.is_some() {
+                return false;
+            }
+            let Some(parent) = path.strip_suffix(&format!("::{impl_type}")) else {
+                return false;
+            };
+            if same_file {
+                parent == "super" || Some(parent) == crate_module.as_deref()
+            } else {
+                Some(parent) == krate_module.as_deref()
+                    || (Some(parent) == krate && root_names_owner)
+            }
         })
 }
 

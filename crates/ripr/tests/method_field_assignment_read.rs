@@ -469,3 +469,38 @@ fn an_unrelated_namesake_elsewhere_keeps_the_credit() -> Result<(), String> {
     assert_eq!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }
+
+/// #14407 review of the binding repair: a same-file test importing a foreign
+/// `Counter`, an integration test whose `self::` glob reaches a test-crate
+/// namesake, and an inline-module owner behind a root re-export of another
+/// type all keep the gap.
+#[test]
+fn unbound_namesake_routes_get_no_credit() -> Result<(), String> {
+    let same_file_import = format!(
+        "{OWNER}#[cfg(test)]\nmod tests {{\n    use dep::Counter;\n    #[test]\n    fn reference() {{\n        let mut c = Counter {{ n: 5, m: 0 }};\n        c.reset();\n        assert_eq!(c.n, 1);\n    }}\n}}\n"
+    );
+    let found = finding_at(&same_file_import, "src/lib.rs", "")?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let test_crate_glob = finding_with_files(
+        OWNER,
+        "tests/t.rs",
+        &format!("mod common;\nuse self::common::*;\n{}", test_body(O_FIELD)),
+        &[(
+            "tests/common/mod.rs",
+            "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n}\n",
+        )],
+    )?;
+    assert_ne!(
+        test_crate_glob.class,
+        ExposureClass::Exposed,
+        "{test_crate_glob:#?}"
+    );
+    let inline_owner = "pub mod inner {\n    pub struct Counter {\n        pub n: u32,\n        pub m: u32,\n    }\n    impl Counter {\n        pub fn reset(&mut self) {\n            self.n = 1;\n        }\n    }\n}\npub use dep::Counter;\n";
+    let found = finding_at(
+        inline_owner,
+        "tests/t.rs",
+        &format!("use probe::Counter;\n{}", test_body(O_FIELD)),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}

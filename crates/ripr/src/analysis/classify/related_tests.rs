@@ -2391,6 +2391,15 @@ pub(in crate::analysis) fn library_module_path(file: &Path) -> Option<Vec<String
     .then_some(parts)
 }
 
+/// Whether `owner`'s `impl` is a top-level item of its own file (#14407), so
+/// the file's module path is the type's path.
+pub(in crate::analysis) fn owner_impl_is_top_level_item(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> bool {
+    owner_impl_is_root_item_of(index, owner, &owner.file)
+}
+
 /// Whether the root library file (`src/lib.rs`) puts the owner's impl type
 /// `name` at the crate root (#14407): the owner's file is `src/lib.rs` and it
 /// declares `name` exactly once, unaliased; or the owner's file is a module
@@ -2407,6 +2416,9 @@ pub(in crate::analysis) fn root_library_names_owner_type(
     let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
         return false;
     };
+    if !owner_impl_is_top_level_item(index, owner) {
+        return false;
+    }
     let root_count = super::owner_pin::source_type_declaration_count(&root.source, name);
     if owner.file == Path::new("src/lib.rs") {
         return root_count == 1;

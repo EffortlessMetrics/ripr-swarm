@@ -22,6 +22,7 @@ tests = [
   "crates/ripr/tests/method_field_assignment_read.rs::an_external_namesake_receiver_gets_no_credit",
   "crates/ripr/tests/method_field_assignment_read.rs::a_crate_root_literal_names_a_module_owner_only_through_its_reexport",
   "crates/ripr/tests/method_field_assignment_read.rs::an_unrelated_namesake_elsewhere_keeps_the_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::unbound_namesake_routes_get_no_credit",
   "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_single_plain_field_write_admits_the_owner",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_library_file_maps_to_its_module_path",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::only_a_plain_pub_use_is_a_reexport",

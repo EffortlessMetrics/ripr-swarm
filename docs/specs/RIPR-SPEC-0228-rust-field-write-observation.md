@@ -806,12 +806,17 @@ changes `self.count += 2` to `self.count += 1`.
   aliases a type named like the owner's impl type anywhere in that file, or
   when a test in the owner's own file shares it with a second declaration,
   alias or `use .. as` rename of that name. Reveal's short-field credit also
-  needs the test to bind the owner's own type by name: the owner's file
-  declares the name once, before the owner; a test elsewhere imports it only
-  as `krate::<owner module path>::Name` (or `krate::Name` when the library
-  root declares it or re-exports it from the owner's module), uses no glob
-  rooted outside `self`/`super`/`crate`/`krate`, and spells `krate::Name { .. }`
-  only when the root names the owner's type. A same-named type elsewhere in
+  needs the test to bind the owner's own type by name: the owner's `impl`
+  is a top-level item of a file that declares the name once, before the
+  owner; an import of the name spells `super::Name` or
+  `crate::<owner module path>::Name` in the owner's file and
+  `krate::<owner module path>::Name` elsewhere (or `krate::Name` when the
+  library root declares it or re-exports it from the owner's module); a glob
+  is `super::*` or `crate::<owner module path>::*` in the owner's file, or
+  `krate::*` elsewhere when the root binds no other type of the name, and
+  any other `self`/`super`/`crate` glob needs no other indexed file to
+  declare the name; and `krate::Name { .. }` is spelled only when the root
+  names the owner's type. A same-named type elsewhere in
   the workspace that the test does not bind does not withdraw the credit. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
