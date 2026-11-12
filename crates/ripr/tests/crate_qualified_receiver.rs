@@ -28,6 +28,12 @@ fn finding_at(test_path: &str, test: &str) -> Result<Finding, String> {
 }
 
 fn finding_for(owner_source: &str, test_path: &str, test: &str) -> Result<Finding, String> {
+    finding_with_files(owner_source, &[(test_path, test)])
+}
+
+/// The predicate finding of `digit` with every `(path, text)` of `test_files`
+/// written beside the owner.
+fn finding_with_files(owner_source: &str, test_files: &[(&str, &str)]) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -47,10 +53,13 @@ fn finding_for(owner_source: &str, test_path: &str, test: &str) -> Result<Findin
         "[package]\nname = \"rg\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
     write("src/lib.rs", owner_source)?;
-    if let Some(parent) = std::path::Path::new(test_path).parent() {
-        std::fs::create_dir_all(root.join(parent)).map_err(|error| format!("test dir: {error}"))?;
+    for (test_path, test) in test_files {
+        if let Some(parent) = std::path::Path::new(test_path).parent() {
+            std::fs::create_dir_all(root.join(parent))
+                .map_err(|error| format!("test dir: {error}"))?;
+        }
+        write(test_path, test)?;
     }
-    write(test_path, test)?;
     let lines: Vec<&str> = owner_source.lines().collect();
     let changed_line = lines
         .iter()
@@ -176,15 +185,25 @@ fn renamed_import_of_the_crate_name_keeps_no_direct_call() -> Result<(), String>
 #[test]
 fn test_module_child_file_keeps_no_direct_call() -> Result<(), String> {
     let test = "#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 2);\n}\n";
-    let found = finding_at("tests/sub/t.rs", test)?;
-    // A module child of a test crate may not be linked at all; it must never be
-    // a direct owner call.
-    assert!(
-        !found.related_tests.iter().any(|related| {
-            related.name == "rng_digit"
-                && related.relation_reason == Some(RelationReason::DirectOwnerCall)
-        }),
+    // `tests/sub/main.rs` is the test-crate root and declares `t`, so the
+    // child is a linked module rather than an orphan file. The test must be
+    // related for the guard to be what withholds the direct call: an unrelated
+    // orphan passed with the guard removed (#14083 T8).
+    let found = finding_with_files(
+        OWNER,
+        &[("tests/sub/main.rs", "mod t;\n"), ("tests/sub/t.rs", test)],
+    )?;
+    assert_ne!(
+        related_reason(&found, "rng_digit")?.0,
+        Some(RelationReason::DirectOwnerCall),
         "a module child of a test crate is not a test-crate root: {found:#?}"
+    );
+    // Control: the same body in the test-crate root itself is a direct call.
+    let root = finding_at("tests/sub/main.rs", test)?;
+    assert_eq!(
+        related_reason(&root, "rng_digit")?.0,
+        Some(RelationReason::DirectOwnerCall),
+        "{root:#?}"
     );
     Ok(())
 }

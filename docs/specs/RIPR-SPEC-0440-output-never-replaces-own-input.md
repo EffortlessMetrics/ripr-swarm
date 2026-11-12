@@ -1,4 +1,4 @@
-# RIPR-SPEC-0438: Report Output Never Replaces Its Own Input
+# RIPR-SPEC-0440: Report Output Never Replaces Its Own Input
 
 Status: accepted
 

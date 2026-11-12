@@ -7383,6 +7383,13 @@ fn owner_call_relation_reason_gated(
         if !free_function_call_spells_free_call(test, owner_name) {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14069: a renaming import can bind the owner's bare name to
+        // another function (`use super::other as discount;`). When every
+        // spelling in the test is that bare name, the test calls the other
+        // function and the owner never runs.
+        if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         // RIPR-SPEC-0005: a free function whose name another module also
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.

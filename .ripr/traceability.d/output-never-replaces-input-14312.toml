@@ -1,7 +1,7 @@
 [[behavior]]
-id = "RIPR-SPEC-0438"
+id = "RIPR-SPEC-0440"
 name = "report output never replaces its own input"
-spec = "docs/specs/RIPR-SPEC-0438-output-never-replaces-own-input.md"
+spec = "docs/specs/RIPR-SPEC-0440-output-never-replaces-own-input.md"
 tests = [
   "crates/ripr/tests/output_names_input_refusal.rs::output_naming_an_input_is_refused_before_writing",
   "crates/ripr/tests/output_names_input_refusal.rs::an_absolute_spelling_of_the_input_is_still_refused",
