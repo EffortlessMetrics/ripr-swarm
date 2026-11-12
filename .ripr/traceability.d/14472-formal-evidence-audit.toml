@@ -1,0 +1,20 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = ["xtask/src/bin/formal-evidence-audit.rs"]
+tests = [
+  "xtask/src/bin/formal-evidence-audit.rs::tests::consistent_documents_never_become_native_assurance",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::unknown_duplicate_fields_and_unknown_vocabulary_reject",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::incomplete_critical_claim_metadata_rejects",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::success_looking_incomplete_evidence_rejects",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::wrong_identity_duplicate_rows_and_missing_subjects_reject",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::partial_timeout_preserves_observed_rows_without_run_success",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::no_subject_or_not_started_run_needs_no_fabricated_result",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::stale_generation_remains_visible_without_promotion",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::counterexample_timeout_and_process_consistency_are_distinct",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::registry_order_does_not_change_summary",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::duplicate_bound_keys_missing_nullable_keys_and_trailing_input_reject",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::extra_discovered_subject_cannot_hide_behind_complete_inventory",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::checked_in_examples_do_not_claim_execution",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::retained_admission_controls_have_the_expected_semantic_disposition",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::cleanup_and_process_completion_remain_separate",
+]

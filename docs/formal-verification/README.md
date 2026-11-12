@@ -17,9 +17,9 @@ They do not satisfy one another automatically.
 The repository already has:
 
 - a pinned Kani workflow and `cargo xtask kani`;
-- fail-closed handling for missing tools, missing native results, timeouts,
-  ambiguous result attribution, abnormal process completion, and unreachable
-  required covers;
+- conservative handling for missing tools/results, timeouts, ambiguous result
+  attribution and abnormal process completion; complete positive-cover admission
+  remains with #14469 and bounded tool preflight remains with #12581;
 - bounded Kani proofs over production decision cores;
 - a generated source census of ordinary Kani harnesses;
 - scheduled property and metamorphic fuzzing;
@@ -105,6 +105,8 @@ owner where scope has become too large.
   artifact handling, and projection.
 - [CI.md](CI.md) — critical/full/canary topology and required-check admission.
 - [MAINTENANCE.md](MAINTENANCE.md) — operator and maintainer runbook.
+- [ADMISSION_AUDIT.md](ADMISSION_AUDIT.md) — isolated document-consistency
+  checks, adversarial controls and the boundary to native assurance.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
   implementation programme using the current issue and PR owners.
 - [`schema/`](schema/) — draft machine contracts.
