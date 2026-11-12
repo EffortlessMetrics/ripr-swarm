@@ -190,3 +190,66 @@ fn relocated_macro_recovers_new_resources_and_rejects_watch_mutants() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn unknown_production_input_forces_cargo_to_refresh_the_producer() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let root = write_resource_root(&fixture, "unknown-production", "normal")?;
+    let lock = fixture.cargo(&root, &["generate-lockfile", "--offline"])?;
+    assert!(lock.status.success(), "resource lock setup: {lock:?}");
+    let args = [
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "policy-worktree-probe",
+        "--message-format=json",
+    ];
+    let initial = fixture.cargo(&root, &args)?;
+    assert!(initial.status.success(), "initial build: {initial:?}");
+    let initial_events = messages(&initial);
+    let selected = PathBuf::from(
+        artifact(&initial_events, "bin")?["executable"]
+            .as_str()
+            .ok_or("initial binary")?,
+    );
+    let retained = fixture.0.join("retained-production-probe");
+    fs::copy(selected, &retained).map_err(|e| e.to_string())?;
+    assert!(
+        std::process::Command::new(&retained)
+            .current_dir(&root)
+            .output()
+            .map_err(|e| e.to_string())?
+            .status
+            .success()
+    );
+    fs::write(root.join("tools/repo-policy/new-unknown-input"), "new")
+        .map_err(|e| e.to_string())?;
+    let stale = std::process::Command::new(&retained)
+        .current_dir(&root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(
+        !stale.status.success(),
+        "retained producer accepted unknown input"
+    );
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("stale source identity"));
+    let recovered = fixture.cargo(&root, &args)?;
+    assert!(recovered.status.success(), "rebuild: {recovered:?}");
+    let events = messages(&recovered);
+    let binary = artifact(&events, "bin")?;
+    assert_eq!(
+        binary["fresh"], false,
+        "unknown production input did not rebuild producer"
+    );
+    let executable = binary["executable"].as_str().ok_or("recovered binary")?;
+    assert!(
+        std::process::Command::new(executable)
+            .current_dir(&root)
+            .output()
+            .map_err(|e| e.to_string())?
+            .status
+            .success()
+    );
+    Ok(())
+}
