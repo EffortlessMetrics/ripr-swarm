@@ -266,6 +266,11 @@ pub(crate) struct AgentBriefSelection<'a> {
     /// limitation, not agent-visible). Like cap omissions, their absence is
     /// not evidence of resolution (#9301).
     pub(crate) omitted_by_policy: usize,
+    /// The part of `omitted_by_policy` withheld because static evidence is
+    /// opaque or unknown at a stage (or names an unresolved panic outcome or
+    /// framework oracle). These are changed seams ripr could not judge, so a
+    /// consumer must not read their absence as a clean result (#14082).
+    pub(crate) omitted_static_limited: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -365,6 +370,7 @@ pub(crate) fn select_agent_brief_seams<'a>(
         warnings,
         omitted_by_cap,
         omitted_by_policy: direct.omitted_by_policy,
+        omitted_static_limited: direct.omitted_static_limited,
     }
 }
 
@@ -380,6 +386,7 @@ struct AgentBriefCandidateSelection<'a> {
     candidates: Vec<AgentBriefSelectedSeam<'a>>,
     allow_fallback: bool,
     omitted_by_policy: usize,
+    omitted_static_limited: usize,
 }
 
 fn direct_candidates<'a>(
@@ -393,6 +400,7 @@ fn direct_candidates<'a>(
             candidates: explicit_seam_candidate(classified, seam_id, policy, warnings),
             allow_fallback: false,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
     }
 
@@ -400,6 +408,7 @@ fn direct_candidates<'a>(
     let mut matched_working_set = false;
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
+    let mut omitted_static_limited = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
     let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
     let normalized_working_set = NormalizedAgentBriefWorkingSet::new(working_set);
@@ -410,6 +419,7 @@ fn direct_candidates<'a>(
         matched_working_set = true;
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
             omitted_by_policy += 1;
+            omitted_static_limited += usize::from(omission.is_static_limited());
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
             if named_omissions < AGENT_BRIEF_MAX_NAMED_OMISSIONS {
@@ -446,6 +456,7 @@ fn direct_candidates<'a>(
         candidates,
         allow_fallback: !matched_working_set,
         omitted_by_policy,
+        omitted_static_limited,
     }
 }
 
@@ -916,6 +927,20 @@ enum AgentBriefOmission {
 }
 
 impl AgentBriefOmission {
+    /// The seam was withheld because ripr could not judge it, as opposed to
+    /// configured off or simply not a gap. That covers a gap class with
+    /// limited evidence and a class that is itself a static limitation
+    /// (`*_unknown`, `opaque`), which `for_entry` reports as not actionable.
+    fn is_static_limited(self) -> bool {
+        match self {
+            Self::EvidenceLimited(_)
+            | Self::PanicOutcomeUnresolved(_)
+            | Self::FrameworkOracleUnresolved(_) => true,
+            Self::NotActionable(class) => class.is_static_limitation(),
+            Self::ConfiguredOff(_) => false,
+        }
+    }
+
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
         if matches!(
             policy.severity_for(entry.class, entry.seam.file()),
@@ -2068,6 +2093,33 @@ ungripped = "warning"
         // More than the named-omission limit, so the sum must include both
         // the named and the counted-only omissions.
         assert_eq!(selection.omitted_by_policy, 13);
+        // #14082: configured off is a choice, not a seam ripr could not judge.
+        assert_eq!(selection.omitted_static_limited, 0);
+        let class = SeamGripClass::Ungripped;
+        for unknown in [
+            SeamGripClass::ActivationUnknown,
+            SeamGripClass::PropagationUnknown,
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+            SeamGripClass::Opaque,
+        ] {
+            // A class that is itself a static limitation was not judged
+            // either, unless the user configured it off.
+            assert!(AgentBriefOmission::NotActionable(unknown).is_static_limited());
+            assert!(!AgentBriefOmission::ConfiguredOff(unknown).is_static_limited());
+        }
+        for (omission, limited) in [
+            (AgentBriefOmission::ConfiguredOff(class), false),
+            (
+                AgentBriefOmission::NotActionable(SeamGripClass::StronglyGripped),
+                false,
+            ),
+            (AgentBriefOmission::EvidenceLimited(class), true),
+            (AgentBriefOmission::PanicOutcomeUnresolved(class), true),
+            (AgentBriefOmission::FrameworkOracleUnresolved(class), true),
+        ] {
+            assert_eq!(omission.is_static_limited(), limited, "{omission:?}");
+        }
         // An explicit --seam request never reaches review-comments (its
         // scope is not diff-scoped), so its fixed 0 cannot enable a false
         // resolution.

@@ -796,13 +796,28 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             // #10691: the preview-language note below names the real recovery
             // (the `ripr.toml` block to add), so the default view drops the
             // stage/kind-flavoured Limitation line and keeps one plain pointer.
-            match limitation.affected_items {
-                Some(count) => out.push_str(&format!(
-                    "  Not analyzed: {count} changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
-                )),
-                None => out.push_str(
-                    "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n",
-                ),
+            // #14152: that pointer is only true when such a note follows. No
+            // note is written without a preview advisory, and none covers
+            // Rust switched off in `[languages]`, so those print the
+            // producer's own recovery instead of pointing at nothing.
+            let note_follows = !output.preview_language_advisories.is_empty()
+                && !limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(crate::analysis::is_rust_excluded_by_config_detail);
+            let subject = match limitation.affected_items {
+                Some(count) => format!("{count} changed file(s)"),
+                None => "changed files".to_string(),
+            };
+            if note_follows {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
+                    limitation.recovery.detail
+                ));
             }
             continue;
         }
@@ -2661,9 +2676,10 @@ mod tests {
     }
 
     /// #10691: a changed language with no analyzer renders one plain
-    /// `Not analyzed:` pointer on the bounded surface (the preview-language
-    /// note carries the `ripr.toml` recovery); the full surface keeps the
-    /// glossed kind/stage/recovery tokens.
+    /// `Not analyzed:` line on the bounded surface, without the kind/stage
+    /// tokens; the full surface keeps the glossed kind/stage/recovery tokens.
+    /// #14152: this output has no preview advisory, so no note follows and
+    /// the line carries the producer's recovery instead of pointing at one.
     #[test]
     fn bounded_adapter_unavailable_limitation_is_one_plain_pointer() -> Result<(), String> {
         use crate::analysis_outcome::{
@@ -2692,10 +2708,11 @@ mod tests {
         let rendered = render(&output);
         assert!(
             rendered.contains(
-                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze.\n  Fix: Enable the python preview adapter and re-run the analysis.\n"
             ),
             "{rendered}"
         );
+        assert!(!rendered.contains("see the note below"), "{rendered}");
         for leaked in [
             "Limitation:",
             "language_adapter_unavailable",

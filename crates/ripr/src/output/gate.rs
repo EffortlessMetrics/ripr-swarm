@@ -319,6 +319,14 @@ pub(crate) fn build_gate_decision_report(
     } else {
         None
     };
+    // #14082: a changed file the parser declined yields no seams, and a seam
+    // withheld as a static limitation never becomes a candidate, so zero
+    // candidates from either is not a clean result. The warnings keep the
+    // top-level status off `pass` and reach the Markdown warnings section.
+    if let Some(scope) = analysis_scope.as_ref() {
+        warnings.extend(parser_declined_scope_warning(scope));
+        warnings.extend(static_limited_scope_warning(scope));
+    }
     let policy = GatePolicy {
         mode: input.mode,
         threshold: DEFAULT_THRESHOLD.to_string(),
@@ -1495,6 +1503,60 @@ fn compute_new_unsuppressed(
         count: count as u64,
         reason: causal_delta.map(CausalDeltaAuthority::disclosure),
     }
+}
+
+/// The gate warning for an analysis scope that discloses parser-declined
+/// files (#9598): nesting budget, parse error or non-UTF-8 sent them to the
+/// lexical fallback, which extracts no seams. `None` when the key is absent
+/// or an empty list; a malformed value warns too, because coverage of the
+/// changed files is then not established.
+fn parser_declined_scope_warning(scope: &Value) -> Option<String> {
+    let files = match scope.get("parser_declined_files")? {
+        Value::Array(items) if items.is_empty() => return None,
+        Value::Array(items) => items
+            .iter()
+            .map(|item| item.as_str().map(|file| format!("`{file}`")))
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    Some(match files {
+        Some(files) => format!(
+            "analysis_scope lists parser_declined_files (not parsed: nesting budget, parse \
+             error or non-UTF-8): {}; no seams were extracted from them, so the absence of \
+             a gate candidate there is not evidence that their changes are tested; fix each \
+             file so it parses, then rerun",
+            files.join(", ")
+        ),
+        None => "analysis_scope has a malformed parser_declined_files, so which changed \
+                 files were parsed is not established and the absence of a gate candidate \
+                 is not evidence that the changes are tested; regenerate the gate input, \
+                 then rerun"
+            .to_string(),
+    })
+}
+
+/// The gate warning for an analysis scope that discloses reviewed-scope seams
+/// withheld as static limitations (`static_limited_omitted_seams`, present
+/// only when nonzero): ripr could not judge them, so they are not gate
+/// candidates and their absence is not a clean result. A value that is not a
+/// non-negative integer warns too.
+fn static_limited_scope_warning(scope: &Value) -> Option<String> {
+    let value = scope.get("static_limited_omitted_seams")?;
+    Some(match value.as_u64() {
+        Some(0) => return None,
+        Some(count) => format!(
+            "analysis_scope lists static_limited_omitted_seams: {count} seam(s) in the reviewed \
+             scope were withheld because their static evidence is opaque or unknown at a \
+             stage; they are not gate candidates, so the absence of a gate candidate for \
+             them is not evidence that the changes are tested; run `ripr check` on the same diff to \
+             inspect them"
+        ),
+        None => "analysis_scope has a malformed static_limited_omitted_seams, so how many \
+                 seams were withheld as static limitations is not established and \
+                 the absence of a gate candidate is not evidence that the changes are \
+                 tested; regenerate the gate input, then rerun"
+            .to_string(),
+    })
 }
 
 fn top_level_status(
