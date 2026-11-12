@@ -1545,7 +1545,7 @@ establish queue activation, installed runner capacity, or execution within a
 | `kani.yml` | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `security.yml` `cargo-deny` | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `security.yml` `deny-tracker` | `ubuntu-latest` | Schedule on main in this repository, after cargo-deny success or failure |
-| `security.yml` `dependency-review` | `ubuntu-latest` | Dormant: job requires PR event, but workflow has no PR subscription |
+| `security.yml` `dependency-review` | `ubuntu-latest` | Manual dispatch with explicit base/head commit IDs; no PR subscription |
 | `source-of-truth.yml` both jobs | `ubuntu-latest` | Retained schedule or manual dispatch |
 | `badge-endpoints.yml` | `ubuntu-latest` | Manual dispatch only |
 | `droid-security-scan.yml` | Group `em-ci-review`, tier `droid-review` | Retained schedule or manual dispatch |
@@ -2768,11 +2768,35 @@ enforce RustSec advisories, license policy, banned crates, and approved
 dependency sources. Duplicate dependency findings are warnings while the
 `ra_ap_syntax` dependency graph is being baselined.
 
-The retained GitHub Dependency Review job is dormant: its guard requires
-`pull_request`, while `security.yml` admits only schedule and manual dispatch.
-Its high-severity and denied-license configuration does not establish an active
-PR gate or a manual Dependency Review route. This documentation makes no change
-to Dependency Graph or branch-protection settings.
+The security workflow also supplies GitHub Dependency Review for high-severity
+vulnerability alerts and denied license families. These security jobs remain
+advisory to the repository's required-check set. A failed or missing security
+result does not satisfy a candidate's separate security acceptance, including
+the exact-head cargo-deny and Dependency Review requirements under #9067.
+Dependency Review retains the pinned action's default `runtime` dependency
+scope; this capability does not expand its policy to development dependencies.
+
+For an explicit candidate comparison, dispatch `security.yml` from the reviewed
+workflow ref with both `base_sha` and `head_sha` set to distinct full 40-character
+commit IDs in this repository. Both jobs reject a partial pair or mutable ref.
+The cargo-deny checkout is bound to `head_sha`; Dependency Review compares
+`base_sha` to that same head using the existing high-severity and denied-license
+settings. Each job verifies its checkout and records its subject in the run
+summary. Missing commits and dependency API errors fail the affected job; the
+selected inputs alone are not a passing security receipt. Inspect both job
+results and any dependency-snapshot warnings: the pinned provider can report
+incomplete snapshot data without failing, so missing coverage remains unproven.
+Retain the exact pair, workflow revision and run URL with the candidate's evidence.
+For manual requests, Actions records the workflow ref as the run's native head.
+Use the verified selected SHAs and both consumer results for candidate evidence;
+that record does not change the run's native identity.
+
+Dispatch without either input retains the ordinary cargo-deny scan of the
+workflow event's immutable commit and does not select Dependency Review. The
+daily main scan and its deny-red tracker keep their separate advisory-monitoring
+purpose. Neither is a substitute for an exact-candidate comparison. This manual
+capability remains available when auxiliary PR/push subscriptions are retired
+under #12973; it adds no automatic event, queue obligation or required check.
 
 ## GitHub Actions Runtime Policy
 
@@ -2784,7 +2808,9 @@ releases exist. `cargo xtask check-workflows` rejects old action refs such as
 `actions/dependency-review-action@v4` is temporarily allowlisted in
 `policy/workflow_action_runtime_allowlist.txt` because the official Dependency
 Review action still declares a Node 20 runtime and no Node-24-backed major is
-available. The retained action pin does not make the dormant Dependency Review job execute.
+available. The action pin fixes the implementation revision. Dependency Review
+executes through the explicit base/head manual route described above; this
+restores neither a PR subscription nor required-check membership.
 
 The same cargo-deny check can be run locally with:
 
