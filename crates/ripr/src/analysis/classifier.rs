@@ -2041,6 +2041,7 @@ pub(super) mod tests {
                 owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
                     trait_path: trait_path.to_string(),
                     self_ty: "Money".to_string(),
+                    impl_generics: None,
                 };
             }
             let mut functions = vec![owner.clone()];

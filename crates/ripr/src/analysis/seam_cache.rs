@@ -734,7 +734,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
 /// (#5346, #12641) — cached boundary verdicts from before the widening are not
 /// reused.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
+/// `1.181`: a test reaching a trait-impl owner only through a one-hop blanket
+/// impl (`impl<T: Render> ToText for T`) withholds the gap as unresolved reach
+/// instead of reporting it (#6732).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -954,7 +957,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.183`: same blanket-impl reach withholding as full `1.181` (#6732).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1176,7 +1180,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.183`: same blanket-impl reach withholding as full `1.181` (#6732).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5599,7 +5604,8 @@ mod tests {
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
         // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.178");
+        // 1.178 -> 1.181: one-hop blanket-impl reach withholds the gap (#6732).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.181");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5759,8 +5765,9 @@ mod tests {
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
         // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        // 0.180 -> 0.183: same blanket-impl reach withholding as full 1.181 (#6732).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

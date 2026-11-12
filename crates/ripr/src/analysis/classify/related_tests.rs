@@ -150,6 +150,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Changed single-line constants with their old and new declarations
     /// (RIPR-SPEC-0048), for the value-flow check.
     changed_consts: super::ChangedConsts,
+    /// Blanket trait impl entry method names keyed by the owner method they
+    /// call on `self` (#6732 candidate prefilter).
+    blanket_proxy_call_names: BTreeMap<String, Vec<String>>,
 }
 
 impl RelatedTestCandidateIndex {
@@ -223,6 +226,8 @@ impl RelatedTestCandidateIndex {
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
         candidates.unseen_reach = super::UnseenReachNames::build(index);
+        candidates.blanket_proxy_call_names =
+            super::transitive_reach::blanket_proxy_call_names_by_owner(index);
 
         candidates
     }
@@ -368,6 +373,17 @@ impl RelatedTestCandidateIndex {
                 &mut selected,
                 self.by_call_name.get(owner_name).map(Vec::as_slice),
             );
+            for proxy in self
+                .blanket_proxy_call_names
+                .get(owner_name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+            {
+                extend_bucket(
+                    &mut selected,
+                    self.by_call_name.get(proxy.as_str()).map(Vec::as_slice),
+                );
+            }
 
             let lowered_owner = owner_name.to_ascii_lowercase();
             if !extend_substring_bucket(
@@ -1542,6 +1558,22 @@ fn find_related_tests_with_candidates<'a>(
                     && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
             }
         };
+        // The indexed prefilter holds every owner some blanket impl entry
+        // calls on `self`; any other owner skips the per-test function scan.
+        let blanket_entry_possible = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .blanket_proxy_call_names
+                .contains_key(owner_name),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => true,
+        };
+        let reaches_owner_through_blanket_impl = test_in_owner_package
+            && blanket_entry_possible
+            && owner_fn.is_some_and(|owner| {
+                super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+                    test, owner, index,
+                )
+            });
         let dispatches_to_helper_fmt_entry = !calls_helper_entry
             && !property_only_owner_call
             && test_in_owner_package
@@ -1620,7 +1652,8 @@ fn find_related_tests_with_candidates<'a>(
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
                 || calls_helper_method_entry
-                || hands_owner_path_to_helper);
+                || hands_owner_path_to_helper
+                || reaches_owner_through_blanket_impl);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1673,7 +1706,9 @@ fn find_related_tests_with_candidates<'a>(
             // A name-only call (an unrelated same-named method) never hides
             // the formatting reach of a helper-entry `fmt` (#8999).
             if by_name == RelationReason::WeakTokenSubstring
-                && (dispatches_to_helper_fmt_entry || calls_helper_method_entry)
+                && (dispatches_to_helper_fmt_entry
+                    || calls_helper_method_entry
+                    || reaches_owner_through_blanket_impl)
             {
                 RelationReason::HelperOwnerCall
             } else {
@@ -4753,7 +4788,7 @@ fn associated_constructor_names_own_type(
         index.functions().iter().any(|function| {
             function.name == name
                 && matches!(&function.item.container,
-                    FunctionContainer::TraitImpl { trait_path, self_ty }
+                    FunctionContainer::TraitImpl { trait_path, self_ty, .. }
                         if base_type_name(self_ty) == ty
                             && impl_trait_name_from_path(trait_path) == trait_name)
         })
@@ -7061,6 +7096,7 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
     let FunctionContainer::TraitImpl {
         trait_path,
         self_ty,
+        ..
     } = &owner.item.container
     else {
         return false;
@@ -9171,6 +9207,18 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
+    /// A method declared in `trait trait_name` at the root of `src/lib.rs`: the
+    /// trait's one declaring module, which a bare trait identity needs (#6732).
+    fn blanket_trait_decl(name: &str, trait_name: &str) -> FunctionSummary {
+        let mut decl = function("src/lib.rs", name);
+        decl.id = SymbolId(format!("src/lib.rs::{name}"));
+        decl.item.has_self_param = true;
+        decl.item.container = FunctionContainer::Trait {
+            trait_name: trait_name.to_string(),
+        };
+        decl
+    }
+
     fn impl_function(file: &str, name: &str, impl_segment: &str) -> FunctionSummary {
         let mut owner = function(file, name);
         owner.id = SymbolId(format!("{file}::{impl_segment}::{name}"));
@@ -9292,6 +9340,123 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         let related = find_related_tests(&probe, Some(&other), &index, true, None, None);
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6732: `(-0.0f64).to_text()` reaches `impl Render for f64` through the
+    /// blanket `impl<T: Render> ToText for T` body calling `self.render()`.
+    #[test]
+    fn given_blanket_to_text_when_test_pins_f64_then_reaches_render_impl() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let mut blanket = impl_function("src/lib.rs", "to_text", "impl <T: Render> ToText for T");
+        blanket.calls = vec![CallFact {
+            line: 3,
+            name: "render".to_string(),
+            text: "self.render()".into(),
+        }]
+        .into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                owner.clone(),
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "negative_zero_keeps_its_sign",
+                "assert_eq!((-0.0f64).to_text(), \"-0.0\");",
+                "to_text",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    /// #6732 review: indexed candidate selection must admit a blanket-only test
+    /// path that never names `render`.
+    #[test]
+    fn given_blanket_only_test_path_when_indexed_then_reaches_render_impl() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let mut blanket = impl_function("src/lib.rs", "to_text", "impl <T: Render> ToText for T");
+        blanket.calls = vec![CallFact {
+            line: 3,
+            name: "render".to_string(),
+            text: "self.render()".into(),
+        }]
+        .into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                owner.clone(),
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
+            tests: vec![test_with_call(
+                "tests/blanket.rs",
+                "negative_zero",
+                "assert_eq!((-0.0f64).to_text(), \"-0.0\");",
+                "to_text",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    /// #6732 review: an unrelated same-name `render` call must not hide blanket reach.
+    #[test]
+    fn given_unrelated_render_call_when_test_also_calls_to_text_then_helper_owner_call() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let other = impl_function("src/lib.rs", "render", "impl Render for Other");
+        let mut blanket = impl_function("src/lib.rs", "to_text", "impl <T: Render> ToText for T");
+        blanket.calls = vec![CallFact {
+            line: 3,
+            name: "render".to_string(),
+            text: "self.render()".into(),
+        }]
+        .into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                owner.clone(),
+                other,
+                blanket,
+                blanket_trait_decl("render", "Render"),
+                blanket_trait_decl("to_text", "ToText"),
+            ],
+            tests: vec![{
+                let mut test = test_with_call(
+                    "tests/blanket.rs",
+                    "mixed",
+                    "Other::render(&other); assert_eq!((-0.0f64).to_text(), \"-0.0\");",
+                    "render",
+                );
+                test.calls.push(CallFact {
+                    line: 2,
+                    name: "to_text".to_string(),
+                    text: "(-0.0f64).to_text()".into(),
+                });
+                test
+            }],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
     }
 
     /// (#6732 review) An associated function with no `self` takes its `Self`
@@ -10396,6 +10561,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         implementor.item.container = FunctionContainer::TraitImpl {
             trait_path: "Counter".to_string(),
             self_ty: "Vec<u32>".to_string(),
+            impl_generics: None,
         };
         assert_eq!(
             counter_default_fn_relation(body, vec![implementor], ""),
@@ -10406,6 +10572,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             deref_implementor.item.container = FunctionContainer::TraitImpl {
                 trait_path: "Counter".to_string(),
                 self_ty: self_ty.to_string(),
+                impl_generics: None,
             };
             assert_eq!(
                 counter_default_fn_relation(body, vec![deref_implementor], ""),
@@ -13965,6 +14132,7 @@ fn crate_c_score_test() {
         trait_owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
             trait_path: "Read".to_string(),
             self_ty: "Gauge".to_string(),
+            impl_generics: None,
         };
         assert!(
             narrowed_gauge_related(&trait_owner, DIRECT_IMPORT, Vec::new(), &[SPARE], false)
