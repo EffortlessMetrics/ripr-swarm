@@ -1228,6 +1228,49 @@ mod tests {
         }
     }
 
+    /// #14429 producer level: a changed trait associated type yields no
+    /// field-construction probe, while a changed struct-literal field still
+    /// does (negative control).
+    #[test]
+    fn diff_producer_reads_associated_type_as_declaration() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub trait Vector {\n    type Eq: CmpEq;\n}\npub struct S {\n    pub a: u8,\n}\npub fn make() -> S {\n    S {\n        a: 1,\n    }\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let families_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let associated = families_for(2);
+        assert!(
+            !associated.contains(&ProbeFamily::FieldConstruction),
+            "`type Eq: CmpEq;` must not read as a constructed field: {associated:?}"
+        );
+        let field = families_for(9);
+        assert!(
+            field.contains(&ProbeFamily::FieldConstruction),
+            "the struct-literal field `a: 1,` must stay field_construction: {field:?}"
+        );
+        Ok(())
+    }
+
     /// Producer level: an added `pub mod new;` yields no probe, while a
     /// retargeted `pub(crate) use` re-export still yields one.
     #[test]
