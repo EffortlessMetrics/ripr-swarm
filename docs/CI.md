@@ -346,6 +346,30 @@ schedule/merge queue), not the default PR path.
 - Prefer upload-on-failure with short retention (3-7 days) for diagnostics.
 - Keep receipt uploads minimal, especially for docs/control-plane-only paths.
 
+#### Diagnostic retrieval windows
+
+These four diagnostic copies have an explicit 14-day retrieval window (#14250).
+The two-week window is the retrieval budget for investigating daily and manually requested runs;
+it does not depend on a later scheduled run succeeding. Workflow maintainers
+own the corresponding diagnostics. Their upload conditions and evidence checks
+remain in their producing workflows.
+
+| Workflow / artifact | Consumer and retained evidence |
+| --- | --- |
+| `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
+| `macos-advisory.yml` / `macos-advisory-logs` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
+| `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
+
+No workflow downloads these four artifacts. Their retrieval window is not a
+retention rule for release or qualification evidence, failure reproducer inputs,
+or reports consumed by later runs. In particular, `dx-scoreboard` feeds the
+outcome page, `outcome-receipts` carries historical trend inputs, and Windows
+Advisory artifacts support retained native dependency receipts. Those artifacts
+keep their existing retention. A diagnostic needed for a longer-lived proof or
+incident must receive its own retention treatment before its copy expires;
+rerunning produces a new observation, not the original evidence.
+
 ### 6) Required validation for CI-only efficiency PRs
 
 Every CI-efficiency PR should show evidence appropriate to the edited surface:
@@ -551,7 +575,7 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 4`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -2191,7 +2215,13 @@ Steps:
   Dependabot heads, whose token is read-only.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
-  gate the analysis passed. **Explain failed SARIF upload** runs only when
+  gate the analysis passed. It uploads only on pull requests: the diff
+  findings, one alert per changed-behavior spot.
+- **Upload RIPR repo seams** uploads every seam in the repository and runs
+  only on a manual (`workflow_dispatch`) run. On a pull request its alerts on
+  the changed lines repeated the diff findings, so a reviewer saw two or three
+  code-scanning alerts on one line; the packet no longer renders it there.
+  **Explain failed SARIF upload** runs only when
   one of the two upload steps failed and lists the usual causes (private
   repository without GitHub Code Security, code scanning not available, or a
   read-only token), notes it can also be an outage or a rejected SARIF file,

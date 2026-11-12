@@ -1146,6 +1146,69 @@ mod tests {
         assert_eq!(read_verdict(&partial, "a.ts", 2, 2), Verdict::Incomplete);
     }
 
+    /// #14083 T9: the verdict join reads a real `ripr check --diff` JSON
+    /// document, not only hand-built ones. The hand-built Rust documents fix
+    /// the field names by assumption (`./`-prefixed probe path, the owner on
+    /// `canonical_gap`, `analysis_outcome.analysis_complete`); a renamed or
+    /// moved field would keep them green while every real mutant read as
+    /// `NoFinding` or `Incomplete`.
+    #[test]
+    fn verdict_reads_a_real_rust_check_document() -> Result<(), String> {
+        const LIB: &str = "pub fn over_limit(amount: u32) -> bool {\n    amount > 10\n}\n";
+        const TEST: &str = "use real_check::over_limit;\n\n#[test]\nfn boundary() {\n    assert_eq!(over_limit(10), false);\n    assert_eq!(over_limit(11), true);\n}\n";
+        let root = std::env::temp_dir().join(format!(
+            "ripr-synthetic-diff-{}-real-rust-check",
+            std::process::id()
+        ));
+        let write = |relative: &str, text: &str| -> Result<(), String> {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+            }
+            fs::write(&path, text).map_err(|err| format!("write {relative}: {err}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"real_check\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("tests/boundary.rs", TEST)?;
+        // The mutant is applied to the file and described by a diff, as the
+        // diff-mode scorer does for each cargo-mutants mutant.
+        let edit = synthesize_edit(
+            "src/lib.rs",
+            LIB,
+            &mutant("1", (2, 4), (2, 15), "amount >= 10", "caught"),
+        )
+        .map_err(str::to_string)?;
+        write("src/lib.rs", &edit.mutated)?;
+        write("mutant.diff", &edit.diff)?;
+        let output = ripr::check_workspace(ripr::CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("mutant.diff")),
+            mode: ripr::Mode::Ready,
+            format: ripr::OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..ripr::CheckInput::default()
+        });
+        let rendered =
+            output.and_then(|output| ripr::render_check(&output, &ripr::OutputFormat::Json));
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        let check: Value = serde_json::from_str(&rendered?).map_err(|err| err.to_string())?;
+        let verdict = read_verdict(&check, "src/lib.rs", 2, 2);
+        let Verdict::Class { token, owner, .. } = &verdict else {
+            return Err(format!(
+                "expected one class on the mutated line, got {verdict:?}: {check}"
+            ));
+        };
+        if token != "exposed" || !owner.contains("over_limit") {
+            return Err(format!("unexpected verdict {verdict:?}: {check}"));
+        }
+        // The same real document has nothing on an untouched line.
+        assert_eq!(read_verdict(&check, "src/lib.rs", 1, 1), Verdict::NoFinding);
+        Ok(())
+    }
+
     #[test]
     fn tokens_map_to_the_shared_grip_class_vocabulary() {
         for (token, class, family) in [
