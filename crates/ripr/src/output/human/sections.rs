@@ -575,10 +575,14 @@ pub(super) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> std::borr
     let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
     // The sink was read for the probe's own head, so only that head may be
     // joined to it: a different `before` head would pair an old pattern with
-    // the new arm's result.
+    // the new arm's result. Arrows are counted on the comment/string-masked
+    // text, as the flow model counts them, so `"a=>b" =>` is one head.
     let result = (finding.probe.family == ProbeFamily::MatchArm
         && head.ends_with("=>")
-        && head.matches("=>").count() == 1
+        && crate::analysis::mask_comments_and_strings(head)
+            .matches("=>")
+            .count()
+            == 1
         && compact(head) == compact(&finding.probe.expression))
     .then(|| {
         finding.flow_sinks.iter().find(|sink| {

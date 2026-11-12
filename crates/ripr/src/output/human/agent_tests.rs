@@ -2145,6 +2145,13 @@ fn head_only_arm_row_names_the_arm_result() {
         "Size::Large =>"
     );
 
+    // A `=>` inside a string pattern is not an arm arrow, so the row still
+    // names the result, as the flow model read it.
+    let mut literal = gap.clone();
+    literal.probe.expression = "\"a=>b\" =>".to_string();
+    let text = render_finding(&literal, root, ctx, false);
+    assert!(text.contains("|\"a=>b\" => 450|"), "{text}");
+
     let mut predicate = gap;
     predicate.probe.family = ProbeFamily::Predicate;
     let text = render_finding(&predicate, root, ctx, false);
