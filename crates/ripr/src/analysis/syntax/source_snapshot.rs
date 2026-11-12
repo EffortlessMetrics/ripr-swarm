@@ -23,8 +23,12 @@ type SnapshotSlot = (Arc<str>, Arc<OnceLock<Arc<SourceSnapshot>>>);
 /// touched: about 310 MB of a 1.37 GB live heap on this repository's own
 /// `check`. Past the bound the least recently used snapshots leave the memo;
 /// a reader already holding one keeps it, and a later lookup rebuilds the
-/// same snapshot from the same source.
-const FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES: usize = 24 * 1024 * 1024;
+/// same snapshot from the same source. Probes visit a file's snapshot in
+/// short bursts, so a small window keeps nearly all hits: on this
+/// repository's `check`, 8 MiB instead of 24 MiB cut peak RSS by about
+/// 130 MB (1.41 GB to 1.28 GB) with wall time and output unchanged; 2 MiB
+/// saved about 55 MB more but started to cost wall time.
+const FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 
 /// The file-snapshot memo, least recently used first out once its resident
 /// source exceeds [`FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES`].
