@@ -19,6 +19,33 @@ use crate::{
     read_file_policy_allowlist, read_file_policy_test_commands,
 };
 
+/// Receipt producer leaves 30 seconds of its 1,200-second envelope for the
+/// owned-process termination/drain path and final fail-closed cleanup. This is
+/// cooperative with ordinary filesystem/scheduler behavior, not a hard OS deadline.
+const NATIVE_RECEIPT_WORK_BUDGET: Duration = Duration::from_secs(1_170);
+struct NativeDeadline {
+    started: std::time::Instant,
+}
+impl NativeDeadline {
+    fn start() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+        }
+    }
+    fn remaining(&self) -> Result<Duration, String> {
+        remaining_native_budget(NATIVE_RECEIPT_WORK_BUDGET, self.started.elapsed())
+    }
+    fn timeout(&self, nominal: Duration) -> Result<Duration, String> {
+        Ok(nominal.min(self.remaining()?))
+    }
+}
+fn remaining_native_budget(budget: Duration, elapsed: Duration) -> Result<Duration, String> {
+    budget
+        .checked_sub(elapsed)
+        .filter(|left| !left.is_zero())
+        .ok_or_else(|| "native receipt aggregate deadline exhausted".to_string())
+}
+
 const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// Compile budget, separate from listing. A cold `cargo test --list` spends
 /// almost all of its wall clock building; that must not be charged against
@@ -510,12 +537,25 @@ fn validate_test_covered_by_recorded(
     commands: &[FilePolicyTestCommand],
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_recorded_budgeted(path, commands, diagnostics, None)
+}
+
+fn validate_test_covered_by_recorded_budgeted(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    deadline: Option<&NativeDeadline>,
+) -> Result<Vec<TestCoverageObservation>, String> {
     let host = FilePolicyHost::current()?;
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
     // per package set lets Cargo schedule each set's targets together; it
     // only pre-fills the cache.
     for args in combined_preparation_builds(commands, host) {
+        let timeout = match deadline {
+            Some(deadline) => deadline.timeout(TEST_COVERED_BY_BUILD_TIMEOUT)?,
+            None => TEST_COVERED_BY_BUILD_TIMEOUT,
+        };
         let captured = announce_cargo_child(
             &cargo_child_label("test-valued covered_by combined build", &args),
             || {
@@ -523,18 +563,47 @@ fn validate_test_covered_by_recorded(
                     "cargo",
                     &args,
                     &[],
-                    TEST_COVERED_BY_BUILD_TIMEOUT,
+                    timeout,
                     "test-valued covered_by combined build",
                 )
             },
         );
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
+        if let Some(deadline) = deadline {
+            deadline.remaining()?;
+        }
     }
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
-            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        // This closure runs again for every lock-wait retry; each gets only the
+        // current remaining envelope, never the original child budget.
+        capture_with_native_deadline(deadline, spawn.timeout, |timeout| {
+            announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
+                capture_output_with_timeout("cargo", &spawn.args, &[], timeout, spawn.description)
+            })
         })
     })
+}
+
+fn capture_with_native_deadline<T>(
+    deadline: Option<&NativeDeadline>,
+    nominal: Duration,
+    capture: impl FnOnce(Duration) -> Result<T, String>,
+) -> Result<T, String> {
+    match deadline {
+        Some(deadline) => capture_with_remaining(|| deadline.remaining(), nominal, capture),
+        None => capture(nominal),
+    }
+}
+
+fn capture_with_remaining<T>(
+    remaining: impl Fn() -> Result<Duration, String>,
+    nominal: Duration,
+    capture: impl FnOnce(Duration) -> Result<T, String>,
+) -> Result<T, String> {
+    let timeout = nominal.min(remaining()?);
+    let result = capture(timeout);
+    remaining()?;
+    result
 }
 
 fn validate_test_covered_by_recorded_with(
@@ -2588,6 +2657,30 @@ mod tests {
         if first_selector != 11_000 {
             return Err(format!("lock-wait attempts lost time: {first_selector}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn native_deadline_stops_lock_retry_and_starts_no_more_children() -> Result<(), String> {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let budget = Duration::from_secs(10);
+        let mut calls = 0;
+        let error = capture_past_lock_wait(&lock_spawn(), &mut |spawn| {
+            super::capture_with_remaining(
+                || super::remaining_native_budget(budget, elapsed.get()),
+                spawn.timeout,
+                |timeout| {
+                    calls += 1;
+                    assert_eq!(timeout, budget);
+                    elapsed.set(budget);
+                    Ok(lock_wait_output(true))
+                },
+            )
+        })
+        .err()
+        .ok_or("exhausted deadline retried successfully")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert_eq!(calls, 1);
         Ok(())
     }
 

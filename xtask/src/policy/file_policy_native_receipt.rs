@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    TestCoverageObservation, accept_file_policy_coverage, covered_by_listing_args,
-    validate_test_covered_by_recorded,
+    NativeDeadline, TestCoverageObservation, accept_file_policy_coverage, covered_by_listing_args,
+    validate_test_covered_by_recorded_budgeted,
 };
 
 pub(crate) const RECEIPT_NAME: &str = "file-policy-native-receipt.json";
@@ -224,8 +224,17 @@ fn file_hash(path: &str) -> Result<String, String> {
     read_input(Path::new(path)).map(|bytes| hash(&bytes))
 }
 
-fn snapshot(context_path: &str) -> Result<Snapshot, String> {
-    let git = |args: &[&str]| probe_text("git", args);
+fn snapshot(context_path: &str, deadline: &NativeDeadline) -> Result<Snapshot, String> {
+    let bounded = |program: &str, args: &[&str]| -> Result<Vec<u8>, String> {
+        let timeout = deadline.timeout(PROBE_TIMEOUT)?;
+        let result = bounded_probe(program, args, timeout);
+        deadline.remaining()?;
+        result
+    };
+    let git = |args: &[&str]| -> Result<String, String> {
+        String::from_utf8(bounded("git", args)?)
+            .map_err(|_| "native receipt git probe output is not UTF-8".to_string())
+    };
     let head = git(&["--no-replace-objects", "rev-parse", "HEAD"])?;
     let tree = git(&["--no-replace-objects", "rev-parse", "HEAD^{tree}"])?;
     let dirty = git(&["status", "--porcelain", "--untracked-files=all"])?;
@@ -238,8 +247,8 @@ fn snapshot(context_path: &str) -> Result<Snapshot, String> {
         ledger: file_hash("policy/non-rust-allowlist.toml")?,
         lock: file_hash("Cargo.lock")?,
         context_sha256: file_hash(context_path)?,
-        cargo_version_sha256: hash(&bounded_probe("cargo", &["--version"], PROBE_TIMEOUT)?),
-        rustc_version_sha256: hash(&bounded_probe("rustc", &["-vV"], PROBE_TIMEOUT)?),
+        cargo_version_sha256: hash(&bounded("cargo", &["--version"])?),
+        rustc_version_sha256: hash(&bounded("rustc", &["-vV"])?),
     })
 }
 fn context_is_well_formed(c: &DeclaredContext) -> bool {
@@ -304,9 +313,11 @@ fn rows(coverage: Vec<TestCoverageObservation>) -> Result<Vec<Row>, String> {
 /// The output is removed before any producer work. Only the existing exact
 /// Cargo enumerator and packet acceptance boundary can reach the write.
 pub(crate) fn produce(args: &[String]) -> Result<(), String> {
+    let deadline = NativeDeadline::start();
     let output_path = crate::reports_dir().join(RECEIPT_NAME);
     let output = output_path.as_path();
     prepare_output(args, output)?;
+    deadline.remaining()?;
     let context_text = String::from_utf8(read_input(Path::new(&args[1]))?)
         .map_err(|_| "declared context is not UTF-8".to_string())?;
     let context: DeclaredContext = serde_json::from_str(&context_text)
@@ -318,15 +329,17 @@ pub(crate) fn produce(args: &[String]) -> Result<(), String> {
         context,
         output,
         &hash(context_text.as_bytes()),
-        || snapshot(&args[1]),
+        || deadline.remaining().map(|_| ()),
+        || snapshot(&args[1], &deadline),
         || {
             let commands = crate::read_file_policy_test_commands("policy/non-rust-allowlist.toml")?;
             let mut diagnostics = Vec::new();
             accept_file_policy_coverage(|| {
-                validate_test_covered_by_recorded(
+                validate_test_covered_by_recorded_budgeted(
                     "policy/non-rust-allowlist.toml",
                     &commands,
                     &mut diagnostics,
+                    Some(&deadline),
                 )
             })
         },
@@ -397,10 +410,13 @@ fn produce_after_clear(
     context: DeclaredContext,
     output: &Path,
     expected_context_sha256: &str,
+    check_deadline: impl Fn() -> Result<(), String>,
     mut capture: impl FnMut() -> Result<Snapshot, String>,
     native: impl FnOnce() -> Result<Vec<TestCoverageObservation>, String>,
 ) -> Result<(), String> {
+    check_deadline()?;
     let before = capture()?;
+    check_deadline()?;
     if before.context_sha256 != expected_context_sha256 {
         return Err("declared context changed before native validation".into());
     }
@@ -408,7 +424,9 @@ fn produce_after_clear(
         return Err("declared checkout differs from actual HEAD".into());
     }
     let rows = rows(native()?)?;
+    check_deadline()?;
     let after = capture()?;
+    check_deadline()?;
     if before != after {
         return Err(
             "native receipt source, declared context or tool observation changed during validation"
@@ -427,9 +445,16 @@ fn produce_after_clear(
         rows,
     };
     let text = serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?;
+    check_deadline()?;
     publish_receipt_with(output, format!("{text}\n").as_bytes(), |file, bytes| {
         file.write_all(bytes)
     })?;
+    if let Err(error) = check_deadline() {
+        return match clear_output(output) {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(format!("{error}; {cleanup}")),
+        };
+    }
     println!(
         "native validation completed; full_proof_pending: effective Cargo context is unverified"
     );
@@ -674,6 +699,7 @@ mod tests {
             context(),
             &output,
             &"4".repeat(64),
+            || Ok(()),
             || Ok(snapshot_fixture()),
             || Err("native producer failed".into()),
         )
@@ -686,6 +712,7 @@ mod tests {
             context(),
             &output,
             &"4".repeat(64),
+            || Ok(()),
             || {
                 n += 1;
                 let mut value = snapshot_fixture();
@@ -703,6 +730,7 @@ mod tests {
             context(),
             &output,
             &"4".repeat(64),
+            || Ok(()),
             || Ok(snapshot_fixture()),
             || Ok(vec![observation()]),
         )?;
@@ -711,6 +739,95 @@ mod tests {
         validate_binding(&text, &context(), &source(), 2, "success", 2)?;
         assert!(require_full(&text, &context(), &source(), 2, "success", 2).is_err());
         fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_deadline_exhaustion_never_publishes_or_starts_native() -> Result<(), String> {
+        use std::cell::Cell;
+        let root = crate::tests::temp_dir("native-receipt-deadline");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let output = root.join(RECEIPT_NAME);
+        let called = Cell::new(false);
+        let error = produce_after_clear(
+            context(),
+            &output,
+            &"4".repeat(64),
+            || Err("native receipt aggregate deadline exhausted".to_string()),
+            || Ok(snapshot_fixture()),
+            || {
+                called.set(true);
+                Ok(vec![observation()])
+            },
+        )
+        .err()
+        .ok_or("expired producer unexpectedly succeeded")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert!(!called.get());
+        assert!(!output.exists());
+
+        let checks = Cell::new(0);
+        let error = produce_after_clear(
+            context(),
+            &output,
+            &"4".repeat(64),
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                if next == 3 {
+                    Err("native receipt aggregate deadline exhausted".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            || Ok(snapshot_fixture()),
+            || Ok(vec![observation()]),
+        )
+        .err()
+        .ok_or("deadline exhausted after native unexpectedly succeeded")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert!(!output.exists());
+
+        let checks = Cell::new(0);
+        let error = produce_after_clear(
+            context(),
+            &output,
+            &"4".repeat(64),
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                if next == 6 {
+                    Err("native receipt aggregate deadline exhausted".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            || Ok(snapshot_fixture()),
+            || Ok(vec![observation()]),
+        )
+        .err()
+        .ok_or("deadline exhausted during publication unexpectedly succeeded")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert!(!output.exists());
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_deadline_clamps_each_child_and_refuses_exhaustion() -> Result<(), String> {
+        assert_eq!(
+            super::super::remaining_native_budget(Duration::from_secs(10), Duration::from_secs(7))?,
+            Duration::from_secs(3)
+        );
+        assert!(
+            super::super::remaining_native_budget(Duration::from_secs(10), Duration::from_secs(10))
+                .is_err()
+        );
+        let started = std::time::Instant::now()
+            .checked_sub(Duration::from_secs(1_171))
+            .ok_or("clock underflow")?;
+        let expired = NativeDeadline { started };
+        assert!(expired.timeout(Duration::from_secs(30)).is_err());
         Ok(())
     }
 

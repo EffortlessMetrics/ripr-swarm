@@ -211,9 +211,16 @@ drive-relative and root-without-drive paths are refused. Native Windows runtime
 behavior is not established.
 The fixed output assumes one producer per worktree; concurrent producer safety
 is not established and must be enforced or proven before hosted use. The exact
-native selector enumerator retains its existing per-command and lock-wait
-budgets; this receipt command imposes no aggregate 1,200-second ceiling. Any
-real run requires an independently admitted outer process-tree deadline.
+native selector enumerator retains its standalone per-command and lock-wait
+budgets. The diagnostic receipt producer instead starts one monotonic 1,170-second
+work budget at entry and clamps every snapshot probe, combined preparation,
+listing and lock-wait retry to its remaining time. It checks the budget at
+preflight and publication boundaries and removes a newly published receipt if
+the budget is exhausted. The remaining 30 seconds of the 1,200-second envelope
+are reserved for owned-child termination and drain. Blocking filesystem calls,
+OS scheduling and cleanup failures prevent this cooperative mechanism from
+proving a hard wall-clock limit; any real run still needs independently admitted
+outer process-tree containment and deadline.
 A broad selector may still match a neighboring test after an intended test is
 deleted; the existing generic validator has no exact intended identity for
 that case. Packet-specific exact-subject rules remain unchanged.
