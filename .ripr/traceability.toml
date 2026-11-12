@@ -20957,6 +20957,7 @@ tests = [
   "xtask/src/policy/library_selector.rs::tests::selector_grammar_accepts_only_one_package_lib_and_module_path",
   "xtask/src/policy/library_selector.rs::tests::a_declared_module_with_tests_resolves_to_their_names",
   "xtask/src/policy/library_selector.rs::tests::stale_or_unsupported_shapes_do_not_resolve",
+  "xtask/src/policy/library_selector.rs::tests::host_conditions_list_exactly_what_this_host_builds",
   "xtask/src/policy/library_selector.rs::tests::the_shipped_ripr_library_selector_resolves_in_this_repository",
 ]
 fixtures = []

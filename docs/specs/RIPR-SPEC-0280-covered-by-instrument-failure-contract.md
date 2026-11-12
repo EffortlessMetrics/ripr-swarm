@@ -172,10 +172,15 @@ nothing else) against source:
 - every segment of the module path is a declared module, reached through
   ordinary `mod` declarations or inline modules, where `#[cfg(test)]` is the
   only accepted condition;
-- the final module holds at least one `#[test]` function with no condition
-  other than `#[cfg(test)]`, and neither it nor an inline module inside it
-  declares a file module (`mod deeper;`), whose tests would be missing from
-  the list.
+- the final module holds at least one `#[test]` function;
+- inside the final module, at any depth of inline modules, every `cfg` is
+  one the resolver evaluates for this host (`test`, `unix`, `windows`,
+  `target_os = "..."`, or `not(..)` of one of them), with no `cfg_attr`,
+  `#[path]`, file module (`mod deeper;`), macro invocation or definition, or
+  function with another test attribute (such as `#[tokio::test]`). Any of
+  these could leave tests out of the list, so it refuses the whole selector.
+  A test or module whose `cfg` is false on this host is left out, as the
+  build on this host leaves it out.
 
 A selector that resolves starts no build. Its report row reads
 `applicable; resolved_in_source=N; not_listed; tests=[...]`, carries none of
@@ -238,7 +243,11 @@ and list every applicable selector.
 - Source resolution is pinned on a generated workspace: the grammar, a
   declared module with tests, and the shapes that must not resolve (renamed
   module, feature condition, conditional test, syntax error, nested file
-  module). One test
+  module, and an unconditional test beside a test, a module or a nested test
+  under a condition not evaluated, another test attribute, or a macro
+  invocation). A host-condition test pins that `unix`, `windows`, `not(..)`,
+  `target_os` and a conditional nested module list exactly what this host
+  builds. One test
   resolves the shipped `ripr` selector in this repository. A policy test pins
   that a resolved selector is not handed to the builder, that the remaining
   selectors are, and that the resolved row cannot be read as a listing.

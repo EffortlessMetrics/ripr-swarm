@@ -105,13 +105,48 @@ fn attribute_text(attr: &ast::Attr) -> String {
         .collect()
 }
 
-/// Whether an item's attributes leave it present in an ordinary test build.
-/// `#[cfg(test)]` does. Any other `cfg`, a `cfg_attr` or a `#[path]` is not
-/// understood here.
-fn present_in_test_build<T: HasAttrs>(item: &T) -> bool {
-    item.attrs().map(|attr| attribute_text(&attr)).all(|text| {
-        text == "#[cfg(test)]" || !(text.starts_with("#[cfg") || text.starts_with("#[path"))
-    })
+/// The value of one whitespace-free `cfg` predicate in a test build on this
+/// host, or `None` when it is not understood here. Only `test` and the host
+/// family and operating system are understood, alone or under `not(..)`:
+/// selectors are resolved for the host that runs the local build.
+fn host_cfg_value(predicate: &str) -> Option<bool> {
+    if let Some(inner) = predicate
+        .strip_prefix("not(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        return host_cfg_value(inner).map(|value| !value);
+    }
+    match predicate {
+        "test" => Some(true),
+        "unix" => Some(cfg!(unix)),
+        "windows" => Some(cfg!(windows)),
+        _ => {
+            let os = predicate.strip_prefix("target_os=\"")?.strip_suffix('"')?;
+            Some(os == std::env::consts::OS)
+        }
+    }
+}
+
+/// Whether an item is present in a test build on this host: `Some(true)` or
+/// `Some(false)` when every `cfg` on it is understood (see
+/// [`host_cfg_value`]), `None` when any `cfg` is not, or when it carries a
+/// `cfg_attr` or a `#[path]`.
+fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
+    let mut present = true;
+    for text in item.attrs().map(|attr| attribute_text(&attr)) {
+        if text.starts_with("#[cfg_attr") || text.starts_with("#[path") {
+            return None;
+        }
+        if let Some(predicate) = text
+            .strip_prefix("#[cfg(")
+            .and_then(|rest| rest.strip_suffix(")]"))
+        {
+            present &= host_cfg_value(predicate)?;
+        } else if text.starts_with("#[cfg") {
+            return None;
+        }
+    }
+    Some(present)
 }
 
 fn is_test_function(function: &ast::Fn) -> bool {
@@ -129,24 +164,45 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
     Some(parse.tree().items().collect())
 }
 
-/// Test names under `items`, relative to `prefix`. Nested inline modules are
-/// followed. A nested file module (`mod deeper;`) is not read here, so its
-/// tests would be missing from the list: the whole selector is refused
-/// (`None`) and goes to the build-and-list path instead.
+/// Whether an attribute could mark a function as a test in a way this module
+/// does not count: anything naming `test` other than `#[test]` and
+/// `#[cfg(test)]`, such as `#[tokio::test]` or `#[test_case(..)]`.
+fn is_other_test_attribute(text: &str) -> bool {
+    text.contains("test") && text != "#[test]" && text != "#[cfg(test)]"
+}
+
+/// Test names under `items`, relative to `prefix`, or `None` when the list
+/// could be incomplete. Nested inline modules are followed. A test or module
+/// whose `cfg` is false on this host is left out, as the build leaves it out.
+/// Each of these refuses the whole selector, which then goes to the
+/// build-and-list path: a `cfg` not understood by [`host_cfg_value`], a
+/// `cfg_attr` or `#[path]`, a nested file module (`mod deeper;`, not read
+/// here), a macro invocation or definition (it can expand to tests), and a
+/// function carrying another test attribute.
 fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> Option<()> {
     for item in items {
         match item {
-            ast::Item::Fn(function)
-                if is_test_function(function) && present_in_test_build(function) =>
-            {
-                if let Some(name) = function.name() {
-                    tests.push(format!("{prefix}::{}", name.text()));
+            ast::Item::Fn(function) => {
+                if function
+                    .attrs()
+                    .any(|attr| is_other_test_attribute(&attribute_text(&attr)))
+                {
+                    return None;
+                }
+                if is_test_function(function) && presence_in_test_build(function)? {
+                    tests.push(format!("{prefix}::{}", function.name()?.text()));
                 }
             }
-            ast::Item::Module(module) if present_in_test_build(module) => {
+            ast::Item::Module(module) => {
+                if !presence_in_test_build(module)? {
+                    continue;
+                }
                 let name = module.name()?;
                 let nested = module.item_list()?.items().collect::<Vec<_>>();
                 collect_tests(&nested, &format!("{prefix}::{}", name.text()), tests)?;
+            }
+            ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
+                return None;
             }
             _ => {}
         }
@@ -175,7 +231,7 @@ pub(crate) fn resolve_in_source(root: &Path, command: &str) -> Option<Vec<String
         });
         let module = declared.next()?;
         // Two declarations of one name are cfg alternatives; not understood.
-        if declared.next().is_some() || !present_in_test_build(&module) {
+        if declared.next().is_some() || presence_in_test_build(&module) != Some(true) {
             return None;
         }
         child_directory.push(segment);
@@ -320,13 +376,20 @@ mod tests {
         let renamed = "#[cfg(test)]\nmod checks {\n    #[test]\n    fn first() {}\n}\n";
         let feature = "#[cfg(feature = \"x\")]\nmod tests {\n    #[test]\n    fn first() {}\n}\n";
         let pathed = "#[path = \"elsewhere.rs\"]\nmod tests;\n";
-        let gated_test =
-            "#[cfg(test)]\nmod tests {\n    #[cfg(windows)]\n    #[test]\n    fn first() {}\n}\n";
+        let gated_test = "#[cfg(test)]\nmod tests {\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn first() {}\n}\n";
         let broken = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn first( {}\n";
         // Inline tests plus a nested file module: its tests would be left out
         // of the list, so the selector is not resolved at all.
         let nested_file =
             "#[cfg(test)]\nmod tests {\n    #[test]\n    fn first() {}\n    mod deeper;\n}\n";
+        // An unconditional test beside a test or module under a condition this
+        // walk does not evaluate: the build may list all of them, so a list of
+        // the unconditional one alone could be partial.
+        let mixed_test = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(feature = \"x\")]\n    #[test]\n    fn unix_only() {}\n}\n";
+        let mixed_module = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(any(unix, windows))]\n    mod nested {\n        #[test]\n        fn nested_test() {}\n    }\n}\n";
+        let mixed_nested = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    mod nested {\n        #[test]\n        fn plain() {}\n        #[cfg_attr(unix, ignore)]\n        #[cfg(not(feature = \"x\"))]\n        #[test]\n        fn unix_only() {}\n    }\n}\n";
+        let other_attribute = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[tokio::test]\n    async fn other() {}\n}\n";
+        let macro_tests = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    make_tests!(a, b);\n}\n";
         for (label, inner) in [
             ("no-tests", no_tests),
             ("renamed", renamed),
@@ -335,6 +398,11 @@ mod tests {
             ("gated-test", gated_test),
             ("broken", broken),
             ("nested-file", nested_file),
+            ("mixed-test", mixed_test),
+            ("mixed-module", mixed_module),
+            ("mixed-nested", mixed_nested),
+            ("other-attribute", other_attribute),
+            ("macro-tests", macro_tests),
         ] {
             let workspace = layout(label, inner)?;
             let tests = resolve_in_source(workspace.root(), SELECTOR);
@@ -368,6 +436,42 @@ mod tests {
         )
     }
 
+    /// Host conditions are evaluated as the build on this host would: a test
+    /// or module whose `cfg` is false is left out, and the rest are listed,
+    /// including under `not(..)` and `target_os`.
+    #[test]
+    fn host_conditions_list_exactly_what_this_host_builds() -> Result<(), String> {
+        let inner = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[cfg(unix)]\n    #[test]\n    fn unix_only() {}\n    #[cfg(windows)]\n    #[test]\n    fn windows_only() {}\n    #[cfg(not(unix))]\n    #[test]\n    fn not_unix() {}\n    #[cfg(target_os = \"linux\")]\n    #[test]\n    fn linux_only() {}\n    #[cfg(unix)]\n    mod nested {\n        #[test]\n        fn nested_unix() {}\n    }\n}\n";
+        let workspace = layout("host-conditions", inner)?;
+        let mut expected = vec!["outer::inner::tests::always"];
+        if cfg!(unix) {
+            expected.push("outer::inner::tests::unix_only");
+        }
+        if cfg!(windows) {
+            expected.push("outer::inner::tests::windows_only");
+        }
+        if !cfg!(unix) {
+            expected.push("outer::inner::tests::not_unix");
+        }
+        if cfg!(target_os = "linux") {
+            expected.push("outer::inner::tests::linux_only");
+        }
+        if cfg!(unix) {
+            expected.push("outer::inner::tests::nested::nested_unix");
+        }
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests.as_deref()
+                == Some(
+                    &expected
+                        .iter()
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>()[..],
+                ),
+            format!("expected {expected:?}, got {tests:?}"),
+        )
+    }
+
     /// The shipped selector this exists for resolves in the real tree, so the
     /// local run does not build the `ripr` library test target for it.
     #[test]
@@ -392,6 +496,19 @@ mod tests {
                 format!("`{selector}` does not resolve in source: {tests:?}"),
             )?;
         }
+        // Its module holds a `#[cfg(unix)]` test, which the native listing on
+        // a Unix host includes; a resolved list must include it too.
+        let admission = resolve_in_source(
+            root,
+            "cargo test -p ripr --lib analysis::scip::admission::tests",
+        )
+        .ok_or("the admission selector does not resolve")?;
+        let gated =
+            "analysis::scip::admission::tests::rejects_symlink_project_root_that_escapes_workspace";
+        require(
+            admission.iter().any(|name| name == gated) == cfg!(unix),
+            format!("host-gated test listed wrongly: {admission:?}"),
+        )?;
         Ok(())
     }
 }
