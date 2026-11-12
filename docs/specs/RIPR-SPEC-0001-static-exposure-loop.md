@@ -74,6 +74,14 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A `match` rewritten as `let ... else` (clippy `manual_let_else`) keeps its
+diverging statement: a removed single-line `None => return R,` arm and the
+added `return R;` seed no probe on either side when the `match` scrutinee and
+the `let ... else` scrutinee are the same text, the added statement is the
+first added line after its opener, and each text occurs exactly once in the
+window (#14428). A changed scrutinee, a changed return value, a multi-line
+`None => { .. }` arm, or a repeated statement keeps both probes.
+
 A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
 prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
@@ -737,6 +745,8 @@ Fixture coverage:
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `a_manual_let_else_rewrite_pairs_its_diverging_statement`
+- `manual_let_else_pairing_is_fail_closed`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
