@@ -216,27 +216,10 @@ fn derive_diff(
     // rename semantics (pure-rename paths produce no probes) fire for
     // subject runs too (#3296 review: without -M a pure rename became
     // delete+add and probed unchanged content).
-    git(
-        root,
-        &[
-            // Pin path quoting (#3601): ambient `core.quotePath=false` would
-            // emit raw non-UTF-8 path bytes that the lossy decode in `git()`
-            // collapses onto one U+FFFD path.
-            "-c",
-            "core.quotePath=true",
-            // No `--ignore-submodules=none` here: verified that `diff-tree`
-            // ignores `diff.ignoreSubmodules` (a gitlink change stays in its
-            // output under `all`), so the pin would be a no-op.
-            "diff-tree",
-            "--unified=0",
-            "--no-ext-diff",
-            "--root",
-            "-M",
-            base,
-            candidate,
-        ],
-        deadline,
-    )
+    let mut args =
+        crate::analysis::pinned_git_diff_args("diff-tree", &["--root", "-M"], "--unified=0");
+    args.extend_from_slice(&[base, candidate]);
+    git(root, &args, deadline)
 }
 
 /// Materialize the candidate tree into a fresh temp directory through ONE

@@ -203,6 +203,31 @@ doctor guidance before the diff loader runs.
 The existing PR-evidence path inventory uses the same inclusion option, keeping
 its changed-file count aligned with retained gitlinks in the packet diff.
 
+The source-patch argument owner in `analysis/diff/load.rs` also serves the
+CI packet's binary patch and NUL-separated path check and the immutable
+candidate's `diff-tree` route (#9365). It pins `diff.renameLimit=1000`, the
+[documented Git default](https://git-scm.com/docs/git-config#Documentation/git-config.txt-diffrenameLimit),
+as RIPR's finite exhaustive rename-search policy. This keeps ordinary default
+behavior without accepting an ambient unlimited quadratic search (`0`) or a
+small limit that turns edited renames into unrelated additions and deletions.
+Git's preliminary exact-match detection still runs; above the finite limit,
+Git may report unmatched paths as additions/deletions rather than renames.
+This is a stable search budget, not a guarantee to discover every rename or a
+promise of byte-identical results across Git versions. Git parses malformed
+repository values before command-line overrides: those still return a named
+diff failure, never empty successful evidence.
+
+Rename enablement remains a caller policy: ordinary `diff` keeps its existing
+`diff.renames` behavior, including `false`; immutable candidates retain `-M`.
+The shared presentation pins also suppress external diff and text conversion,
+color, custom prefixes, context expansion, submodule omission, and orderfiles.
+CI packets keep `--binary` and three context lines; analysis and immutable
+candidates keep zero context, with candidate binary changes reported without
+binary patch payloads. Each caller retains its revision semantics, deadlines,
+stdout decoding, and nonzero-exit handling. In particular, candidate input
+continues to compare the exact trees, and packet input the resolved merge-base
+range. No caller's repository, worktree or index environment is rewritten.
+
 ### Honesty bar
 
 - A resolved base MUST genuinely exist (`git rev-parse --verify` must
@@ -368,6 +393,9 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names`
 - `crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref`
+
+- `crates/ripr/src/cli/commands/ci_packet/diff_contract_tests.rs::side_route_diff_contract`
+- `crates/ripr/src/cli/commands/ci_packet/diff_contract_tests.rs::shared_diff_rename_budget_is_finite`
 
 ## Implementation Mapping
 

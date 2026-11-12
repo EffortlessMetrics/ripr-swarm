@@ -51,6 +51,10 @@ use std::process::{Command, Stdio};
 use super::non_empty_string_arg;
 use crate::output::json::CHECK_FINDINGS_BYTES_ENV;
 
+#[cfg(test)]
+#[path = "ci_packet/diff_contract_tests.rs"]
+mod diff_contract_tests;
+
 const COMMAND: &str = "reports ci-packet";
 
 const REPORTS: &str = "target/ripr/reports";
@@ -1321,26 +1325,10 @@ impl PacketRun {
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
-        let diff = git_bytes(
-            &self.root,
-            &[
-                "-c",
-                "core.quotePath=true",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
-                // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--unified=3",
-                "--inter-hunk-context=0",
-                &range,
-            ],
-        )
+        let mut diff_args =
+            crate::analysis::pinned_git_diff_args("diff", &["--binary"], "--unified=3");
+        diff_args.push(&range);
+        let diff = git_bytes(&self.root, &diff_args)
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
@@ -1362,18 +1350,13 @@ impl PacketRun {
         )
         .map_err(|err| format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}; check you can write under target/ripr, then rerun"))?;
         if diff.is_empty() {
-            let names = git_bytes(
-                &self.root,
-                &[
-                    "-c",
-                    "core.quotePath=true",
-                    "diff",
-                    "--name-only",
-                    "--ignore-submodules=none",
-                    "-z",
-                    &range,
-                ],
-            )
+            let mut name_args = crate::analysis::pinned_git_diff_args(
+                "diff",
+                &["--name-only", "-z"],
+                "--unified=3",
+            );
+            name_args.push(&range);
+            let names = git_bytes(&self.root, &name_args)
             .map_err(|err| format!("ripr: git diff --name-only failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
             let changed = names.iter().filter(|byte| **byte == 0).count();
             if changed != 0 {

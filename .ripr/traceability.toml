@@ -8087,6 +8087,8 @@ id = "RIPR-SPEC-0084"
 name = "default base resolution"
 spec = "docs/specs/RIPR-SPEC-0084-default-base-resolution.md"
 tests = [
+  "crates/ripr/src/cli/commands/ci_packet/diff_contract_tests.rs::side_route_diff_contract",
+  "crates/ripr/src/cli/commands/ci_packet/diff_contract_tests.rs::shared_diff_rename_budget_is_finite",
   "crates/ripr/tests/cli_smoke.rs::pr_evidence_with_missing_artifacts_writes_packet",
   "crates/ripr/tests/cli_smoke.rs::pr_evidence_without_default_base_in_shallow_checkout_writes_nothing",
   "crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes",
@@ -8139,6 +8141,8 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/cli/commands/ci_packet.rs",
+  "crates/ripr/src/analysis/git_candidate_execution.rs",
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/app/pr_evidence.rs",
   "crates/ripr/src/analysis/diff/parse.rs",

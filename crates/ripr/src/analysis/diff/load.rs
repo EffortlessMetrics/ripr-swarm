@@ -2625,6 +2625,64 @@ fn run_git_diff_with_unified(
     )?))
 }
 
+/// Shared source-patch presentation for diff and diff-tree (RIPR-SPEC-0084).
+/// Callers own revisions, output mode, rename enablement, execution and errors.
+/// `unified_arg` is the caller's canonical `--unified=N` presentation.
+/// The finite rename limit pins Git's documented default; it is not a promise
+/// to discover every rename. Valid ambient limits cannot change this policy;
+/// malformed configuration still fails closed in Git (#9365).
+pub(crate) fn pinned_git_diff_args<'a>(
+    command: &'a str,
+    extra_args: &[&'a str],
+    unified_arg: &'a str,
+) -> Vec<&'a str> {
+    // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
+    // a dangling user orderfile otherwise aborts the diff before any
+    // analysis runs, and a live one only reorders output the parser does
+    // not need ordered. An empty value is NOT an off switch — git fails
+    // reading orderfile `''` — while /dev/null holds no patterns on any
+    // platform git runs (verified on git-for-Windows 2.47.1, which maps it
+    // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    let mut args = vec![
+        "-c",
+        "core.quotePath=true",
+        "-c",
+        "diff.renameLimit=1000",
+        "-c",
+        "diff.orderFile=/dev/null",
+        command,
+    ];
+    args.extend_from_slice(extra_args);
+    // Analysis consumes source-coordinate patches, not human diff views.
+    // Pin every caller, including worktree mode: helpers can suppress real
+    // changes, textconv can invent source coordinates, and ambient context
+    // can expand a one-line edit into a full-file payload (#3850). Git's
+    // source/destination prefixes are also parser identity syntax: ambient
+    // diff.noprefix can remove them, so a real path such as b/identity.rs
+    // can collapse onto identity.rs after the parser strips the expected b/
+    // side prefix (#4086). (diff.mnemonicPrefix only rewrites worktree/index
+    // comparisons, never the <base>...HEAD range form issued here.) Append canonical
+    // side prefixes after caller extras so neither repository config nor a
+    // conflicting presentation extra can change file identity.
+    // The context-line count is the one caller-selected presentation knob
+    // (the appended pin wins over any same-named extra): analysis takes zero,
+    // the PR-evidence packet takes three.
+    // Ambient submodule ignore settings can hide a changed gitlink before
+    // the parser's skipped-content disclosure sees it (#8209). Keep those
+    // sections visible without analyzing the child repository's contents.
+    args.extend_from_slice(&[
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--ignore-submodules=none",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        unified_arg,
+        "--inter-hunk-context=0",
+    ]);
+    args
+}
+
 fn run_git_diff_bytes(
     root: &Path,
     range: &str,
@@ -2656,49 +2714,8 @@ fn run_git_diff_bytes(
             format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
         );
     }
-    // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
-    // a dangling user orderfile otherwise aborts the diff before any
-    // analysis runs, and a live one only reorders output the parser does
-    // not need ordered. An empty value is NOT an off switch — git fails
-    // reading orderfile `''` — while /dev/null holds no patterns on any
-    // platform git runs (verified on git-for-Windows 2.47.1, which maps it
-    // to NUL; the hostile-config test pins the behavior everywhere it runs).
-    let mut args: Vec<&str> = vec![
-        "-c",
-        "core.quotePath=true",
-        "-c",
-        "diff.orderFile=/dev/null",
-        "diff",
-    ];
-    args.extend_from_slice(extra_args);
-    // Analysis consumes source-coordinate patches, not human diff views.
-    // Pin every caller, including worktree mode: helpers can suppress real
-    // changes, textconv can invent source coordinates, and ambient context
-    // can expand a one-line edit into a full-file payload (#3850). Git's
-    // source/destination prefixes are also parser identity syntax: ambient
-    // diff.noprefix can remove them, so a real path such as b/identity.rs
-    // can collapse onto identity.rs after the parser strips the expected b/
-    // side prefix (#4086). (diff.mnemonicPrefix only rewrites worktree/index
-    // comparisons, never the <base>...HEAD range form issued here.) Append canonical
-    // side prefixes after caller extras so neither repository config nor a
-    // conflicting presentation extra can change file identity.
-    // The context-line count is the one caller-selected presentation knob
-    // (the appended pin wins over any same-named extra): analysis takes zero,
-    // the PR-evidence packet takes three.
-    // Ambient submodule ignore settings can hide a changed gitlink before
-    // the parser's skipped-content disclosure sees it (#8209). Keep those
-    // sections visible without analyzing the child repository's contents.
     let unified_arg = format!("--unified={unified}");
-    args.extend_from_slice(&[
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--ignore-submodules=none",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        unified_arg.as_str(),
-        "--inter-hunk-context=0",
-    ]);
+    let mut args = pinned_git_diff_args("diff", extra_args, &unified_arg);
     args.push(range);
     let output = match max_stdout_bytes {
         Some(limit) => crate::git::run_git_output_with_optional_deadline_and_limit(
