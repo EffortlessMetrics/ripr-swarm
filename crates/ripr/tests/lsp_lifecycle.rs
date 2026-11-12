@@ -2177,14 +2177,14 @@ fn refresh_publishes_diagnostics_under_a_spaced_unicode_root() -> Result<(), Str
 /// Reads publishes until one whose path ends with the root-relative
 /// `expected` satisfies `accept` (given its diagnostic count), failing at
 /// `ANALYSIS_TIMEOUT`. A suffix match needs no canonicalization, so it also
-/// names a file that no longer exists. Ids of responses read on the way are
+/// names a file that no longer exists. Responses read on the way are
 /// appended to `responses`, so a caller that fired a request without awaiting
-/// it can tell whether its response was already consumed (#14514).
+/// it can find its response (and check its result) after the wait (#14514).
 fn await_publish_for(
     session: &mut LspSession,
     expected: &Path,
     waiting_for: &str,
-    responses: &mut Vec<u64>,
+    responses: &mut Vec<serde_json::Value>,
     accept: impl Fn(usize) -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
@@ -2193,10 +2193,8 @@ fn await_publish_for(
         if message.get("method").and_then(serde_json::Value::as_str)
             != Some("textDocument/publishDiagnostics")
         {
-            if (message.get("result").is_some() || message.get("error").is_some())
-                && let Some(id) = message.get("id").and_then(serde_json::Value::as_u64)
-            {
-                responses.push(id);
+            if message.get("result").is_some() || message.get("error").is_some() {
+                responses.push(message);
             }
             continue;
         }
@@ -2281,9 +2279,14 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     // The refresh response can arrive before or after either publish. Read it
     // if the waits above did not, so `shutdown` is the only response left
     // to correlate (#14514).
-    if !responses.contains(&refresh_id) {
-        session.await_response(refresh_id, ANALYSIS_TIMEOUT)?;
-    }
+    let refresh_response = match responses
+        .iter()
+        .find(|message| message.get("id").and_then(serde_json::Value::as_u64) == Some(refresh_id))
+    {
+        Some(message) => message.clone(),
+        None => session.await_response(refresh_id, ANALYSIS_TIMEOUT)?,
+    };
+    expect_result(&refresh_response, "ripr.refresh")?;
     shutdown_exit_and_wait(&mut session)
 }
 
