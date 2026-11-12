@@ -157,7 +157,12 @@ developed on Windows and Linux but continuously validated on Linux only, and
 the advisory Windows lane deliberately runs no golden gate and no blessing —
 a Windows lane that blessed or checked goldens would institutionalize the
 #2337 drift it exists to catch (`docs/CI.md`, "Advisory Windows Lane").
-Never bless or hand-edit golden expected-files from a Windows host.
+Never hand-edit or rewrite golden expected-files from a Windows host.
+`goldens bless` preserves existing bytes when every surface is gate-equivalent,
+including the Windows Python verify projection, and reports no change. If any
+surface genuinely differs (or a required golden is missing), it refuses the
+entire Windows write plan before updating expected files or the changelog.
+Use the Linux route below for the actual blessing.
 
 A Windows-rendered bless fails on the arbiter platform in recorded shapes:
 the same tree produced 43 local Windows drift entries and 35 hosted Linux
@@ -167,8 +172,8 @@ committed Linux goldens do not carry (#8525); and a bless from a CRLF working
 tree embedded `input_identity` hashes that no `eol=lf` checkout reproduces,
 failing hosted qualification on PR #8559 (run 39072364336) until the fixtures
 were re-blessed from an LF tree (#8614; that shape is now refused at bless
-time, `xtask/src/reports/fixtures.rs`). The guard cannot catch every platform
-difference; the route below is the discipline.
+time, `xtask/src/reports/fixtures.rs`). The Windows write guard does not attempt
+to reverse lossy projections; the route below supplies canonical output.
 
 The sanctioned local route on a Windows host:
 

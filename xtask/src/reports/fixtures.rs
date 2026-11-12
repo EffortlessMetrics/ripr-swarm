@@ -624,9 +624,8 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     }
 
     let expected = fixture.join("expected");
-    // #14498: only surfaces whose bytes actually differ are copied and named in
-    // the CHANGELOG. A bless over unchanged output used to append a `Pending`
-    // block claiming an update that did not happen.
+    // #14509/#14510: compare with the gate before planning writes. Equivalent
+    // output preserves canonical bytes; changed Windows output refuses safely.
     let applied = apply_bless_outputs(&expected, &run, name, reason)?;
     let body = bless_report_body(&fixture, reason, &run, &applied);
     write_report("goldens-bless.md", &body)
@@ -676,28 +675,27 @@ struct BlessSurface {
 }
 
 impl BlessSurface {
-    /// Whether blessing this surface would change a byte. A missing golden is a
-    /// change; an unreadable one is an error, not a silent overwrite.
-    ///
-    /// This is a raw-byte comparison on purpose (#14498): `goldens check`
-    /// compares normalized text, so the two can disagree. A golden that differs
-    /// only where the gate normalizes (a Windows python-verify projection, for
-    /// example) can be blessed and reported changed here while `check` still
-    /// calls it unchanged. Aligning the two is #14509; this claim does not.
-    fn differs(&self) -> Result<bool, String> {
-        let target = match fs::read(&self.target) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(err) => {
-                return Err(format!(
-                    "failed to read {}: {err}",
-                    normalize_path(&self.target)
-                ));
-            }
-        };
-        let source = fs::read(&self.source)
+    /// Share the gate's equivalence relation, retaining the canonical bytes of
+    /// an existing golden when only a platform projection or masked fact differs.
+    /// Read every source during planning, even if its target does not yet exist.
+    fn differs(&self, fixture: &str, windows: bool) -> Result<bool, String> {
+        fs::read(&self.source)
             .map_err(|err| format!("failed to read {}: {err}", normalize_path(&self.source)))?;
-        Ok(source != target)
+        match fs::read(&self.target) {
+            Ok(_) => Ok(!compare_golden_for_host(
+                fixture,
+                self.label,
+                &self.target,
+                &self.source,
+                windows,
+            )?
+            .matches),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(err) => Err(format!(
+                "failed to read {}: {err}",
+                normalize_path(&self.target)
+            )),
+        }
     }
 }
 
@@ -705,7 +703,7 @@ impl BlessSurface {
 /// can tell a no-op from a rewrite without diffing the tree.
 fn no_change_outcome(changelog: &Path) -> String {
     format!(
-        "No change: every expected file already matched the run output, so nothing was copied and `{}` was left untouched.\n",
+        "No change: every expected file already matched the gate comparison, so nothing was copied and `{}` was left untouched.\n",
         normalize_path(changelog)
     )
 }
@@ -718,14 +716,24 @@ struct BlessedOutputs {
     changelog: PathBuf,
 }
 
-/// Copies only the surfaces whose bytes changed and records exactly one pending
-/// CHANGELOG entry naming them. When every surface already matches, nothing is
-/// written at all (#14498).
+/// Copies only surfaces rejected by the gate comparison and records one pending
+/// CHANGELOG entry naming them. Equivalent output preserves the existing bytes;
+/// changed Windows output refuses before any golden or changelog write.
 fn apply_bless_outputs(
     expected: &Path,
     run: &FixtureRun,
     name: &str,
     reason: &str,
+) -> Result<BlessedOutputs, String> {
+    apply_bless_outputs_for_host(expected, run, name, reason, cfg!(windows))
+}
+
+fn apply_bless_outputs_for_host(
+    expected: &Path,
+    run: &FixtureRun,
+    name: &str,
+    reason: &str,
+    windows: bool,
 ) -> Result<BlessedOutputs, String> {
     let expected_human_full = expected.join("human-full.txt");
     let updated_human_full = expected_human_full.exists();
@@ -760,7 +768,7 @@ fn apply_bless_outputs(
     }
     let mut changed = Vec::new();
     for surface in &surfaces {
-        if surface.differs()? {
+        if surface.differs(name, windows)? {
             changed.push(surface);
         }
     }
@@ -772,6 +780,19 @@ fn apply_bless_outputs(
             changelog,
         });
     }
+    // Projection is lossy: Windows manual guidance cannot be reversed into
+    // canonical Bash actions. Refuse the complete plan before any golden or
+    // changelog write. A future canonical renderer can relax this guard.
+    if windows {
+        return Err(format!(
+            "goldens bless refused for fixture `{name}` before writing expected files or CHANGELOG: changed Windows output cannot establish canonical Linux golden bytes. Run the reviewed bless from a Linux checkout (or WSL with LF inputs)."
+        ));
+    }
+    let mut text = if changelog.exists() {
+        read_text_lossy(&changelog)?
+    } else {
+        "# Golden Output Changes\n".to_string()
+    };
     fs::create_dir_all(expected)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(expected)))?;
     for surface in &changed {
@@ -783,11 +804,6 @@ fn apply_bless_outputs(
             )
         })?;
     }
-    let mut text = if changelog.exists() {
-        read_text_lossy(&changelog)?
-    } else {
-        "# Golden Output Changes\n".to_string()
-    };
     let mut entry = format!(
         "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n",
         next_pending_heading(&text, name)
@@ -1722,9 +1738,19 @@ fn compare_golden(
     expected: &Path,
     actual: &Path,
 ) -> Result<GoldenComparison, String> {
+    compare_golden_for_host(fixture, surface, expected, actual, cfg!(windows))
+}
+
+fn compare_golden_for_host(
+    fixture: &str,
+    surface: &'static str,
+    expected: &Path,
+    actual: &Path,
+    windows: bool,
+) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
     let expected_text = if surface != "check.json" {
-        project_windows_python_verify_expected(fixture, &expected_text, cfg!(windows))
+        project_windows_python_verify_expected(fixture, &expected_text, windows)
     } else {
         expected_text
     };
@@ -3924,7 +3950,8 @@ mod tests {
 
         // Negative control: a real change still records exactly one block.
         write(actual.join("human.txt"), "# report\nchanged\n")?;
-        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "change")?;
+        let applied =
+            super::apply_bless_outputs_for_host(&expected, &run, "synthetic", "change", false)?;
         assert_eq!(applied.changed, vec![expected.join("human.txt")]);
         let after = read_text(expected.join("CHANGELOG.md"))?;
         assert_eq!(after.matches("## Pending").count(), 1, "{after}");
@@ -3940,6 +3967,262 @@ mod tests {
         assert!(body.contains("CHANGELOG.md"), "{body}");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    // Both host branches execute on every host; this is not native Windows
+    // process qualification. The native entry point passes cfg!(windows).
+    fn parity_bless_fixture(label: &str) -> Result<(PathBuf, PathBuf, FixtureRun), String> {
+        let dir = unique_temp_path(label);
+        let expected = dir.join("expected");
+        let actual = dir.join("actual");
+        fs::create_dir_all(&expected).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+        for surface in [
+            "check.json",
+            "human.txt",
+            "human-full.txt",
+            "sarif.json",
+            "github.txt",
+        ] {
+            let text = if surface == "check.json" {
+                "{\"findings\":[]}"
+            } else {
+                "unchanged\n"
+            };
+            fs::write(expected.join(surface), text).map_err(|error| error.to_string())?;
+            fs::write(actual.join(surface), text).map_err(|error| error.to_string())?;
+        }
+        fs::write(expected.join("CHANGELOG.md"), "# Golden Output Changes\n")
+            .map_err(|error| error.to_string())?;
+        let run = FixtureRun {
+            name: "py".to_string(),
+            actual_dir: actual.clone(),
+            check_json: actual.join("check.json"),
+            human_txt: actual.join("human.txt"),
+            human_full_txt: actual.join("human-full.txt"),
+            comparisons: Vec::new(),
+        };
+        Ok((dir, expected, run))
+    }
+
+    fn parity_expected_bytes(expected: &Path) -> Result<Vec<Vec<u8>>, String> {
+        [
+            "check.json",
+            "human.txt",
+            "human-full.txt",
+            "sarif.json",
+            "github.txt",
+            "CHANGELOG.md",
+        ]
+        .iter()
+        .map(|surface| fs::read(expected.join(surface)).map_err(|error| error.to_string()))
+        .collect()
+    }
+
+    #[test]
+    fn bless_gate_equivalent_windows_output_preserves_canonical_bytes() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-windows-noop")?;
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        for surface in ["human.txt", "human-full.txt", "github.txt"] {
+            let (golden, emitted) = if surface == "human-full.txt" {
+                (
+                    bash.replace("Verify command", "verify"),
+                    manual.replace("Suggested command", "suggested command"),
+                )
+            } else {
+                (bash.to_string(), manual.to_string())
+            };
+            fs::write(expected.join(surface), golden).map_err(|error| error.to_string())?;
+            fs::write(run.actual_dir.join(surface), emitted).map_err(|error| error.to_string())?;
+            assert!(
+                compare_golden_for_host(
+                    "py",
+                    surface,
+                    &expected.join(surface),
+                    &run.actual_dir.join(surface),
+                    true
+                )?
+                .matches
+            );
+        }
+        let before = parity_expected_bytes(&expected)?;
+        for _ in 0..2 {
+            let applied = apply_bless_outputs_for_host(&expected, &run, "py", "no-op", true)?;
+            assert!(
+                applied.changed.is_empty(),
+                "Windows gate-equivalent output must be a no-op"
+            );
+            assert!(bless_report_body(&dir, "no-op", &run, &applied).contains("No change:"));
+            assert_eq!(parity_expected_bytes(&expected)?, before);
+        }
+        // The canonical Bash bytes still match the subsequent Linux output.
+        fs::write(&run.human_txt, bash).map_err(|error| error.to_string())?;
+        assert!(
+            compare_golden_for_host(
+                "py",
+                "human.txt",
+                &expected.join("human.txt"),
+                &run.human_txt,
+                false
+            )?
+            .matches
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_changed_windows_plan_refuses_before_any_write() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-windows-refusal")?;
+        // Core data changes before the optional human surface in write order.
+        // Refusing late would partially update check.json and lose canonical bytes.
+        fs::write(&run.check_json, "{\"findings\":[{\"new\":true}]}")
+            .map_err(|error| error.to_string())?;
+        let bash = "  verify (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        fs::write(expected.join("human-full.txt"), bash).map_err(|error| error.to_string())?;
+        fs::write(&run.human_full_txt, manual).map_err(|error| error.to_string())?;
+        assert!(
+            compare_golden_for_host(
+                "py",
+                "human-full.txt",
+                &expected.join("human-full.txt"),
+                &run.human_full_txt,
+                true
+            )?
+            .matches
+        );
+        let before = parity_expected_bytes(&expected)?;
+        let result = apply_bless_outputs_for_host(&expected, &run, "py", "changed", true);
+        assert!(
+            matches!(result, Err(ref error) if error.contains("Linux") && error.contains("before writing"))
+        );
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        // A missing expected tree must not be created by an unsafe Windows bless.
+        let missing = dir.join("missing");
+        assert!(apply_bless_outputs_for_host(&missing, &run, "py", "new", true).is_err());
+        assert!(!missing.exists());
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_normalized_surfaces_preserve_bytes_but_real_linux_changes_are_named()
+    -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-linux")?;
+        for surface in ["human.txt", "human-full.txt", "sarif.json", "github.txt"] {
+            fs::write(run.actual_dir.join(surface), "unchanged\r\n")
+                .map_err(|error| error.to_string())?;
+        }
+        let before = parity_expected_bytes(&expected)?;
+        let applied = apply_bless_outputs_for_host(&expected, &run, "py", "no-op", false)?;
+        assert!(applied.changed.is_empty());
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        fs::write(run.actual_dir.join("sarif.json"), "changed sarif\n")
+            .map_err(|error| error.to_string())?;
+        fs::write(run.actual_dir.join("github.txt"), "changed github\n")
+            .map_err(|error| error.to_string())?;
+        let applied = apply_bless_outputs_for_host(&expected, &run, "py", "real change", false)?;
+        assert_eq!(
+            applied.changed,
+            vec![expected.join("sarif.json"), expected.join("github.txt")]
+        );
+        let changelog =
+            fs::read_to_string(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?;
+        assert_eq!(changelog.matches("## Pending").count(), 1);
+        assert!(
+            changelog.contains("expected/sarif.json") && changelog.contains("expected/github.txt")
+        );
+        assert!(
+            !changelog.contains("expected/human.txt") && !changelog.contains("expected/check.json")
+        );
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "repeat", false)?
+                .changed
+                .is_empty()
+        );
+        assert_eq!(
+            fs::read_to_string(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            changelog
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_windows_projection_rejects_wrong_selector_and_root() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-identity")?;
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        for (golden, actual) in [
+            (bash.to_string(), manual.replace("test_one", "test_two")),
+            (
+                bash.replace("fixtures/py/", "fixtures/other/"),
+                manual.to_string(),
+            ),
+        ] {
+            fs::write(expected.join("human.txt"), golden).map_err(|error| error.to_string())?;
+            fs::write(&run.human_txt, actual).map_err(|error| error.to_string())?;
+            assert!(
+                !compare_golden_for_host(
+                    "py",
+                    "human.txt",
+                    &expected.join("human.txt"),
+                    &run.human_txt,
+                    true
+                )?
+                .matches
+            );
+            let before = parity_expected_bytes(&expected)?;
+            assert!(
+                apply_bless_outputs_for_host(&expected, &run, "py", "wrong identity", true)
+                    .is_err()
+            );
+            assert_eq!(parity_expected_bytes(&expected)?, before);
+        }
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_read_errors_precede_any_writes() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-read-errors")?;
+        fs::write(&run.check_json, "{\"findings\":[{\"changed\":true}]}")
+            .map_err(|error| error.to_string())?;
+        let before = parity_expected_bytes(&expected)?;
+        // The changed first surface cannot be copied before a later read fails.
+        fs::remove_file(run.actual_dir.join("github.txt")).map_err(|error| error.to_string())?;
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "missing source", false).is_err()
+        );
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        fs::write(run.actual_dir.join("github.txt"), "unchanged\n")
+            .map_err(|error| error.to_string())?;
+        // A directory is a portable unreadable-as-file target (also under root).
+        fs::remove_file(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        fs::create_dir(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        assert!(apply_bless_outputs_for_host(&expected, &run, "py", "bad target", false).is_err());
+        assert_eq!(
+            fs::read(expected.join("check.json")).map_err(|error| error.to_string())?,
+            before[0]
+        );
+        assert_eq!(
+            fs::read(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            before[5]
+        );
+        fs::remove_dir(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        // Both target and source missing still fails during planning, not copying.
+        fs::remove_file(run.actual_dir.join("human.txt")).map_err(|error| error.to_string())?;
+        fs::remove_file(expected.join("human.txt")).map_err(|error| error.to_string())?;
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "both missing", false).is_err()
+        );
+        assert_eq!(
+            fs::read(expected.join("check.json")).map_err(|error| error.to_string())?,
+            before[0]
+        );
+        assert_eq!(
+            fs::read(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            before[5]
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
     }
 
     #[test]

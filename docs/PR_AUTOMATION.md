@@ -764,8 +764,12 @@ outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
 before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog. Bless from the Linux arbiter
-platform, never from a Windows host; the sanctioned route is documented in
+appends the fixture expected-output changelog only for surfaces that differ
+under the gate comparison. Gate-equivalent output preserves the original
+expected bytes and leaves the changelog untouched. On Windows, any genuine
+change is refused before writing expected files or the changelog: the Windows
+projection cannot establish canonical Linux golden bytes. Apply changes from
+the Linux arbiter platform; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) compare the line
