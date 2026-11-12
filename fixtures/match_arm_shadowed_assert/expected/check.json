@@ -37,7 +37,7 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach selection_request: checks_unknown"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: _ if arg.starts_with('-') =>"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: unknown_option = true"},
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach selection_request: checks_unknown", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: _ if arg.starts_with('-') =>", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: _ if arg.starts_with('-') => (line 61)", "related test src/tests.rs:3 checks_unknown uses no oracle", "source enum variant value super::SelectionRequest::Unresolved at line 6"],
+      "evidence_path": ["reach yes: Related tests appear to reach selection_request: checks_unknown", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: unknown_option = true", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: unknown_option = true (line 61)", "related test src/tests.rs:3 checks_unknown uses no oracle", "source enum variant value super::SelectionRequest::Unresolved at line 6"],
       "flow_sinks": [
-        {"kind":"match_arm","text":"_ if arg.starts_with('-') =>","line":61}
+        {"kind":"match_arm","text":"unknown_option = true","line":61}
       ],
-      "evidence": ["Changed behavior appears to influence match arm result: _ if arg.starts_with('-') =>", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach selection_request: checks_unknown", "assertion not credited: `assert!` in checks_unknown at src/tests.rs:6: src/tests.rs:1 defines a macro named `assert`"],
+      "evidence": ["Changed behavior appears to influence match arm result: unknown_option = true", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach selection_request: checks_unknown", "assertion not credited: `assert!` in checks_unknown at src/tests.rs:6: src/tests.rs:1 defines a macro named `assert`"],
       "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));"

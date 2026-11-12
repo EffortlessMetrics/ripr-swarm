@@ -2103,3 +2103,39 @@ fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(
     assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
     Ok(())
 }
+
+/// #14420: a head-only match-arm row names the arm result the flow model
+/// read on the head's line, so an agent sees the value to pin without
+/// opening the file. A sink on another line, or a non-arm probe, keeps
+/// the expression as it was.
+#[test]
+fn head_only_arm_row_names_the_arm_result() {
+    let root = std::path::Path::new("repo");
+    let ctx = "ripr context --at probe:arm";
+    let mut gap = weak_gap("probe:arm", 10);
+    gap.probe.family = ProbeFamily::MatchArm;
+    gap.probe.expression = "Size::Medium =>".to_string();
+    gap.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: 10,
+        owner: None,
+    }];
+    let text = render_finding(&gap, root, ctx, false);
+    assert!(text.contains("|Size::Medium => 450|"), "{text}");
+
+    let mut elsewhere = gap.clone();
+    elsewhere.flow_sinks[0].line = 11;
+    let text = render_finding(&elsewhere, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
+
+    let mut head_sink = gap.clone();
+    head_sink.flow_sinks[0].text = "Size::Medium =>".to_string();
+    let text = render_finding(&head_sink, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
+
+    let mut predicate = gap;
+    predicate.probe.family = ProbeFamily::Predicate;
+    let text = render_finding(&predicate, root, ctx, false);
+    assert!(text.contains("|Size::Medium =>|"), "{text}");
+}

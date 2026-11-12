@@ -220,7 +220,8 @@ pub(crate) fn render_finding_digest_with_config(
         .as_deref()
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
+    let changed = with_arm_result(finding, changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
     // #9033: the digest names the first entry the full form's Weakness list
     // would also show, so a one-line pointer never names an entry that
     // `--format human-full` dropped as a restatement of its Evidence block.
@@ -563,6 +564,30 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+/// #14420: a head-only match-arm text (`Size::Medium =>`) joined to the arm
+/// result the flow model read for it (`Size::Medium => 450`), so a reader
+/// sees the value a test must pin. Any other text, or a head whose result
+/// the flow model did not read on the head's line, is returned unchanged.
+pub(super) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> std::borrow::Cow<'a, str> {
+    let head = text.trim();
+    let result = (finding.probe.family == ProbeFamily::MatchArm
+        && head.ends_with("=>")
+        && head.matches("=>").count() == 1)
+        .then(|| {
+            finding.flow_sinks.iter().find(|sink| {
+                sink.kind == crate::domain::FlowSinkKind::MatchArm
+                    && sink.line == finding.probe.location.line
+                    && !sink.text.trim().is_empty()
+                    && sink.text.trim() != head
+            })
+        })
+        .flatten();
+    match result {
+        Some(sink) => std::borrow::Cow::Owned(format!("{head} {}", sink.text.trim())),
+        None => std::borrow::Cow::Borrowed(text),
+    }
 }
 
 /// Marks a match-arm `after:` row that carries only the arm head.
