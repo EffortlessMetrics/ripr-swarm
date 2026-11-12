@@ -137,7 +137,7 @@ impl GapListFilter {
     /// exposure exclusion (#14327). With no `class` filter, an `exposed` item
     /// the shared seam gate refused as already gripped
     /// ([`SEAM_ALREADY_GRIPPED`](crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED):
-    /// its existing tests already check the seam, so no static gap remains)
+    /// its existing tests already check the seam)
     /// is left out of the walked set. Only that positive cause omits: an
     /// `exposed` item that is repair-ready, or unready for any other reason
     /// (a truncated seam inventory, withheld worktree evidence, an ambiguous
@@ -1297,7 +1297,7 @@ impl WorkspaceSession {
             document["proof_harness_only"] = json!(scope.proof_harness_only);
         }
         // Additive (#14327): with no `class` filter the list leaves out
-        // `exposed` items (nothing to repair on the test side). Disclose the
+        // `exposed` items refused as `seam_already_gripped`. Disclose the
         // count and the route; absent when zero or when `class` was named.
         // `total`, `eligible`, `selected` and `outcome` still describe the
         // whole snapshot; only `filtered` and `items` narrow.
