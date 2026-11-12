@@ -182,7 +182,9 @@ observed dirty checkout or a difference between its before and after snapshots;
 ignored inputs and intermediate changes restored before the second snapshot are
 not observed. One writer and no concurrent source/context mutation are required.
 Duplicate declaration identities and duplicate names within one selector are
-refused; distinct declaration lines remain distinct. Binary identities are unavailable. A successful
+refused; declaration identity uses the ledger line, declared host, and the
+same whitespace-tokenized Cargo listing arguments as native validation. Distinct
+declaration lines remain distinct. Binary identities are unavailable. A successful
 receipt is versioned and marked `native_valid_context_unverified`; its declared
 context and hashed observations are not evidence that effective Cargo features,
 configuration, environment, wrappers or ignored inputs were independently verified.

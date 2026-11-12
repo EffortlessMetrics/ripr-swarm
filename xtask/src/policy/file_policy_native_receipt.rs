@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    TestCoverageObservation, accept_file_policy_coverage, validate_test_covered_by_recorded,
+    TestCoverageObservation, accept_file_policy_coverage, covered_by_listing_args,
+    validate_test_covered_by_recorded,
 };
 
 pub(crate) const RECEIPT_NAME: &str = "file-policy-native-receipt.json";
@@ -271,7 +272,7 @@ fn rows(coverage: Vec<TestCoverageObservation>) -> Result<Vec<Row>, String> {
             .to_string();
         let identity = (
             observation.selector.line,
-            observation.selector.command.clone(),
+            covered_by_listing_args("native receipt", &observation.selector)?,
             host.clone(),
         );
         if !declarations.insert(identity) {
@@ -517,14 +518,20 @@ pub(crate) fn validate_binding(
     }
     let mut declarations = BTreeSet::new();
     for row in &receipt.rows {
-        if !declarations.insert((row.line, row.command.as_str(), row.declared_host.as_str())) {
-            return Err("native receipt repeats a selector declaration identity".into());
-        }
         if row.line == 0
             || !crate::is_cargo_test_command(&row.command)
             || !matches!(row.declared_host.as_str(), "all" | "unix" | "windows")
         {
             return Err("native receipt has an invalid selector declaration".into());
+        }
+        let selector = crate::FilePolicyTestCommand {
+            line: row.line,
+            command: row.command.clone(),
+            host: None,
+        };
+        let args = covered_by_listing_args("native receipt", &selector)?;
+        if !declarations.insert((row.line, args, row.declared_host.as_str())) {
+            return Err("native receipt repeats a selector declaration identity".into());
         }
         if let Some(selected) = &row.selected {
             if selected.is_empty()
@@ -924,7 +931,7 @@ mod tests {
         let mut duplicate_row = receipt();
         duplicate_row.rows.push(Row {
             line: 1,
-            command: "cargo test -p probe exact".into(),
+            command: "cargo\ttest  -p probe exact".into(),
             declared_host: "all".into(),
             selected: Some(vec!["tests::other".into()]),
         });
@@ -969,11 +976,12 @@ mod tests {
             selected: Some(selected.into_iter().map(str::to_string).collect()),
         };
         assert!(rows(vec![observation(1, vec!["a", "a"])]).is_err());
-        assert!(rows(vec![observation(1, vec!["a"]), observation(1, vec!["a"])]).is_err());
-        assert_eq!(
-            rows(vec![observation(1, vec!["a"]), observation(2, vec!["a"])])?.len(),
-            2
-        );
+        let mut same = observation(1, vec!["b"]);
+        same.selector.command = "cargo\ttest  -p probe".into();
+        assert!(rows(vec![observation(1, vec!["a"]), same]).is_err());
+        let mut different = observation(2, vec!["a"]);
+        different.selector.command = "cargo\ttest  -p probe".into();
+        assert_eq!(rows(vec![observation(1, vec!["a"]), different])?.len(), 2);
         Ok(())
     }
 }
