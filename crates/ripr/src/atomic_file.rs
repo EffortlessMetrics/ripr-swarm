@@ -1384,9 +1384,18 @@ mod tests {
     /// regular file nor a directory", not on the specific node kind.
     #[cfg(unix)]
     fn socket_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
-        let root = isolated_dir(label);
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).map_err(|err| format!("root setup: {err}"))?;
+        // A socket path must stay under the ~104 byte address limit, and the
+        // checkout forces `TMPDIR` into its own `target` directory, so the
+        // fixture lives under a short absolute path that does not depend on
+        // checkout depth. `create_dir` is exclusive: it never reuses a stale
+        // directory.
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = PathBuf::from(format!(
+            "/tmp/ripr-sock-{}-{sequence}-{}",
+            std::process::id(),
+            label.len()
+        ));
+        std::fs::create_dir(&root).map_err(|err| format!("root setup: {err}"))?;
         let node = root.join("node");
         std::os::unix::net::UnixListener::bind(&node)
             .map_err(|err| format!("socket setup: {err}"))?;

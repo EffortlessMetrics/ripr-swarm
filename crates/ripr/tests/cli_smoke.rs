@@ -35761,8 +35761,18 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
 #[test]
 fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io::Error> {
     use std::os::unix::fs::FileTypeExt as _;
-    let root = unique_temp_workspace("out-special-node");
-    std::fs::create_dir_all(&root)?;
+    // A socket path must stay under the ~104 byte address limit, and the
+    // checkout forces `TMPDIR` into its own `target` directory, so this
+    // fixture uses a short absolute path; `create_dir` is exclusive.
+    let root = std::path::PathBuf::from(format!(
+        "/tmp/ripr-sock-cli-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir(&root)?;
     let node = root.join("node");
     let listener = std::os::unix::net::UnixListener::bind(&node)?;
     let output = run_ripr(&[
