@@ -1117,12 +1117,23 @@ fn body_imports_same_name(test: &TestSummary, owner_name: &str) -> bool {
         // An unparsed body cannot show that no import rebinds the name.
         return true;
     };
+    let names_owner = |name: Option<ast::Name>| name.is_some_and(|name| name.text() == owner_name);
     parse.tree().syntax().descendants().any(|node| {
-        ast::Use::cast(node).is_some_and(|item| {
+        if let Some(item) = ast::Use::cast(node.clone()) {
             let text = item.syntax().text().to_string();
             // A glob (`use crate::rival::*;`) may bring in the name too.
-            text.contains('*') || count_name_tokens(&text, owner_name) > 0
-        })
+            return text.contains('*') || count_name_tokens(&text, owner_name) > 0;
+        }
+        // Any other local binding of the name (`const f: fn(u32) -> u32 =
+        // ..`, a `static`, a closure parameter or a pattern) makes a later
+        // `f(..)` call something the fold does not evaluate.
+        if let Some(item) = ast::Const::cast(node.clone()) {
+            return names_owner(item.name());
+        }
+        if let Some(item) = ast::Static::cast(node.clone()) {
+            return names_owner(item.name());
+        }
+        ast::IdentPat::cast(node).is_some_and(|pat| names_owner(pat.name()))
     })
 }
 

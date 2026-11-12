@@ -1084,7 +1084,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 // when the edit sits in the arm body; read the whole arm line.
                 let after = full_arm_line(owner, &probe.expression, before)
                     .unwrap_or_else(|| probe.expression.clone());
-                changes_only_a_range_bound(before, &after).then(|| (before, after))
+                changes_only_a_range_bound(before, &after).then_some((before, after))
             }) {
                 range_bound_infection(
                     owner.filter(|_| !assertion_macros_rebound),

@@ -492,6 +492,25 @@ fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result
 }
 
 #[test]
+fn a_local_const_or_static_of_the_owner_name_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
+    for binding in ["const", "static"] {
+        let test = format!(
+            "use ranges::*;\n\n#[test]\nfn pins() {{\n    assert_eq!(sum_to(0), 0);\n    {{\n        #[allow(non_upper_case_globals)]\n        {binding} sum_to: fn(u32) -> u32 = ranges::rival::sum_to;\n        assert_eq!(sum_to(3), 6);\n    }}\n}}\n"
+        );
+        let findings =
+            findings_on_changed_line(lib, "    (0..=n).sum()", "    (0..n).sum()", &test)?;
+        assert!(!findings.is_empty(), "{binding}");
+        assert!(
+            !infection_states(&findings).contains(&"Yes".to_string()),
+            "{binding}: {findings:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_arrow_inside_a_comment_does_not_hide_a_range_bound() -> Result<(), String> {
     // An unread input keeps an earlier fold from settling it: the gate itself
     // must still read the change as a range-bound change.
