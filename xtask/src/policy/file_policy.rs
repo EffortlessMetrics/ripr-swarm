@@ -2741,6 +2741,7 @@ mod tests {
         let started = std::time::Instant::now();
         let budget = Duration::from_secs(5);
         let timed_out = std::cell::Cell::new(false);
+        let primary_reaped = std::cell::Cell::new(false);
         let result = super::capture_with_remaining(
             || super::remaining_native_budget(budget, started.elapsed()),
             budget,
@@ -2753,21 +2754,27 @@ mod tests {
                     "native deadline child control",
                 )?;
                 timed_out.set(output.timed_out);
+                primary_reaped.set(output.status.is_some());
                 Ok(())
             },
         );
         assert!(timed_out.get(), "hung child did not reach its timeout");
+        assert!(primary_reaped.get(), "primary child was not reaped");
         let error = result.err().ok_or("expired child unexpectedly succeeded")?;
         assert!(error.contains("aggregate deadline exhausted"), "{error}");
         let pid = std::fs::read_to_string(&marker).map_err(|e| e.to_string())?;
         let pid: u32 = pid
             .parse()
             .map_err(|e| format!("invalid descendant pid: {e}"))?;
-        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            let state = stat
-                .rsplit_once(") ")
-                .and_then(|(_, tail)| tail.chars().next());
-            assert_eq!(state, Some('Z'), "owned descendant remains live: {stat}");
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => {
+                let state = stat
+                    .rsplit_once(") ")
+                    .and_then(|(_, tail)| tail.chars().next());
+                assert_eq!(state, Some('Z'), "owned descendant remains live: {stat}");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(format!("cannot inspect owned descendant {pid}: {error}")),
         }
         std::fs::remove_file(&marker).map_err(|e| e.to_string())?;
         std::fs::remove_dir(&root).map_err(|e| e.to_string())?;
