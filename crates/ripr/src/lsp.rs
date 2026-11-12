@@ -91,6 +91,16 @@ pub fn serve() -> Result<(), String> {
 }
 
 async fn serve_stdio() -> Result<(), String> {
+    let ending = serve_stdio_session().await?;
+    if let Some(notice) = ending.stderr_notice() {
+        // #14219: the session ends with exit 0 either way; this line is the
+        // only place a client's server log shows why it stopped.
+        eprintln!("{notice}");
+    }
+    Ok(())
+}
+
+async fn serve_stdio_session() -> Result<SessionEnding, String> {
     let watched_parent = parent_death_watchdog::initial_parent_process_id();
     let root =
         std::env::current_dir().map_err(|err| format!("failed to get current dir: {err}"))?;
@@ -106,6 +116,34 @@ async fn serve_stdio() -> Result<(), String> {
     .await
 }
 
+/// How a served session stopped (#14219).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionEnding {
+    /// The client sent `exit`.
+    Exit,
+    /// The input stream closed, including the write-stall trip, which ends
+    /// input on purpose.
+    InputClosed,
+    /// The read loop stopped while input was still open: the codec refused
+    /// a message (a bad header, an oversized frame, or a framed body that is
+    /// not a JSON-RPC message, such as one holding a lone surrogate escape).
+    /// The client received one error reply with a null id and nothing else.
+    /// This is the catch-all for any other stop with input open, such as the
+    /// service refusing to become ready, which tower-lsp-server only logs.
+    UndecodableInput,
+}
+
+impl SessionEnding {
+    fn stderr_notice(self) -> Option<&'static str> {
+        match self {
+            Self::Exit | Self::InputClosed => None,
+            Self::UndecodableInput => Some(
+                "ripr lsp: stopped after a message it could not decode (the client was sent a JSON-RPC error with a null id). The session does not recover from this; restart the language server. Frame recovery is tracked in #14219.",
+            ),
+        }
+    }
+}
+
 /// Serves one LSP session over the given transport pair with the reviewed
 /// ingress/concurrency/egress bounds from `lsp/transport_bounds.rs` (issue
 /// #2034). Separated from `serve_stdio` so the bounded composition is
@@ -116,7 +154,7 @@ async fn serve_streams<I, O>(
     root: std::path::PathBuf,
     bounds: &transport_bounds::TransportBounds,
     watched_parent: Option<u32>,
-) -> Result<(), String>
+) -> Result<SessionEnding, String>
 where
     I: tokio::io::AsyncRead + Unpin,
     O: tokio::io::AsyncWrite + Unpin,
@@ -131,6 +169,7 @@ where
     parent_death_watchdog::spawn_parent_death_watchdog(session_end.clone(), watched_parent);
     let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let stdin = session_end::EndOfInput::new(stdin, session_end.clone());
+    let input_reached_eof = stdin.eof_flag();
     let order = ShutdownExitOrder::default().ending_session_with(session_end);
 
     Server::new(stdin, stdout, socket)
@@ -145,7 +184,13 @@ where
                 .to_string(),
         );
     }
-    Ok(())
+    if order.exit_received() {
+        Ok(SessionEnding::Exit)
+    } else if input_reached_eof.load(Ordering::SeqCst) {
+        Ok(SessionEnding::InputClosed)
+    } else {
+        Ok(SessionEnding::UndecodableInput)
+    }
 }
 
 /// Shutdown/exit order observed on the wire (#5249).
@@ -181,6 +226,10 @@ impl ShutdownExitOrder {
             }
             _ => {}
         }
+    }
+
+    fn exit_received(&self) -> bool {
+        self.exit_received.load(Ordering::SeqCst)
     }
 
     fn exit_without_shutdown(&self) -> bool {

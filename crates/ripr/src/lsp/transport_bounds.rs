@@ -979,7 +979,11 @@ mod tests {
             .await
             .map_err(|err| format!("server must stop after an ingress bound trip: {err}"))?
             .map_err(|err| format!("server task failed: {err}"))?;
-        outcome.map_err(|err| format!("serve_streams returned an error: {err}"))
+        let ending = outcome.map_err(|err| format!("serve_streams returned an error: {err}"))?;
+        // #14219: input was still open when the read loop stopped, so the
+        // stdio entry names the reason on stderr.
+        assert_eq!(ending, super::super::SessionEnding::UndecodableInput);
+        Ok(())
     }
 
     #[tokio::test]
@@ -1018,7 +1022,11 @@ mod tests {
             .map_err(|err| format!("server task failed: {err}"))?;
         drop(client_write);
         drop(client_read);
-        outcome.map_err(|err| format!("serve_streams returned an error: {err}"))
+        let ending = outcome.map_err(|err| format!("serve_streams returned an error: {err}"))?;
+        // The stall trip ends input on purpose, so it is not reported as an
+        // undecodable message (#14219).
+        assert_eq!(ending, super::super::SessionEnding::InputClosed);
+        Ok(())
     }
 
     /// Reads framed server output until one frame contains `needle`. A hard
@@ -1113,6 +1121,101 @@ mod tests {
             .map_err(|err| format!("server task failed: {err}"))?;
         drop(client_write);
         drop(client_read);
-        outcome.map_err(|err| format!("serve_streams returned an error: {err}"))
+        let ending = outcome.map_err(|err| format!("serve_streams returned an error: {err}"))?;
+        assert_eq!(ending, super::super::SessionEnding::UndecodableInput);
+        Ok(())
+    }
+
+    /// #14219: a framed body the codec refuses ends the session with input
+    /// still open, and only that ending carries a stderr notice; a closed
+    /// input and an `exit` stay silent.
+    #[tokio::test]
+    async fn refused_framed_body_is_the_only_ending_with_a_stderr_notice() -> Result<(), String> {
+        async fn run(
+            after_initialize: &[u8],
+            close_input: bool,
+        ) -> Result<super::super::SessionEnding, String> {
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let (server_read, server_write) = tokio::io::split(server_io);
+            let (mut client_read, mut client_write) = tokio::io::split(client_io);
+            let root = std::env::temp_dir();
+            let server = tokio::spawn(async move {
+                super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None)
+                    .await
+            });
+            client_write
+                .write_all(&initialize_frame())
+                .await
+                .map_err(|err| format!("writing initialize: {err}"))?;
+            read_frame_containing(
+                &mut client_read,
+                "\"capabilities\"",
+                "the initialize result",
+            )
+            .await?;
+            client_write
+                .write_all(after_initialize)
+                .await
+                .map_err(|err| format!("writing the probe frame: {err}"))?;
+            if close_input {
+                client_write
+                    .shutdown()
+                    .await
+                    .map_err(|err| format!("closing input: {err}"))?;
+            }
+            // Keep reading so egress never stalls the server.
+            let drain = tokio::spawn(async move {
+                let mut sink = Vec::new();
+                let _ = client_read.read_to_end(&mut sink).await;
+                sink
+            });
+            let outcome = tokio::time::timeout(Duration::from_secs(10), server)
+                .await
+                .map_err(|_elapsed| "server did not stop".to_string())?
+                .map_err(|err| format!("server task failed: {err}"))?;
+            drop(client_write);
+            let output = drain.await.map_err(|err| format!("drain failed: {err}"))?;
+            if !close_input && after_initialize.windows(4).any(|w| w == b"nope") {
+                let text = String::from_utf8_lossy(&output);
+                assert!(
+                    text.contains("-32700") && text.contains("\"id\":null"),
+                    "the refused body must still get its null-id parse error, got: {text}"
+                );
+            }
+            outcome
+        }
+
+        let refused = run(&frame("{nope"), false).await?;
+        assert_eq!(refused, super::super::SessionEnding::UndecodableInput);
+        let notice = refused
+            .stderr_notice()
+            .ok_or("a refused body must carry a stderr notice")?;
+        assert!(
+            notice.starts_with("ripr lsp: stopped after a message it could not decode")
+                && notice.contains("restart the language server"),
+            "notice must say what happened and what to do, got: {notice}"
+        );
+
+        let closed = run(b"", true).await?;
+        assert_eq!(closed, super::super::SessionEnding::InputClosed);
+        assert_eq!(closed.stderr_notice(), None);
+
+        // A client that closes in the middle of a frame is a closed input,
+        // not an undecodable message, even though the codec reports the
+        // leftover bytes as a decode error.
+        for partial in [
+            &b"Content-Le"[..],
+            &b"Content-Length: 40\r\n\r\n{\"json"[..],
+        ] {
+            let cut = run(partial, true).await?;
+            assert_eq!(cut, super::super::SessionEnding::InputClosed);
+        }
+
+        let mut exit = frame(r#"{"jsonrpc":"2.0","id":2,"method":"shutdown"}"#);
+        exit.extend_from_slice(&frame(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+        let exited = run(&exit, false).await?;
+        assert_eq!(exited, super::super::SessionEnding::Exit);
+        assert_eq!(exited.stderr_notice(), None);
+        Ok(())
     }
 }
