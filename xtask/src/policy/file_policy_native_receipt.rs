@@ -592,41 +592,50 @@ mod tests {
     #[test]
     fn malformed_invocation_clears_stale_output_but_context_alias_is_preserved()
     -> Result<(), String> {
-        let output =
-            std::env::temp_dir().join(format!("ripr-native-prepare-{}.json", std::process::id()));
+        let root = crate::tests::temp_dir("ripr-native-prepare");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let output = root.join("receipt.json");
         fs::write(&output, "stale").map_err(|e| e.to_string())?;
-        assert!(prepare_output(&[], &output).is_err());
+        let error = prepare_output(&[], &output)
+            .err()
+            .ok_or("malformed invocation accepted")?;
+        assert!(error.contains("expects --context"), "{error}");
         assert!(!output.exists());
         fs::write(&output, "context").map_err(|e| e.to_string())?;
         let args = vec![
             "--context".to_string(),
             output.to_string_lossy().to_string(),
         ];
-        assert!(prepare_output(&args, &output).is_err());
+        let error = prepare_output(&args, &output)
+            .err()
+            .ok_or("context alias accepted")?;
+        assert!(error.contains("must not be the receipt output"), "{error}");
         assert_eq!(
             fs::read_to_string(&output).map_err(|e| e.to_string())?,
             "context"
         );
         fs::remove_file(&output).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
     #[test]
     fn failed_native_or_changed_snapshot_cannot_publish_a_receipt() -> Result<(), String> {
-        let output =
-            std::env::temp_dir().join(format!("ripr-native-receipt-{}.json", std::process::id()));
+        let root = crate::tests::temp_dir("ripr-native-receipt");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let output = root.join("receipt.json");
         fs::write(&output, "stale").map_err(|e| e.to_string())?;
         clear_output(&output)?;
-        assert!(
-            produce_after_clear(
-                context(),
-                &output,
-                &"4".repeat(64),
-                || Ok(snapshot_fixture()),
-                || Err("native producer failed".into())
-            )
-            .is_err()
-        );
+        let error = produce_after_clear(
+            context(),
+            &output,
+            &"4".repeat(64),
+            || Ok(snapshot_fixture()),
+            || Err("native producer failed".into()),
+        )
+        .err()
+        .ok_or("failed producer accepted")?;
+        assert_eq!(error, "native producer failed");
         assert!(!output.exists());
         let mut n = 0;
         let result = produce_after_clear(
@@ -643,7 +652,8 @@ mod tests {
             },
             || Ok(vec![observation()]),
         );
-        assert!(result.is_err());
+        let error = result.err().ok_or("changed snapshot accepted")?;
+        assert!(error.contains("changed during validation"), "{error}");
         assert!(!output.exists());
         produce_after_clear(
             context(),
@@ -656,6 +666,7 @@ mod tests {
         fs::remove_file(&output).map_err(|e| e.to_string())?;
         validate_binding(&text, &context(), &source(), 2, "success", 2)?;
         assert!(require_full(&text, &context(), &source(), 2, "success", 2).is_err());
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -792,14 +803,15 @@ mod tests {
 
     #[test]
     fn partial_write_failure_never_publishes_receipt() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!("ripr-native-atomic-{}", std::process::id()));
-        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let root = crate::tests::temp_dir("ripr-native-atomic");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         let output = root.join(RECEIPT_NAME);
         let result = publish_receipt_with(&output, b"complete", |file, _| {
             file.write_all(b"partial")?;
             Err(std::io::Error::other("injected write failure"))
         });
-        assert!(result.is_err());
+        let error = result.err().ok_or("partial write accepted")?;
+        assert!(error.contains("injected write failure"), "{error}");
         assert!(!output.exists());
         assert_eq!(fs::read_dir(&root).map_err(|e| e.to_string())?.count(), 0);
         publish_receipt_with(&output, b"complete", |file, bytes| file.write_all(bytes))?;
