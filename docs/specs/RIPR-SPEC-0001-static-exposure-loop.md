@@ -96,6 +96,14 @@ families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
 
+A removed line that is one bare literal (a number, `true`/`false`, or one
+quoted string or char, optionally followed by `,` or `;`) adds no removed-side
+`static_unknown` probe when its positional replacement in the same block
+already carries a modeled-family probe whose `before` is that literal
+(#14325). That probe judges the replaced value; a base-side catch-all would
+keep verification refused for code no test can reach. An equal literal
+deleted with no replacement keeps its own probe.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
@@ -151,6 +159,18 @@ initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
 reads as a declaration; so does `A + B` between two bound names and a
 parenthesised single path `(a)`.
+A parameter line of a `fn` written in a macro call body (`feature! { fn f(
+a: u32, ) {} }`) is a declaration under the same type-syntax allowlist
+(#13983). Its `( .. )` tree must directly follow `fn name` or `fn name<..>`;
+the generic list must balance, may hold `Item = u8` and `Fn() -> u8` bounds,
+and fails closed on `;` or `=>`. The parameter list must sit in an item
+position of the macro call: the call's own token tree, or below it only
+`{ .. }` trees that are each an `impl`, `trait` or `mod` body or the body of a
+nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
+(`fn(..)`), a call argument (`make(a: 1,)`), a macro arm, a struct literal and
+a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
+line (`&self,`) has no type and is not classified by this rule, and a fn nested
+inside another fn body in a macro keeps `field_construction`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated

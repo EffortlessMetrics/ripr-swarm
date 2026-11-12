@@ -9,8 +9,9 @@
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
-    ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
-    root_from_initialize_params, workspace_folder_set_from_initialize_params,
+    ConfigurationMode, PullDiagnosticAdvertisement, WorkspaceRootResolution,
+    initialize_result_for_client, root_from_initialize_params,
+    workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
@@ -1774,7 +1775,7 @@ impl Backend {
         let relative_pattern_support = self
             .watched_files_relative_pattern_support
             .load(Ordering::SeqCst);
-        let watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
+        let mut watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
             Ok(watchers) => watchers,
             Err(reason) => {
                 self.client
@@ -1788,6 +1789,19 @@ impl Backend {
                 return;
             }
         };
+        // #14099: sources the committed snapshot analyzed change outside the
+        // editor too. `diagnostics_input_watchers` succeeding means the root
+        // is anchorable (a URI, or a glob-safe absolute path).
+        let root_uri = relative_pattern_support
+            .then(|| file_uri_for_path(&root).ok())
+            .flatten();
+        if root_uri.is_some() || !relative_pattern_support {
+            let absolute = crate::output::path::path_display_lossy(&root);
+            watchers.extend(super::watched_source_drift::committed_source_watchers(
+                root_uri.as_ref(),
+                absolute.trim_end_matches('/'),
+            ));
+        }
         let registration = Registration {
             id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),
@@ -3680,7 +3694,36 @@ impl Backend {
             };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
+        kinds.diagnostics_input_changed |= self.watched_events_drift_committed_sources(changes);
         kinds
+    }
+
+    /// #14099: whether a watched-file event names a source the committed
+    /// snapshot analyzed, is not open, and no longer holds the bytes that
+    /// snapshot consumed (deleted, renamed away or rewritten outside the
+    /// editor). Such an event has no document-sync path, so without a refresh
+    /// the committed rows stay on a file that is gone or predates the rewrite.
+    fn watched_events_drift_committed_sources(&self, changes: &[FileEvent]) -> bool {
+        let Some(snapshot) = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|latest| latest.clone())
+        else {
+            return false;
+        };
+        let committed = super::watched_source_drift::CommittedSources {
+            root: &snapshot.root,
+            consumed: &snapshot.rust_consumed_sources,
+            diagnostic_uris: snapshot.diagnostics_by_uri.keys().collect(),
+        };
+        super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
+            self.quarantine
+                .documents
+                .lock()
+                // A failed store lock reads as open: never refresh on a guess.
+                .map_or(true, |documents| documents.state_for_uri(uri).is_some())
+        })
     }
 
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
@@ -6738,7 +6781,10 @@ impl LanguageServer for Backend {
             .await;
         }
         Ok(initialize_result_for_client(
-            supports_pull_diagnostics,
+            PullDiagnosticAdvertisement::for_client(
+                supports_pull_diagnostics,
+                profile.ripr_editor.is_some(),
+            ),
             position_encoding,
         ))
     }
@@ -10200,6 +10246,8 @@ mod top_limitation_selection_tests {
             stop_reason: PartialDiffStopReason::FileBudget,
             next_file_changed_lines: Some(3),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }

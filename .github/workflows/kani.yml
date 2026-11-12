@@ -75,3 +75,4 @@ jobs:
           name: ripr-kani
           path: target/ripr/reports/kani.md
           if-no-files-found: warn
+          retention-days: 14

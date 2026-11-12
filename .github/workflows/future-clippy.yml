@@ -98,6 +98,7 @@ jobs:
             target/future-clippy.log
             target/future-clippy-status.txt
           if-no-files-found: error
+          retention-days: 14
 
   stable-repo-policy:
     name: stable-repo-policy
