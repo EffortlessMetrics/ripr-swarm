@@ -175,10 +175,13 @@ nothing else) against source:
 - the final module holds at least one `#[test]` function;
 - inside the final module, at any depth of inline modules, every `cfg` is
   one the resolver evaluates for this host (`test`, `unix`, `windows`,
-  `target_os = "..."`, or `not(..)` of one of them), with no `cfg_attr`,
-  `#[path]`, file module (`mod deeper;`), macro invocation or definition, or
-  function with another test attribute (such as `#[tokio::test]`). Any of
-  these could leave tests out of the list, so it refuses the whole selector.
+  `target_os = "..."`, or `not(..)` of one of them), every other attribute
+  on any item is inert (test markers, lint levels, documentation, codegen
+  hints, standard derives), and there is no file module (`mod deeper;`) or
+  macro invocation or definition. A `cfg_attr`, `#[path]`, attribute macro,
+  non-standard derive or other test attribute (such as `#[tokio::test]`)
+  could change which tests exist, so it refuses the whole selector. The same
+  attribute rule applies to the modules along the path.
   A test or module whose `cfg` is false on this host is left out, as the
   build on this host leaves it out.
   Inner attributes (`#![cfg(..)]`) of a module file or inline module are
@@ -247,8 +250,9 @@ and list every applicable selector.
   declared module with tests, and the shapes that must not resolve (renamed
   module, feature condition, conditional test, syntax error, nested file
   module, and an unconditional test beside a test, a module or a nested test
-  under a condition not evaluated, another test attribute, or a macro
-  invocation). A host-condition test pins that `unix`, `windows`, `not(..)`,
+  under a condition not evaluated, another test attribute, a macro
+  invocation, an attribute macro on the test or on another item, or a
+  non-standard derive). A host-condition test pins that `unix`, `windows`, `not(..)`,
   `target_os` and a conditional nested module list exactly what this host
   builds. One test
   resolves the shipped `ripr` selector in this repository. A policy test pins

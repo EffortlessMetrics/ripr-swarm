@@ -130,10 +130,48 @@ fn host_cfg_value(predicate: &str) -> Option<bool> {
     }
 }
 
+/// Whether a non-`cfg` attribute is known not to add, remove or rename items:
+/// test markers, lint levels, documentation, codegen hints and the standard
+/// derives. An attribute macro is none of these, so it is not inert.
+fn is_inert_attribute(text: &str) -> bool {
+    const STANDARD_DERIVES: [&str; 9] = [
+        "Debug",
+        "Clone",
+        "Copy",
+        "PartialEq",
+        "Eq",
+        "PartialOrd",
+        "Ord",
+        "Hash",
+        "Default",
+    ];
+    let Some(body) = text
+        .strip_prefix("#[")
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let name = body.split(['(', '=']).next().unwrap_or_default();
+    match name {
+        "test" | "ignore" | "should_panic" | "allow" | "expect" | "warn" | "deny" | "forbid"
+        | "doc" | "inline" | "cold" | "must_use" | "track_caller" | "macro_use"
+        | "rustfmt::skip" => true,
+        "derive" => body
+            .strip_prefix("derive(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|list| {
+                list.split(',')
+                    .all(|derive| STANDARD_DERIVES.contains(&derive.trim_start_matches("std::")))
+            }),
+        _ => name.starts_with("clippy::"),
+    }
+}
+
 /// Whether an item is present in a test build on this host: `Some(true)` or
 /// `Some(false)` when every `cfg` on it is understood (see
-/// [`host_cfg_value`]), `None` when any `cfg` is not, or when it carries a
-/// `cfg_attr` or a `#[path]`.
+/// [`host_cfg_value`]) and every other attribute is inert (see
+/// [`is_inert_attribute`]); `None` otherwise, including for a `cfg_attr`, a
+/// `#[path]` or an attribute macro, which can change what is built.
 fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
     let mut present = true;
     for text in item.attrs().map(|attr| attribute_text(&attr)) {
@@ -145,7 +183,7 @@ fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
             .and_then(|rest| rest.strip_suffix(")]"))
         {
             present &= host_cfg_value(predicate)?;
-        } else if text.starts_with("#[cfg") {
+        } else if text.starts_with("#[cfg") || !is_inert_attribute(&text) {
             return None;
         }
     }
@@ -174,39 +212,27 @@ fn parse_items(path: &Path) -> Option<Vec<ast::Item>> {
     Some(tree.items().collect())
 }
 
-/// Whether an attribute could mark a function as a test in a way this module
-/// does not count: anything naming `test` other than `#[test]` and
-/// `#[cfg(test)]`, such as `#[tokio::test]` or `#[test_case(..)]`.
-fn is_other_test_attribute(text: &str) -> bool {
-    text.contains("test") && text != "#[test]" && text != "#[cfg(test)]"
-}
-
 /// Test names under `items`, relative to `prefix`, or `None` when the list
 /// could be incomplete. Nested inline modules are followed. A test or module
 /// whose `cfg` is false on this host is left out, as the build leaves it out.
 /// Each of these refuses the whole selector, which then goes to the
-/// build-and-list path: a `cfg` not understood by [`host_cfg_value`], a
-/// `cfg_attr` or `#[path]`, a nested file module (`mod deeper;`, not read
-/// here), a macro invocation or definition (it can expand to tests), and a
-/// function carrying another test attribute.
+/// build-and-list path: a `cfg` not understood by [`host_cfg_value`], any
+/// attribute that is not inert (a `cfg_attr`, `#[path]`, an attribute macro
+/// or another test attribute such as `#[tokio::test]`) on any item, a nested
+/// file module (`mod deeper;`, not read here), and a macro invocation or
+/// definition (it can expand to tests).
 fn collect_tests(items: &[ast::Item], prefix: &str, tests: &mut Vec<String>) -> Option<()> {
     for item in items {
+        // Every item, not only tests and modules: an attribute macro on any
+        // item can expand to tests, so it refuses the selector.
+        if !presence_in_test_build(item)? {
+            continue;
+        }
         match item {
-            ast::Item::Fn(function) => {
-                if function
-                    .attrs()
-                    .any(|attr| is_other_test_attribute(&attribute_text(&attr)))
-                {
-                    return None;
-                }
-                if is_test_function(function) && presence_in_test_build(function)? {
-                    tests.push(format!("{prefix}::{}", function.name()?.text()));
-                }
+            ast::Item::Fn(function) if is_test_function(function) => {
+                tests.push(format!("{prefix}::{}", function.name()?.text()));
             }
             ast::Item::Module(module) => {
-                if !presence_in_test_build(module)? {
-                    continue;
-                }
                 let name = module.name()?;
                 let list = module.item_list()?;
                 // An inline module's inner attributes sit under its item list.
@@ -410,6 +436,11 @@ mod tests {
         let inner_cfg_attr = "#[cfg(test)]\nmod tests {\n    #![cfg_attr(unix, allow(dead_code))]\n    #[test]\n    fn always() {}\n}\n";
         // An inner attribute at the top of the module file itself.
         let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
+        // An attribute macro can remove or rename the test it sits on, or
+        // expand an ordinary item into tests.
+        let attribute_macro = "#[cfg(test)]\nmod tests {\n    #[remove_item]\n    #[test]\n    fn only_test() {}\n}\n";
+        let item_macro = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[generate_tests]\n    struct Cases;\n}\n";
+        let foreign_derive = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[derive(Debug, MakeTests)]\n    struct Cases;\n}\n";
         let macro_tests = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    make_tests!(a, b);\n}\n";
         for (label, inner) in [
             ("no-tests", no_tests),
@@ -424,6 +455,9 @@ mod tests {
             ("mixed-nested", mixed_nested),
             ("other-attribute", other_attribute),
             ("macro-tests", macro_tests),
+            ("attribute-macro", attribute_macro),
+            ("item-macro", item_macro),
+            ("foreign-derive", foreign_derive),
             ("inner-feature", inner_feature),
             ("inner-cfg-attr", inner_cfg_attr),
             ("file-inner-feature", file_inner_feature),
