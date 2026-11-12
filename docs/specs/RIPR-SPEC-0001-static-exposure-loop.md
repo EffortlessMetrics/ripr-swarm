@@ -96,6 +96,23 @@ families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
 
+A change confined to one range expression or range pattern whose values feed an
+absorbing consumer (a method on the range's chain outside the length-preserving
+set such as `sum`, `contains`, `find` or `take`, a `for` header, or a match range
+pattern) reads infection `yes` only when an `assert_eq!`-family or bare boolean
+`assert!` holds a bare literal call of the owner (or its `.await`) whose folded
+result differs between the old and new range (#14419). A relational or
+`assert_ne!` check at such an input, or every asserted call agreeing on both
+versions, reads infection `weak`. The second case is not claimed for an
+equivalent rewrite or when the owner has other callers. Any other gated change,
+including an input ripr cannot fold, reads `unknown`, so `(0..n).sum()` to
+`(0..=n).sum()` tested only by `sum_to(0)` is not `exposed`. A test whose body
+rebinds or imports the owner's name supplies no separating input. Ranges feeding
+length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
+`.count()`) keep the ordinary reading, since an element more shows at every
+non-empty input. A set collect or an input where both ranges are empty is the
+known limit there.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
