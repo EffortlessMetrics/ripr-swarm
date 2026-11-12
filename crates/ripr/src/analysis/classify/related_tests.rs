@@ -4475,7 +4475,7 @@ pub(in crate::analysis) fn let_binding_is_crate_qualified_literal(
 
 /// How many `let [mut] binding` statements `body` holds, by the same text
 /// reading as [`last_let_statement`].
-fn let_statement_count(body: &str, binding: &str) -> usize {
+pub(in crate::analysis) fn let_statement_count(body: &str, binding: &str) -> usize {
     let mut count = 0;
     let mut rest = body;
     while let Some(stmt) = last_let_statement(rest, binding) {
@@ -4484,6 +4484,14 @@ fn let_statement_count(body: &str, binding: &str) -> usize {
         rest = &rest[..at];
     }
     count
+}
+
+/// Whether `init` is one struct literal (`Counter { .. }`,
+/// `krate::Counter { .. }`) with nothing after it (#14407).
+pub(in crate::analysis) fn initializer_is_struct_literal(init: &str) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init) && matches!(type_head(init), Some((_, Some(b'{'))))
 }
 
 /// Whether `init` is one struct literal whose head is exactly

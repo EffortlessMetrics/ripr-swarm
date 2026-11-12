@@ -4606,6 +4606,36 @@ fn assertion_restates_seeded_field(test: &TestSummary, path: &str, assertion: &O
         })
 }
 
+/// #14407: whether every binding the assertion reads the field `path` from
+/// has, before the read, exactly one `let` and that `let` is initialized by a
+/// visible struct literal, so [`assertion_restates_seeded_field`] can read the
+/// field's pre-call value. A constructor, call or other initializer may already
+/// leave the expected value in the field (`Counter::new()` building
+/// `Counter { n: 1 }`), so reveal's assigned-field credit refuses it. Activation
+/// and the repository seam do not ask this.
+pub(in crate::analysis) fn assigned_field_seed_is_visible(
+    test: &TestSummary,
+    path: &str,
+    assertion: &OracleFact,
+) -> bool {
+    let reads =
+        super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path);
+    let body = test.body.as_str();
+    let end = body
+        .split_inclusive('\n')
+        .take(assertion.line.saturating_sub(test.start_line))
+        .map(str::len)
+        .sum::<usize>()
+        .min(body.len());
+    let masked = crate::analysis::extract::mask_comments_and_strings(&body[..end]);
+    !reads.is_empty()
+        && reads.iter().all(|read| {
+            super::related_tests::let_statement_count(&masked, &read.binding) == 1
+                && super::reveal::owner_call_binding_let_initializer(&masked, &read.binding)
+                    .is_some_and(super::related_tests::initializer_is_struct_literal)
+        })
+}
+
 /// Whether `test`'s body, before file line `read_line`, seeds `binding.path`
 /// with `expected` (compact text) or with a value it cannot read; see
 /// [`assertion_restates_seeded_field`].
@@ -12448,6 +12478,68 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
+        }
+    }
+
+    /// #14407: reveal's short-field credit needs a receiver built by one
+    /// visible struct literal.
+    #[test]
+    fn only_a_struct_literal_receiver_has_a_visible_seed() {
+        let visible = |lines: &[&str]| {
+            let body = lines.join("\n");
+            let assertion = lines.last().copied().unwrap_or_default().trim();
+            let test = TestSummary {
+                start_line: 10,
+                end_line: 10 + lines.len(),
+                body: body.as_str().into(),
+                ..test_with_assertion("reference", assertion, OracleKind::ExactValue)
+            };
+            let fact = OracleFact {
+                line: 10 + lines.len() - 1,
+                ..oracle_fact(assertion, OracleKind::ExactValue)
+            };
+            assigned_field_seed_is_visible(&test, "n", &fact)
+        };
+        for kept in [
+            &[
+                "let mut c = probe::Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(visible(kept), "{kept:?}");
+        }
+        for refused in [
+            &[
+                "let mut c = probe::Counter::new();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter::default();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &["let mut c = make();", "c.reset();", "assert_eq!(c.n, 1);"],
+            &[
+                "let mut c = Counter { n: 5 }.clone();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &["c.reset();", "assert_eq!(c.n, 1);"],
+            &[
+                "let mut c = Counter::new();",
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(!visible(refused), "{refused:?}");
         }
     }
 

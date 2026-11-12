@@ -236,3 +236,34 @@ fn a_namesake_counter_in_the_test_file_gets_no_credit() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #14407 review: a receiver built by a constructor has a pre-call field value
+/// the read rule does not see (`new()` already sets `n: 1`), so a deleted write
+/// may pass. Only a visible struct literal earns the short-field read credit.
+#[test]
+fn a_constructor_built_receiver_gets_no_short_field_credit() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn new() -> Counter {\n        Counter { n: 1, m: 0 }\n    }\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n}\n";
+    let found = finding_at(
+        owner,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter::new();\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_eq!(
+        relation(&found),
+        Some(RelationReason::DirectOwnerCall),
+        "the receiver still reaches the owner: {found:#?}"
+    );
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    // Control: the same owner with a struct-literal receiver is exposed.
+    let literal = finding_at(
+        owner,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_eq!(literal.class, ExposureClass::Exposed, "{literal:#?}");
+    Ok(())
+}
