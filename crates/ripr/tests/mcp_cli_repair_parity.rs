@@ -432,6 +432,17 @@ fn already_gripped_seam_is_refused_with_one_cause_on_every_surface() -> Result<(
             "#[test]\nfn boundary() {\n    let r = discounted_total(100, 100);\n    assert_eq!(r, 90);\n}\n",
         ),
     )?;
+    // #14327: the default list leaves the already-gripped item out and
+    // discloses it; `class: "exposed"` recovers it.
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("refresh did not complete: {refresh}"));
+    }
+    let default_list = mcp.tool("ripr_list_gaps", json!({}))?;
+    assert_eq!(default_list["items"], json!([]), "{default_list}");
+    assert_eq!(default_list["exposed_omitted"], json!(1), "{default_list}");
+    drop(mcp);
     let seen = observe_listing(&fixture, json!({ "class": "exposed" }))?;
     assert!(
         !seen.check_class.is_empty(),
@@ -718,14 +729,10 @@ fn item_no_seam_resolves_carries_the_cli_cause_on_prepare_and_card() -> Result<(
         ),
     ] {
         let fixture = Fixture::python(name, test)?;
-        // The strong test pins the boundary, so that item is `exposed` and the
-        // default list leaves it out (#14327); the weak one is listed.
-        let list_arguments = if name == "py-strong" {
-            json!({ "class": "exposed" })
-        } else {
-            json!({})
-        };
-        let seen = observe_listing(&fixture, list_arguments)?;
+        // The strong test pins the boundary, so that item is `exposed`, but the
+        // gate refuses it as Rust-only rather than already gripped, so the
+        // default list still names it (#14327).
+        let seen = observe(&fixture)?;
         let cause = "covers Rust files only";
         assert!(
             seen.repair_text.contains(cause),

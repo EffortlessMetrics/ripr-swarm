@@ -405,10 +405,14 @@ official SDK transport:
   no match, and an unknown `file`, produce an empty disclosed page.
   `selected` remains the stored-selection count; `filtered` is the narrowed
   count. `filters` echoes all four dimensions, with null for omitted values.
-  With no `class` filter the list leaves out `exposed` items that are not
-  repair-ready (#14327): they need no test-side action, so listing them
-  invites per-item evidence reads that change nothing. A repair-ready
-  `exposed` item stays listed because it is still an actionable repair target. `filtered` counts after that exclusion (it is the set
+  With no `class` filter the list leaves out `exposed` items the shared seam
+  gate refused as `seam_already_gripped` (#14327): existing tests already
+  check the seam, so listing them invites per-item evidence reads that change
+  nothing. Only that positive cause omits. An `exposed` item that is
+  repair-ready, or unready for any other cause (a truncated seam inventory,
+  withheld worktree evidence, an ambiguous or unfound seam, a finding-level
+  gate), stays listed, because missing or limited evidence never becomes a
+  no-action conclusion. `filtered` counts after that exclusion (it is the set
   the page walks), the additive `exposed_omitted` count and `exposed_route`
   string disclose what was left out (both absent when zero or when `class`
   was named), and `total`, `eligible`, `selected` and `outcome` still describe
@@ -788,8 +792,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   + `gap_list_filters_narrow_each_dimension_then_combine_before_paging`
   — direct stored-fact narrowing/readiness and continuation controls.
 - `crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count`
-  — default list leaves out non-repair-ready `exposed` items and counts them
-  in `exposed_omitted`; `class: "exposed"` lists them; other items stay.
+  — default list leaves out already-gripped `exposed` items and counts them
+  in `exposed_omitted`; a truncation-refused `exposed` item and a
+  repair-ready one stay listed; `class: "exposed"` lists them all.
 - `crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge`
   — argument admission before refresh; this is not successful narrowing proof.
 - `crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary`

@@ -134,12 +134,18 @@ pub(crate) struct GapListFilter {
 
 impl GapListFilter {
     /// Narrowed membership: every explicit dimension, plus the default
-    /// exposure exclusion (#14327). With no `class` filter, `exposed` items
-    /// that are not repair-ready need no test-side action and are left out of
-    /// the walked set (a repair-ready exposed item stays: it is actionable); they are
-    /// counted by [`Self::default_excluded_exposed`] and named in the
-    /// document, never silently dropped. Any explicit `class` (including
-    /// `exposed`) matches exactly that class.
+    /// exposure exclusion (#14327). With no `class` filter, an `exposed` item
+    /// the shared seam gate refused as already gripped
+    /// ([`SEAM_ALREADY_GRIPPED`](crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED):
+    /// its existing tests already check the seam, so no static gap remains)
+    /// is left out of the walked set. Only that positive cause omits: an
+    /// `exposed` item that is repair-ready, or unready for any other reason
+    /// (a truncated seam inventory, withheld worktree evidence, an ambiguous
+    /// or unfound seam, a finding-level gate), stays listed, because missing
+    /// or limited evidence never becomes a no-action conclusion. Omitted
+    /// items are counted by [`Self::default_excluded_exposed`] and disclosed
+    /// in the document, never silently dropped. Any explicit `class`
+    /// (including `exposed`) matches exactly that class.
     fn matches(&self, item: &GapItem) -> bool {
         self.matches_dimensions(item) && !self.excludes_exposed_by_default(item)
     }
@@ -147,7 +153,8 @@ impl GapListFilter {
     fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
         self.class.is_none()
             && item.class() == crate::domain::ExposureClass::Exposed.as_str()
-            && !item.repair_ready()
+            && item.repair_readiness.ineligibility
+                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
     }
 
     /// Items the default exposure exclusion removed: they satisfy every
@@ -3512,19 +3519,52 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
-    /// #14327: with no `class` filter the list leaves out `exposed` items that
-    /// are not repair-ready and discloses them as `exposed_omitted`; an
-    /// explicit class lists them, other items (including a repair-ready
-    /// exposed one) stay listed, and whole-snapshot counts do not shrink.
+    /// #14327: with no `class` filter the list leaves out `exposed` items the
+    /// shared seam gate refused as `seam_already_gripped` and discloses them as
+    /// `exposed_omitted`. An `exposed` item refused for limited evidence (a
+    /// truncated seam inventory) and a repair-ready `exposed` item stay listed;
+    /// an explicit class lists them all, and whole-snapshot counts do not
+    /// shrink.
     #[test]
     fn default_gap_list_omits_exposed_and_discloses_the_count() -> Result<(), String> {
-        let mut gripped = gaps::test_finding()?;
-        gripped.id = "finding:test:exposed-gripped".to_string();
-        gripped.canonical_gap = None;
-        gripped.probe.id = crate::domain::ProbeId("probe:test:exposed-gripped".to_string());
-        gripped.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", 40, 1);
-        gripped.class = crate::domain::ExposureClass::Exposed;
-        let session = session_with_varied_findings_plus(vec![gripped])?;
+        let exposed_unready = |name: &str, line: usize| -> Result<crate::domain::Finding, String> {
+            let mut finding = gaps::test_finding()?;
+            finding.id = format!("finding:test:exposed-{name}");
+            finding.canonical_gap = None;
+            finding.probe.id = crate::domain::ProbeId(format!("probe:test:exposed-{name}"));
+            finding.probe.location = crate::domain::SourceLocation::new("src/checkout.rs", line, 1);
+            finding.class = crate::domain::ExposureClass::Exposed;
+            Ok(finding)
+        };
+        let mut session = session_with_varied_findings_plus(vec![
+            exposed_unready("gripped", 40)?,
+            exposed_unready("truncated", 50)?,
+        ])?;
+        // Bind the shared seam gate's verdicts the way commit does
+        // (`RepairReadiness::with_seam_verdict`): no analysis runs here.
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        for (id, code) in [
+            (
+                "finding:test:exposed-gripped",
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            ),
+            (
+                "finding:test:exposed-truncated",
+                crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            ),
+        ] {
+            let item = snapshot
+                .items
+                .iter_mut()
+                .find(|item| item.finding_id == id)
+                .ok_or_else(|| format!("fixture lost {id}"))?;
+            assert!(!item.repair_ready(), "precondition: {id} starts unready");
+            item.repair_readiness.ineligibility = Some(code);
+        }
         let list = |filter: &GapListFilter| {
             session
                 .list_gaps(
@@ -3541,6 +3581,7 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "finding:test:exposed-truncated".to_string(),
                 "finding:test:unready".to_string(),
                 "gap:test:exposed-python".to_string(),
                 "gap:test:ready".to_string(),
@@ -3555,10 +3596,10 @@ mod tests {
                 .is_some_and(|route| route.contains("class: \"exposed\"")),
             "{default}"
         );
-        assert_eq!(default["filtered"], json!(4), "{default}");
-        assert_eq!(default["selected"], json!(5), "{default}");
-        assert_eq!(default["total"], json!(5), "{default}");
-        assert_eq!(default["page"]["returned"], json!(4), "{default}");
+        assert_eq!(default["filtered"], json!(5), "{default}");
+        assert_eq!(default["selected"], json!(6), "{default}");
+        assert_eq!(default["total"], json!(6), "{default}");
+        assert_eq!(default["page"]["returned"], json!(5), "{default}");
         assert_eq!(default["filters"]["class"], Value::Null, "{default}");
 
         let exposed = list(&GapListFilter {
@@ -3571,13 +3612,14 @@ mod tests {
             ids,
             vec![
                 "finding:test:exposed-gripped".to_string(),
+                "finding:test:exposed-truncated".to_string(),
                 "gap:test:exposed-python".to_string(),
             ],
             "{exposed}"
         );
         assert!(exposed.get("exposed_omitted").is_none(), "{exposed}");
         assert!(exposed.get("exposed_route").is_none(), "{exposed}");
-        assert_eq!(exposed["filtered"], json!(2), "{exposed}");
+        assert_eq!(exposed["filtered"], json!(3), "{exposed}");
 
         // Another explicit class neither lists nor counts exposed items.
         let weak = list(&GapListFilter {
@@ -3598,7 +3640,7 @@ mod tests {
             ..Default::default()
         })?;
         assert_eq!(checkout["exposed_omitted"], json!(1), "{checkout}");
-        assert_eq!(checkout["filtered"], json!(2), "{checkout}");
+        assert_eq!(checkout["filtered"], json!(3), "{checkout}");
         Ok(())
     }
 
