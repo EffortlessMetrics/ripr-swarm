@@ -33,6 +33,11 @@ human, GitHub and JSON disclosures keep naming it;
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
 requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+When full summary findings exceed full summary exposed findings the refusal
+reason is `unexposed_findings_remain` (#13825). It names what it counts rather
+than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
+is reported under the header's `limits=`, not `gaps=`, so the record never
+claims gaps remain beside a `gaps=0` header.
 Explain navigation retains its printed format for artifact replay with an
 explicit suppression policy, since that combination refuses Agent format.
 

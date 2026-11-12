@@ -110,8 +110,9 @@ not edit source or tests, run verification, or create a durable CLI attempt.
 See the [progressive MCP flow](interop/mcp.md#progressive-flow) for repair
 cards, attempt and receipt inspection, and snapshot-pinned reads.
 
-Refresh explicitly after edits. For saved tracked changes, pass
-`source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
+Refresh explicitly after edits. Like `ripr check`, `ripr_refresh` reads saved
+tracked edits when any exist; pass `source: "committed"` or
+`source: "worktree"` to force one, and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
@@ -180,7 +181,7 @@ subset:
   Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the

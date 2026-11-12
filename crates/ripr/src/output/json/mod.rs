@@ -1,6 +1,6 @@
 mod context_packet;
 mod finding_alignment;
-mod findings_priority;
+pub(crate) mod findings_priority;
 mod formatter;
 mod report;
 mod terse;
