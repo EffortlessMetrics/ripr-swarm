@@ -21,6 +21,7 @@ struct Mapping {
 }
 
 const CONTROLS: &[&str] = &[
+    "workflow_contracts::review_disposition_admission::relocated_receiver_resources_are_executed_or_refused",
     "workflow_contracts::inventory_contract::complete_native_inventory_preserves_every_baseline_case",
     "workflow_contracts::inventory_contract::duplicate_mapping_is_refused",
     "workflow_contracts::inventory_contract::missing_mapping_is_refused",

@@ -6,13 +6,143 @@ use std::process::{Command, Output, Stdio};
 const SCRIPT: &str = ".github/actions/pr-candidate-admission/review_disposition.py";
 const REFUSED: &str = "source review attestation refused";
 
-fn script() -> Result<PathBuf, String> {
-    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+// Bind the selected receiver to the resources compiled into this test binary.
+// No producer-path fallback is safe when a retained executable is relocated.
+const SCRIPT_BYTES: &[u8] =
+    include_bytes!("../../../../.github/actions/pr-candidate-admission/review_disposition.py");
+const BODIES: &[(&str, &[u8])] = &[
+    (
+        "ready-pr12736-5.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12736-5.md"),
+    ),
+    (
+        "ready-pr12736-7.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12736-7.md"),
+    ),
+    (
+        "ready-pr12751-1.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12751-1.md"),
+    ),
+    (
+        "ready-pr12756-1.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12756-1.md"),
+    ),
+    (
+        "ready-pr12756-13.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12756-13.md"),
+    ),
+    (
+        "ready-pr12756-4.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12756-4.md"),
+    ),
+    (
+        "ready-pr12756-7.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12756-7.md"),
+    ),
+    (
+        "ready-pr12781-1.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12781-1.md"),
+    ),
+    (
+        "ready-pr12782-4.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12782-4.md"),
+    ),
+    (
+        "ready-pr12784-6.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12784-6.md"),
+    ),
+    (
+        "ready-pr12793-5.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/ready-pr12793-5.md"),
+    ),
+    (
+        "refuse-pr12736-3.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12736-3.md"),
+    ),
+    (
+        "refuse-pr12782-0.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12782-0.md"),
+    ),
+    (
+        "refuse-pr12784-0.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12784-0.md"),
+    ),
+    (
+        "refuse-pr12784-3.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12784-3.md"),
+    ),
+    (
+        "refuse-pr12793-0.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12793-0.md"),
+    ),
+    (
+        "refuse-pr12793-3.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12793-3.md"),
+    ),
+    (
+        "refuse-pr12793-4.md",
+        include_bytes!("../../../repo-policy/tests/fixtures/review_bodies/refuse-pr12793-4.md"),
+    ),
+];
+
+fn resource_root() -> Result<PathBuf, String> {
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
+        .ok_or("review resource runtime missing CARGO_MANIFEST_DIR")?;
+    let manifest = PathBuf::from(manifest);
+    if !manifest.is_absolute() {
+        return Err("review resource manifest must be absolute".into());
+    }
+    let manifest = manifest
+        .canonicalize()
+        .map_err(|e| format!("review resource manifest: {e}"))?;
     let root = manifest
         .parent()
         .and_then(|p| p.parent())
-        .ok_or("repository root not found")?;
-    Ok(root.join(SCRIPT))
+        .ok_or("review resource root missing")?;
+    let expected = root
+        .join("tools/repo-policy-contracts")
+        .canonicalize()
+        .map_err(|e| format!("review resource manifest: {e}"))?;
+    if manifest != expected {
+        return Err("review resource manifest mismatch".into());
+    }
+    let script = root.join(SCRIPT);
+    if std::fs::read(&script).map_err(|e| format!("review resource script: {e}"))? != SCRIPT_BYTES {
+        return Err("review resource script differs from compiled subject".into());
+    }
+    let dir = root.join("tools/repo-policy/tests/fixtures/review_bodies");
+    let mut count = 0;
+    for entry in std::fs::read_dir(&dir).map_err(|e| format!("review resource corpus: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let Some((_, expected)) = BODIES.iter().find(|(n, _)| std::ffi::OsStr::new(n) == name)
+        else {
+            return Err(format!(
+                "unexpected review resource fixture: {}",
+                entry.path().display()
+            ));
+        };
+        if !entry.file_type().map_err(|e| e.to_string())?.is_file()
+            || std::fs::read(entry.path()).map_err(|e| e.to_string())? != *expected
+        {
+            return Err(format!(
+                "review resource fixture differs: {}",
+                entry.path().display()
+            ));
+        }
+        count += 1;
+    }
+    if count != BODIES.len() {
+        return Err(format!(
+            "review resource corpus incomplete: {count}/{}",
+            BODIES.len()
+        ));
+    }
+    Ok(root.to_path_buf())
+}
+
+fn script() -> Result<PathBuf, String> {
+    Ok(resource_root()?.join(SCRIPT))
 }
 
 fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, String> {
@@ -306,8 +436,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
 #[test]
 fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
     let head = "a".repeat(40);
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../repo-policy/tests/fixtures/review_bodies");
+    let dir = resource_root()?.join("tools/repo-policy/tests/fixtures/review_bodies");
     let mut ready = 0;
     let mut refused = 0;
     for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
@@ -772,4 +901,70 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         false,
         "negative then neutral reply without a description line",
     )
+}
+
+#[test]
+fn relocated_receiver_resources_are_executed_or_refused() -> Result<(), String> {
+    let source = resource_root()?;
+    let root =
+        std::env::temp_dir().join(format!("review-resource-receiver-{}", std::process::id()));
+    let manifest = root.join("tools/repo-policy-contracts");
+    let corpus = root.join("tools/repo-policy/tests/fixtures/review_bodies");
+    let script = root.join(SCRIPT);
+    std::fs::create_dir_all(&manifest).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(script.parent().ok_or("script parent")?).map_err(|e| e.to_string())?;
+    std::fs::copy(source.join(SCRIPT), &script).map_err(|e| e.to_string())?;
+    for (name, _) in BODIES {
+        std::fs::copy(
+            source
+                .join("tools/repo-policy/tests/fixtures/review_bodies")
+                .join(name),
+            corpus.join(name),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let run = |case: &str| -> Result<Output, String> {
+        Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+            .arg(format!(
+                "workflow_contracts::review_disposition_admission::{case}"
+            ))
+            .args(["--exact", "--test-threads=1"])
+            .current_dir(&root)
+            .env("CARGO_MANIFEST_DIR", &manifest)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let check = |case: &str, success: bool| -> Result<(), String> {
+        let output = run(case)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if output.status.success() != success
+            || !stdout.contains("running 1 test")
+            || (!success && !stdout.contains("review resource"))
+        {
+            return Err(format!(
+                "receiver {case}: {:?} {stdout} {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    };
+    let script_case = "malformed_review_pages_refuse_instead_of_crashing";
+    let corpus_case = "full_real_review_bodies_admit_or_refuse_as_recorded";
+    check(script_case, true)?;
+    check(corpus_case, true)?;
+    std::fs::write(&script, "raise SystemExit(97)\n").map_err(|e| e.to_string())?;
+    check(script_case, false)?;
+    std::fs::remove_file(&script).map_err(|e| e.to_string())?;
+    check(script_case, false)?;
+    std::fs::copy(source.join(SCRIPT), &script).map_err(|e| e.to_string())?;
+    std::fs::write(corpus.join(BODIES[0].0), "corrupt").map_err(|e| e.to_string())?;
+    check(corpus_case, false)?;
+    std::fs::remove_dir_all(&corpus).map_err(|e| e.to_string())?;
+    check(corpus_case, false)?;
+    std::fs::create_dir(&corpus).map_err(|e| e.to_string())?;
+    check(corpus_case, false)?;
+    std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
 }
