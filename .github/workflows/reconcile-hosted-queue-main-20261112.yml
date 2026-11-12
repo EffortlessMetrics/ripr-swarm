@@ -1,0 +1,79 @@
+name: Reconcile hosted queue carrier with current main
+
+on:
+  push:
+    branches: [codex/4838-hosted-main-reconcile-20261112]
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact rehearsal branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: codex/4838-hosted-main-reconcile-20261112
+          fetch-depth: 0
+
+      - name: Merge the inspected protected-main generation
+        shell: bash
+        env:
+          EXPECTED_HEAD: 50d9bb94921b0f4f7b3d840093a596eed7059852
+          EXPECTED_MAIN: 17076506afc35dfc91b0329e9de8b9391dd02cdb
+        run: |
+          set -euo pipefail
+          actual_head="$(git rev-parse HEAD^)"
+          [ "$actual_head" = "$EXPECTED_HEAD" ] || {
+            echo "::error::rehearsal parent moved: expected $EXPECTED_HEAD, got $actual_head"
+            exit 1
+          }
+          git fetch --no-tags origin main
+          actual_main="$(git rev-parse FETCH_HEAD)"
+          [ "$actual_main" = "$EXPECTED_MAIN" ] || {
+            echo "::error::protected main moved: expected $EXPECTED_MAIN, got $actual_main"
+            exit 1
+          }
+          git config user.name EffortlessSteven
+          git config user.email 15812269+EffortlessSteven@users.noreply.github.com
+          set +e
+          git merge --no-commit --no-ff "$EXPECTED_MAIN"
+          merge_status=$?
+          set -e
+          if [ "$merge_status" -ne 0 ]; then
+            echo "::group::Unmerged paths"
+            git diff --name-status --diff-filter=U
+            echo "::endgroup::"
+            echo "::group::Merge status"
+            git status --short
+            echo "::endgroup::"
+            exit "$merge_status"
+          fi
+          rm .github/workflows/reconcile-hosted-queue-main-20261112.yml
+
+      - name: Verify reconciled final tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --locked -p repo-policy --all-targets
+          cargo run --locked -p repo-policy -- check-workflows
+          git diff --check
+          test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
+
+      - name: Create and publish tested merge object
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
+          merged="$(git rev-parse HEAD)"
+          echo "merged_commit=$merged"
+          echo "merged_tree=$(git rev-parse HEAD^{tree})"
+          echo "merged_parents=$(git show -s --format=%P HEAD)"
+          git push origin HEAD:refs/heads/codex/4838-hosted-main-reconcile-20261112
