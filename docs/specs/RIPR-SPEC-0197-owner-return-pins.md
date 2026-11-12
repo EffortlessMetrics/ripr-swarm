@@ -2059,6 +2059,11 @@ nested `if` branch tails recurse. Exclusions:
   by AST kind (so `if` or `match` alone on its line is still excluded);
 - a value on any line of its `if`'s condition gets no shape, because an inline
   branch already flows to the return through that line's predicate (#7626);
+- a branch value that is a comparison or boolean expression
+  (`input.len() > 3`, also inside parentheses or under `!`) keeps only its
+  predicate probe, so a weaker second row
+  cannot turn a discriminated predicate into a gap (verdict corpus
+  `spec-b-0159-recursive-helper`);
 - an `if` without `else` is a statement, not the owner's value.
 
 This adds probes only; it does not widen Rule 3. A pin of the owner's result
