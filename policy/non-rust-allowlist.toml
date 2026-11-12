@@ -765,6 +765,15 @@ covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignor
 # ---------------------------------------------------------------------------
 
 [[allow]]
+glob = "tools/repo-policy/tests/workflow_contracts/fixtures/inventory-map.json"
+kind = "fixture_input"
+owner = "repo-policy"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen workflow-contract test identities verify that executable consolidation preserves every original logical case and ignored state (#12914)."
+covered_by = ["cargo test -p repo-policy --test workflow_contracts workflow_contracts::inventory_contract", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "docs/agent-context/review-conversations.fixture.json"
 kind = "fixture_input"
 owner = "agents/review"
