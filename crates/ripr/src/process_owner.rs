@@ -235,6 +235,8 @@ pub struct OwnedProcess {
     /// signaling a group that reused the number (#9895 review).
     #[cfg(all(unix, not(windows)))]
     group_settled: bool,
+    #[cfg(target_os = "linux")]
+    group_cleanup_error: Option<String>,
     /// Unix test oracle: the custody contract allows exactly one group
     /// signal per owner lifetime; each `request_kill` on unix increments
     /// this counter so a witness can pin it.
@@ -344,6 +346,8 @@ impl OwnedProcess {
             group_owned,
             custody_lost: false,
             group_settled: false,
+            #[cfg(target_os = "linux")]
+            group_cleanup_error: None,
             #[cfg(test)]
             test_group_kills: 0,
             #[cfg(test)]
@@ -416,6 +420,10 @@ impl OwnedProcess {
     /// is still waitable: WNOWAIT observes exit without releasing its identity.
     /// The group is disarmed before the subsequent standard-library reap.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        #[cfg(target_os = "linux")]
+        if let Some(error) = &self.group_cleanup_error {
+            return Err(std::io::Error::other(error.clone()));
+        }
         #[cfg(unix)]
         if self.custody_lost {
             return Err(std::io::Error::other(
@@ -482,6 +490,10 @@ impl OwnedProcess {
                         "owned child custody was lost; signalling is disarmed",
                     ));
                 }
+                #[cfg(target_os = "linux")]
+                if let Some(error) = &self.group_cleanup_error {
+                    return Err(std::io::Error::other(error.clone()));
+                }
                 if self.group_settled {
                     return Ok(());
                 }
@@ -494,6 +506,16 @@ impl OwnedProcess {
                 match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
                     Ok(()) | Err(rustix::io::Errno::SRCH) => {
                         self.group_settled = true;
+                        // Signal delivery is asynchronous. Keep the leader unreaped
+                        // (and its group identity pinned) until Linux observes every
+                        // member quiescent, rather than certifying only its reap.
+                        #[cfg(target_os = "linux")]
+                        if let Err(error) =
+                            wait_for_linux_group_quiescence(self.child.id(), FALLBACK_REAP_BUDGET)
+                        {
+                            self.group_cleanup_error = Some(error.to_string());
+                            return Err(error);
+                        }
                         return Ok(());
                     }
                     Err(error) => return Err(error.into()),
@@ -647,6 +669,88 @@ impl OwnedProcess {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_stat_group_is_quiescent(stat: &str, group: u32) -> std::io::Result<bool> {
+    let fields: Vec<_> = stat
+        .rsplit_once(')')
+        .ok_or_else(|| std::io::Error::other("malformed process stat"))?
+        .1
+        .split_whitespace()
+        .collect();
+    let field = |index: usize| {
+        fields
+            .get(index)
+            .copied()
+            .ok_or_else(|| std::io::Error::other("incomplete process stat"))
+    };
+    let pgrp = field(2)?.parse::<u32>().map_err(std::io::Error::other)?;
+    if pgrp != group {
+        return Ok(true);
+    }
+    let threads = field(17)?.parse::<u32>().map_err(std::io::Error::other)?;
+    Ok(matches!(field(0)?, "Z" | "X") && threads <= 1)
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_linux_group_quiescence(group: u32, budget: Duration) -> std::io::Result<()> {
+    let deadline = Instant::now() + budget;
+    loop {
+        let mut quiescent = true;
+        let mut leader_seen = false;
+        for entry in std::fs::read_dir("/proc")? {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::other(
+                    "owned group observation exceeded its budget",
+                ));
+            }
+            let entry = entry?;
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+                continue;
+            };
+            match std::fs::read_to_string(entry.path().join("stat")) {
+                Ok(stat) => {
+                    quiescent &= linux_stat_group_is_quiescent(&stat, group)?;
+                    if pid == group {
+                        let leader_group = stat
+                            .rsplit_once(')')
+                            .and_then(|(_, tail)| tail.split_whitespace().nth(2))
+                            .and_then(|value| value.parse::<u32>().ok());
+                        if leader_group != Some(group) {
+                            return Err(std::io::Error::other(
+                                "owned leader changed process group",
+                            ));
+                        }
+                        leader_seen = true;
+                    }
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(3) => {} // process exited during snapshot
+                Err(error) => return Err(error),
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "owned group observation exceeded its budget",
+            ));
+        }
+        if !leader_seen {
+            return Err(std::io::Error::other(
+                "owned unreaped leader absent from process snapshot",
+            ));
+        }
+        if quiescent {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "owned group not quiescent after SIGKILL",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[cfg(unix)]
 fn checked_child_pid(child: &std::process::Child) -> std::io::Result<rustix::process::Pid> {
     i32::try_from(child.id())
@@ -766,6 +870,30 @@ impl Drop for OwnedProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_group_observer_requires_terminal_single_thread_members() -> Result<(), String> {
+        let stat = |state: &str, group: u32, threads: u32| {
+            format!(
+                "42 (name with ) spaces) {state} 1 {group} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 {threads}"
+            )
+        };
+        for state in ["R", "S", "D", "T", "I"] {
+            assert!(
+                !linux_stat_group_is_quiescent(&stat(state, 42, 1), 42)
+                    .map_err(|e| e.to_string())?
+            );
+        }
+        assert!(linux_stat_group_is_quiescent(&stat("Z", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(&stat("X", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(!linux_stat_group_is_quiescent(&stat("Z", 42, 2), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(&stat("R", 43, 1), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent("malformed", 42).is_err());
+        assert!(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42).is_err());
+        Ok(())
+    }
+
     use std::io::Read;
     use std::process::Stdio;
 
@@ -1543,6 +1671,18 @@ mod tests {
             .args(["-c", "printf owned-output; exit 7"])
             .stdout(Stdio::piped());
         contained_command(command)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_group_cleanup_failure_cannot_become_success_on_retry() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        owned.terminate_tree()?;
+        owned.group_cleanup_error = Some("injected unproved group cleanup".to_string());
+        assert!(owned.try_wait().is_err());
+        assert!(owned.terminate_tree().is_err());
+        assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
+        Ok(())
     }
 
     #[cfg(unix)]
