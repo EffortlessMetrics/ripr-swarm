@@ -107,9 +107,10 @@ versions, reads infection `weak`. The second case is not claimed for an
 equivalent rewrite or when the owner has other callers. Any other gated change,
 including an input ripr cannot fold, reads `unknown`, so `(0..n).sum()` to
 `(0..=n).sum()` tested only by `sum_to(0)` is not `exposed`. A `sum` or
-`product` folds only when the owner's return type is a written integer type and
-no cast follows it; an unresolved alias such as `type Byte = u8` or a cast could
-wrap to the old value, so it is not folded. A test whose body
+`product` folds only when the owner's return type is written as a fixed-width
+integer (`u8` to `u64`, `i8` to `i64`) and no cast follows it; an unresolved
+alias such as `type Byte = u8` or a cast could wrap to the old value, so it is
+not folded. A test whose body
 rebinds or imports the owner's name supplies no separating input. Ranges feeding
 length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
 `.count()`) keep the ordinary reading, since an element more shows at every
