@@ -1003,6 +1003,10 @@ fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
     error_path.probe.family = ProbeFamily::ErrorPath;
     let mut return_value = weak_gap("probe:return_value:b", 12);
     return_value.probe.family = ProbeFamily::ReturnValue;
+    // As on a real `return Err(..)` line, the families word the explanatory
+    // prose differently for the same missing value.
+    error_path.missing = vec!["No exact error variant discriminator was detected".to_string()];
+    return_value.missing = vec!["No strong discriminator was detected".to_string()];
     let text = rendered(&output(vec![error_path.clone(), return_value.clone()]));
     assert_eq!(
         text.matches("\nweakly_exposed|").count(),
@@ -1059,6 +1063,15 @@ fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
     let mut other_test = return_value.clone();
     other_test.related_tests[0].name = "discount_other".to_string();
     let text = rendered(&output(vec![error_path.clone(), other_test]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Without discriminator facts, the printed `missing=` is the prose, so
+    // different prose keeps both rows.
+    let mut prose_a = error_path.clone();
+    prose_a.activation.missing_discriminators.clear();
+    let mut prose_b = return_value.clone();
+    prose_b.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![prose_a, prose_b]));
     assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
 
     // Same row text on another line is a different edit.

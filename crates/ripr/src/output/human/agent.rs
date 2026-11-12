@@ -1021,16 +1021,23 @@ fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Fin
 
 /// What a gap's records say, without its id (see `fold_identical_gap_rows`).
 /// Built from the unclipped values, and from every missing discriminator
-/// rather than the one printed, so two findings that differ past the field
+/// value rather than the one printed, so two findings that differ past the field
 /// budget or in a later missing value never fold.
 fn gap_row_key(root: &Path, finding: &Finding) -> String {
-    let missing: Vec<&str> = finding
-        .activation
-        .missing_discriminators
-        .iter()
-        .map(|fact| fact.value.as_str())
-        .chain(finding.missing.iter().map(String::as_str))
-        .collect();
+    // Every missing discriminator value; the `missing` prose only when it is
+    // the fallback `missing=` prints, since its wording differs by probe
+    // family ("no exact error variant" vs "no strong discriminator") for
+    // one value.
+    let missing: Vec<&str> = if finding.activation.missing_discriminators.is_empty() {
+        finding.missing.iter().map(String::as_str).collect()
+    } else {
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect()
+    };
     let test = strongest_test(finding).map(|test| {
         format!(
             "{}:{} {} {} {:?} {:?}",
