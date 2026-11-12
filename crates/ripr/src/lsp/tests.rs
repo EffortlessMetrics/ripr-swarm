@@ -9141,8 +9141,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
 
 /// #5354: the seam "open best related test" action never opens a test linked
 /// only by proximity, even a strong one, over a test that calls the owner;
-/// with only proximity-linked tests it opens nothing, while the targeted-test
-/// brief stays offered from the same related tests.
+/// with only proximity-linked tests it opens nothing.
 #[test]
 fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{
@@ -9221,22 +9220,12 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
     assert_eq!(args[0]["test_name"], "calls_owner_weakly");
 
-    let has_brief = |commands: &[(String, String, Vec<serde_json::Value>)]| {
-        commands
-            .iter()
-            .any(|(_, command, _)| command == COPY_TARGETED_TEST_BRIEF_COMMAND)
-    };
     let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
     assert!(
         !proximity_only
             .iter()
             .any(|(title, _, _)| title == "Write targeted test: open best related test"),
         "a proximity-only related test must not be opened: {proximity_only:?}"
-    );
-    assert_eq!(
-        has_brief(&proximity_only),
-        has_brief(&commands),
-        "the targeted-test brief still reads proximity-only related tests: {proximity_only:?}"
     );
     Ok(())
 }

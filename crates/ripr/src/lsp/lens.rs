@@ -5,9 +5,9 @@
 /// URI; identical lenses of one owner share its topmost row (#14362). The
 /// click target is the witness-selected related test, which never names a
 /// proximity-only test (#5354), so it can name fewer tests than the count.
-/// The title cites the finding's
-/// `related_tests.len()` from the cached `AnalysisSnapshot` — the same source
-/// that feeds `finding.class` — so the count is never fabricated.
+/// The title cites the finding's `related_tests.len()` from the cached
+/// `AnalysisSnapshot` — the same source that feeds `finding.class` — so the
+/// count is never fabricated.
 ///
 /// Honesty invariants (enforced by unit tests):
 /// - `snapshot == None` → empty Vec (absence of analysis ≠ fabricated 0-count).
