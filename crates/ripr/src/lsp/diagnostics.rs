@@ -1137,7 +1137,7 @@ impl AnalysisPendingRecovery {
     fn route_text(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
-            Self::AnalysisRunning => "Findings appear when it finishes.",
+            Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
                 "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
             }

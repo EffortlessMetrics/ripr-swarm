@@ -27205,6 +27205,108 @@ fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Resul
 }
 
 #[test]
+fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+-> Result<(), String> {
+    // #14447 review: "in progress" must not outlive the attempt. When the
+    // first analysis fails without a snapshot and nothing follows it, the
+    // push marker returns to the save/refresh route that starts analysis.
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes the attempt fail fast.
+                    "initializationOptions": {"baseRef": "ripr-lsp-pending-revert-missing-base"},
+                    "capabilities": {
+                        "textDocument": {"publishDiagnostics": {"versionSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri, "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+            let mut recoveries = Vec::new();
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message["method"] != "textDocument/publishDiagnostics"
+                    || message["params"]["uri"] != uri.as_str()
+                {
+                    continue;
+                }
+                let recovery = message["params"]["diagnostics"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|marker| marker["data"]["recovery"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let done = recovery == "save_or_refresh";
+                recoveries.push(recovery);
+                if done {
+                    return Ok::<_, String>(recoveries);
+                }
+            }
+        })
+        .await
+        .map_err(|elapsed| {
+            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+        })??;
+        if recoveries.first().map(String::as_str) != Some("analysis_running") {
+            return Err(format!(
+                "the didOpen marker must name the running analysis first: {recoveries:?}"
+            ));
+        }
+        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+            return Err(format!(
+                "a failed attempt must restore the start route: {recoveries:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(root);
+        Ok(())
+    })
+}
+
+#[test]
 #[serial]
 fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> Result<(), String> {
     // #13441: the empty-scope marker is served, not stored, so push clients

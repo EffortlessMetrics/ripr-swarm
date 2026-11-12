@@ -101,8 +101,8 @@ from a scripted client):
 | `ripr` not on the client's `PATH` | Typical editor behavior; wording varies. Clients generally report a failed server start (places to look: Helix `:log-open`, Neovim `:checkhealth vim.lsp`, Zed language server status). Use an absolute path in `cmd` / `command` |
 
 A first-open diagnostic of `ripr-diagnostic-analysis-pending` means no
-analysis has finished yet. While one is running it says so and findings
-replace it when the run ends. If it asks you to save or run `ripr.refresh`,
+analysis has finished yet. While one is running it says so, and the run's
+results replace it when the run ends. If it asks you to save or run `ripr.refresh`,
 no run was under way when it was published.
 
 Neovim needs `vim.lsp.config` and `vim.lsp.enable` (Neovim 0.11 or newer)

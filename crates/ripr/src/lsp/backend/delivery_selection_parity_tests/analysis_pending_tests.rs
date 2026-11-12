@@ -142,6 +142,44 @@ fn analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_on
     assert_pending_marker(&report["items"])
 }
 
+/// #14447 review: a queued or running attempt never hides a blocked route.
+/// While the root authority or a latched configuration failure blocks the
+/// next refresh, the marker keeps naming that block, not "in progress".
+#[test]
+fn analysis_pending_blocked_routes_win_over_a_running_attempt() -> Result<(), String> {
+    let harness = drained_parity_backend()?;
+    let uri = parity_uri("pending.rs")?;
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    harness
+        .runtime
+        .block_on(harness.service.inner().apply_workspace_root_authority(
+            WorkspaceRootAuthority::unavailable("test root unavailable"),
+        ));
+    let report = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&report)?,
+        "ripr:analysis-pending:use_single_workspace_root_and_restart"
+    );
+    select_root(&harness);
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    harness
+        .service
+        .inner()
+        .set_configuration_failure("changed ripr.toml input is invalid");
+    let report = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&report)?,
+        "ripr:analysis-pending:fix_configuration"
+    );
+    Ok(())
+}
+
 #[test]
 fn analysis_pending_document_pull_answers_unchanged_for_the_cached_pending_id() -> Result<(), String>
 {

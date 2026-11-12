@@ -217,17 +217,21 @@ asks for an action that is already underway (#11253):
   "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
 
 The `ripr-diagnostic-analysis-pending` marker follows the same rule (#14447).
-While no snapshot exists and an attempt is queued or running, or an unblocked
-refresh is about to start one, the marker says "ripr analysis is in progress"
-and that findings appear when it finishes, under recovery
-`analysis_running`. It does not request `ripr.refresh`. When the attempt ends
-without a snapshot, the marker returns to recovery `save_or_refresh` and its
-"has not analyzed this workspace yet" wording. Blocked states keep their own
-recovery routes. This holds on push and on both pull paths.
+While no snapshot exists and an attempt is queued or running, the marker says
+"ripr analysis is in progress" and that results replace it when the attempt
+finishes, under recovery `analysis_running`, on push and on both pull paths.
+A push client also gets that route when an unblocked refresh is about to
+start an attempt; a pull client is asked to re-pull once the attempt is
+queued. The marker does not request `ripr.refresh`. When the attempt ends
+without a snapshot and no follow-up attempt starts, the marker returns to
+recovery `save_or_refresh` and its "has not analyzed this workspace yet"
+wording. Blocked states keep their own recovery routes. A pull client is
+asked to re-pull only when the served recovery route changes.
 
 The marker's code, data kind and state are unchanged; #14447 adds only the
-`analysis_running` recovery and its result id. These are advisory hover words using static vocabulary;
-they make no runtime-outcome or test-sufficiency claim.
+`analysis_running` recovery and its result id. These are advisory hover
+words using static vocabulary; they make no runtime-outcome or
+test-sufficiency claim.
 
 ## Required Evidence
 
