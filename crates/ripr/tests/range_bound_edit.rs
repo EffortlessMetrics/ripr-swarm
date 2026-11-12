@@ -467,6 +467,22 @@ fn a_range_in_a_match_arm_body_is_gated() -> Result<(), String> {
 }
 
 #[test]
+fn a_separating_input_on_a_match_arm_body_range_is_unknown_not_weak() -> Result<(), String> {
+    // Known limit: the fold reads only plain arm values, so an arm-body range
+    // reduction cannot be evaluated. A separating input then stays Unknown,
+    // never the "every input agrees" Weak reading and never Yes.
+    let lib = "/// Sum or zero.\npub fn pick(k: u32, n: u32) -> u32 {\n    match k {\n        1 => 0,\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("assert_eq!(pick(2, 3), 6);"),
+    )?;
+    assert_eq!(infection_states(&findings), vec!["Unknown".to_string()]);
+    Ok(())
+}
+
+#[test]
 fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result<(), String> {
     let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
     let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::*;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
