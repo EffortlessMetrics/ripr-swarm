@@ -714,6 +714,9 @@ pub(super) fn machine_refusal_document(
         OutputFormat::AgentSeamPacketsJson => {
             Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
         }
+        // Agent: the format's own refused stop/verify record, never zero
+        // bytes an agent could read as an empty result (#14452).
+        OutputFormat::Agent => Some(Ok(output::human::render_agent_refusal(&notice))),
         _ => None,
     }
 }

@@ -1633,6 +1633,11 @@ mod triage;
 
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
+/// The agent-format refusal record for a refused check run (#14452).
+pub(crate) fn render_agent_refusal(notice: &crate::core_error::RefusalNotice) -> String {
+    agent::render_refusal(notice)
+}
+
 pub(crate) fn render_agent_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,

@@ -2103,3 +2103,61 @@ fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(
     assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
     Ok(())
 }
+
+fn refusal_notice(message: &str) -> crate::core_error::RefusalNotice {
+    crate::core_error::RefusalNotice {
+        identity: "base_unresolvable",
+        repair_route: "analysis/base-resolution",
+        message: message.to_string(),
+        remedy: crate::domain::RefusalRemedy::from_prose(message),
+    }
+}
+
+/// #14452: a refused `check --format agent` run prints a typed refusal
+/// record, one `stop=` line, the runnable next command only when it is
+/// unconditional and has no placeholder, and a `verify=refused` line.
+#[test]
+fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
+    let runnable = super::agent::render_refusal(&refusal_notice(
+        "no base found.\nRun `ripr pilot --root .` for whole-repository exploration.",
+    ));
+    assert_eq!(
+        runnable,
+        "#ripr agent static-advisory refused run_status=base_unresolvable \
+         repair_route=analysis/base-resolution\n\
+         stop=no base found. Run `ripr pilot --root .` for whole-repository exploration.\n\
+         next=ripr pilot --root .\n\
+         verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable\n"
+    );
+
+    let placeholder = super::agent::render_refusal(&refusal_notice(
+        "the base does not resolve; pass `ripr check --base <ref>` for a ref this repository has.",
+    ));
+    assert!(
+        placeholder.contains("stop=the base does not resolve"),
+        "{placeholder}"
+    );
+    assert!(!placeholder.contains("next="), "{placeholder}");
+
+    let conditional = super::agent::render_refusal(&refusal_notice(
+        "git timed out; if it persists, run `ripr doctor --root .`.",
+    ));
+    assert!(!conditional.contains("next="), "{conditional}");
+
+    let notice = refusal_notice(
+        "the workspace is not trusted; run `ripr check --root .` with RIPR_TRUST=1, or pass --trust-workspace.",
+    );
+    // The stimulus must name a command plus prose-only prerequisites.
+    assert_eq!(
+        notice.remedy.command.as_deref(),
+        Some("ripr check --root .")
+    );
+    assert!(notice.remedy.prose_has_more, "{:?}", notice.remedy);
+    let needs_more = super::agent::render_refusal(&notice);
+    assert!(
+        needs_more.contains("stop=the workspace is not trusted"),
+        "{needs_more}"
+    );
+    assert!(!needs_more.contains("next="), "{needs_more}");
+    assert_eq!(conditional.lines().count(), 3, "{conditional}");
+}

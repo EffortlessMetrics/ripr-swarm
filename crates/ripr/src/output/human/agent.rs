@@ -357,6 +357,40 @@ fn preview_leaves_test_side_open(finding: &Finding) -> bool {
         && triage::weak_assertion_row(finding).is_some()
 }
 
+/// The agent-format record for a refused `ripr check` run (#14452): the
+/// same typed identity, repair route and machine-safe message every other
+/// machine format renders from one [`RefusalNotice`], in the format's own
+/// `stop=` / `next=` / `verify=` vocabulary instead of zero bytes. `next=`
+/// appears only when the remedy states one command that runs as-is
+/// (`output::refusal::runnable_command`): a conditional remedy, placeholders,
+/// or flags or env named outside the command stay prose on `stop=`.
+///
+/// [`RefusalNotice`]: crate::core_error::RefusalNotice
+pub(super) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> String {
+    let message = notice
+        .message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = format!(
+        "#ripr agent static-advisory refused run_status={} repair_route={}\nstop={}\n",
+        notice.identity,
+        notice.repair_route,
+        super::terminal_safe(message)
+    );
+    if let Some(command) = crate::output::refusal::runnable_command(&notice.remedy) {
+        out.push_str(&format!(
+            "next={}\n",
+            super::terminal_safe(command.to_string())
+        ));
+    }
+    out.push_str(&format!(
+        "verify=refused|outcome=refused|findings=0|exposed=0|reason={}\n",
+        notice.identity
+    ));
+    out
+}
+
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
 /// [`render`]. It reuses the same record, test-table and terminal vocabulary
 /// (`done=` / `open=` / `stop=`) and the same gap predicates, so a finding is
