@@ -1,34 +1,34 @@
-name: Reconcile hosted queue carrier with current main
+name: Diagnose hosted queue carrier conflicts with current main
 
 on:
   push:
     branches: [codex/4838-hosted-main-reconcile-20261112]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  reconcile:
+  diagnose:
     if: github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     steps:
       - name: Checkout exact rehearsal branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: codex/4838-hosted-main-reconcile-20261112
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Merge the inspected protected-main generation
+      - name: Reproduce and print bounded diff3 conflicts
         shell: bash
         env:
-          EXPECTED_HEAD: 50d9bb94921b0f4f7b3d840093a596eed7059852
+          HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
           EXPECTED_MAIN: 17076506afc35dfc91b0329e9de8b9391dd02cdb
         run: |
           set -euo pipefail
-          actual_head="$(git rev-parse HEAD^)"
-          [ "$actual_head" = "$EXPECTED_HEAD" ] || {
-            echo "::error::rehearsal parent moved: expected $EXPECTED_HEAD, got $actual_head"
+          git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD || {
+            echo "::error::rehearsal no longer contains the tested hosted source $HOSTED_SOURCE"
             exit 1
           }
           git fetch --no-tags origin main
@@ -37,43 +37,60 @@ jobs:
             echo "::error::protected main moved: expected $EXPECTED_MAIN, got $actual_main"
             exit 1
           }
-          git config user.name EffortlessSteven
-          git config user.email 15812269+EffortlessSteven@users.noreply.github.com
+          git config merge.conflictstyle diff3
           set +e
           git merge --no-commit --no-ff "$EXPECTED_MAIN"
-          merge_status=$?
+          status=$?
           set -e
-          if [ "$merge_status" -ne 0 ]; then
-            echo "::group::Unmerged paths"
-            git diff --name-status --diff-filter=U
-            echo "::endgroup::"
-            echo "::group::Merge status"
-            git status --short
-            echo "::endgroup::"
-            exit "$merge_status"
-          fi
-          rm .github/workflows/reconcile-hosted-queue-main-20261112.yml
+          [ "$status" -ne 0 ] || {
+            echo "::error::merge unexpectedly became conflict-free; use a proof-and-publish transaction"
+            git merge --abort
+            exit 1
+          }
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
 
-      - name: Verify reconciled final tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
-          cargo fmt --all
-          cargo fmt --all -- --check
-          cargo test --locked -p repo-policy --all-targets
-          cargo run --locked -p repo-policy -- check-workflows
-          git diff --check
-          test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
+          expected = {
+              '.github/workflows/main-health-sentinel.yml',
+              '.github/workflows/rust-gates.yml',
+              'changelog.d/12973-current-main-retirement.md',
+              'docs/CI.md',
+              'docs/RELEASE_TRANSACTION.md',
+              'policy/ci-lane-whitelist.toml',
+              'tools/repo-policy/src/queue_workflow.rs',
+              'tools/repo-policy/tests/merge_group_subject.rs',
+              'tools/repo-policy/tests/review_disposition_admission.rs',
+              'xtask/tests/main_health_sentinel_contract.rs',
+              'xtask/tests/routed_queue_resolution.rs',
+          }
+          raw = subprocess.check_output(
+              ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
+          )
+          actual = {line for line in raw.splitlines() if line}
+          if actual != expected:
+              raise SystemExit(
+                  'conflict set changed: ' + ', '.join(sorted(actual ^ expected))
+              )
 
-      - name: Create and publish tested merge object
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add -A
-          git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
-          merged="$(git rev-parse HEAD)"
-          echo "merged_commit=$merged"
-          echo "merged_tree=$(git rev-parse HEAD^{tree})"
-          echo "merged_parents=$(git show -s --format=%P HEAD)"
-          git push origin HEAD:refs/heads/codex/4838-hosted-main-reconcile-20261112
+          for relative in sorted(actual):
+              path = Path(relative)
+              lines = path.read_text(encoding='utf-8').splitlines()
+              marker_indexes = [
+                  index for index, line in enumerate(lines)
+                  if line.startswith(('<<<<<<< ', '||||||| ', '=======', '>>>>>>> '))
+              ]
+              print(f'::group::{relative} ({len(marker_indexes)} markers)')
+              covered: set[int] = set()
+              for marker in marker_indexes:
+                  start = max(0, marker - 10)
+                  end = min(len(lines), marker + 11)
+                  for index in range(start, end):
+                      if index in covered:
+                          continue
+                      covered.add(index)
+                      print(f'{index + 1:5}: {lines[index]}')
+                  print('-----')
+              print('::endgroup::')
+          PY
+          git merge --abort
