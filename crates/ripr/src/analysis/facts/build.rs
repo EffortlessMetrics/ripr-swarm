@@ -2181,13 +2181,23 @@ pub fn check(x: i32) -> bool {
         }
         let entry = entries.first().ok_or("missing seeded entry")?.path();
         let original = fs::read(&entry)?;
-        let mut edited: serde_json::Value = serde_json::from_slice(&original)?;
-        fs::write(&entry, serde_json::to_vec(&edited)?)?;
+        // Entries are framed as `<digest>\n<body>` and verified over the
+        // stored body bytes (#9216), so edits below keep the digest line.
+        let split = original
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or("entry must be framed behind a digest line")?;
+        let (digest_line, original_body) = original.split_at(split + 1);
+        let framed = |body: &[u8]| [digest_line, body].concat();
+        let mut edited: serde_json::Value = serde_json::from_slice(original_body)?;
+        fs::write(&entry, framed(&serde_json::to_vec(&edited)?))?;
         let reformatted = build()?;
-        if reformatted.file_fact_cache.hits != 1 || reformatted.index.tests() != cold.index.tests()
+        if reformatted.file_fact_cache.hits + reformatted.file_fact_cache.corrupt_ignored != 1
+            || reformatted.index.tests() != cold.index.tests()
         {
-            return Err("semantic-preserving JSON formatting must remain a warm hit".into());
+            return Err("a re-serialized body must hit or recompute the same index".into());
         }
+        fs::write(&entry, &original)?;
         let changed_source_key = RepoFileFactCacheKey::new(
             &PathBuf::from("src/lib.rs"),
             b"pub fn changed_source() {}\n",
@@ -2217,7 +2227,7 @@ pub fn check(x: i32) -> bool {
                 return Err("identity or digest changed".into());
             }
         }
-        let altered = serde_json::to_vec(&edited)?;
+        let altered = framed(&serde_json::to_vec(&edited)?);
         if altered == original {
             return Err("payload edit must change bytes".into());
         }

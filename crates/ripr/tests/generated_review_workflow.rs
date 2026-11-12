@@ -215,7 +215,12 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     );
 
     // No artifact the upload step would ship is an empty or invalid JSON.
-    let json_files = replay::json_files(&root.join("target/ripr"))?;
+    // Fact-cache entries are framed `<digest>\n<body>` records (#9216), not
+    // report artifacts, so the cache directory is not held to this check.
+    let json_files = replay::json_files(&root.join("target/ripr"))?
+        .into_iter()
+        .filter(|path| !path.starts_with(root.join("target/ripr/cache")))
+        .collect::<Vec<_>>();
     assert!(
         json_files.len() > 10,
         "only {} JSON artifacts were written",
