@@ -383,9 +383,9 @@ pub(crate) fn no_finding_matched_fresh_run(
     // are (and the column note), so the next selector needs no listing run.
     let cause = location_miss_cause(selector, output);
     let names_same_file_lines = cause
-        .as_deref()
-        .is_some_and(|cause| cause.starts_with("No finding is at line"));
-    if let Some(cause) = cause {
+        .as_ref()
+        .is_some_and(|cause| cause.names_same_file_lines);
+    if let Some(LocationMissCause { text: cause, .. }) = cause {
         message.push_str(". ");
         message.push_str(&cause);
     }
@@ -411,7 +411,23 @@ const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
 /// The run output carries counts, not the per-file changed-line set, so this
 /// never says whether the named line itself changed. Finding ids, seam ids
 /// and malformed locations return `None`: they keep their own wording.
-fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
+fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    location_miss_cause_text(selector, output).map(|(text, names_same_file_lines)| {
+        LocationMissCause {
+            text,
+            names_same_file_lines,
+        }
+    })
+}
+
+/// A [`location_miss_cause`] clause, and whether it already names the same
+/// file's other finding lines (so the #14384 hint must not repeat them).
+struct LocationMissCause {
+    text: String,
+    names_same_file_lines: bool,
+}
+
+fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<(String, bool)> {
     if selector.starts_with("probe:")
         || selector.starts_with("repo-probe:")
         || selector.starts_with("gap:")
@@ -422,6 +438,15 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     }
     let (selector_file, selector_line) = selector.rsplit_once(':')?;
     let wanted_line = selector_line.parse::<usize>().ok()?;
+    // A `file:line:column` selector would read its line as part of the path
+    // and be told the path is misspelled; the #14384 hint names the column
+    // form instead.
+    if selector_file
+        .rsplit_once(':')
+        .is_some_and(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
     let wanted_file = super::selector::normalize_locator_path(selector_file);
     if wanted_file.is_empty() {
         return None;
@@ -436,7 +461,14 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
             super::selector::locator_paths_match(stored.as_ref(), selector_file).then(|| {
                 (
                     finding.probe.location.line,
-                    super::selector::normalize_locator_path(stored.as_ref()),
+                    // Shown root-relative, as every rendered location is: a
+                    // fresh run stores absolute (on Windows, verbatim) paths.
+                    super::selector::normalize_locator_path(
+                        &crate::analysis::finding_location_text(
+                            &output.root,
+                            &finding.probe.location.file,
+                        ),
+                    ),
                 )
             })
         })
@@ -465,8 +497,11 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
         } else {
             "findings at other lines"
         };
-        return Some(format!(
-            "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
+        return Some((
+            format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
+            ),
+            true,
         ));
     }
 
@@ -484,8 +519,11 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     }
     let root = output.root.display();
     if !output.root.join(relative).is_file() {
-        return Some(format!(
-            "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
+        return Some((
+            format!(
+                "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
+            ),
+            false,
         ));
     }
     let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");
@@ -493,20 +531,20 @@ fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<String> {
     // or partitioned run may never have analyzed the file, and a run with no
     // producer outcome establishes neither.
     let Some(outcome) = &output.analysis_outcome else {
-        return Some(cause);
+        return Some((cause, false));
     };
     if !outcome.kind.is_complete() || output.partial_scope.is_some() {
         cause.push_str(
             ". The analysis was incomplete, so that file may not have been analyzed; `ripr check` for the same scope lists what was left out",
         );
-        return Some(cause);
+        return Some((cause, false));
     }
     let counts = &outcome.counts;
     cause.push_str(&format!(
         ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
         counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
     ));
-    Some(cause)
+    Some((cause, false))
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
