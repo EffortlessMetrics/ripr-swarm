@@ -1,9 +1,10 @@
 name: Trusted queue qualification
 
 # Immutable reusable control authority. The merge-queue entrypoint pins this
-# entire workflow, not just its evaluator. em-ci-queue-control must allow only
-# the reviewed path@commit and run clean single-job workers separate from builds.
-# No event base, candidate workflow, input, or mutable branch selects control code.
+# entire workflow, not just its evaluator. Required control and product jobs use
+# deterministic GitHub-hosted execution; no runner inventory or candidate-selected
+# host participates. No event base, candidate workflow, input, or mutable branch
+# selects controller or policy code.
 on:
   workflow_call:
 
@@ -23,9 +24,7 @@ jobs:
   intake:
     name: Authenticate native queue intake
     if: github.event_name == 'merge_group' && github.event.action == 'checks_requested' && github.repository == 'EffortlessMetrics/ripr-swarm'
-    runs-on:
-      group: em-ci-queue-control
-      labels: [self-hosted, linux, x64, ci-control]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -70,9 +69,7 @@ jobs:
     name: Detect Docs-Only Surface
     needs: [intake]
     if: needs.intake.result == 'success'
-    runs-on:
-      group: em-ci-build
-      labels: [self-hosted, linux, x64, rust-heavy]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
@@ -133,9 +130,7 @@ jobs:
     name: Admit PR Candidate
     needs: [intake, detect-docs-only]
     if: needs.intake.result == 'success' && needs.detect-docs-only.result == 'success'
-    runs-on:
-      group: em-ci-queue-control
-      labels: [self-hosted, linux, x64, ci-control]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -370,13 +365,13 @@ jobs:
           fi
 
   rust-owned:
-    name: Ripr Rust on owned heavy capability
+    name: Ripr Rust on hosted qualification
     needs: [admission]
     if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/rust-gates.yml
     with:
       proof-profile: merge-group
-      execution-profile: owned-jit
+      execution-profile: legacy
       head-sha: ${{ needs.admission.outputs.head }}
       base-sha: ${{ needs.admission.outputs.base }}
       subject-sha: ${{ needs.admission.outputs.merge }}
@@ -387,11 +382,11 @@ jobs:
       constituent-pr-number: ${{ needs.admission.outputs.pr }}
       constituent-pr-node-id: ${{ needs.admission.outputs.pr_id }}
       constituent-head-sha: ${{ needs.admission.outputs.head }}
-      runner-config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
+      runner-config: '"ubuntu-latest"'
       cargo-build-jobs: '8'
       use-scratch: false
       test-shards: 1
-      artifact-name: ripr-rust-owned
+      artifact-name: ripr-rust-hosted
       job-timeout-minutes: 20
       pr-labels: ${{ needs.admission.outputs.labels }}
       run-advisory-reports: false
@@ -428,8 +423,8 @@ jobs:
     if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/ci.yml
     with:
-      runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
-      control_runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
+      runner_config: '"ubuntu-latest"'
+      control_runner_config: '"ubuntu-latest"'
       proof_profile: merge-group
       request_id: ${{ needs.admission.outputs.request }}
       head_sha: ${{ needs.admission.outputs.head }}
@@ -460,9 +455,7 @@ jobs:
     name: Ripr Rust Small Result
     needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
-    runs-on:
-      group: em-ci-queue-control
-      labels: [self-hosted, linux, x64, ci-control]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read

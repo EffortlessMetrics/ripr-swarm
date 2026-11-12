@@ -800,7 +800,10 @@ fn caller_portfolio_binding(source: &str) -> bool {
         { return false; }
     }
     source.matches("      proof-profile: merge-group").count() == 1
-        && source.contains("      execution-profile: owned-jit")
+        && source.contains("      execution-profile: legacy")
+        && source.contains("      runner-config: '\"ubuntu-latest\"'")
+        && source.contains("      runner_config: '\"ubuntu-latest\"'")
+        && source.contains("      control_runner_config: '\"ubuntu-latest\"'")
         && result.contains("if: always() && github.event_name == 'merge_group'")
         && result.contains("GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}")
         && result.contains("\"$GROUP_PROOF_RESULT\" == success")
@@ -815,7 +818,7 @@ fn caller_portfolio_binding(source: &str) -> bool {
 }
 
 #[test]
-fn caller_requires_every_frozen_native_group_leaf_on_the_owned_route() {
+fn caller_requires_every_frozen_native_group_leaf_on_the_hosted_route() {
     assert!(caller_portfolio_binding(CALLER));
     for wrong in [
         CALLER.replace(
@@ -827,6 +830,14 @@ fn caller_requires_every_frozen_native_group_leaf_on_the_owned_route() {
             "      subject_sha: ${{ needs.admission.outputs.head }}",
         ),
         CALLER.replace("proof_profile: merge-group", "proof_profile: qualification"),
+        CALLER.replace(
+            "      execution-profile: legacy",
+            "      execution-profile: owned-jit",
+        ),
+        CALLER.replace(
+            "      runner-config: '\"ubuntu-latest\"'",
+            "      runner-config: '\"self-hosted\"'",
+        ),
         CALLER.replace("      run_rust_only: true", "      run_rust_only: false"),
         CALLER.replace(
             "GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}",

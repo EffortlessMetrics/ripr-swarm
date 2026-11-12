@@ -5,8 +5,7 @@ use crate::workflow_lifecycle::event_declarations;
 
 pub const GENERATION: &str = "  CI_LIFECYCLE_GENERATION: merge-queue-v1";
 const CONTROL_SOURCE: &str = "1b6bae558bd5895057726544b9c6baca63effb97";
-const HEAVY: &str =
-    "{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}";
+const HOSTED: &str = "\"ubuntu-latest\"";
 
 fn job<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     let (_, jobs) = source.split_once("\njobs:\n")?;
@@ -56,7 +55,12 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         "rust-cx53:",
         "rust-github:",
         "workflow_dispatch:",
-        "ubuntu-latest",
+        "self-hosted",
+        "em-ci-queue-control",
+        "em-ci-build",
+        "rust-heavy",
+        "ci-control",
+        "owned-jit",
     ] {
         require(
             !source.contains(forbidden),
@@ -66,14 +70,9 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     for name in ["detect-docs-only", "admission"] {
         let body = job(source, name).unwrap_or("");
         let header = body.split("    steps:\n").next().unwrap_or("");
-        let runner = if name == "admission" {
-            "    runs-on:\n      group: em-ci-queue-control\n      labels: [self-hosted, linux, x64, ci-control]"
-        } else {
-            "    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, rust-heavy]"
-        };
         require(
-            header.contains(runner),
-            &format!("{name} must preserve control/build isolation"),
+            header.contains("    runs-on: ubuntu-latest"),
+            &format!("{name} must use deterministic hosted execution"),
         );
         require(
             header.contains("    timeout-minutes:"),
@@ -91,7 +90,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     }
     let intake = job(source, "intake").unwrap_or("");
     for binding in [
-        "labels: [self-hosted, linux, x64, ci-control]",
+        "    runs-on: ubuntu-latest",
         "ref: 1b6bae558bd5895057726544b9c6baca63effb97",
         "checks: read",
         "queue_intake.py",
@@ -104,8 +103,18 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     require(
-        !intake.contains("rust-heavy") && !intake.contains("ref: ${{ github.sha }}"),
-        "intake must not execute or allocate candidate capacity",
+        ![
+            "self-hosted",
+            "em-ci-queue-control",
+            "em-ci-build",
+            "rust-heavy",
+            "ci-control",
+            "owned-jit",
+        ]
+        .iter()
+        .any(|token| intake.contains(token))
+            && !intake.contains("ref: ${{ github.sha }}"),
+        "intake must use hosted capacity without candidate-selected authority",
     );
     let admission = job(source, "admission").unwrap_or("");
     for name in [
@@ -152,7 +161,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         "    needs: [admission]",
         "    uses: ./.github/workflows/rust-gates.yml",
         "      proof-profile: merge-group",
-        "      execution-profile: owned-jit",
+        "      execution-profile: legacy",
         "      use-scratch: false",
         "      test-shards: 1",
         "      job-timeout-minutes: 20",
@@ -167,8 +176,8 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     require(
-        rust.contains(&format!("      runner-config: '{HEAVY}'")),
-        "owned Rust must select the governed heavy capability",
+        rust.contains(&format!("      runner-config: '{HOSTED}'")),
+        "Rust qualification must use the deterministic hosted runner",
     );
     for name in [
         "windows-subset",
@@ -211,8 +220,9 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     require(
-        ci.contains(&format!("      runner_config: '{HEAVY}'")),
-        "generic Linux CI proof must use owned heavy capacity",
+        ci.contains(&format!("      runner_config: '{HOSTED}'"))
+            && ci.contains(&format!("      control_runner_config: '{HOSTED}'")),
+        "generic Linux CI proof must use deterministic hosted runners",
     );
     let result = job(source, "result").unwrap_or("");
     let header = result.split("    steps:\n").next().unwrap_or("");
@@ -221,7 +231,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         "    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
         "    if: always()",
         "    timeout-minutes: 5",
-        "    runs-on:\n      group: em-ci-queue-control\n      labels: [self-hosted, linux, x64, ci-control]",
+        "    runs-on: ubuntu-latest",
     ] {
         require(
             header.contains(binding),
@@ -254,8 +264,8 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         ("result", result),
     ] {
         require(
-            body.contains("group: em-ci-queue-control"),
-            &format!("{name} needs restricted control capacity"),
+            body.contains("    runs-on: ubuntu-latest"),
+            &format!("{name} needs deterministic hosted execution"),
         );
         for forbidden in [
             "ref: ${{ github.event.merge_group.base_sha }}",
@@ -343,8 +353,8 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
 }
 
 /// The only event subscriber is a fixed, input-free call to an immutable workflow.
-/// Runner-group selected_workflows is the independent runtime enforcement: a
-/// malicious candidate can edit this checker, but cannot grant its job access.
+/// The caller and its evaluator are pinned independently of event B/H/G; hosted
+/// execution removes mutable runner inventory from the qualification authority.
 pub fn entrypoint_violations(source: &str) -> Vec<String> {
     const PREFIX: &str =
         "    uses: EffortlessMetrics/ripr-swarm/.github/workflows/routed-rust.yml@";
@@ -381,8 +391,8 @@ mod tests {
         for name in ["intake", "admission", "result"] {
             let body = job(CALLER, name).unwrap_or("");
             assert!(
-                body.contains("group: em-ci-queue-control"),
-                "{name} needs isolated control group"
+                body.contains("    runs-on: ubuntu-latest"),
+                "{name} needs deterministic hosted execution"
             );
             assert!(!body.contains("ref: ${{ github.event.merge_group.base_sha }}"));
             assert!(!body.contains("TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}"));
@@ -444,9 +454,9 @@ mod tests {
                 .is_empty()
             );
         }
-        let hosted = CALLER.replace(HEAVY, "\"ubuntu-latest\"");
-        assert_ne!(hosted, CALLER);
-        assert!(!violations(&hosted, Some(RUST)).is_empty());
+        let self_hosted = CALLER.replace("    runs-on: ubuntu-latest", "    runs-on: self-hosted");
+        assert_ne!(self_hosted, CALLER);
+        assert!(!violations(&self_hosted, Some(RUST)).is_empty());
         for event in [
             "pull_request",
             "pull_request_target",

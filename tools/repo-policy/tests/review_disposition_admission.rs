@@ -572,7 +572,9 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
     let contradicted = format!("{line}\nSource review: REVIEW_INCOMPLETE");
     let hedged = format!("{line} pending CI");
     let quoted = format!("> {line}");
-    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 17] = [
+    let ordered_dot = format!("{line}\n1. disposition: REPAIR_REQUIRED");
+    let ordered_paren = format!("{line}\n2) disposition: REVIEW_READY");
+    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 19] = [
         (
             "exact line",
             &none,
@@ -649,6 +651,18 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
             "quoted line",
             &none,
             pull_object("MEMBER", "o/r", &head, &quoted),
+            false,
+        ),
+        (
+            "ordered-list competing disposition with period",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &ordered_dot),
+            false,
+        ),
+        (
+            "ordered-list competing disposition with parenthesis",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &ordered_paren),
             false,
         ),
         (
