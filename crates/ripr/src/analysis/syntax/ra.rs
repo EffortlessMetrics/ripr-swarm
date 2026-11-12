@@ -4422,6 +4422,14 @@ pub fn early(total: u32) -> u32 {
         return 5
     }
 }
+
+pub fn wide(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        input.len() > 3
+    } else {
+        depth > 1 && input.is_empty()
+    }
+}
 "#;
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
         let all_return_shapes = facts
@@ -4434,11 +4442,19 @@ pub fn early(total: u32) -> u32 {
         // shape, so the branch walk adds no second one over the same line.
         let early = all_return_shapes
             .iter()
-            .filter(|(line, _)| *line >= 60)
+            .filter(|(line, _)| (60..66).contains(line))
             .map(|(line, _)| *line)
             .collect::<Vec<_>>();
         if early != [62, 64] {
             return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
+        }
+        // `wide`: a comparison or boolean branch value is the predicate
+        // probe's subject, so it gets no second return-value row.
+        if all_return_shapes.iter().any(|(line, _)| *line >= 66) {
+            return Err(format!(
+                "predicate branch value got a return shape: {all_return_shapes:?}"
+            )
+            .into());
         }
         let return_shapes = all_return_shapes
             .into_iter()

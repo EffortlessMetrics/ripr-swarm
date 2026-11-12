@@ -124,7 +124,16 @@ pub(super) fn push_tail_if_branch_return_values(
                 | ast::Expr::ForExpr(_)
                 | ast::Expr::LoopExpr(_)
         );
-        if own_line && !control_flow && is_tail_return_value_text(&value_text) {
+        // A comparison or boolean branch value is already a predicate probe;
+        // a second, weaker return-value row on the same expression would be a
+        // false actionable gap when the predicate is discriminated
+        // (verdict corpus `spec-b-0159-recursive-helper`).
+        let predicate_value = ast::BinExpr::cast(value.syntax().clone()).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        });
+        if own_line && !control_flow && !predicate_value && is_tail_return_value_text(&value_text) {
             push_probe_shape(
                 shapes,
                 line_index,
