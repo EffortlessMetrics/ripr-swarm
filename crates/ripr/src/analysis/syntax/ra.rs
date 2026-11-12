@@ -4430,6 +4430,14 @@ pub fn wide(input: &str, depth: usize) -> bool {
         depth > 1 && input.is_empty()
     }
 }
+
+pub fn wrapped(input: &str, depth: usize) -> bool {
+    if depth == 0 {
+        (input.len() > 3)
+    } else {
+        !(depth > 1)
+    }
+}
 "#;
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
         let all_return_shapes = facts
@@ -4448,8 +4456,9 @@ pub fn wide(input: &str, depth: usize) -> bool {
         if early != [62, 64] {
             return Err(format!("unexpected early-return shapes: {all_return_shapes:?}").into());
         }
-        // `wide`: a comparison or boolean branch value is the predicate
-        // probe's subject, so it gets no second return-value row.
+        // `wide`, `wrapped`: a comparison or boolean branch value, bare,
+        // parenthesized or negated, is the predicate probe's subject, so it
+        // gets no second return-value row.
         if all_return_shapes.iter().any(|(line, _)| *line >= 66) {
             return Err(format!(
                 "predicate branch value got a return shape: {all_return_shapes:?}"

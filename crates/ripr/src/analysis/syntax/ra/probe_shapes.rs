@@ -128,7 +128,22 @@ pub(super) fn push_tail_if_branch_return_values(
         // a second, weaker return-value row on the same expression would be a
         // false actionable gap when the predicate is discriminated
         // (verdict corpus `spec-b-0159-recursive-helper`).
-        let predicate_value = ast::BinExpr::cast(value.syntax().clone()).is_some_and(|inner| {
+        // Parentheses and `!` wrap the same predicate, so they are peeled first.
+        let mut core = value.clone();
+        loop {
+            let inner = match &core {
+                ast::Expr::ParenExpr(paren) => paren.expr(),
+                ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                    prefix.expr()
+                }
+                _ => None,
+            };
+            match inner {
+                Some(inner) => core = inner,
+                None => break,
+            }
+        }
+        let predicate_value = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|inner| {
             inner
                 .op_kind()
                 .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
