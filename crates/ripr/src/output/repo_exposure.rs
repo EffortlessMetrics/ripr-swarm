@@ -1484,6 +1484,54 @@ pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> 
     )
 }
 
+/// The `repo-exposure-summary-json` refusal (#14499): the summary's own
+/// envelope with `run_status: "refused"`, the typed limitation, zeroed
+/// metrics and an empty `top_files`, so a planning consumer reads a refused
+/// run rather than zero bytes or an all-clear.
+pub(crate) fn render_summary_refusal_json(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+    mode: &str,
+) -> String {
+    let value = serde_json::json!({
+        "schema_version": REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION,
+        "format": "repo-exposure-summary-json",
+        "tool": "ripr",
+        "ripr_version": env!("CARGO_PKG_VERSION"),
+        "scope": "repo",
+        "basis": "canonical_actionable_gap",
+        "run_status": "refused",
+        "limitations": [{
+            "category": notice.identity,
+            "repair_route": notice.repair_route,
+            "message": notice.message,
+        }],
+        "metadata": {
+            "root": display_path(root),
+            "base": base,
+            "head": "HEAD",
+            "mode": mode,
+        },
+        "metrics": {
+            "raw_seams": 0,
+            "headline_eligible_seams": 0,
+            "canonical_gap_records": 0,
+            "raw_actionable_seam_records": 0,
+            "unsuppressed_exposure_gaps": 0,
+            "suppressed_exposure_gaps": 0,
+        },
+        "top_files": [],
+    });
+    match serde_json::to_string_pretty(&value) {
+        Ok(mut json) => {
+            json.push('\n');
+            json
+        }
+        Err(_) => "{}\n".to_string(),
+    }
+}
+
 /// Render a bounded repo exposure summary JSON.
 ///
 /// Unlike `repo-exposure-json`, this shape deliberately omits per-seam

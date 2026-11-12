@@ -714,6 +714,74 @@ pub(super) fn machine_refusal_document(
         OutputFormat::AgentSeamPacketsJson => {
             Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
         }
+        // json-terse and check-findings-json (#14499): the same check JSON
+        // refusal envelope. check-findings-json carries no artifact identity,
+        // so a verify that requires a snapshot still rejects it.
+        OutputFormat::JsonTerse => Some(
+            output::limited_check::render_check_failure_json(envelope_input, error)
+                .and_then(|document| output::json::render_terse(&document)),
+        ),
+        OutputFormat::CheckFindingsJson => Some(output::limited_check::render_check_failure_json(
+            envelope_input,
+            error,
+        )),
+        // Every other badge family: the same degraded badge under its own
+        // kind and scope, in its own native or Shields projection.
+        OutputFormat::BadgeShields
+        | OutputFormat::BadgePlusJson
+        | OutputFormat::BadgePlusShields
+        | OutputFormat::RepoBadgeJson
+        | OutputFormat::RepoBadgeShields
+        | OutputFormat::RepoBadgePlusJson
+        | OutputFormat::RepoBadgePlusShields => {
+            use output::badge::{BadgeKind, BadgeScope};
+            let kind = match format {
+                OutputFormat::BadgePlusJson
+                | OutputFormat::BadgePlusShields
+                | OutputFormat::RepoBadgePlusJson
+                | OutputFormat::RepoBadgePlusShields => BadgeKind::RiprPlus,
+                _ => BadgeKind::Ripr,
+            };
+            let scope = if format.is_repo_scope() {
+                BadgeScope::Repo
+            } else {
+                BadgeScope::Diff
+            };
+            let summary = output::badge::refusal_badge_summary_for(&notice, kind, scope);
+            let shields = matches!(
+                format,
+                OutputFormat::BadgeShields
+                    | OutputFormat::BadgePlusShields
+                    | OutputFormat::RepoBadgeShields
+                    | OutputFormat::RepoBadgePlusShields
+            );
+            Some(Ok(if shields {
+                output::badge::render_shields_json(&summary)
+            } else {
+                output::badge::render_native_json(&summary)
+            }))
+        }
+        OutputFormat::RepoSarif => Some(Ok(output::sarif::render_repo_refusal_sarif(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
+        OutputFormat::RepoSarifCompact => {
+            Some(Ok(output::sarif::render_repo_refusal_sarif_compact(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+            )))
+        }
+        OutputFormat::RepoSeamsJson => Some(Ok(output::repo_seams::render_refusal_json(&notice))),
+        OutputFormat::RepoExposureSummaryJson => {
+            Some(Ok(output::repo_exposure::render_summary_refusal_json(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+                envelope_input.mode.as_str(),
+            )))
+        }
         _ => None,
     }
 }

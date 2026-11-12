@@ -863,3 +863,165 @@ fn a_plain_package_manifest_keeps_the_gate_anchored() -> Result<(), String> {
         .map_err(|error| format!("the gate must keep a plain package project: {error}"))?;
     Ok(())
 }
+
+/// #14499: every machine-readable `check` format carries its own refusal
+/// document (never zero bytes), each naming the typed identity, and each
+/// JSON-shaped one parsing as JSON with the family's refused marker.
+#[test]
+fn every_machine_format_carries_a_refusal_document() -> Result<(), String> {
+    let input = CheckInput {
+        root: PathBuf::from("."),
+        ..CheckInput::default()
+    };
+    let error = CoreError::repository_root_unusable("synthetic refusal");
+    let mut covered = 0;
+    for name in OutputFormat::accepted_cli_names() {
+        let format = OutputFormat::parse_cli_name(name).ok_or(name)?;
+        let document = machine_refusal_document(&input, format, &error);
+        // `github` is a CI log format, not machine-readable for progress
+        // purposes, but its annotation is still a refusal document.
+        if !format.is_machine_readable() && !matches!(format, OutputFormat::Github) {
+            if document.is_some() {
+                return Err(format!("{name} is prose: its refusal stays on stderr"));
+            }
+            continue;
+        }
+        // `agent` gains its record in #14467.
+        if matches!(format, OutputFormat::Agent) && document.is_none() {
+            continue;
+        }
+        let document = document.ok_or(format!("{name} must carry a refusal document"))??;
+        covered += 1;
+        assert!(
+            document.contains("repository_root_unusable"),
+            "{name}: {document}"
+        );
+        if !(format.is_json_request()
+            || matches!(
+                format,
+                OutputFormat::Sarif
+                    | OutputFormat::SarifCompact
+                    | OutputFormat::RepoSarif
+                    | OutputFormat::RepoSarifCompact
+                    | OutputFormat::BadgeShields
+                    | OutputFormat::BadgePlusShields
+                    | OutputFormat::RepoBadgeShields
+                    | OutputFormat::RepoBadgePlusShields
+            ))
+        {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&document).map_err(|err| format!("{name}: {err}"))?;
+        // Each family's own refused marker, not any one of them.
+        let (pointer, expected) = match format {
+            OutputFormat::Json
+            | OutputFormat::JsonCompact
+            | OutputFormat::JsonTerse
+            | OutputFormat::CheckFindingsJson => {
+                ("/analysis_scope/run_status", "repository_root_unusable")
+            }
+            OutputFormat::Sarif
+            | OutputFormat::SarifCompact
+            | OutputFormat::RepoSarif
+            | OutputFormat::RepoSarifCompact => ("/runs/0/properties/run_status", "refused"),
+            OutputFormat::BadgeJson
+            | OutputFormat::BadgeShields
+            | OutputFormat::BadgePlusJson
+            | OutputFormat::BadgePlusShields
+            | OutputFormat::RepoBadgeJson
+            | OutputFormat::RepoBadgeShields
+            | OutputFormat::RepoBadgePlusJson
+            | OutputFormat::RepoBadgePlusShields => {
+                ("/message", "refused: repository_root_unusable")
+            }
+            _ => ("/run_status", "refused"),
+        };
+        assert_eq!(
+            value.pointer(pointer),
+            Some(&serde_json::json!(expected)),
+            "{name} {pointer}: {value}"
+        );
+        if matches!(
+            format,
+            OutputFormat::BadgeJson
+                | OutputFormat::BadgePlusJson
+                | OutputFormat::RepoBadgeJson
+                | OutputFormat::RepoBadgePlusJson
+        ) {
+            assert_eq!(value["status"], "warn", "{name}");
+            assert_eq!(value["color"], "lightgrey", "{name}");
+        }
+        match format {
+            OutputFormat::BadgeShields | OutputFormat::RepoBadgeShields => {
+                assert_eq!(value["label"], "ripr", "{name}");
+                assert_eq!(value["color"], "lightgrey", "{name}");
+                assert_eq!(value.as_object().map(|map| map.len()), Some(4), "{name}");
+            }
+            OutputFormat::BadgePlusShields | OutputFormat::RepoBadgePlusShields => {
+                assert_eq!(value["label"], "ripr+", "{name}");
+                assert_eq!(value.as_object().map(|map| map.len()), Some(4), "{name}");
+            }
+            OutputFormat::BadgePlusJson => {
+                assert_eq!(value["kind"], "ripr_plus", "{name}");
+                assert_eq!(value["scope"], "diff", "{name}");
+            }
+            OutputFormat::RepoBadgeJson | OutputFormat::RepoBadgePlusJson => {
+                assert_eq!(value["scope"], "repo", "{name}");
+                assert_eq!(value["basis"], "canonical_actionable_gap", "{name}");
+            }
+            OutputFormat::RepoSarif | OutputFormat::RepoSarifCompact => {
+                let run = &value["runs"][0];
+                assert_eq!(run["properties"]["scope"], "repo_seam", "{name}");
+                assert_eq!(run["results"], serde_json::json!([]), "{name}");
+                assert_eq!(
+                    run["invocations"][0]["toolConfigurationNotifications"][0]["properties"]["identity"],
+                    "repository_root_unusable",
+                    "{name}"
+                );
+            }
+            OutputFormat::RepoSeamsJson => {
+                assert_eq!(value["seams"], serde_json::json!([]), "{name}");
+                assert!(value.get("artifact").is_none(), "{name}");
+                assert_eq!(
+                    value["limitations"][0]["repair_route"],
+                    "analysis/repository-root"
+                );
+            }
+            OutputFormat::RepoExposureSummaryJson => {
+                assert_eq!(value["format"], "repo-exposure-summary-json");
+                assert_eq!(value["top_files"], serde_json::json!([]));
+                assert_eq!(value["metrics"]["unsuppressed_exposure_gaps"], 0);
+            }
+            OutputFormat::JsonTerse => assert_eq!(value["rendering"], "terse"),
+            OutputFormat::CheckFindingsJson => {
+                assert!(value.get("artifact").is_none(), "{name}");
+                assert_eq!(value["findings"], serde_json::json!([]));
+            }
+            _ => {}
+        }
+    }
+    // 23 names with a refusal document (the `agent` record lands with #14467).
+    assert_eq!(covered, 22, "machine formats with a refusal document");
+    Ok(())
+}
+
+/// #14499: the check-findings-json refusal is not a verify snapshot; the
+/// artifact validator rejects it rather than reading an empty, whole run.
+#[test]
+fn check_findings_json_refusal_is_rejected_as_a_verify_artifact() -> Result<(), String> {
+    let input = CheckInput {
+        root: PathBuf::from("."),
+        ..CheckInput::default()
+    };
+    let error = CoreError::repository_root_unusable("synthetic refusal");
+    let document = machine_refusal_document(&input, OutputFormat::CheckFindingsJson, &error)
+        .ok_or("check-findings-json must carry a refusal document")??;
+    let verdict =
+        crate::agent::artifact::validate_check_findings_artifact(&input.root, &document, "--from");
+    assert!(
+        verdict.is_err(),
+        "a refusal must not validate as a snapshot"
+    );
+    Ok(())
+}

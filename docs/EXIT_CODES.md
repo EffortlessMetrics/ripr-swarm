@@ -122,13 +122,12 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
-  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
-  `repo-exposure-summary-json` — write
-  nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. These machine formats keep
-  stdout empty. Usage-class errors include argv errors and
+  refused envelope (zeroed counts, `run_status: "refused"`). Every other machine format (`json-terse`,
+  `check-findings-json`, `repo-sarif`, the Shields and `badge-plus-*` /
+  `repo-badge-*` badges, `repo-seams-json`, `repo-exposure-summary-json`)
+  prints its own refusal document too (#14499); docs/OUTPUT_SCHEMA.md lists
+  each shape. The prose formats (`human`, `human-full`, `repo-seams-md`,
+  `repo-exposure-md`) keep stdout empty and the diagnostic on stderr. Usage-class errors include argv errors and
   `context`/`explain` selector misses or ambiguity; their guidance and retry
   listing stay on stderr (RIPR-SPEC-0003). Under an explicit JSON request
   (`--json` or a JSON `--format`) these covered classes also write a minimal
