@@ -288,7 +288,10 @@ wrong credits.
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
    a panic does, so they refuse. The same completion rule applies under
    `#[async_std::test]` when `async_std` is the crate in the test's module and
-   the attribute carries no arguments (#5040). An `async` owner's return value is then read
+   the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
+   and `#[actix_web::test]` on the same terms (#14073): the exact
+   crate-qualified path, the crate not rebound in the test's module, and no
+   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -2605,7 +2608,16 @@ not themselves a static propagation proof.
   through resolved module edges, recognized only when that root is a Cargo
   autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
   `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
-  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
+  `build.rs` beside an indexed `src/`) or a root the nearest package
+  manifest names: a `[lib] path`, or an explicit `[[test]]`, `[[bin]]`,
+  `[[example]]` or `[[bench]]` `path` (#7128). So a test in
+  `[[test]] path = "it/pin.rs"` is its own crate root and its exact
+  assertion on a crate-qualified owner call is credited like the same test
+  under `tests/`; the same file with no declaring target is an orphan no
+  crate is known to compile and stays unrecognized (tests
+  `a_declared_test_target_outside_tests_dir_pins_like_an_autodiscovered_one`,
+  `an_undeclared_file_outside_the_layout_stays_unplaced`). humantime's
+  `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported

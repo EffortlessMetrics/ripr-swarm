@@ -227,6 +227,17 @@ owner returns:
 Whether a test's input runs the closure is rules 1 and 2's question, not
 this edge's.
 
+Outside the admitted tail, the propagation witness still reads closure
+syntax as an opaque path. Only code counts as closure syntax: a `|` inside
+a string, character literal or comment does not, and neither does a binary
+`||` that follows an operand (`verbose: flag == "-v" || flag == "--verbose"`,
+#14326). A `||` after an opening bracket, an operator, `,`, `=`, a label or
+a closure-opening keyword (`move`, `mut`, `async`, `return`, ...) still
+opens a closure and keeps the witness opaque. An operand spelled as a raw
+identifier such as `r#move` reads as its keyword and keeps the witness
+opaque: a missed credit, never a false one. A closure statement that starts
+right after a block `}` or an attribute `]` is a known reading limit.
+
 ### Rule 4: a spawned thread's closure
 
 A changed `return_value` probe whose expression is the owner's whole tail
@@ -389,6 +400,9 @@ pin, including when the numeric model is unestablished.
   (overwritten, shadowed, replaced, rival and uninvoked-closure assertions).
 - `crates/ripr/tests/iterator_adaptor_propagation.rs`: rule 3 through
   `check_workspace`, and the `map` + `count` refusal.
+- `crates/ripr/src/analysis/classify/propagation_witness.rs`
+  `logical_or_is_not_closure_syntax`: rule 3's closure-syntax reading,
+  logical-or operands against closure openers.
 - `fixtures/rust-verdict-corpus`: examples 1 to 3 (`grid-iter-exact`,
   `grid-iter-helper`, `grid-iter-table`), 4 (`trap-iter-boundary-missing`),
   5 (`trap-iter-empty-slice`), 6 (`grid-iter-property`) and 7

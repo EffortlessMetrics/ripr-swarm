@@ -1,0 +1,11 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+index 1111111..2222222 100644
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -4,5 +4,5 @@
+ export function discountedTotal(subtotal: number): number {
+-  if (subtotal > DISCOUNT_THRESHOLD) {
++  if (subtotal >= DISCOUNT_THRESHOLD) {
+     return subtotal - 500;
+   }
+   return subtotal;
