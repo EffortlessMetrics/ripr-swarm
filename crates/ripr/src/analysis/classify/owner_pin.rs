@@ -3162,7 +3162,8 @@ fn include_limitation_reach(
         if let Some(facts) = index.files().get(fragment) {
             if facts.used_lexical_fallback
                 || !facts.module_declarations.is_empty()
-                || source_may_mount_foreign_files(&facts.source)
+                || !own_path_literals(&facts.source, false)
+                    .is_some_and(|literals| literals.is_empty())
                 || target_context_roots(fragment, index, src_dirs).is_some()
             {
                 return IncludeReach::Workspace;
@@ -3208,7 +3209,8 @@ fn unindexed_inert_fragment(index: &RustIndex, fragment: &Path) -> Option<String
         return None;
     }
     String::from_utf8(bytes).ok().filter(|source| {
-        !source_may_mount_foreign_files(source) && !source_may_declare_file_module(source)
+        own_path_literals(source, false).is_some_and(|literals| literals.is_empty())
+            && !source_may_declare_file_module(source)
     })
 }
 
