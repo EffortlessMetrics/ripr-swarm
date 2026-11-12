@@ -706,6 +706,13 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
             "- disposition: REPAIR_REQUIRED",
             false,
         ),
+        ("final field", "Final disposition: REPAIR_REQUIRED", false),
+        (
+            "current field",
+            "Current disposition: REVIEW_INCOMPLETE",
+            false,
+        ),
+        ("table field", "| Disposition | REPAIR_REQUIRED |", false),
         (
             "numbered prose",
             "1. Recorded the earlier disposition in the issue.",
