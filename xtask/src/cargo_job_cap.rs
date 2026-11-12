@@ -47,19 +47,63 @@ fn cgroup_limit_bytes(text: &str) -> Option<u64> {
     text.trim().parse::<u64>().ok()
 }
 
+/// The memory-limit files that bound this process, from `/proc/self/cgroup`
+/// text: its own cgroup and every ancestor up to the root, for cgroup v2
+/// (`0::<path>`) and for a v1 hierarchy carrying the `memory` controller. A
+/// nested child limit below an unlimited root is therefore seen. Without a
+/// readable membership, the two root files.
+fn cgroup_limit_files(membership: Option<&str>) -> Vec<String> {
+    let Some(text) = membership else {
+        return vec![
+            "/sys/fs/cgroup/memory.max".to_string(),
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes".to_string(),
+        ];
+    };
+    let mut files = Vec::new();
+    for line in text.lines() {
+        let mut fields = line.splitn(3, ':');
+        let (Some(id), Some(controllers), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (base, file) = if id == "0" && controllers.is_empty() {
+            ("/sys/fs/cgroup", "memory.max")
+        } else if controllers.split(',').any(|name| name == "memory") {
+            ("/sys/fs/cgroup/memory", "memory.limit_in_bytes")
+        } else {
+            continue;
+        };
+        let mut ancestor = path.trim_end_matches('/');
+        loop {
+            files.push(format!("{base}{ancestor}/{file}"));
+            match ancestor.rfind('/') {
+                Some(cut) => ancestor = &ancestor[..cut],
+                None => break,
+            }
+        }
+    }
+    files
+}
+
+/// The smallest of `MemTotal` and every readable cgroup limit on this
+/// process's membership path, read through `read`.
+fn smallest_memory_bound(read: &dyn Fn(&str) -> Option<String>) -> Option<u64> {
+    let membership = read("/proc/self/cgroup");
+    let limits = cgroup_limit_files(membership.as_deref())
+        .into_iter()
+        .filter_map(|file| read(&file).and_then(|text| cgroup_limit_bytes(&text)));
+    read("/proc/meminfo")
+        .and_then(|text| meminfo_total_bytes(&text))
+        .into_iter()
+        .chain(limits)
+        .min()
+}
+
 /// The smallest memory bound this process can see, or `None` off Linux or
 /// when nothing is readable.
 fn host_memory_bytes() -> Option<u64> {
-    let read = |path: &str| std::fs::read_to_string(path).ok();
-    [
-        read("/proc/meminfo").and_then(|text| meminfo_total_bytes(&text)),
-        read("/sys/fs/cgroup/memory.max").and_then(|text| cgroup_limit_bytes(&text)),
-        read("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-            .and_then(|text| cgroup_limit_bytes(&text)),
-    ]
-    .into_iter()
-    .flatten()
-    .min()
+    smallest_memory_bound(&|path| std::fs::read_to_string(path).ok())
 }
 
 /// Environment for the Cargo children of a local `precommit`: empty, or the
@@ -86,7 +130,101 @@ pub(crate) fn local_precommit_envs() -> &'static [(&'static str, &'static str)] 
 
 #[cfg(test)]
 mod tests {
-    use super::{LOW_MEMORY_BYTES, capped_jobs, cgroup_limit_bytes, meminfo_total_bytes};
+    use super::{
+        LOW_MEMORY_BYTES, capped_jobs, cgroup_limit_bytes, meminfo_total_bytes,
+        smallest_memory_bound,
+    };
+    use std::collections::BTreeMap;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    fn bound(files: &[(&str, String)]) -> Option<u64> {
+        let files = files
+            .iter()
+            .map(|(path, text)| (path.to_string(), text.clone()))
+            .collect::<BTreeMap<_, _>>();
+        smallest_memory_bound(&|path| files.get(path).cloned())
+    }
+
+    /// #14417 review: the operative limit can sit on a nested cgroup below an
+    /// unlimited root, or on an ancestor of this process's own cgroup. Both
+    /// are found for cgroup v2 and v1; a sibling's limit is not.
+    #[test]
+    fn nested_and_ancestor_cgroup_limits_bound_memory() {
+        let meminfo = (
+            "/proc/meminfo",
+            format!("MemTotal: {} kB\n", 64 * GIB / 1024),
+        );
+        let fifteen = (15 * GIB).to_string();
+        let v2 = ("/proc/self/cgroup", "0::/outer/job\n".to_string());
+        assert_eq!(
+            bound(&[
+                meminfo.clone(),
+                v2.clone(),
+                ("/sys/fs/cgroup/memory.max", "max\n".to_string()),
+                ("/sys/fs/cgroup/outer/job/memory.max", fifteen.clone()),
+            ]),
+            Some(15 * GIB),
+            "v2 child limited, root unlimited"
+        );
+        assert_eq!(
+            bound(&[
+                meminfo.clone(),
+                v2.clone(),
+                ("/sys/fs/cgroup/outer/memory.max", fifteen.clone()),
+                ("/sys/fs/cgroup/outer/job/memory.max", "max\n".to_string()),
+            ]),
+            Some(15 * GIB),
+            "v2 parent limited"
+        );
+        let v1 = (
+            "/proc/self/cgroup",
+            "9:pids:/a\n4:memory:/a/b\n0::/\n".to_string(),
+        );
+        assert_eq!(
+            bound(&[
+                meminfo.clone(),
+                v1.clone(),
+                (
+                    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                    "9223372036854771712\n".to_string()
+                ),
+                (
+                    "/sys/fs/cgroup/memory/a/b/memory.limit_in_bytes",
+                    fifteen.clone()
+                ),
+            ]),
+            Some(15 * GIB),
+            "v1 child limited, root unlimited"
+        );
+        assert_eq!(
+            bound(&[
+                meminfo.clone(),
+                v1.clone(),
+                (
+                    "/sys/fs/cgroup/memory/a/memory.limit_in_bytes",
+                    fifteen.clone()
+                ),
+            ]),
+            Some(15 * GIB),
+            "v1 parent limited"
+        );
+        assert_eq!(
+            bound(&[
+                meminfo.clone(),
+                v2.clone(),
+                ("/sys/fs/cgroup/other/memory.max", fifteen.clone()),
+            ]),
+            Some(64 * GIB),
+            "a sibling cgroup's limit does not apply"
+        );
+        assert_eq!(
+            bound(&[meminfo.clone(), ("/sys/fs/cgroup/memory.max", fifteen),]),
+            Some(15 * GIB),
+            "no readable membership: the root file still counts"
+        );
+        assert_eq!(bound(&[]), None, "nothing readable");
+    }
 
     /// #13705: the cap applies only to a readable, constrained, parallel host
     /// with no explicit job count.

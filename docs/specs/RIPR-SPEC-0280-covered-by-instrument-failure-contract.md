@@ -209,8 +209,10 @@ was stopped once (13.6 GB). Local `precommit` sets `CARGO_BUILD_JOBS=1` for
 the Clippy and enumeration children it starts when all of these hold:
 
 - `CARGO_BUILD_JOBS` is not already set;
-- the smallest readable memory bound (`MemTotal`, or a cgroup limit) is below
-  24 GiB;
+- the smallest readable memory bound is below 24 GiB: `MemTotal`, and the
+  cgroup limit of this process's own cgroup and every ancestor named in
+  `/proc/self/cgroup` (v2 `memory.max`, v1 `memory.limit_in_bytes`), so a
+  nested child limit below an unlimited root counts;
 - the host reports more than one CPU.
 
 A host whose memory or CPU count cannot be read is left alone. The run says
@@ -281,8 +283,9 @@ on stderr that the cap applies. Hosted `ci-policy` and the standalone
   that a resolved selector is not handed to the builder, that the remaining
   selectors are, and that the resolved row cannot be read as a listing.
 - The job-cap decision is pinned as a table (explicit count, the memory
-  boundary, unreadable memory or CPU count, one CPU), and the memory parsers
-  on exact and malformed inputs.
+  boundary, unreadable memory or CPU count, one CPU), the memory parsers
+  on exact and malformed inputs, and the cgroup walk (v2 and v1, child limited
+  under an unlimited root, parent limited, a sibling's limit ignored).
 
 ## Non-Goals
 

@@ -21023,6 +21023,7 @@ tests = [
   "xtask/src/policy/library_selector.rs::tests::the_shipped_ripr_library_selector_resolves_in_this_repository",
   "xtask/src/cargo_job_cap.rs::tests::job_cap_applies_only_to_a_constrained_parallel_host_without_an_explicit_count",
   "xtask/src/cargo_job_cap.rs::tests::memory_sources_parse_only_their_exact_shapes",
+  "xtask/src/cargo_job_cap.rs::tests::nested_and_ancestor_cgroup_limits_bound_memory",
 ]
 fixtures = []
 code = [
