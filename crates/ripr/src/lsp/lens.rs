@@ -488,8 +488,9 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
         } else if count == 0 {
             format!("preview: no related tests found ({class_label}) · static, cached")
         } else {
+            // #14462: the leading `preview:` already marks the tier.
             format!(
-                "preview: {} (preview, {class_label}) · static, cached",
+                "preview: {} ({class_label}) · static, cached",
                 related_tests_phrase(count)
             )
         }
@@ -1159,9 +1160,15 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("preview") {
+        if !title.starts_with("preview: 1 related test (exposed) · static, cached") {
             return Err(format!(
-                "preview finding must have 'preview' in title, got: {title}"
+                "preview finding must lead with the preview tier and class, got: {title}"
+            ));
+        }
+        // #14462: the tier is named once, not again inside the parentheses.
+        if title.matches("preview").count() != 1 {
+            return Err(format!(
+                "preview must appear once in the title, got: {title}"
             ));
         }
         Ok(())

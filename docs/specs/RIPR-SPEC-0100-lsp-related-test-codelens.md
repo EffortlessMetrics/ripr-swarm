@@ -72,7 +72,7 @@ after that prefix MUST comply with the static-language vocabulary:
 | `N == 0` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
 | `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
-| Any TS/Python finding (preview) | Prefix with `"preview: "` |
+| Any TS/Python finding (preview) | Prefix with `"preview: "`; the class in parentheses does not repeat "preview" (#14462) |
 
 Forbidden words in any codeLens title (enforced by `check-static-language`):
 `killed`, `survived`, `proven`, `adequate`, `covered`, `passing`, and the
@@ -305,7 +305,7 @@ title:    "Refresh saved-workspace analysis · ripr: no related tests found (no 
 
 ```
 finding:  class=exposed, related_tests.len()=1, language_status=Some(Preview)
-title:    "Refresh saved-workspace analysis · preview: 1 related tests (preview, exposed) · static, cached"
+title:    "Refresh saved-workspace analysis · preview: 1 related test (exposed) · static, cached"
 ```
 
 ### URI mismatch — filter works
