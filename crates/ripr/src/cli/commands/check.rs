@@ -1700,6 +1700,11 @@ fn check_inner(
     // ripr's artifact root says so once, with the exact entry; `doctor` gives
     // the same verdict. stderr only, so stdout and machine formats are
     // unchanged, and silent when `--quiet` or when git cannot establish it.
+    // The output guard gives an existing `target/ripr` its self-ignore file
+    // before the verdict, so a tree an older ripr left unignored is judged as
+    // this run leaves it; it creates nothing. A refusal here is reported by
+    // the guard on the write path.
+    let _ = crate::atomic_file::ensure_report_output_contained(&input.root);
     if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
         eprintln!("{}", terminal_safe(note));
     }
