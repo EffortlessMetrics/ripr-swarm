@@ -416,9 +416,10 @@ impl OwnedProcess {
         }
     }
 
-    /// Non-blocking exit check. Contained Unix groups settle while the leader
-    /// is still waitable: WNOWAIT observes exit without releasing its identity.
-    /// The group is disarmed before the subsequent standard-library reap.
+    /// Poll direct-child exit without waiting for a running primary. Once it
+    /// exits, contained Linux group cleanup may use its bounded observation
+    /// budget before returning. WNOWAIT retains the leader identity through
+    /// settlement; the group is disarmed before the standard-library reap.
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         #[cfg(target_os = "linux")]
         if let Some(error) = &self.group_cleanup_error {
