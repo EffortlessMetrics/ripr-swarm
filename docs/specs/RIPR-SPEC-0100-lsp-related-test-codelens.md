@@ -99,13 +99,16 @@ A lens click does something useful for its own row (#13389):
   no input identity for the server route, keeps refresh.
 - The target is the witness fix site (`DiagnosticWitness::selected_related_test`),
   chosen from the finding's own `related_tests`, the same list the title count
-  comes from, so the lens opens the test hover and related information name. A
-  test linked only by proximity (same test file, same module, a token
-  substring) is never the target; among the rest the strongest oracle wins,
-  then the lowest relation-confidence rank, ties to the earliest listed.
+  comes from, so the lens opens the test hover and related information name.
   Python and Perl findings whose producer declares a suggested test keep that
-  declared target. With only proximity-linked tests the lens keeps refresh, and
-  the title count may then exceed the tests it can open (#5354). The seam code
+  declared target (that declaration is not proximity-filtered); an incomplete
+  or ambiguous declaration selects nothing and the lens keeps refresh. For
+  other findings a test linked only by proximity (same test file, same module,
+  a token substring) is never the target: a call-bearing test matching the
+  finding's suggested test name and file wins first, then the strongest
+  oracle, then the lowest relation-confidence rank, ties to the earliest
+  listed. With only proximity-linked tests the lens keeps refresh, and the
+  title count may then exceed the tests it can open (#5354). The seam code
   action ranks the seam's related tests with the same proximity exclusion but
   its own order (a strong oracle first, else the lowest relation-confidence
   rank). Preview-tier (TypeScript, Python) findings navigate the same way and
