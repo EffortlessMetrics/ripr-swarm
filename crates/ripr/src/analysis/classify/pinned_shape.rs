@@ -1068,8 +1068,9 @@ mod tests {
     fn a_table_loop_pin_must_be_a_direct_statement_of_a_top_level_loop() {
         let pin = "assert_eq!(sum(&row), 3);";
         let run = |body: &str| assertion_is_top_level_loop_statement(body, pin);
+        // The loop as a statement followed by more code.
         assert!(run(
-            "fn t() {\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}"
+            "fn t() {\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n    let done = 1;\n}"
         ));
         assert!(run(
             "fn t() {\n    let rows = 1;\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}"
