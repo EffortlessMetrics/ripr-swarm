@@ -101,7 +101,7 @@ on:
       test-shards:
         description: >-
           1 runs the required nextest step in this job. 4 leaves it to
-          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+          rust-test-shards.yml, which the caller must also run and require (#10507).
         required: false
         default: 1
         type: number
