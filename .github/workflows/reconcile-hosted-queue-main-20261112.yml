@@ -11,7 +11,7 @@ jobs:
   reconcile:
     if: github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout rehearsal history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -25,7 +25,7 @@ jobs:
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
-          EXPECTED_MAIN: b9f04dbe223ba6ea8e71561a3f84e2be8d91ea1d
+          EXPECTED_MAIN: a4fc05e4c0cb57b204fb78f32bc86e8ef2a5a298
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD
@@ -38,7 +38,6 @@ jobs:
 
           git config user.name EffortlessSteven
           git config user.email 15812269+EffortlessSteven@users.noreply.github.com
-          git config merge.conflictstyle diff3
           git checkout --detach "$HOSTED_SOURCE"
           set +e
           git merge --no-commit --no-ff "$EXPECTED_MAIN"
@@ -50,75 +49,35 @@ jobs:
             exit 1
           }
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          # All four conflicts are components of the hosted-only generation and
-          # its matching tests. Current main still carries the retired bootstrap
-          # route in the conflicting hunks; mixing that contract into the hosted
-          # caller produced a false test surface rather than a valid reconciliation.
-          choices = {
-              '.github/actions/pr-candidate-admission/review_disposition.py': 'ours',
-              '.github/workflows/routed-rust.yml': 'ours',
-              'tools/repo-policy/tests/review_disposition_admission.rs': 'ours',
-              'xtask/tests/rust_gate_workflow_contract.rs': 'ours',
+          expected_conflicts="$(cat <<'EOF'
+.github/actions/pr-candidate-admission/review_disposition.py
+.github/workflows/routed-rust.yml
+tools/repo-policy/tests/review_disposition_admission.rs
+xtask/tests/rust_gate_workflow_contract.rs
+EOF
+)"
+          actual_conflicts="$(git diff --name-only --diff-filter=U | LC_ALL=C sort)"
+          [ "$actual_conflicts" = "$expected_conflicts" ] || {
+            echo "::error::conflict set changed"
+            printf 'expected:\n%s\nactual:\n%s\n' "$expected_conflicts" "$actual_conflicts"
+            exit 1
           }
-          actual = [line for line in subprocess.check_output(
-              ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
-          ).splitlines() if line]
-          if actual != list(choices):
-              raise SystemExit(f'conflict set changed: expected={list(choices)!r} actual={actual!r}')
 
-          def resolve_diff3(text: str, side: str) -> str:
-              lines = text.splitlines(keepends=True)
-              out: list[str] = []
-              index = 0
-              conflicts = 0
-              while index < len(lines):
-                  if not lines[index].startswith('<<<<<<< '):
-                      out.append(lines[index])
-                      index += 1
-                      continue
-                  conflicts += 1
-                  index += 1
-                  ours: list[str] = []
-                  while index < len(lines) and not lines[index].startswith('||||||| '):
-                      ours.append(lines[index])
-                      index += 1
-                  if index >= len(lines):
-                      raise SystemExit('missing diff3 base marker')
-                  index += 1
-                  while index < len(lines) and not lines[index].startswith('======='):
-                      index += 1
-                  if index >= len(lines):
-                      raise SystemExit('missing conflict separator')
-                  index += 1
-                  theirs: list[str] = []
-                  while index < len(lines) and not lines[index].startswith('>>>>>>> '):
-                      theirs.append(lines[index])
-                      index += 1
-                  if index >= len(lines):
-                      raise SystemExit('missing conflict end marker')
-                  index += 1
-                  out.extend(ours if side == 'ours' else theirs)
-              if conflicts == 0:
-                  raise SystemExit('expected at least one conflict marker')
-              resolved = ''.join(out)
-              if any(marker in resolved for marker in ('<<<<<<< ', '||||||| ', '=======', '>>>>>>> ')):
-                  raise SystemExit('conflict marker remained after resolution')
-              return resolved
-
-          for relative, side in choices.items():
-              path = Path(relative)
-              path.write_text(resolve_diff3(path.read_text(encoding='utf-8'), side), encoding='utf-8')
-          PY
-
-          git add \
-            .github/actions/pr-candidate-admission/review_disposition.py \
-            .github/workflows/routed-rust.yml \
-            tools/repo-policy/tests/review_disposition_admission.rs \
-            xtask/tests/rust_gate_workflow_contract.rs
+          # These four files form one hosted-only authority generation and its
+          # exact tests. Hunk-level resolution admitted non-conflicting pieces of
+          # the retired transitional caller and produced a mixed generation.
+          # Preserve each complete hosted file, then prove that generation on the
+          # full current-main tree.
+          while IFS= read -r path; do
+            git checkout --ours -- "$path"
+            resolved="$(git hash-object --no-filters "$path")"
+            expected="$(git rev-parse "$HOSTED_SOURCE:$path")"
+            [ "$resolved" = "$expected" ] || {
+              echo "::error::$path is not the reviewed hosted blob"
+              exit 1
+            }
+            git add "$path"
+          done <<< "$expected_conflicts"
           test -z "$(git diff --name-only --diff-filter=U)"
 
       - name: Review-disposition self-test
@@ -131,15 +90,33 @@ jobs:
         continue-on-error: true
         run: cargo fmt --all -- --check
 
-      - name: Affected repository-policy contract
+      - name: Repository-policy qualification
         id: repo_policy
         continue-on-error: true
-        run: cargo test --locked -p repo-policy --test review_disposition_admission
+        run: >-
+          cargo test --locked -p repo-policy
+          --test review_disposition_admission
+          --test hosted_queue_route
+          --test queue_intake
+          --test merge_group_subject
+          --test queue_composition_acceptance
+          --test ci_leaf_contract
+          --test printed_command_admission
+          --test python_wheel_workflow
+          --test rust_gates_admission
+          --test rust_gates_admission_replay
 
-      - name: Affected xtask workflow contracts
+      - name: Xtask workflow qualification
         id: xtask_contracts
         continue-on-error: true
-        run: cargo test --locked -p xtask --test rust_gate_workflow_contract --test routed_queue_resolution
+        run: >-
+          cargo test --locked -p xtask
+          --test rust_gate_workflow_contract
+          --test routed_queue_resolution
+          --test routed_dispatch_result
+          --test main_health_sentinel_contract
+          --test windows_subset_admission_contract
+          --test windows_subset_evidence
 
       - name: Actual workflow checker
         id: workflow_checker
@@ -153,6 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+          git diff --cached --check
           git diff --quiet
           test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
           test ! -e .ci/staged/4838-current-main-conflicts-c5d50a38.txt
@@ -170,7 +148,7 @@ jobs:
           steps.hygiene.outcome == 'success'
         shell: bash
         env:
-          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-b9f04dbe
+          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-a4fc05e4
         run: |
           set -euo pipefail
           git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
@@ -180,7 +158,14 @@ jobs:
           echo "RECONCILED_COMMIT=$commit"
           echo "RECONCILED_TREE=$tree"
           echo "RECONCILED_PARENTS=$parents"
-          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 b9f04dbe223ba6ea8e71561a3f84e2be8d91ea1d" ]
+          {
+            echo '### Hosted queue reconciliation'
+            echo
+            echo "- commit: \`$commit\`"
+            echo "- tree: \`$tree\`"
+            echo "- parents: \`$parents\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 a4fc05e4c0cb57b204fb78f32bc86e8ef2a5a298" ]
 
           set +e
           push_output="$(git push origin "HEAD:$TARGET_REF" 2>&1)"
