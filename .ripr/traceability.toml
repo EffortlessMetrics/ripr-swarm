@@ -1997,6 +1997,8 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
   "crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt",
+  "crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works",
+  "crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason",
   "crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses",
   "crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts",
   "crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory",
