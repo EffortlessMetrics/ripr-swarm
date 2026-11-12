@@ -107,8 +107,12 @@ read elsewhere, could move in lockstep with the owner, an `#[ignore]` test never
 runs, and a `#[should_panic]` test can pass on both versions, so none earns credit. A relational or
 `assert_ne!` check at such an input, or every asserted call agreeing on both
 versions, reads infection `weak`. The second case is not claimed for an
-equivalent rewrite or when the owner has other callers. Any other gated change,
-including an input ripr cannot fold, reads `unknown`, so `(0..n).sum()` to
+equivalent rewrite or when the owner has other callers. A range handed to a call
+(`Iterator::sum(0..n)`) is gated like an absorbing method, and an assertion that
+never runs (a literal-false block, an uncalled closure, after a `return`) reads
+nothing. Any other gated change, including an input ripr cannot fold, reads
+`unknown`, except a moved match range pattern whose arms the fold cannot read
+(`&str` results), which keeps the ordinary arm-routing reading (#5992), so `(0..n).sum()` to
 `(0..=n).sum()` tested only by `sum_to(0)` is not `exposed`. A `sum` or
 `product` folds only when the owner's return type is written as a fixed-width
 integer (`u8` to `u64`, `i8` to `i64`) and no cast follows it; an unresolved

@@ -699,6 +699,10 @@ pub(in crate::analysis) fn range_change_visibility(
             every_mention_agrees = false;
             continue;
         }
+        // An assertion in a literal-false block, an uncalled closure or
+        // after a `return` stays in `assertions` for execution admission
+        // to refuse; it never runs, so it reads nothing here.
+        let unreached = crate::analysis::extract::unreached_lines(test.body.as_str());
         let mut agreed_mentions = 0usize;
         let mut note = |reading: CallReading, exact: bool| -> Option<String> {
             match reading {
@@ -716,6 +720,14 @@ pub(in crate::analysis) fn range_change_visibility(
             None
         };
         for oracle in &test.assertions {
+            if oracle
+                .line
+                .checked_sub(test.start_line)
+                .is_none_or(|offset| unreached.contains_key(&offset))
+            {
+                note(CallReading::Unread, false);
+                continue;
+            }
             if let Some(relational) = relational_assertion(&oracle.text, &owner.name) {
                 for side in [&relational.left, &relational.right] {
                     if count_name_tokens(side, &owner.name) > 0 {
@@ -1626,7 +1638,8 @@ impl RangeTail {
         let subject = plain_name(&strip_parens(matched.expr()?)?)?;
         let mut arms = Vec::new();
         for arm in matched.match_arm_list()?.arms() {
-            if arm.guard().is_some() {
+            // A `#[cfg]` arm may be compiled out before matching.
+            if arm.guard().is_some() || arm.attrs().next().is_some() {
                 return None;
             }
             let patterns = match arm.pat()? {

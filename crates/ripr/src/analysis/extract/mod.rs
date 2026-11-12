@@ -33,7 +33,7 @@ pub(crate) use oracles::{
     is_exact_membership_any_assertion, is_inequality_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
     outer_assertion_condition, retain_reached_oracles, terminal_err_return_guard_oracle,
-    uncompared_unwrap_err, unwrap_err_bound_variables,
+    uncompared_unwrap_err, unreached_lines, unwrap_err_bound_variables,
 };
 #[cfg(test)]
 pub(crate) use oracles::{contains_macro_invocation, table_builds};

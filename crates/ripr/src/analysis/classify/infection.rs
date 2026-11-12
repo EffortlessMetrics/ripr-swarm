@@ -1082,7 +1082,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if let Some((before, after, kind)) = probe.before.as_deref().and_then(|before| {
                 // A match-arm probe carries only the arm head (`_ =>`) even
                 // when the edit sits in the arm body; read the whole arm line.
-                let after = full_arm_line(owner, &probe.expression, before)
+                let after = full_arm_line(owner, &probe.expression, before, probe.location.line)
                     .unwrap_or_else(|| probe.expression.clone());
                 range_bound_change(before, &after).map(|kind| (before, after, kind))
             }) {
@@ -1273,19 +1273,33 @@ pub(in crate::analysis) fn aligned_range_texts(before: &str, after: &str) -> (St
 /// (`_ => (0..n).sum(),`): the one other owner line starting with that head.
 /// `None` when the probe is not a bare head, the head itself changed, or the
 /// line is not unique.
-fn full_arm_line(owner: Option<&FunctionSummary>, head: &str, before: &str) -> Option<String> {
+fn full_arm_line(
+    owner: Option<&FunctionSummary>,
+    head: &str,
+    before: &str,
+    probe_line: usize,
+) -> Option<String> {
     let owner = owner?;
     let (head, before) = (head.trim(), before.trim());
     if !head.ends_with("=>") || before == head || !before.starts_with(head) {
         return None;
     }
-    let mut lines = owner
+    let lines: Vec<(usize, &str)> = owner
         .body
         .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with(head) && *line != before);
-    let line = lines.next()?;
-    lines.next().is_none().then(|| line.to_string())
+        .enumerate()
+        .map(|(offset, line)| (owner.start_line + offset, line.trim()))
+        .filter(|(_, line)| line.starts_with(head) && *line != before)
+        .collect();
+    // Two arms share the head (`_ =>` in a nested match): the probe's own
+    // line names the edited one.
+    match lines.as_slice() {
+        [(_, line)] => Some((*line).to_string()),
+        _ => lines
+            .iter()
+            .find(|(absolute, _)| *absolute == probe_line)
+            .map(|(_, line)| (*line).to_string()),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1413,7 +1427,9 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
             node = parent;
             continue;
         }
-        if ast::ForExpr::can_cast(parent.kind()) {
+        // A `for` header, or a range handed to a call (`Iterator::sum(0..n)`,
+        // `helper(0..n)`) whose consumer is not read here.
+        if ast::ForExpr::can_cast(parent.kind()) || ast::ArgList::can_cast(parent.kind()) {
             return Some(RangeConsumer::Absorbing);
         }
         break;

@@ -533,6 +533,80 @@ fn a_should_panic_test_does_not_supply_a_separating_input() -> Result<(), String
 }
 
 #[test]
+fn a_dead_assertion_does_not_supply_a_separating_input() -> Result<(), String> {
+    // Only `sum_to(0)` runs, and both ranges sum to 0 there.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    if false {\n        assert_eq!(sum_to(4), 10);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_range_passed_to_an_associated_sum_is_gated() -> Result<(), String> {
+    // `Iterator::sum(0..=n)` absorbs the extra element at n = 0.
+    let lib =
+        "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    Iterator::sum(0..=n)\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    Iterator::sum(0..=n)",
+        "    Iterator::sum(0..n)",
+        &test_calling("assert_eq!(sum_to(0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_nested_match_arm_sharing_the_head_is_still_gated() -> Result<(), String> {
+    // Two `_ =>` arms: the edited outer one still reaches the range gate.
+    let lib = "/// Pick a sum.\npub fn pick(m: u32, n: u32) -> u32 {\n    match m {\n        0 => match n {\n            0 => 1,\n            _ => 2,\n        },\n        _ => (0..=n).sum(),\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        _ => (0..=n).sum(),",
+        "        _ => (0..n).sum(),",
+        &test_calling("assert_eq!(pick(1, 0), 0);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cfg_gated_match_arm_is_not_folded_or_contradicted() -> Result<(), String> {
+    // The `#[cfg(any())]` arm is compiled out, so `tier(5)` returns 1.
+    let lib = "/// Tier an input.\npub fn tier(n: u32) -> u32 {\n    match n {\n        #[cfg(any())]\n        5 => 2,\n        0..=5 => 1,\n        _ => 3,\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        0..=5 => 1,",
+        "        0..5 => 1,",
+        &test_calling("assert_eq!(tier(5), 1);"),
+    )?;
+    assert!(!findings.is_empty());
+    let contradicted = findings
+        .iter()
+        .any(|finding| format!("{finding:?}").contains("contradicts static evaluation"));
+    assert!(!contradicted, "{findings:?}");
+    Ok(())
+}
+
+#[test]
 fn a_single_use_expected_binding_keeps_a_separating_input() -> Result<(), String> {
     // Control: `let expected = 10;` read once is the literal 10.
     let findings = findings_on_changed_line(
