@@ -297,7 +297,45 @@ pub(crate) fn produce(args: &[String]) -> Result<(), String> {
     )
 }
 
+/// Check existing output ancestors without following symlinks. Missing
+/// directories are permitted for later creation. This is not atomic with
+/// removal, directory creation, or publication against concurrent mutation.
+fn validate_output_parent(output: &Path) -> Result<(), String> {
+    let parent = output.parent().ok_or("receipt has no parent")?;
+    let mut current = std::path::PathBuf::new();
+    for component in parent.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("receipt output parent contains parent traversal".into());
+        }
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "receipt output parent contains symlink: {}",
+                    current.display()
+                ));
+            }
+            Ok(metadata) if !metadata.file_type().is_dir() => {
+                return Err(format!(
+                    "receipt output parent is not a directory: {}",
+                    current.display()
+                ));
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect receipt output parent {}: {error}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn prepare_output(args: &[String], output: &Path) -> Result<(), String> {
+    validate_output_parent(output)?;
     // Do not remove the user's context input if it aliases the receipt path.
     if args.len() == 2
         && args[0] == "--context"
@@ -371,8 +409,10 @@ fn publish_receipt_with(
     bytes: &[u8],
     write: impl FnOnce(&mut fs::File, &[u8]) -> std::io::Result<()>,
 ) -> Result<(), String> {
+    validate_output_parent(output)?;
     let parent = output.parent().ok_or("receipt has no parent")?;
     fs::create_dir_all(parent).map_err(|e| format!("cannot create receipt directory: {e}"))?;
+    validate_output_parent(output)?;
     let temp = parent.join(format!(".{RECEIPT_NAME}.{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -381,7 +421,10 @@ fn publish_receipt_with(
         .map_err(|e| format!("cannot exclusively create receipt temporary file: {e}"))?;
     let written = write(&mut file, bytes).and_then(|()| file.flush());
     drop(file);
-    let result = written.and_then(|()| fs::rename(&temp, output));
+    let result = written.and_then(|()| {
+        validate_output_parent(output).map_err(std::io::Error::other)?;
+        fs::rename(&temp, output)
+    });
     if let Err(error) = result {
         return match fs::remove_file(&temp) {
             Ok(()) => Err(format!("cannot publish receipt: {error}")),
@@ -705,6 +748,45 @@ mod tests {
         fs::remove_file(&regular).map_err(|e| e.to_string())?;
         fs::remove_file(&fifo).map_err(|e| e.to_string())?;
         fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_output_parent_preserves_unrelated_sentinel() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-output-parent");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let outside = root.join("outside");
+        fs::create_dir(&outside).map_err(|e| e.to_string())?;
+        let sentinel = outside.join(RECEIPT_NAME);
+        fs::write(&sentinel, "do not replace").map_err(|e| e.to_string())?;
+        let link = root.join("output-link");
+        std::os::unix::fs::symlink(&outside, &link).map_err(|e| e.to_string())?;
+        let output = link.join(RECEIPT_NAME);
+        let args = vec![
+            "--context".to_string(),
+            root.join("context").to_string_lossy().to_string(),
+        ];
+        let error = prepare_output(&args, &output)
+            .err()
+            .ok_or("symlink parent accepted")?;
+        assert!(error.contains("symlink"), "{error}");
+        let error = publish_receipt_with(&output, b"new", |file, bytes| file.write_all(bytes))
+            .err()
+            .ok_or("symlink parent published")?;
+        assert!(error.contains("symlink"), "{error}");
+        assert_eq!(
+            fs::read_to_string(&sentinel).map_err(|e| e.to_string())?,
+            "do not replace"
+        );
+        let missing_output = root.join("new/deep").join(RECEIPT_NAME);
+        prepare_output(&args, &missing_output)?;
+        publish_receipt_with(&missing_output, b"new", |file, bytes| file.write_all(bytes))?;
+        assert_eq!(
+            fs::read(&missing_output).map_err(|e| e.to_string())?,
+            b"new"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 

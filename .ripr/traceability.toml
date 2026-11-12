@@ -20975,6 +20975,7 @@ tests = [
   "xtask/src/policy/file_policy_native_receipt.rs::tests::failed_native_or_changed_snapshot_cannot_publish_a_receipt",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::malformed_invocation_clears_stale_output_but_context_alias_is_preserved",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::partial_write_failure_never_publishes_receipt",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::symlink_output_parent_preserves_unrelated_sentinel",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::hung_probe_is_refused",
   "xtask/src/policy/file_policy_native_receipt.rs::tests::fifo_without_writer_is_refused_before_open",
   "xtask/src/verify_test_shards.rs::tests::native_artifact_traversal_refuses_depth_and_node_exhaustion",

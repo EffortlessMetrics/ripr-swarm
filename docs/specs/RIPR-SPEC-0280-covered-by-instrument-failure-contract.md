@@ -176,8 +176,12 @@ continue native enumeration. No hosted result depends on this prerequisite.
 `cargo xtask file-policy-native-receipt --context <json>` clears its fixed
 receipt path before running the existing exact native enumeration and packet
 acceptance. If the context input aliases that path it refuses without deleting
-the input; the old diagnostic remains unverified and cannot be full proof. It refuses dirty or changing source/context and duplicate names
-within one selector because binary identities are unavailable. A successful
+the input; the old diagnostic remains unverified and cannot be full proof. Any
+future acceptance must independently bind a successful producer. It refuses an
+observed dirty checkout or a difference between its before and after snapshots;
+ignored inputs and intermediate changes restored before the second snapshot are
+not observed. One writer and no concurrent source/context mutation are required.
+Duplicate names within one selector are refused because binary identities are unavailable. A successful
 receipt is versioned and marked `native_valid_context_unverified`; its declared
 context and hashed observations are not evidence that effective Cargo features,
 configuration, environment, wrappers or ignored inputs were independently verified.
@@ -196,6 +200,8 @@ this diagnostic mode has no full-success path and is not wired into hosted CI.
 Receipt and context inputs refuse symlinks in any path component, including
 symlinked system roots; callers must use canonical trusted paths. Artifact
 traversal has node and depth limits and refuses symlinks and special files.
+Output parent checks refuse static symlink and nondirectory ancestors before
+removal and publication, while allowing missing directories to be created.
 Metadata checks and later opens are not atomic against hostile concurrent
 filesystem mutation. Native Windows drive-prefix behavior is not established.
 The fixed output assumes one producer per worktree; concurrent producer safety
