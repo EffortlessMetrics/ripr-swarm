@@ -1,31 +1,30 @@
-name: Prove hosted queue reconciliation with current main
+name: Inspect hosted queue reconciliation conflict
 
 on:
   push:
     branches: [codex/4838-hosted-main-reconcile-20261112]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  reconcile:
+  inspect:
     if: github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 15
     steps:
       - name: Checkout rehearsal history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: codex/4838-hosted-main-reconcile-20261112
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
-      - name: Construct exact two-parent reconciliation
-        id: construct
+      - name: Inspect exact current-main conflict
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
-          EXPECTED_MAIN: 0f7e46673c505a171d64c18d775f3e28cb3ab102
+          EXPECTED_MAIN: d729765b7b58522be5a46c9076588eb86a7769ef
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD
@@ -36,20 +35,18 @@ jobs:
             exit 1
           }
 
-          git config user.name EffortlessSteven
-          git config user.email 15812269+EffortlessSteven@users.noreply.github.com
           git checkout --detach "$HOSTED_SOURCE"
           set +e
           git merge --no-commit --no-ff "$EXPECTED_MAIN"
           merge_status=$?
           set -e
           [ "$merge_status" -ne 0 ] || {
-            echo "::error::expected the reviewed four-file conflict set"
+            echo "::error::expected a conflict set"
             git merge --abort
             exit 1
           }
 
-          expected_conflicts=$'.github/actions/pr-candidate-admission/review_disposition.py\n.github/workflows/routed-rust.yml\ntools/repo-policy/tests/review_disposition_admission.rs\nxtask/tests/rust_gate_workflow_contract.rs'
+          expected_conflicts=$'.github/actions/pr-candidate-admission/review_disposition.py\n.github/workflows/routed-rust.yml\npolicy/workflow_allowlist.txt\ntools/repo-policy/tests/review_disposition_admission.rs\nxtask/tests/rust_gate_workflow_contract.rs'
           actual_conflicts="$(git diff --name-only --diff-filter=U | LC_ALL=C sort)"
           [ "$actual_conflicts" = "$expected_conflicts" ] || {
             echo "::error::conflict set changed"
@@ -57,141 +54,27 @@ jobs:
             exit 1
           }
 
-          # These four files form one hosted-only authority generation and its
-          # exact tests. Hunk-level resolution admitted non-conflicting pieces of
-          # the retired transitional caller and produced a mixed generation.
-          # Preserve each complete hosted file, then prove that generation on the
-          # full current-main tree.
-          while IFS= read -r path; do
-            git checkout --ours -- "$path"
-            resolved="$(git hash-object --no-filters "$path")"
-            expected="$(git rev-parse "$HOSTED_SOURCE:$path")"
-            [ "$resolved" = "$expected" ] || {
-              echo "::error::$path is not the reviewed hosted blob"
-              exit 1
-            }
-            git add "$path"
-          done <<< "$expected_conflicts"
-          test -z "$(git diff --name-only --diff-filter=U)"
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Review-disposition self-test
-        id: parser
-        continue-on-error: true
-        run: python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+          path = Path('policy/workflow_allowlist.txt')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          starts = [i for i, line in enumerate(lines) if line.startswith('<<<<<<< ')]
+          if not starts:
+              raise SystemExit('no conflict markers found')
+          for block, start in enumerate(starts, 1):
+              end = next(
+                  (i for i in range(start + 1, len(lines)) if lines[i].startswith('>>>>>>> ')),
+                  None,
+              )
+              if end is None:
+                  raise SystemExit(f'unclosed conflict at line {start + 1}')
+              lo = max(0, start - 3)
+              hi = min(len(lines), end + 4)
+              print(f'--- conflict block {block}: lines {lo + 1}-{hi} ---')
+              for index in range(lo, hi):
+                  print(f'{index + 1:04d}: {lines[index]}')
+          PY
 
-      - name: Check formatting
-        id: format
-        continue-on-error: true
-        run: cargo fmt --all -- --check
-
-      - name: Repository-policy qualification
-        id: repo_policy
-        continue-on-error: true
-        run: >-
-          cargo test --locked -p repo-policy
-          --test review_disposition_admission
-          --test hosted_queue_route
-          --test queue_intake
-          --test merge_group_subject
-          --test queue_composition_acceptance
-          --test ci_leaf_contract
-          --test printed_command_admission
-          --test python_wheel_workflow
-          --test rust_gates_admission
-          --test rust_gates_admission_replay
-
-      - name: Xtask workflow qualification
-        id: xtask_contracts
-        continue-on-error: true
-        run: >-
-          cargo test --locked -p xtask
-          --test rust_gate_workflow_contract
-          --test routed_queue_resolution
-          --test routed_dispatch_result
-          --test main_health_sentinel_contract
-          --test windows_subset_admission_contract
-          --test windows_subset_evidence
-
-      - name: Actual workflow checker
-        id: workflow_checker
-        continue-on-error: true
-        run: cargo run --locked -p repo-policy -- check-workflows
-
-      - name: Final tree hygiene
-        id: hygiene
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check
-          git diff --cached --check
-          git diff --quiet
-          test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
-          test ! -e .ci/staged/4838-current-main-conflicts-c5d50a38.txt
-          test ! -e .ci/staged/4838-conflicts-c5d50a38
-
-      - name: Publish independently passing reconciliation
-        id: publish
-        if: >-
-          steps.construct.outcome == 'success' &&
-          steps.parser.outcome == 'success' &&
-          steps.format.outcome == 'success' &&
-          steps.repo_policy.outcome == 'success' &&
-          steps.xtask_contracts.outcome == 'success' &&
-          steps.workflow_checker.outcome == 'success' &&
-          steps.hygiene.outcome == 'success'
-        shell: bash
-        env:
-          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-0f7e4667
-        run: |
-          set -euo pipefail
-          git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
-          commit="$(git rev-parse HEAD)"
-          tree="$(git rev-parse HEAD^{tree})"
-          parents="$(git show -s --format=%P HEAD)"
-          echo "RECONCILED_COMMIT=$commit"
-          echo "RECONCILED_TREE=$tree"
-          echo "RECONCILED_PARENTS=$parents"
-          {
-            echo '### Hosted queue reconciliation'
-            echo
-            echo "- commit: \`$commit\`"
-            echo "- tree: \`$tree\`"
-            echo "- parents: \`$parents\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 0f7e46673c505a171d64c18d775f3e28cb3ab102" ]
-
-          set +e
-          push_output="$(git push origin "HEAD:$TARGET_REF" 2>&1)"
-          push_status=$?
-          set -e
-          printf '%s\n' "$push_output"
-          if [ "$push_status" -eq 0 ]; then
-            exit 0
-          fi
-          if printf '%s' "$push_output" | grep -q 'refusing to allow a GitHub App to create or update workflow'; then
-            echo "Expected workflow-permission refusal after object upload; retain exact commit identity above."
-            exit 0
-          fi
-          exit "$push_status"
-
-      - name: Refuse incomplete reconciliation proof
-        if: >-
-          always() &&
-          (steps.construct.outcome != 'success' ||
-           steps.parser.outcome != 'success' ||
-           steps.format.outcome != 'success' ||
-           steps.repo_policy.outcome != 'success' ||
-           steps.xtask_contracts.outcome != 'success' ||
-           steps.workflow_checker.outcome != 'success' ||
-           steps.hygiene.outcome != 'success')
-        shell: bash
-        run: |
-          echo "construct=${{ steps.construct.outcome }}"
-          echo "parser=${{ steps.parser.outcome }}"
-          echo "format=${{ steps.format.outcome }}"
-          echo "repo_policy=${{ steps.repo_policy.outcome }}"
-          echo "xtask_contracts=${{ steps.xtask_contracts.outcome }}"
-          echo "workflow_checker=${{ steps.workflow_checker.outcome }}"
-          echo "hygiene=${{ steps.hygiene.outcome }}"
+          echo "::error::diagnostic run intentionally stops after printing the reviewed conflict surface"
           exit 1
