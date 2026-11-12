@@ -3892,13 +3892,31 @@ fn macro_binding_sites(
     if candidates.is_some_and(|candidates| !candidates.may_bind(name)) {
         return Vec::new();
     }
-    let mut sites = trusted_macro_binding_sites(
-        source,
-        index.macro_scope_crates(),
-        &[name],
-        &|line, declaration| module_resolved(path, line, declaration),
-        &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
-    );
+    let resolved = |line: usize, declaration: &str| module_resolved(path, line, declaration);
+    let verified = |krate: &str| macro_root_verified_in_contexts(path, krate, index, roots);
+    // #14115: an assertion-context name is read in the union's trust context,
+    // as the retained workspace sites are, so a call to another standard
+    // macro is a wrapper only when that macro is itself bound in this file.
+    let names = assertion_context_macros();
+    let mut sites = if names.contains(&name) {
+        trusted_macro_binding_site_sets(
+            source,
+            index.macro_scope_crates(),
+            &names,
+            &[name],
+            &resolved,
+            &verified,
+        )
+        .1
+    } else {
+        trusted_macro_binding_sites(
+            source,
+            index.macro_scope_crates(),
+            &[name],
+            &resolved,
+            &verified,
+        )
+    };
     bind_literal_macro_use_exports(path, &mut sites, index, roots);
     sites
 }

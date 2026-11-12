@@ -1625,6 +1625,20 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 - `run_limitations[]` with the same category, run status, repair route, and the
   budget diagnostic message
 
+Since #13641 the per-language changed-line limits
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`,
+`RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`) measure the files a run actually
+analyzes. A diff over them degrades into the bounded
+`analysis_scope.run_status: "limited_partial_scope"` result (RIPR-PROP-0019)
+instead of this refusal. A file that alone exceeds its own language's
+changed-line limit is never split or analyzed: it is left out, named in
+`analysis_scope.over_limit_files` (emitted only when non-empty), counted as
+uninspected and disclosed under `budget_disclosures`; when nothing else
+stopped selection the stop reason is `file_exceeds_analysis_limit`. The
+refusal remains only when no changed file fits, and for the
+language-neutral streaming parse guards and the `RIPR_MAX_DIFF_INDEX_FILES`
+index guard, which still fail closed as described here.
+
 Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
 or complete analysis. The zero summary and empty `findings` array mean analysis
 did not run far enough to classify probes, not that the diff has no findings.
@@ -10592,7 +10606,9 @@ Field contract:
   then) counts the skipped ones, `cap_omitted_seams` and `omitted_by_policy` (always emitted, 0 when none; #9301) count
   visible seams dropped by the brief cap and working-set seams dropped by policy
   (configured off, static limitation), which baseline diff must not read as
-  resolved, a warning says the same, and the brief-cap
+  resolved, the optional `static_limited_omitted_seams` (present only when
+  nonzero; #14082) counts the static-limitation part of `omitted_by_policy`,
+  a warning says the same, and the brief-cap
   warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
@@ -11736,7 +11752,16 @@ Field contract:
   extracts no seams) are excluded from it and listed in the optional
   `parser_declined_files` (present only when non-empty; the review-comments
   Markdown summary also lists them as a `limitation: parser_declined_files`
-  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
+  line, omitted when empty, #9734). A non-empty or malformed
+  `parser_declined_files` also adds one entry to the gate decision's
+  `warnings` naming the files, so the top-level `status` is never `pass` for
+  a decision whose changed files were not all parsed (#14082). The same holds
+  for the optional `static_limited_omitted_seams` (an integer, present only
+  when nonzero): the part of `omitted_by_policy` that was withheld because
+  static evidence is opaque or unknown at a stage. Those changed seams are not
+  gate candidates, so a nonzero or malformed value adds a gate warning and the
+  status is never `pass`; seams omitted because they are configured off or are
+  not gaps do not count. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
