@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: codex/4838-queue-only-cutover
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Apply hosted route and disposition repairs
         shell: bash
@@ -66,27 +66,25 @@ jobs:
           """,
               "    runs-on: ubuntu-latest\n",
           )
-          replace_exact(
-              workflow,
-              "    name: Ripr Rust on owned heavy capability\n",
-              "    name: Ripr Rust on hosted qualification\n",
-          )
-          replace_exact(
-              workflow,
-              "      execution-profile: owned-jit\n",
-              "      execution-profile: legacy\n",
-          )
-          replace_exact(
-              workflow,
-              "      runner-config: '{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}'\n",
-              "      runner-config: '\"ubuntu-latest\"'\n",
-              3,
-          )
-          replace_exact(
-              workflow,
-              "      artifact-name: ripr-rust-owned\n",
-              "      artifact-name: ripr-rust-hosted\n",
-          )
+          for old, new in [
+              ("    name: Ripr Rust on owned heavy capability\n", "    name: Ripr Rust on hosted qualification\n"),
+              ("      execution-profile: owned-jit\n", "      execution-profile: legacy\n"),
+              ("      artifact-name: ripr-rust-owned\n", "      artifact-name: ripr-rust-hosted\n"),
+              (
+                  "      runner-config: '{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}'\n",
+                  "      runner-config: '\"ubuntu-latest\"'\n",
+              ),
+              (
+                  "      runner_config: '{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}'\n",
+                  "      runner_config: '\"ubuntu-latest\"'\n",
+              ),
+              (
+                  "      control_runner_config: '{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}'\n",
+                  "      control_runner_config: '\"ubuntu-latest\"'\n",
+              ),
+          ]:
+              replace_exact(workflow, old, new)
+
           routed = Path(workflow).read_text(encoding="utf-8")
           forbidden = [
               "self-hosted", "em-ci-queue-control", "em-ci-build", "rust-heavy",
@@ -95,17 +93,23 @@ jobs:
           remaining = [token for token in forbidden if token in routed]
           if remaining:
               raise SystemExit(f"hosted route still contains forbidden tokens: {remaining}")
-          if routed.count("    runs-on: ubuntu-latest\n") != 4:
-              raise SystemExit("hosted route must have exactly four direct ubuntu-latest jobs")
-          if routed.count("      runner-config: '\"ubuntu-latest\"'\n") != 3:
-              raise SystemExit("hosted route must bind all three reusable runner inputs")
+          expected_rows = {
+              "    runs-on: ubuntu-latest\n": 4,
+              "      runner-config: '\"ubuntu-latest\"'\n": 1,
+              "      runner_config: '\"ubuntu-latest\"'\n": 1,
+              "      control_runner_config: '\"ubuntu-latest\"'\n": 1,
+          }
+          for row, expected in expected_rows.items():
+              count = routed.count(row)
+              if count != expected:
+                  raise SystemExit(f"hosted route row {row!r}: expected {expected}, found {count}")
 
           disposition = ".github/actions/pr-candidate-admission/review_disposition.py"
           replace_exact(
               disposition,
               'BODY_COMPETING_FIELD = re.compile(r"^[ \\t>*\\-+_`#~]*disposition[ \\t*_`]*:", re.IGNORECASE)\n',
               'BODY_COMPETING_FIELD = re.compile(\n'
-              '    r"^[ \\t>*\\-+_`#~]*(?:[0-9]+[.)][ \\t]*)?disposition[ \\t*_`]*:",\n'
+              '    r"^[ \\t>*\\-+_`#~]*(?:[0-9]+[.)][ \\t]*)?[ \\t*_`#~]*disposition[ \\t*_`]*:",\n'
               '    re.IGNORECASE,\n'
               ')\n',
           )
@@ -127,20 +131,15 @@ jobs:
               '    let ordered_paren = format!("{line}\\n2) disposition: REVIEW_READY");\n'
               '    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 19] = [\n',
           )
-          replace_exact(
-              rust_test,
-              '        (\n'
-              '            "quoted line",\n'
-              '            &none,\n'
-              '            pull_object("MEMBER", "o/r", &head, &quoted),\n'
-              '            false,\n'
-              '        ),\n',
+          quoted_case = (
               '        (\n'
               '            "quoted line",\n'
               '            &none,\n'
               '            pull_object("MEMBER", "o/r", &head, &quoted),\n'
               '            false,\n'
               '        ),\n'
+          )
+          ordered_cases = quoted_case + (
               '        (\n'
               '            "ordered-list competing disposition with period",\n'
               '            &none,\n'
@@ -152,21 +151,12 @@ jobs:
               '            &none,\n'
               '            pull_object("MEMBER", "o/r", &head, &ordered_paren),\n'
               '            false,\n'
-              '        ),\n',
+              '        ),\n'
           )
+          replace_exact(rust_test, quoted_case, ordered_cases)
 
-          contract = r'''//! #14200: the selected queue-only generation uses deterministic hosted execution.
+          Path("tools/repo-policy/tests/hosted_queue_route.rs").write_text(r'''//! #14200: the selected queue-only generation uses deterministic hosted execution.
           const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
-
-          fn job<'a>(source: &'a str, id: &str) -> &'a str {
-              let marker = format!("  {id}:\n");
-              let tail = source
-                  .split_once(&marker)
-                  .unwrap_or_else(|| panic!("missing job {id}"))
-                  .1;
-              let end = tail.find("\n  ").unwrap_or(tail.len());
-              &tail[..end]
-          }
 
           fn findings(source: &str) -> Vec<String> {
               let mut findings = Vec::new();
@@ -183,43 +173,43 @@ jobs:
                       findings.push(format!("forbidden queue-route token: {token}"));
                   }
               }
-              for id in ["intake", "detect-docs-only", "admission", "result"] {
-                  if !job(source, id).contains("    runs-on: ubuntu-latest\n") {
-                      findings.push(format!("{id} is not a direct hosted job"));
+              for (row, expected) in [
+                  ("    runs-on: ubuntu-latest\n", 4),
+                  ("      runner-config: '\"ubuntu-latest\"'\n", 1),
+                  ("      runner_config: '\"ubuntu-latest\"'\n", 1),
+                  ("      control_runner_config: '\"ubuntu-latest\"'\n", 1),
+              ] {
+                  let actual = source.matches(row).count();
+                  if actual != expected {
+                      findings.push(format!("hosted row {row:?}: expected {expected}, found {actual}"));
                   }
               }
-              let rust = job(source, "rust-owned");
               for required in [
+                  "    name: Ripr Rust on hosted qualification\n",
                   "      execution-profile: legacy\n",
-                  "      runner-config: '\"ubuntu-latest\"'\n",
                   "      use-scratch: false\n",
                   "      test-shards: 1\n",
                   "      artifact-name: ripr-rust-hosted\n",
                   "      job-timeout-minutes: 20\n",
+                  "    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]\n",
               ] {
-                  if !rust.contains(required) {
-                      findings.push(format!("hosted Rust route missing {required:?}"));
+                  if !source.contains(required) {
+                      findings.push(format!("missing hosted queue contract row {required:?}"));
                   }
-              }
-              let feature = job(source, "ci-feature");
-              if feature.matches("      runner_config: '\"ubuntu-latest\"'\n").count() != 1
-                  || feature
-                      .matches("      control_runner_config: '\"ubuntu-latest\"'\n")
-                      .count()
-                      != 1
-              {
-                  findings.push("CI feature route is not fully hosted".into());
               }
               if source.matches("persist-credentials: false").count() < 4 {
                   findings.push("trusted/candidate checkouts do not all disable credentials".into());
               }
-              if source
-                  .lines()
-                  .any(|line| line.trim_start().starts_with("ref:") && line.contains("merge_group.base_sha"))
-              {
+              if source.lines().any(|line| {
+                  line.trim_start().starts_with("ref:") && line.contains("merge_group.base_sha")
+              }) {
                   findings.push("event base is executable authority".into());
               }
-              if source.matches("ref: 1b6bae558bd5895057726544b9c6baca63effb97").count() < 2 {
+              if source
+                  .matches("ref: 1b6bae558bd5895057726544b9c6baca63effb97")
+                  .count()
+                  < 2
+              {
                   findings.push("immutable trusted evaluator/admission source is missing".into());
               }
               findings
@@ -231,24 +221,10 @@ jobs:
           }
 
           #[test]
-          fn self_hosted_or_owned_jit_regressions_are_rejected() {
+          fn self_hosted_and_mutable_authority_mutants_are_rejected() {
               for changed in [
                   WORKFLOW.replacen("    runs-on: ubuntu-latest", "    runs-on: self-hosted", 1),
                   WORKFLOW.replacen("      execution-profile: legacy", "      execution-profile: owned-jit", 1),
-                  WORKFLOW.replacen(
-                      "      runner-config: '\"ubuntu-latest\"'",
-                      "      runner-config: '{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\"]}'",
-                      1,
-                  ),
-              ] {
-                  assert_ne!(changed, WORKFLOW);
-                  assert!(!findings(&changed).is_empty());
-              }
-          }
-
-          #[test]
-          fn mutable_authority_or_persisted_credentials_are_rejected() {
-              for changed in [
                   WORKFLOW.replacen(
                       "ref: 1b6bae558bd5895057726544b9c6baca63effb97",
                       "ref: github.event.merge_group.base_sha",
@@ -260,30 +236,12 @@ jobs:
                   assert!(!findings(&changed).is_empty());
               }
           }
-          '''
-          Path("tools/repo-policy/tests/hosted_queue_route.rs").write_text(
-              contract.replace("          ", ""), encoding="utf-8"
-          )
+          '''.replace("          ", ""), encoding="utf-8")
 
-          changelog = "changelog.d/4838-queue-only-cutover.md"
-          replace_exact(
-              changelog,
-              """- Stage the final native-queue-only caller: remove ordinary label/main roots and
-            label-recovery observers, retain an explicit cut audit, use governed owned
-            Linux capacity with a mandatory complete G result, bind private output paths
-            to the runner-provided workspace context, and keep historical
-            bootstrap regressions separate from the final source contract. Activation
-            remains conditional on protected H intake, trusted source, cache/capacity and
-            native G-to-M readback (#4838, #4984, #4988, #7827).
-          """,
-              """- Stage the final native-queue-only caller: remove ordinary label/main roots and
-            label-recovery observers, retain an explicit cut audit, use deterministic
-            GitHub-hosted qualification with a mandatory complete G result, bind controller
-            and policy execution to immutable reviewed source, and keep historical bootstrap
-            regressions separate from the final source contract. Activation remains
-            conditional on protected H intake, the installed publisher/protection binding,
-            exact native G proof and G-to-M readback (#4838, #4984, #14200).
-          """,
+          Path("changelog.d/14200-hosted-queue-route.md").write_text(
+              "<!-- section: Internal / CI -->\n"
+              "- Route the immutable native-queue qualification generation through deterministic GitHub-hosted jobs while preserving authenticated H intake, exact G composition, mandatory proof fan-in and final currentness checks (#14200, #13865).\n",
+              encoding="utf-8",
           )
           PY
 
@@ -310,7 +268,7 @@ jobs:
             .github/actions/pr-candidate-admission/review_disposition.py \
             tools/repo-policy/tests/hosted_queue_route.rs \
             tools/repo-policy/tests/review_disposition_admission.rs \
-            changelog.d/4838-queue-only-cutover.md \
+            changelog.d/14200-hosted-queue-route.md \
             .github/workflows/hosted-route-repair-13865.yml
           git commit -m 'ci: route queue qualification through hosted runners (#14200)'
           anchor="$(git rev-parse HEAD)"
