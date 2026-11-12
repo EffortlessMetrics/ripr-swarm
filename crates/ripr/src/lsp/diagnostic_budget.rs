@@ -218,8 +218,12 @@ impl BudgetCursor {
                 overflow: DiagnosticOverflowReason::WorkspaceItemLimit,
             };
         }
-        let byte_overflow =
-            self.selected_bytes.saturating_add(payload_bytes) > budget.max_serialized_bytes;
+        // Overflow of the machine sum is above every admitted byte limit,
+        // including usize::MAX. Saturation would hide that refusal boundary.
+        let byte_overflow = self
+            .selected_bytes
+            .checked_add(payload_bytes)
+            .is_none_or(|total| total > budget.max_serialized_bytes);
         if byte_overflow && self.selected_len != 0 {
             return BudgetDecision::Omit {
                 reason: OmittedDiagnosticReason::SerializedByteLimit,
@@ -782,6 +786,9 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
 
 #[cfg(kani)]
 mod kani_proofs;
+
+#[cfg(test)]
+mod budget_composition_tests;
 
 #[cfg(test)]
 mod tests {

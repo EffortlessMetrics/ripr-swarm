@@ -1,0 +1,16 @@
+[[behavior]]
+id = "RIPR-SPEC-0126"
+name = "Diagnostic count and byte pressure compose at the arithmetic boundary"
+spec = "docs/specs/RIPR-SPEC-0126-lsp-diagnostic-delivery-budget.md"
+tests = [
+  "crates/ripr/src/lsp/diagnostic_budget/budget_composition_tests.rs::maximum_byte_budget_refuses_sum_overflow_and_preserves_exact_fit",
+  "crates/ripr/src/lsp/diagnostic_budget/budget_composition_tests.rs::document_and_byte_pressure_compose_without_charging_omitted_payloads",
+  "crates/ripr/src/lsp/diagnostic_budget/budget_composition_tests.rs::oversized_first_item_does_not_admit_a_zero_byte_second_item",
+  "crates/ripr/src/lsp/diagnostic_budget/budget_composition_tests.rs::bounded_walk_matches_independent_widened_accounting",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostic_budget.rs",
+  "crates/ripr/src/lsp/diagnostic_budget/kani_proofs.rs",
+]
+outputs = []
+metrics = ["unit_test_pass_rate"]
