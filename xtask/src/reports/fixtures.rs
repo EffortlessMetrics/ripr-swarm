@@ -624,76 +624,170 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     }
 
     let expected = fixture.join("expected");
-    fs::create_dir_all(&expected)
-        .map_err(|err| format!("failed to create {}: {err}", normalize_path(&expected)))?;
-    fs::copy(&run.check_json, expected.join("check.json")).map_err(|err| {
-        format!(
-            "failed to update {} from {}: {err}",
-            normalize_path(&expected.join("check.json")),
-            normalize_path(&run.check_json)
-        )
-    })?;
-    fs::copy(&run.human_txt, expected.join("human.txt")).map_err(|err| {
-        format!(
-            "failed to update {} from {}: {err}",
-            normalize_path(&expected.join("human.txt")),
-            normalize_path(&run.human_txt)
-        )
-    })?;
+    // #14498: only surfaces whose bytes actually differ are copied and named in
+    // the CHANGELOG. A bless over unchanged output used to append a `Pending`
+    // block claiming an update that did not happen.
+    let applied = apply_bless_outputs(&expected, &run, name, reason)?;
+    let mut actual_outputs = format!(
+        "- `{}`\n- `{}`\n",
+        normalize_path(&run.check_json),
+        normalize_path(&run.human_txt)
+    );
+    if applied.updated_human_full {
+        actual_outputs.push_str(&format!("- `{}`\n", normalize_path(&run.human_full_txt)));
+    }
+    let mut updated_outputs = String::new();
+    for target in &applied.changed {
+        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(target)));
+    }
+    if !applied.changed.is_empty() {
+        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&applied.changelog)));
+    }
+    let outcome = if applied.changed.is_empty() {
+        no_change_outcome(&applied.changelog)
+    } else {
+        String::new()
+    };
+    let body = format!(
+        "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\n{outcome}Actual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
+        normalize_path(&fixture)
+    );
+    write_report("goldens-bless.md", &body)
+}
+
+/// One blessed output surface: the run-side file, the golden it writes to, and
+/// the name the CHANGELOG entry uses.
+struct BlessSurface {
+    label: &'static str,
+    source: PathBuf,
+    target: PathBuf,
+}
+
+impl BlessSurface {
+    /// Whether blessing this surface would change a byte. A missing golden is a
+    /// change; an unreadable one is an error, not a silent overwrite.
+    fn differs(&self) -> Result<bool, String> {
+        let target = match fs::read(&self.target) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => {
+                return Err(format!(
+                    "failed to read {}: {err}",
+                    normalize_path(&self.target)
+                ));
+            }
+        };
+        let source = fs::read(&self.source)
+            .map_err(|err| format!("failed to read {}: {err}", normalize_path(&self.source)))?;
+        Ok(source != target)
+    }
+}
+
+/// The report line a bless carries when nothing changed (#14498), so a caller
+/// can tell a no-op from a rewrite without diffing the tree.
+fn no_change_outcome(changelog: &Path) -> String {
+    format!(
+        "No change: every expected file already matched the run output, so nothing was copied and `{}` was left untouched.\n",
+        normalize_path(changelog)
+    )
+}
+
+/// The result of applying one bless run to `expected/`.
+struct BlessedOutputs {
+    /// Golden paths that were rewritten. Empty means the bless was a no-op.
+    changed: Vec<PathBuf>,
+    updated_human_full: bool,
+    changelog: PathBuf,
+}
+
+/// Copies only the surfaces whose bytes changed and records exactly one pending
+/// CHANGELOG entry naming them. When every surface already matches, nothing is
+/// written at all (#14498).
+fn apply_bless_outputs(
+    expected: &Path,
+    run: &FixtureRun,
+    name: &str,
+    reason: &str,
+) -> Result<BlessedOutputs, String> {
     let expected_human_full = expected.join("human-full.txt");
     let updated_human_full = expected_human_full.exists();
+    let mut surfaces = vec![
+        BlessSurface {
+            label: "check.json",
+            source: run.check_json.clone(),
+            target: expected.join("check.json"),
+        },
+        BlessSurface {
+            label: "human.txt",
+            source: run.human_txt.clone(),
+            target: expected.join("human.txt"),
+        },
+    ];
     if updated_human_full {
-        fs::copy(&run.human_full_txt, &expected_human_full).map_err(|err| {
-            format!(
-                "failed to update {} from {}: {err}",
-                normalize_path(&expected_human_full),
-                normalize_path(&run.human_full_txt)
-            )
-        })?;
+        surfaces.push(BlessSurface {
+            label: "human-full.txt",
+            source: run.human_full_txt.clone(),
+            target: expected_human_full,
+        });
     }
     for surface in ["sarif.json", "github.txt"] {
         let target = expected.join(surface);
         if target.exists() {
-            fs::copy(run.actual_dir.join(surface), &target)
-                .map_err(|error| format!("failed to bless {}: {error}", normalize_path(&target)))?;
+            surfaces.push(BlessSurface {
+                label: surface,
+                source: run.actual_dir.join(surface),
+                target,
+            });
+        }
+    }
+    let mut changed = Vec::new();
+    for surface in &surfaces {
+        if surface.differs()? {
+            changed.push(surface);
         }
     }
     let changelog = expected.join("CHANGELOG.md");
+    if changed.is_empty() {
+        return Ok(BlessedOutputs {
+            changed: Vec::new(),
+            updated_human_full,
+            changelog,
+        });
+    }
+    fs::create_dir_all(expected)
+        .map_err(|err| format!("failed to create {}: {err}", normalize_path(expected)))?;
+    for surface in &changed {
+        fs::copy(&surface.source, &surface.target).map_err(|err| {
+            format!(
+                "failed to update {} from {}: {err}",
+                normalize_path(&surface.target),
+                normalize_path(&surface.source)
+            )
+        })?;
+    }
     let mut text = if changelog.exists() {
         read_text_lossy(&changelog)?
     } else {
         "# Golden Output Changes\n".to_string()
     };
     let mut entry = format!(
-        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n",
+        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n",
         next_pending_heading(&text, name)
     );
-    if updated_human_full {
-        entry.push_str("- `expected/human-full.txt`\n");
+    for surface in &changed {
+        entry.push_str(&format!("- `expected/{}`\n", surface.label));
     }
     text.push_str(&entry);
     fs::write(&changelog, text)
         .map_err(|err| format!("failed to write {}: {err}", normalize_path(&changelog)))?;
-    let mut actual_outputs = format!(
-        "- `{}`\n- `{}`\n",
-        normalize_path(&run.check_json),
-        normalize_path(&run.human_txt)
-    );
-    let mut updated_outputs = format!(
-        "- `{}`\n- `{}`\n",
-        normalize_path(&expected.join("check.json")),
-        normalize_path(&expected.join("human.txt"))
-    );
-    if updated_human_full {
-        actual_outputs.push_str(&format!("- `{}`\n", normalize_path(&run.human_full_txt)));
-        updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&expected_human_full)));
-    }
-    updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&changelog)));
-    let body = format!(
-        "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\nActual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
-        normalize_path(&fixture)
-    );
-    write_report("goldens-bless.md", &body)
+    Ok(BlessedOutputs {
+        changed: changed
+            .into_iter()
+            .map(|surface| surface.target.clone())
+            .collect(),
+        updated_human_full,
+        changelog,
+    })
 }
 
 /// Unique heading for the next appended pending changelog entry.
@@ -3750,6 +3844,77 @@ mod tests {
     }
 
     use super::*;
+
+    // #14498: a bless whose output is byte-identical must not append a
+    // `Pending` block, and a bless that does change a golden must still record
+    // exactly one block naming the changed file.
+    #[test]
+    fn bless_with_identical_output_leaves_the_changelog_untouched() -> Result<(), String> {
+        let dir = unique_temp_path("bless-noop");
+        let _ = std::fs::remove_dir_all(&dir);
+        let expected = dir.join("fixture/expected");
+        let actual = dir.join("actual");
+        let write = |path: std::path::PathBuf, body: &str| -> Result<(), String> {
+            std::fs::write(&path, body).map_err(|err| format!("write {}: {err}", path.display()))
+        };
+        let read_bytes = |path: std::path::PathBuf| -> Result<Vec<u8>, String> {
+            std::fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+        let read_text = |path: std::path::PathBuf| -> Result<String, String> {
+            std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+        };
+        std::fs::create_dir_all(&expected)
+            .map_err(|err| format!("create {}: {err}", expected.display()))?;
+        std::fs::create_dir_all(&actual)
+            .map_err(|err| format!("create {}: {err}", actual.display()))?;
+        write(expected.join("check.json"), "{\"findings\":[]}")?;
+        write(expected.join("human.txt"), "# report\n")?;
+        write(expected.join("CHANGELOG.md"), "# Golden Output Changes\n")?;
+        write(actual.join("check.json"), "{\"findings\":[]}")?;
+        write(actual.join("human.txt"), "# report\n")?;
+        let run = FixtureRun {
+            name: "synthetic".to_string(),
+            actual_dir: actual.clone(),
+            check_json: actual.join("check.json"),
+            human_txt: actual.join("human.txt"),
+            human_full_txt: actual.join("human-full.txt"),
+            comparisons: Vec::new(),
+        };
+
+        let before = read_bytes(expected.join("CHANGELOG.md"))?;
+        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "no-op")?;
+        assert!(
+            applied.changed.is_empty(),
+            "identical output must report no change, got {:?}",
+            applied.changed
+        );
+        assert_eq!(
+            read_bytes(expected.join("CHANGELOG.md"))?,
+            before,
+            "a no-op bless must not append a Pending block"
+        );
+        let outcome = super::no_change_outcome(&applied.changelog);
+        assert!(outcome.starts_with("No change:"), "{outcome}");
+        assert!(
+            outcome.contains("CHANGELOG.md` was left untouched"),
+            "{outcome}"
+        );
+
+        // Negative control: a real change still records exactly one block.
+        write(actual.join("human.txt"), "# report\nchanged\n")?;
+        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "change")?;
+        assert_eq!(applied.changed, vec![expected.join("human.txt")]);
+        let after = read_text(expected.join("CHANGELOG.md"))?;
+        assert_eq!(after.matches("## Pending").count(), 1, "{after}");
+        assert!(after.contains("- `expected/human.txt`"), "{after}");
+        assert!(
+            !after.contains("- `expected/check.json`"),
+            "an unchanged surface must not be named: {after}"
+        );
+        assert_eq!(read_text(expected.join("check.json"))?, "{\"findings\":[]}");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
 
     #[test]
     fn normalize_json_handles_double_backslash() {
