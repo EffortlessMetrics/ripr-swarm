@@ -1191,7 +1191,8 @@ mod tests {
             .stderr_notice()
             .ok_or("a refused body must carry a stderr notice")?;
         assert!(
-            notice.starts_with("ripr lsp: stopped after a message it could not decode")
+            notice.starts_with("ripr lsp: stopped while input was still open")
+                && notice.contains("could not decode")
                 && notice.contains("restart the language server"),
             "notice must say what happened and what to do, got: {notice}"
         );

@@ -138,7 +138,7 @@ impl SessionEnding {
         match self {
             Self::Exit | Self::InputClosed => None,
             Self::UndecodableInput => Some(
-                "ripr lsp: stopped after a message it could not decode (the client was sent a JSON-RPC error with a null id). The session does not recover from this; restart the language server. Frame recovery is tracked in #14219.",
+                "ripr lsp: stopped while input was still open, typically after a message it could not decode (answered with one JSON-RPC error with a null id). The session does not recover from this; restart the language server. Frame recovery is tracked in #14219.",
             ),
         }
     }
