@@ -1121,16 +1121,17 @@ verify=complete|outcome=O|findings=N|exposed=N
   `partial_scope`, `no_scope`. It is independent of `done=`, is static
   evidence only, and does not replace running the tests.
 - Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
-  every test-side gap (candidate-current, `weakly_exposed` or
-  `reachable_unrevealed`, not static-limited, not preview-only), and the class
+  one printed row per distinct test-side gap record (candidate-current,
+  `weakly_exposed` or `reachable_unrevealed`, not static-limited, not
+  preview-only; identical records fold, see `folded_gaps=`), and the class
   counts cover every non-suppressed finding in the run.
 - `folded_gaps=F` follows `gaps=` (#14338) when some gap findings would
   print identical records: the same class, `FILE:LINE`, changed expression,
   `missing=` value, strongest related test (its whole `tK=` line) and
   `stages=` row, differing only in `id=` (for example an `error_path` and a
   `return_value` probe on one `return Err(..)` line). The comparison uses the
-  unclipped values and every missing discriminator (its value, shape and
-  flow sink), not only the printed one; the explanatory `missing` prose is
+  unclipped values and every missing discriminator (its value, shape,
+  flow sink and drafted boundary call), not only the printed one; the explanatory `missing` prose is
   compared only when no discriminator is named, since it is then what
   `missing=` prints. One test closes all of
   them, so they print as one row, kept by the first finding in triage order,
