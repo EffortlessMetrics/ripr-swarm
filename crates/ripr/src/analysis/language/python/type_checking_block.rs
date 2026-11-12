@@ -11,12 +11,14 @@
 //! `typing_extensions` (or be the `TYPE_CHECKING = False` spelling that
 //! avoids the import), and no statement in the file may bind either name any
 //! other way (an assignment, a `def`, a parameter, a loop or `with` target,
-//! an `except` name, another import). Everything else keeps its probes: `if not TYPE_CHECKING:`, a compound
+//! an `except` name, a `:=` target, another import). Everything else keeps its probes: `if not TYPE_CHECKING:`, a compound
 //! test, the `else:` branch, a body that shares the `if` line, and a file
 //! that does not parse.
 
 use super::source_facts::parse_module_result;
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
+use rustpython_parser::lexer::lex;
+use rustpython_parser::{Mode, Tok};
 use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 use std::path::Path;
@@ -39,12 +41,42 @@ pub(super) fn type_checking_only_line_ranges(
     };
     let mut bindings = Bindings::default();
     bindings.read(&module.body);
-    if bindings.unreadable {
+    if bindings.unreadable || rebinds_by_named_expression(source, &bindings) {
         return Vec::new();
     }
     let mut ranges = Vec::new();
     collect(source, &module.body, &bindings, &mut ranges);
     ranges
+}
+
+/// Whether a named expression (`name := value`) anywhere in `source` binds
+/// the flag or a typing module alias. A walrus can sit in any expression (a
+/// call argument, an `if` test, a comprehension), and its target is always a
+/// bare name, so the token stream finds every one without walking each
+/// expression shape. The lexer drops comments and line breaks inside
+/// brackets, so a target split from `:=` by them is still adjacent. A file
+/// the lexer rejects counts as rebinding.
+fn rebinds_by_named_expression(source: &str, bindings: &Bindings) -> bool {
+    let mut previous_name: Option<String> = None;
+    for token in lex(source, Mode::Module) {
+        let Ok((token, _)) = token else {
+            return true;
+        };
+        match token {
+            Tok::ColonEqual => {
+                if previous_name
+                    .as_deref()
+                    .is_some_and(|name| name == FLAG || bindings.typing_aliases.contains(name))
+                {
+                    return true;
+                }
+                previous_name = None;
+            }
+            Tok::Name { name } => previous_name = Some(name),
+            _ => previous_name = None,
+        }
+    }
+    false
 }
 
 /// How the file binds the flag and the typing module aliases.
