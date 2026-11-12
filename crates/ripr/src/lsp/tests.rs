@@ -29570,11 +29570,176 @@ fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), Strin
 // degraded optional component must surface typed on every status surface.
 // ---------------------------------------------------------------------------
 
+/// The production portion of one LSP source file: the file with every item
+/// gated behind `#[cfg(test)]` removed. Test modules print skip notices, so a
+/// whole-file scan would fail on them; the exclusion must stop at each gated
+/// item's end, because everything after the first `#[cfg(test)]` marker is
+/// still production code that must be scanned (#14480).
+///
+/// The guard covers `eprintln!`/`eprint!` only: a raw
+/// `writeln!(std::io::stderr(), ...)` is deliberately out of scope because
+/// #14219/#14476 needs a stderr line at session end.
+fn production_source(source: &str) -> String {
+    let mut production = String::with_capacity(source.len());
+    let mut lines = source.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.trim() != "#[cfg(test)]" {
+            production.push_str(line);
+            production.push('\n');
+            continue;
+        }
+        // Drop any further attributes on the same item (`#[derive]`, `#[test]`),
+        // then the item itself: brace-balanced when it opens a block, one line
+        // when it is a field, variant or `use` declaration, and a whole
+        // signature plus body when it is a function.
+        while lines
+            .peek()
+            .is_some_and(|next| next.trim_start().starts_with("#["))
+        {
+            lines.next();
+        }
+        let mut depth = 0;
+        let mut opened = false;
+        let mut in_signature = false;
+        let mut braces = ItemBraces::default();
+        for item_line in lines.by_ref() {
+            let (delta, opens) = braces.scan(item_line);
+            depth += delta;
+            let trimmed = item_line.trim_end();
+            if opens {
+                opened = true;
+                in_signature = false;
+            }
+            let done = if opened {
+                depth <= 0
+            } else if trimmed.ends_with(';') {
+                true
+            } else if in_signature {
+                false
+            } else if trimmed.contains("fn ") || trimmed.starts_with("impl") {
+                in_signature = true;
+                false
+            } else {
+                true
+            };
+            if done {
+                break;
+            }
+        }
+    }
+    production
+}
+
+/// Net brace balance and "opened a block" for the item scan, ignoring string
+/// and `//` comment text so a brace inside a message or a JSON blob cannot
+/// unbalance it. Raw strings may span lines, so the terminator is carried.
+#[derive(Default)]
+struct ItemBraces {
+    raw_terminator: Option<String>,
+}
+
+impl ItemBraces {
+    fn scan(&mut self, line: &str) -> (i32, bool) {
+        let bytes = line.as_bytes();
+        let mut delta = 0;
+        let mut opened = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some(terminator) = self.raw_terminator.clone() {
+                if line[i..].starts_with(&terminator) {
+                    i += terminator.len();
+                    self.raw_terminator = None;
+                } else {
+                    i += line[i..].chars().next().map_or(1, char::len_utf8);
+                }
+                continue;
+            }
+            let ch = line[i..].chars().next().unwrap_or(' ');
+            if ch == 'r' || ch == 'b' {
+                let mut j = i;
+                let mut hashes = 0;
+                if bytes[j] == b'b' {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'r' {
+                    j += 1;
+                    while j < bytes.len() && bytes[j] == b'#' {
+                        hashes += 1;
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'"' {
+                        self.raw_terminator = Some(format!("\"{}", "#".repeat(hashes)));
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            match ch {
+                '"' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        let text = line[i..].chars().next().unwrap_or(' ');
+                        i += text.len_utf8();
+                        if text == '\\' {
+                            i += line[i..].chars().next().map_or(0, char::len_utf8);
+                        } else if text == '"' {
+                            break;
+                        }
+                    }
+                }
+                '/' if line[i..].starts_with("//") => break,
+                '{' => {
+                    delta += 1;
+                    opened = true;
+                    i += 1;
+                }
+                '}' => {
+                    delta -= 1;
+                    i += 1;
+                }
+                _ => i += ch.len_utf8(),
+            }
+        }
+        (delta, opened)
+    }
+}
+
+#[test]
+fn production_source_excludes_only_the_cfg_test_gated_items() {
+    let source = "fn before() {}\n\n#[cfg(test)]\nmod tests {\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
+    let production = production_source(source);
+    assert!(production.contains("fn before()"), "{production}");
+    assert!(production.contains("fn after()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(!production.contains("mod tests"), "{production}");
+}
+
+#[test]
+fn production_source_excludes_a_one_line_test_module_declaration() {
+    let source = "fn production() {}\n#[cfg(test)]\nmod fixture_tests;\nfn later() {}\n";
+    let production = production_source(source);
+    assert!(production.contains("fn production()"), "{production}");
+    assert!(production.contains("fn later()"), "{production}");
+    assert!(!production.contains("mod fixture_tests"), "{production}");
+}
+
+#[test]
+fn production_source_excludes_a_gated_block_containing_a_raw_string() {
+    // backend.rs gates a test module that holds a multi-line `r#"{...}"#`
+    // ledger; braces inside it must not end the module early.
+    let source = "fn before() {}\n#[cfg(test)]\nmod tests {\n    fn ledger() -> &'static str {\n        r#\"{ \"kind\": \"gap_decision_ledger\" }\"#\n    }\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
+    let production = production_source(source);
+    assert!(production.contains("fn before()"), "{production}");
+    assert!(production.contains("fn after()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(!production.contains("ledger"), "{production}");
+}
+
 #[test]
 fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), String> {
     // Source-level guard: the production portion of every LSP source file
-    // must be free of `eprintln!`. Degradation is reported through the typed
-    // component outcomes on the snapshot plus `window/logMessage`, never
+    // must be free of `eprintln!`/`eprint!`. Degradation is reported through the
+    // typed component outcomes on the snapshot plus `window/logMessage`, never
     // through hidden process stderr.
     let sources: [(&str, &str); 21] = [
         ("lsp.rs", include_str!("../lsp.rs")),
@@ -29603,19 +29768,44 @@ fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), St
         ("uri.rs", include_str!("uri.rs")),
     ];
     for (name, source) in sources {
-        // Test-only code (everything from the first `#[cfg(test)]` onward)
-        // is excluded: test modules may print skip notices. No lsp source
-        // declares `#[cfg(test)]` items before its test module except
-        // diagnostics.rs test-only imports/helpers, which contain no
-        // stderr prints either; the whole-file check for those files would
-        // be equally clean, so the split is only a safety margin.
-        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
-        if production.contains("eprintln") {
+        let production = production_source(source);
+        if production.contains("eprintln") || production.contains("eprint!") {
             return Err(format!(
                 "lsp/{name} writes to process stderr in production code; route degradation through the typed component outcomes (#1997)"
             ));
         }
     }
+    // #14480: the scan must not stop at the first `#[cfg(test)]` marker. In
+    // lsp.rs every marker is a one-line `mod <name>;` declaration near the top,
+    // so a "split at the first marker" scan skipped `serve`, `serve_stdio` and
+    // `serve_streams` entirely.
+    let lsp = production_source(include_str!("../lsp.rs"));
+    assert!(
+        lsp.contains("async fn serve_stdio"),
+        "the production scan must reach serve_stdio"
+    );
+    // diagnostics.rs declares production code after its first `#[cfg(test)]`
+    // marker and gates later helpers individually; the production region must
+    // still be scanned, so the exclusion is per gated item and not "everything
+    // after the first marker".
+    let diagnostics = include_str!("diagnostics.rs");
+    let production = production_source(diagnostics);
+    assert!(
+        production.contains("fn canonicalize_diagnostic_batches"),
+        "the production scan must reach diagnostics.rs code declared after its first #[cfg(test)] marker"
+    );
+    assert!(
+        !production.contains("fn finding_diagnostics_by_uri("),
+        "a #[cfg(test)]-gated helper must stay excluded"
+    );
+    // And a stderr write placed in that post-marker production function is
+    // caught, so the presence check above is not the only evidence.
+    let mutated = diagnostics.replacen(
+        "fn site_fingerprint(finding: &Finding) -> String {",
+        "fn site_fingerprint(finding: &Finding) -> String {\n    eprintln!(\"probe\");",
+        1,
+    );
+    assert!(production_source(&mutated).contains("eprintln"));
     Ok(())
 }
 
