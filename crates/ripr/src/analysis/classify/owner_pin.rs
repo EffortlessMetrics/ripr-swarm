@@ -11231,6 +11231,25 @@ pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &st
     declarations + renames + usize::from(file_aliases_type(source, name))
 }
 
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` on a line
+/// before file line `line` (1-based), by a text scan of its comment- and
+/// string-masked code (#14407).
+pub(in crate::analysis) fn source_declares_type_before_line(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    ["struct", "enum", "union"].iter().any(|keyword| {
+        whole_word_offsets(&masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
+                    && masked[..offset].matches('\n').count() + 1 < line
+            })
+    })
+}
+
 /// Whether masked text declares a `trait` named `name`.
 fn declares_trait(masked: &str, name: &str) -> bool {
     whole_word_offsets(masked, "trait")

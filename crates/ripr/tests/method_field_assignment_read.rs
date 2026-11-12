@@ -27,9 +27,20 @@ fn finding_at(owner_source: &str, test_path: &str, test: &str) -> Result<Finding
     finding_with_files(owner_source, test_path, test, &[])
 }
 
-/// [`finding_at`] with `extra` files written last (so one may replace the
-/// default `Cargo.toml`).
 fn finding_with_files(
+    owner_source: &str,
+    test_path: &str,
+    test: &str,
+    extra: &[(&str, &str)],
+) -> Result<Finding, String> {
+    finding_in("src/lib.rs", owner_source, test_path, test, extra)
+}
+
+/// [`finding_at`] with the owner written at `owner_path` (the changed file)
+/// and `extra` files written last (so one may replace the default
+/// `Cargo.toml` or `src/lib.rs`).
+fn finding_in(
+    owner_path: &str,
     owner_source: &str,
     test_path: &str,
     test: &str,
@@ -53,8 +64,8 @@ fn finding_with_files(
         "Cargo.toml",
         "[package]\nname = \"probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
-    write("src/lib.rs", owner_source)?;
-    if test_path != "src/lib.rs" {
+    write(owner_path, owner_source)?;
+    if test_path != owner_path {
         write(test_path, test)?;
     }
     for (path, text) in extra {
@@ -83,7 +94,7 @@ fn finding_with_files(
     write(
         "diff.patch",
         &format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n{hunk}",
+            "diff --git a/{owner_path} b/{owner_path}\nindex 0000000..1111111 100644\n--- a/{owner_path}\n+++ b/{owner_path}\n@@ -1,{n} +1,{n} @@\n{hunk}",
             n = lines.len()
         ),
     )?;
@@ -379,5 +390,82 @@ fn a_constructor_built_receiver_gets_no_short_field_credit() -> Result<(), Strin
         ),
     )?;
     assert_eq!(literal.class, ExposureClass::Exposed, "{literal:#?}");
+    Ok(())
+}
+
+const O_FIELD: &str =
+    "    let mut c = Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);";
+
+/// #14407 exact-head review F1: a test whose `Counter` is an external type
+/// (through a foreign glob, or a library module re-exporting a dependency's
+/// type) cannot run the owner, so its read gets no credit. The control with
+/// the owner's own import is exposed.
+#[test]
+fn an_external_namesake_receiver_gets_no_credit() -> Result<(), String> {
+    let glob = finding(&format!("use foreign::*;\n{}", test_body(O_FIELD)))?;
+    assert_ne!(glob.class, ExposureClass::Exposed, "{glob:#?}");
+    let reexported = finding_with_files(
+        &format!("{OWNER}pub mod other;\n"),
+        "tests/t.rs",
+        &format!("use probe::other::Counter;\n{}", test_body(O_FIELD)),
+        &[("src/other.rs", "pub use dep::Counter;\n")],
+    )?;
+    assert_ne!(reexported.class, ExposureClass::Exposed, "{reexported:#?}");
+    let control = finding(&format!("use probe::Counter;\n{}", test_body(O_FIELD)))?;
+    assert_eq!(control.class, ExposureClass::Exposed, "{control:#?}");
+    Ok(())
+}
+
+/// #14407 exact-head review F2: `probe::Counter { .. }` names the crate root's
+/// type. An owner declared in a module is that type only when `src/lib.rs`
+/// re-exports it from the owner's module.
+#[test]
+fn a_crate_root_literal_names_a_module_owner_only_through_its_reexport() -> Result<(), String> {
+    let test = test_body(
+        "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+    );
+    let foreign_root = finding_in(
+        "src/other.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[("src/lib.rs", "pub mod other;\npub use dep::Counter;\n")],
+    )?;
+    assert_ne!(
+        foreign_root.class,
+        ExposureClass::Exposed,
+        "{foreign_root:#?}"
+    );
+    let own_root = finding_in(
+        "src/other.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[("src/lib.rs", &format!("pub mod other;\n{OWNER}"))],
+    )?;
+    assert_ne!(own_root.class, ExposureClass::Exposed, "{own_root:#?}");
+    let reexport = finding_in(
+        "src/other.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[("src/lib.rs", "pub mod other;\npub use other::Counter;\n")],
+    )?;
+    assert_eq!(reexport.class, ExposureClass::Exposed, "{reexport:#?}");
+    Ok(())
+}
+
+/// #14407 exact-head review F3: an unrelated same-named type elsewhere in the
+/// workspace does not withdraw the credit of a test that binds the owner's
+/// own type.
+#[test]
+fn an_unrelated_namesake_elsewhere_keeps_the_credit() -> Result<(), String> {
+    let found = finding_with_files(
+        &format!("{OWNER}pub mod other;\n"),
+        "tests/t.rs",
+        &format!("use probe::Counter;\n{}", test_body(O_FIELD)),
+        &[("src/other.rs", "pub struct Counter {\n    pub w: u32,\n}\n")],
+    )?;
+    assert_eq!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }

@@ -73,7 +73,7 @@ pub(in crate::analysis) use activation::{
     call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
     literal_operand_value, local_boundary, macro_names_rebound, owner_receiver_borrow,
     owner_writes_field_only_at_probe, pushed_collection_compared_whole, pushed_literal_path,
-    signature_parameters, sort_value_facts,
+    signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,

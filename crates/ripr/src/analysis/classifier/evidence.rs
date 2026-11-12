@@ -1390,6 +1390,10 @@ impl ClassifiedProbeEvidence {
                                 crate::analysis::classify::owner_writes_field_only_at_probe(
                                     &owner.body,
                                     path,
+                                ) && crate::analysis::classify::test_binds_owner_type(
+                                    owner,
+                                    test,
+                                    context.index,
                                 ) && crate::analysis::classify::assigned_field_seed_is_visible(
                                     test,
                                     &owner.name,

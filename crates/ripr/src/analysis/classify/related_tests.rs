@@ -2364,13 +2364,107 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
         && owner_impl_is_root_item_of(index, owner, &owner.file)
 }
 
+/// The module path of a root-library file under `src/` (#14407): `src/lib.rs`
+/// is the crate root (empty), `src/a.rs` and `src/a/mod.rs` are `a`, and
+/// `src/a/b.rs` is `a::b`. Any other file gives `None`.
+pub(in crate::analysis) fn library_module_path(file: &Path) -> Option<Vec<String>> {
+    let rest = file.strip_prefix("src").ok()?;
+    let mut parts: Vec<String> = rest
+        .iter()
+        .map(|part| part.to_str().map(str::to_string))
+        .collect::<Option<_>>()?;
+    let last = parts.pop()?;
+    let stem = last.strip_suffix(".rs")?;
+    if parts.is_empty() && stem == "lib" {
+        return Some(Vec::new());
+    }
+    if parts.is_empty() && stem == "main" {
+        return None;
+    }
+    if stem != "mod" {
+        parts.push(stem.to_string());
+    }
+    (!parts.is_empty()
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        }))
+    .then_some(parts)
+}
+
+/// Whether the root library file (`src/lib.rs`) puts the owner's impl type
+/// `name` at the crate root (#14407): the owner's file is `src/lib.rs` and it
+/// declares `name` exactly once, unaliased; or the owner's file is a module
+/// of the library that declares `name` once, `src/lib.rs` declares no type of
+/// that name, and `src/lib.rs` re-exports it unrenamed by `pub use` of the
+/// owner's module path (`pub use a::Ty;`, optionally `crate::`/`self::`
+/// prefixed). Anything else, including a re-export from another path, is
+/// `false`.
+pub(in crate::analysis) fn root_library_names_owner_type(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    name: &str,
+) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return false;
+    };
+    let root_count = super::owner_pin::source_type_declaration_count(&root.source, name);
+    if owner.file == Path::new("src/lib.rs") {
+        return root_count == 1;
+    }
+    let Some(module) = library_module_path(&owner.file).filter(|module| !module.is_empty()) else {
+        return false;
+    };
+    let Some(owner_facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let target = format!("{}::{name}", module.join("::"));
+    let reexports = super::reveal::flattened_pub_use_paths(&root.source)
+        .into_iter()
+        .filter(|item| {
+            item.alias
+                .as_deref()
+                .unwrap_or_else(|| item.path.rsplit("::").next().unwrap_or(item.path.as_str()))
+                == name
+                || item.path.ends_with("::*")
+        })
+        .collect::<Vec<_>>();
+    root_count == 0
+        && super::owner_pin::source_type_declaration_count(&owner_facts.source, name) == 1
+        && reexports.len() == 1
+        && reexports.iter().all(|item| {
+            item.alias.is_none()
+                && ["", "crate::", "self::"]
+                    .iter()
+                    .any(|prefix| item.path == format!("{prefix}{target}"))
+        })
+}
+
+/// Whether the root library file declares, aliases, renames or `pub use`s any
+/// type named `name`, or holds a `pub use` glob, so `krate::name` or a
+/// `use krate::*;` glob may bind it (#14407).
+pub(in crate::analysis) fn library_root_binds_type_name(index: &RustIndex, name: &str) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return true;
+    };
+    super::owner_pin::source_type_declaration_count(&root.source, name) > 0
+        || super::reveal::flattened_pub_use_paths(&root.source)
+            .iter()
+            .any(|item| {
+                item.path.ends_with("::*")
+                    || item.alias.as_deref().unwrap_or_else(|| {
+                        item.path.rsplit("::").next().unwrap_or(item.path.as_str())
+                    }) == name
+            })
+}
+
 /// The factory name [`initializer_names_impl_type`] passes for a
 /// crate-qualified struct literal head (`krate::Ty { .. }`): no associated
 /// function can be spelled `{`, so it never collides with a constructor name.
 const CRATE_QUALIFIED_STRUCT_LITERAL: &str = "{";
 
 /// The root package's library name when `test` may spell the owner's impl type
-/// through it (`krate::Ty`): the owner is a root-file item of `src/lib.rs` and
+/// through it (`krate::Ty`): the owner is a top-level item of a file of the
+/// root package's library (`src/lib.rs` or a module composed under it) and
 /// `test`, an integration test of the root package, names the library
 /// unshadowed (#14036, #14407). `None` otherwise, so a crate-qualified
 /// spelling then establishes nothing.
@@ -4678,6 +4772,8 @@ fn initializer_names_impl_type(
         // literal itself names the type, so no constructor is consulted.
         ([krate, ty], Some(b'{')) if *ty == impl_type => {
             factory(&format!("{krate}::{ty}"), CRATE_QUALIFIED_STRUCT_LITERAL)
+                // `Ty::Ty { .. }`: a struct variant named like its enum.
+                || (*krate == impl_type && is_variant_name(ty))
         }
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
         // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
@@ -5700,9 +5796,16 @@ fn inherent_receiver_call_resolves_with(
                 // unshadowed in this test, and the owner an item of that
                 // library. A literal names the type itself; an associated
                 // call must be a constructor of it.
-                owner.is_some_and(|owner| own_crate_qualifier(index, test, owner) == Some(krate))
-                    && (name == CRATE_QUALIFIED_STRUCT_LITERAL
-                        || associated_constructor_names_own_type(index, ty, name, None))
+                owner.is_some_and(|owner| {
+                    own_crate_qualifier(index, test, owner) == Some(krate)
+                        && if name == CRATE_QUALIFIED_STRUCT_LITERAL {
+                            // The literal checks no constructor, so the crate
+                            // root must name the owner's own type.
+                            root_library_names_owner_type(index, owner, ty)
+                        } else {
+                            associated_constructor_names_own_type(index, ty, name, None)
+                        }
+                })
             } else {
                 if associated_constructor_names_own_type(
                     index,
@@ -8248,6 +8351,28 @@ mod tests {
             );
         }
         assert!(asked.borrow().is_empty(), "{:?}", asked.borrow());
+        // A struct variant named like its enum (`Mode::Mode { .. }`) keeps
+        // the variant reading when the crate authority refuses (#14407 F4).
+        assert!(initializer_names_impl_type(
+            "Mode::Mode { n: 5 }",
+            "Mode",
+            &factory(false)
+        ));
+    }
+
+    #[test]
+    fn a_library_file_maps_to_its_module_path() {
+        let path = |file: &str| library_module_path(Path::new(file));
+        assert_eq!(path("src/lib.rs"), Some(Vec::new()));
+        assert_eq!(path("src/other.rs"), Some(vec!["other".to_string()]));
+        assert_eq!(path("src/a/mod.rs"), Some(vec!["a".to_string()]));
+        assert_eq!(
+            path("src/a/b.rs"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        for none in ["src/main.rs", "tests/t.rs", "src/a/b.txt", "lib.rs"] {
+            assert_eq!(path(none), None, "{none}");
+        }
     }
 
     #[test]

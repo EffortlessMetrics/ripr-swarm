@@ -4546,18 +4546,20 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 ) -> bool {
     owner_borrows_receiver(&owner.body)
         && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
-        && !test_file_declares_owner_type_namesake(owner, test, index)
-        && !assertion_restates_seeded_field(test, path, assertion)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+        && !assertion_restates_seeded_field(test, path, assertion)
+        && !test_file_declares_owner_type_namesake(owner, test, index)
 }
 
 /// #14407: a test outside the owner's file that declares (or aliases) a type
 /// named like the owner's impl type, at any scope, may build its receiver from
 /// that namesake and run the namesake's same-named method. The relation's
 /// shadow check exempts a test file's own root, so this read rule refuses the
-/// whole file by a text scan instead. Any test also refuses unless the
-/// indexed workspace declares the name exactly once, unaliased and unrenamed.
-/// An owner without an impl type is unaffected.
+/// whole file by a text scan instead. A test in the owner's own file refuses
+/// when that file declares, aliases or renames the name more than once (an
+/// inline `mod tests` namesake). An owner without an impl type is unaffected.
+/// Which type a test outside the owner's file binds by name is reveal's
+/// question ([`test_binds_owner_type`]).
 fn test_file_declares_owner_type_namesake(
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -4572,22 +4574,93 @@ fn test_file_declares_owner_type_namesake(
         // An unindexed test file cannot be shown free of a namesake.
         return true;
     };
-    // A test outside the owner's file must not declare or alias the name.
-    if test.file != owner.file
-        && super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type)
+    if test.file == owner.file {
+        super::owner_pin::source_type_declaration_count(&facts.source, impl_type) > 1
+    } else {
+        super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type)
+    }
+}
+
+/// #14407: whether `test` names the owner's impl type itself when it spells
+/// the type's bare name or crate-qualified name, read by text and fail closed.
+/// Reveal's short-field credit asks this; activation and the repository seam
+/// do not.
+///
+/// - The owner's file must declare the name exactly once (no alias or
+///   rename), before the owner, so a later inline-module namesake cannot be
+///   the one declaration.
+/// - A test in the owner's file then binds it.
+/// - A test elsewhere must be in the root package's integration tests, and
+///   every `use` in its file that could bind the name must reach the owner's
+///   type: a rename to the name refuses, and a named import of it must spell
+///   `krate::<owner module path>::Name`, or `krate::Name` when the library
+///   root names the owner's type ([`super::related_tests::root_library_names_owner_type`]);
+///   a glob import must be rooted at `self`/`super`/`crate`, or at `krate`
+///   when the library root binds no other type of the name. Any other glob
+///   (`use foreign::*;`, `use std::x::*;`) may bring a namesake in and refuses.
+pub(in crate::analysis) fn test_binds_owner_type(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(impl_type) = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type())
+    else {
+        return false;
+    };
+    let Some(owner_facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    if super::owner_pin::source_type_declaration_count(&owner_facts.source, impl_type) != 1
+        || !super::owner_pin::source_declares_type_before_line(
+            &owner_facts.source,
+            impl_type,
+            owner.start_line,
+        )
     {
+        return false;
+    }
+    if test.file == owner.file {
         return true;
     }
-    // The owner's type must be the only declaration of its name across the
-    // indexed workspace: a second one (an inline `mod tests` namesake, or
-    // another workspace member's type a test imports with a plain `use`), an
-    // alias or a `use .. as` rename refuses.
-    index
-        .files()
-        .values()
-        .map(|facts| super::owner_pin::source_type_declaration_count(&facts.source, impl_type))
-        .sum::<usize>()
-        != 1
+    let Some(krate) = index.root_library_name.as_deref() else {
+        return false;
+    };
+    let Some(module) = super::related_tests::library_module_path(&owner.file) else {
+        return false;
+    };
+    let Some(test_facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let root_names_owner =
+        super::related_tests::root_library_names_owner_type(index, owner, impl_type);
+    let full: String = std::iter::once(krate)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(impl_type))
+        .collect::<Vec<_>>()
+        .join("::");
+    let root_spelling = format!("{krate}::{impl_type}");
+    super::reveal::flattened_use_paths(&test_facts.source)
+        .iter()
+        .all(|item| {
+            let path = item.path.trim_start_matches("::");
+            if let Some(prefix) = path.strip_suffix("::*") {
+                let first = prefix.split("::").next().unwrap_or(prefix);
+                return matches!(first, "self" | "super" | "crate")
+                    || (prefix == krate
+                        && (root_names_owner
+                            || !super::related_tests::library_root_binds_type_name(
+                                index, impl_type,
+                            )));
+            }
+            let binding = item
+                .alias
+                .as_deref()
+                .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path));
+            binding != impl_type
+                || (item.alias.is_none()
+                    && (path == full || (path == root_spelling && root_names_owner)))
+        })
 }
 
 /// #14407: whether the field the assertion reads already held the expected
@@ -4674,30 +4747,42 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
                 return false;
             };
             super::related_tests::let_statement_count(&masked, binding) == 1
-                && binding_mentioned_only_as_owner_receiver(&masked, binding, owner_name)
-                && super::reveal::owner_call_binding_let_initializer(&masked, binding)
-                    .filter(|init| super::related_tests::initializer_is_struct_literal(init))
-                    .and_then(|init| {
-                        let start = init.as_ptr() as usize - masked.as_ptr() as usize;
-                        let open = start + init.find('{')?;
-                        let close = start + init.rfind('}')?;
-                        (close > open).then(|| raw.get(open + 1..close)).flatten()
-                    })
-                    .is_some_and(|fields| {
-                        let fields = split_top_level_args(fields);
-                        let mut seeds = fields.iter().filter_map(|field| {
-                            field
-                                .split_once(':')
-                                .filter(|(name, _)| name.trim() == path)
-                                .map(|(_, value)| value.trim())
-                        });
-                        matches!(
-                            (seeds.next(), seeds.next()),
-                            (Some(seed), None)
-                                if super::builder_override::literals_equal(seed, expected.trim())
+            && binding_mentioned_only_as_owner_receiver(&masked, binding, owner_name)
+            && super::reveal::owner_call_binding_let_initializer(&masked, binding)
+                .filter(|init| super::related_tests::initializer_is_struct_literal(init))
+                .and_then(|init| {
+                    let start = init.as_ptr() as usize - masked.as_ptr() as usize;
+                    let open = start + init.find('{')?;
+                    let close = start + init.rfind('}')?;
+                    (close > open).then(|| raw.get(open + 1..close)).flatten()
+                })
+                .is_some_and(|fields| {
+                    let fields = split_top_level_args(fields);
+                    let mut seeds = fields.iter().filter_map(|field| {
+                        field
+                            .split_once(':')
+                            .filter(|(name, _)| name.trim() == path)
+                            .map(|(_, value)| value.trim())
+                    });
+                    // A float literal compares as `f64`, which may differ
+                    // where the field's `f32` values are equal: refuse it.
+                    let float_like = |text: &str| {
+                        let text = text.trim();
+                        text.starts_with(|ch: char| ch.is_ascii_digit() || ch == '-')
+                            && (text.contains('.')
+                                || text.contains("f32")
+                                || text.contains("f64")
+                                || text.contains(['e', 'E']))
+                    };
+                    matches!(
+                        (seeds.next(), seeds.next()),
+                        (Some(seed), None)
+                            if !float_like(seed)
+                                && !float_like(expected)
+                                && super::builder_override::literals_equal(seed, expected.trim())
                                     == Some(false)
-                        )
-                    })
+                    )
+                })
         })
 }
 
@@ -12743,6 +12828,17 @@ assert_eq!(input.amount, 100);"#
                 "let d = Counter { n: 1 };",
                 "c.reset();",
                 "assert_eq!(c.n, d.n);",
+            ],
+            // Float literals compare as `f64` (#14407 F6).
+            &[
+                "let mut c = Counter { n: 0.1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 0.10000000149011612);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1f32);",
             ],
             &[
                 "let mut c = Counter { n: 5, ..Default::default() };",

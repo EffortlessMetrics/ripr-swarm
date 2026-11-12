@@ -804,9 +804,15 @@ changes `self.count += 2` to `self.count += 1`.
   field values. The
   same read also refuses when a test outside the owner's file declares or
   aliases a type named like the owner's impl type anywhere in that file, or
-  when the indexed workspace's declarations, `type` aliases and `use .. as`
-  renames of that name do not total exactly one (another workspace member's
-  same-named type, imported with a plain `use`, would otherwise pass). A
+  when a test in the owner's own file shares it with a second declaration,
+  alias or `use .. as` rename of that name. Reveal's short-field credit also
+  needs the test to bind the owner's own type by name: the owner's file
+  declares the name once, before the owner; a test elsewhere imports it only
+  as `krate::<owner module path>::Name` (or `krate::Name` when the library
+  root declares it or re-exports it from the owner's module), uses no glob
+  rooted outside `self`/`super`/`crate`/`krate`, and spells `krate::Name { .. }`
+  only when the root names the owner's type. A same-named type elsewhere in
+  the workspace that the test does not bind does not withdraw the credit. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.

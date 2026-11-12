@@ -4904,6 +4904,31 @@ pub(super) fn flattened_use_paths(source: &str) -> Vec<UsePath> {
     out
 }
 
+/// [`flattened_use_paths`] restricted to `pub use` declarations, the ones that
+/// re-export an item under the declaring module's path (#14407).
+pub(super) fn flattened_pub_use_paths(source: &str) -> Vec<UsePath> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let mut out = Vec::new();
+    for (at, _) in masked.match_indices("pub") {
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let Some(rest) = masked[at + "pub".len()..]
+            .strip_prefix(char::is_whitespace)
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix("use"))
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+        else {
+            continue;
+        };
+        if let Some(stop) = rest.find(';') {
+            flatten_use_items("", &rest[..stop], &mut out);
+        }
+    }
+    out
+}
+
 fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
     for item in split_top_level_commas(items) {
         let item = item.trim();
@@ -6351,6 +6376,25 @@ mod tests {
 
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn only_a_plain_pub_use_is_a_reexport() {
+        let paths = flattened_pub_use_paths(
+            "pub mod other;\npub use other::Counter;\nuse dep::Gauge;\npub(crate) use dep::Meter;\npub use a::{b, c as d};\n// pub use x::Y;\n",
+        );
+        let spelled: Vec<_> = paths
+            .iter()
+            .map(|item| (item.path.as_str(), item.alias.as_deref()))
+            .collect();
+        assert_eq!(
+            spelled,
+            [
+                ("other::Counter", None),
+                ("a::b", None),
+                ("a::c", Some("d"))
+            ]
+        );
+    }
+
     #[test]
     fn binding_untouched_after_owner_call_refuses_writes_between_call_and_read() {
         // The body starts at file line 10; the read sits on line 14.
