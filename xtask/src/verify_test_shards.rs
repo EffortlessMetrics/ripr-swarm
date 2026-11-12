@@ -50,6 +50,13 @@ struct Options {
     shards: u32,
     out: PathBuf,
     all_features: bool,
+    native_receipt: Option<NativeReceiptOptions>,
+}
+
+struct NativeReceiptOptions {
+    context: PathBuf,
+    producer_result: String,
+    verifier_attempt: u32,
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -105,6 +112,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--run-id" => "run-id",
             "--shards" => "shards",
             "--out" => "out",
+            "--native-receipt-context" => "native-receipt-context",
+            "--native-producer-result" => "native-producer-result",
+            "--native-verifier-attempt" => "native-verifier-attempt",
             other => return Err(format!("verify-test-shards: unknown argument `{other}`")),
         };
         let value = iter
@@ -130,7 +140,28 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "verify-test-shards: --attempt must be a number, got {attempt:?}"
         ));
     }
+    let native_receipt = match (
+        values.get("native-receipt-context"),
+        values.get("native-producer-result"),
+        values.get("native-verifier-attempt"),
+    ) {
+        (None, None, None) => None,
+        (Some(context), Some(producer_result), Some(attempt)) => Some(NativeReceiptOptions {
+            context: PathBuf::from(context),
+            producer_result: producer_result.clone(),
+            verifier_attempt: attempt
+                .parse()
+                .map_err(|_| "invalid native verifier attempt".to_string())?,
+        }),
+        _ => {
+            return Err(
+                "native receipt mode requires context, producer result, and verifier attempt"
+                    .into(),
+            );
+        }
+    };
     Ok(Options {
+        native_receipt,
         dir: PathBuf::from(take("dir")?),
         artifact: take("artifact")?,
         attempt,
@@ -188,6 +219,9 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         };
         if shard == 1 {
             first_dir = Some(dir.clone());
+            if let Some(native) = &options.native_receipt {
+                check_native_receipt(&dir, shard_attempt, options, native, &mut problems);
+            }
         }
         used_attempts.insert(shard_attempt);
         let list = read_named(&dir, &format!("list-{shard}.txt"), &tag, &mut problems);
@@ -313,6 +347,60 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         summary,
         junit,
         context,
+    }
+}
+
+fn check_native_receipt(
+    dir: &Path,
+    selected_attempt: u32,
+    options: &Options,
+    native: &NativeReceiptOptions,
+    problems: &mut Vec<String>,
+) {
+    let Some(text) = read_named(
+        dir,
+        crate::policy::RECEIPT_NAME,
+        "shard 1 native receipt",
+        problems,
+    ) else {
+        return;
+    };
+    let expected = fs::read_to_string(&native.context)
+        .map_err(|e| format!("cannot read expected native context: {e}"))
+        .and_then(|text| {
+            serde_json::from_str::<crate::policy::DeclaredContext>(&text)
+                .map_err(|e| format!("invalid expected native context: {e}"))
+        });
+    let expected = match expected {
+        Ok(value) => value,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    if expected.repository != options.repository
+        || expected.checkout_sha != options.sha
+        || expected.run_id != options.run_id
+    {
+        problems.push("native expected context differs from verifier run identity".into());
+        return;
+    }
+    let source = match crate::policy::native_expected_source(&options.sha) {
+        Ok(source) => source,
+        Err(error) => {
+            problems.push(format!("cannot resolve native expected source: {error}"));
+            return;
+        }
+    };
+    if let Err(error) = crate::policy::require_native_receipt(
+        &text,
+        &expected,
+        &source,
+        selected_attempt,
+        &native.producer_result,
+        native.verifier_attempt,
+    ) {
+        problems.push(error);
     }
 }
 
@@ -876,6 +964,7 @@ mod tests {
             shards,
             out: dir.join("out"),
             all_features: false,
+            native_receipt: None,
         }
     }
 
@@ -970,6 +1059,50 @@ mod tests {
         let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         Ok(outcome.problems)
+    }
+
+    #[test]
+    fn native_receipt_uses_selected_shard_attempt_and_refuses_missing_or_ambiguous()
+    -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-native-selected-attempt");
+        lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
+        lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
+        fs::write(
+            shard_dir(&root, 1).join(crate::policy::RECEIPT_NAME),
+            "old receipt",
+        )
+        .map_err(|e| e.to_string())?;
+        let options = options_attempt(&root, 2, "2");
+        let (selected, attempt) = select_shard_dir(&options, 1)?.ok_or("missing selected shard")?;
+        assert_eq!(attempt, 2);
+        let native = NativeReceiptOptions {
+            context: root.join("context.json"),
+            producer_result: "success".into(),
+            verifier_attempt: 2,
+        };
+        let mut problems = Vec::new();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{problems:?}"
+        );
+        fs::create_dir_all(selected.join("nested")).map_err(|e| e.to_string())?;
+        fs::write(selected.join(crate::policy::RECEIPT_NAME), "one").map_err(|e| e.to_string())?;
+        fs::write(
+            selected.join("nested").join(crate::policy::RECEIPT_NAME),
+            "two",
+        )
+        .map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("ambiguous")),
+            "{problems:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[test]

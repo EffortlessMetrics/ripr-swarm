@@ -1,3 +1,10 @@
+#[path = "file_policy_native_receipt.rs"]
+mod native_receipt;
+pub(crate) use native_receipt::{
+    DeclaredContext, RECEIPT_NAME, expected_source as native_expected_source,
+    produce as produce_native_receipt, require_full as require_native_receipt,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;

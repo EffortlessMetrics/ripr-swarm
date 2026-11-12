@@ -171,6 +171,27 @@ native-coverage subject and cannot satisfy the full file-policy or packet
 coverage obligation. Standalone `check-file-policy` and hosted `ci-policy`
 continue native enumeration. No hosted result depends on this prerequisite.
 
+### Rule 8: diagnostic native receipt, never full proof
+
+`cargo xtask file-policy-native-receipt --context <json>` clears its fixed
+receipt path before running the existing exact native enumeration and packet
+acceptance. If the context input aliases that path it refuses without deleting
+the input; the old diagnostic remains unverified and cannot be full proof. It refuses dirty or changing source/context and duplicate names
+within one selector because binary identities are unavailable. A successful
+receipt is versioned and marked `native_valid_context_unverified`; its declared
+context and hashed observations are not evidence that effective Cargo features,
+configuration, wrappers or ignored inputs were independently verified.
+
+Opt-in `verify-test-shards` receipt mode reads only the selected shard-one
+attempt, compares declared run/context and independently resolved source tree,
+ledger and lock to the receipt, and refuses missing, ambiguous, stale, failed,
+wrong-attempt or unverified proof. Caller-supplied producer and verifier attempt
+values do not independently establish job or binary provenance. In particular,
+this diagnostic mode has no full-success path and is not wired into hosted CI.
+A broad selector may still match a neighboring test after an intended test is
+deleted; the existing generic validator has no exact intended identity for
+that case. Packet-specific exact-subject rules remain unchanged.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -252,6 +273,7 @@ continue native enumeration. No hosted result depends on this prerequisite.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
 - `xtask/src/policy/file_policy.rs`: the policy side of rule 6 and source-only declaration, path, pending and retained-subject controls for rule 7.
+- `xtask/src/policy/file_policy_native_receipt.rs` and `xtask/src/verify_test_shards.rs`: diagnostic receipt binding and refusal controls for rule 8.
 
 ## Implementation Mapping
 
@@ -266,6 +288,7 @@ continue native enumeration. No hosted result depends on this prerequisite.
 - `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
   `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
   `coverage_disclosure_items` (rule 6); `check_file_policy_source_only` and shared path and selector preparation (rule 7).
+- `xtask/src/policy/file_policy_native_receipt.rs`: exact native producer and fail-closed diagnostic binding; `xtask/src/verify_test_shards.rs`: selected-attempt consumer (rule 8).
 
 ## Metrics
 

@@ -20969,11 +20969,19 @@ tests = [
   "xtask/src/policy/file_policy.rs::tests::source_only_refuses_unremovable_native_subject",
   "xtask/src/policy/file_policy.rs::tests::source_only_report_cannot_claim_full_success",
   "xtask/src/policy/file_policy.rs::tests::source_selector_preparation_preserves_native_argv_and_rejects_missing_operand",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::binding_accepts_valid_diagnostic_but_full_proof_refuses_unverified_context",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::binding_refuses_wrong_context_attempt_source_status_and_duplicate_identity",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::duplicate_names_within_a_selector_refuse_but_repeated_declarations_remain_valid",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::failed_native_or_changed_snapshot_cannot_publish_a_receipt",
+  "xtask/src/policy/file_policy_native_receipt.rs::tests::malformed_invocation_clears_stale_output_but_context_alias_is_preserved",
+  "xtask/src/verify_test_shards.rs::tests::native_receipt_uses_selected_shard_attempt_and_refuses_missing_or_ambiguous",
 ]
 fixtures = []
 code = [
   "xtask/src/policy/file_policy.rs",
+  "xtask/src/policy/file_policy_native_receipt.rs",
   "xtask/src/policy/mod.rs",
+  "xtask/src/verify_test_shards.rs",
   "xtask/src/main.rs",
   "xtask/src/precommit_v2.rs",
 ]
