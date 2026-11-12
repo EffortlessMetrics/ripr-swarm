@@ -2,7 +2,8 @@
 mod native_receipt;
 pub(crate) use native_receipt::{
     DeclaredContext, RECEIPT_NAME, expected_source as native_expected_source,
-    produce as produce_native_receipt, require_full as require_native_receipt,
+    produce as produce_native_receipt, read_input as read_native_input,
+    require_full as require_native_receipt,
 };
 
 use std::collections::{BTreeMap, BTreeSet};

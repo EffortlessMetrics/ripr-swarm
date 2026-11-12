@@ -357,20 +357,39 @@ fn check_native_receipt(
     native: &NativeReceiptOptions,
     problems: &mut Vec<String>,
 ) {
-    let Some(text) = read_named(
-        dir,
-        crate::policy::RECEIPT_NAME,
-        "shard 1 native receipt",
-        problems,
-    ) else {
-        return;
+    let mut found = Vec::new();
+    find_files(dir, crate::policy::RECEIPT_NAME, &mut found);
+    let path = match found.as_slice() {
+        [path] => path,
+        [] => {
+            problems.push(format!(
+                "shard 1 native receipt: {} is missing",
+                crate::policy::RECEIPT_NAME
+            ));
+            return;
+        }
+        _ => {
+            problems.push(format!(
+                "shard 1 native receipt: {} is ambiguous ({} members)",
+                crate::policy::RECEIPT_NAME,
+                found.len()
+            ));
+            return;
+        }
     };
-    let expected = fs::read_to_string(&native.context)
-        .map_err(|e| format!("cannot read expected native context: {e}"))
-        .and_then(|text| {
-            serde_json::from_str::<crate::policy::DeclaredContext>(&text)
-                .map_err(|e| format!("invalid expected native context: {e}"))
-        });
+    let text = match crate::policy::read_native_input(path).and_then(|bytes| {
+        String::from_utf8(bytes).map_err(|_| "native receipt is not UTF-8".to_string())
+    }) {
+        Ok(text) => text,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    let expected = crate::policy::read_native_input(&native.context).and_then(|bytes| {
+        serde_json::from_slice::<crate::policy::DeclaredContext>(&bytes)
+            .map_err(|e| format!("invalid expected native context: {e}"))
+    });
     let expected = match expected {
         Ok(value) => value,
         Err(error) => {
@@ -1099,6 +1118,27 @@ mod tests {
         check_native_receipt(&selected, attempt, &options, &native, &mut problems);
         assert!(
             problems.iter().any(|p| p.contains("ambiguous")),
+            "{problems:?}"
+        );
+        fs::remove_file(selected.join("nested").join(crate::policy::RECEIPT_NAME))
+            .map_err(|e| e.to_string())?;
+        fs::write(
+            selected.join(crate::policy::RECEIPT_NAME),
+            vec![b'x'; 8 * 1024 * 1024 + 1],
+        )
+        .map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("exceeds input budget")),
+            "{problems:?}"
+        );
+        fs::write(selected.join(crate::policy::RECEIPT_NAME), "{}").map_err(|e| e.to_string())?;
+        fs::write(&native.context, vec![b'x'; 8 * 1024 * 1024 + 1]).map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("exceeds input budget")),
             "{problems:?}"
         );
         fs::remove_dir_all(&root).map_err(|e| e.to_string())?;

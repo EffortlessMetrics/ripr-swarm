@@ -180,13 +180,18 @@ the input; the old diagnostic remains unverified and cannot be full proof. It re
 within one selector because binary identities are unavailable. A successful
 receipt is versioned and marked `native_valid_context_unverified`; its declared
 context and hashed observations are not evidence that effective Cargo features,
-configuration, wrappers or ignored inputs were independently verified.
+configuration, environment, wrappers or ignored inputs were independently verified.
+Arbitrary environment values are not hashed or stored. Git and tool probes have
+bounded runtime and output; duplicate bare names within one selector are refused
+because the native listing lacks binary identity, so compatibility with every
+current multi-binary selector is not established.
 
 Opt-in `verify-test-shards` receipt mode reads only the selected shard-one
 attempt, compares declared run/context and independently resolved source tree,
 ledger and lock to the receipt, and refuses missing, ambiguous, stale, failed,
 wrong-attempt or unverified proof. Caller-supplied producer and verifier attempt
-values do not independently establish job or binary provenance. In particular,
+values do not independently establish job or binary provenance. Declared tool and
+context identity, receipt row completeness and packet observations are not independently authenticated. In particular,
 this diagnostic mode has no full-success path and is not wired into hosted CI.
 A broad selector may still match a neighboring test after an intended test is
 deleted; the existing generic validator has no exact intended identity for

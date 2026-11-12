@@ -5,7 +5,9 @@
 //! Hosted workflows must not enable this path until that gap is closed.
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,6 +40,43 @@ pub(crate) struct ExpectedSource {
     pub lock_sha256: String,
 }
 
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn bounded_probe(program: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
+    bounded_probe_with_limit(program, args, timeout, 8 * 1024 * 1024)
+}
+
+fn bounded_probe_with_limit(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+    stdout_limit: usize,
+) -> Result<Vec<u8>, String> {
+    let args: Vec<String> = args.iter().map(|value| (*value).to_string()).collect();
+    let output = crate::run::capture_bytes_in_dir_with_budget(
+        Path::new(program),
+        &args,
+        (Path::new("."), None),
+        &[],
+        crate::run::ByteCaptureBudget {
+            timeout,
+            stdout_bytes: stdout_limit,
+            stderr_bytes: 64 * 1024,
+        },
+        "file-policy native receipt probe",
+    )?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "native receipt {program} probe failed or timed out"
+        ));
+    }
+    Ok(output.stdout)
+}
+fn probe_text(program: &str, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(bounded_probe(program, args, PROBE_TIMEOUT)?)
+        .map_err(|_| format!("native receipt {program} probe output is not UTF-8"))
+}
+
 /// Resolve immutable source inputs from the verifier's expected commit, not the receipt.
 pub(crate) fn expected_source(sha: &str) -> Result<ExpectedSource, String> {
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -46,13 +85,20 @@ pub(crate) fn expected_source(sha: &str) -> Result<ExpectedSource, String> {
     let tree_arg = format!("{sha}^{{tree}}");
     let ledger_arg = format!("{sha}:policy/non-rust-allowlist.toml");
     let lock_arg = format!("{sha}:Cargo.lock");
-    let tree = crate::run::run_output(
+    let tree = probe_text(
         "git",
         &["--no-replace-objects", "rev-parse", "--verify", &tree_arg],
     )?;
-    let ledger =
-        crate::run::run_output_bytes("git", &["--no-replace-objects", "show", &ledger_arg])?;
-    let lock = crate::run::run_output_bytes("git", &["--no-replace-objects", "show", &lock_arg])?;
+    let ledger = bounded_probe(
+        "git",
+        &["--no-replace-objects", "show", &ledger_arg],
+        PROBE_TIMEOUT,
+    )?;
+    let lock = bounded_probe(
+        "git",
+        &["--no-replace-objects", "show", &lock_arg],
+        PROBE_TIMEOUT,
+    )?;
     Ok(ExpectedSource {
         tree: tree.trim().to_string(),
         ledger_sha256: hash(&ledger),
@@ -78,7 +124,6 @@ struct Receipt {
     source_tree: String,
     ledger_sha256: String,
     lock_sha256: String,
-    environment_sha256: String,
     cargo_version_sha256: String,
     rustc_version_sha256: String,
     rows: Vec<Row>,
@@ -90,7 +135,6 @@ struct Snapshot {
     tree: String,
     ledger: String,
     lock: String,
-    environment: String,
     context_sha256: String,
     cargo_version_sha256: String,
     rustc_version_sha256: String,
@@ -99,26 +143,24 @@ struct Snapshot {
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn file_hash(path: &str) -> Result<String, String> {
-    fs::read(path)
-        .map(|bytes| hash(&bytes))
-        .map_err(|e| format!("cannot read {path}: {e}"))
-}
-fn environment_hash() -> String {
-    let mut vars: Vec<_> = std::env::vars_os().collect();
-    vars.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut digest = Sha256::new();
-    for (key, value) in vars {
-        for part in [key, value] {
-            let bytes = part.as_encoded_bytes();
-            digest.update((bytes.len() as u64).to_be_bytes());
-            digest.update(bytes);
-        }
+const INPUT_LIMIT: u64 = 8 * 1024 * 1024;
+pub(crate) fn read_input(path: &Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(INPUT_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if bytes.len() as u64 > INPUT_LIMIT {
+        return Err(format!("{} exceeds input budget", path.display()));
     }
-    format!("{:x}", digest.finalize())
+    Ok(bytes)
 }
+fn file_hash(path: &str) -> Result<String, String> {
+    read_input(Path::new(path)).map(|bytes| hash(&bytes))
+}
+
 fn snapshot(context_path: &str) -> Result<Snapshot, String> {
-    let git = |args: &[&str]| crate::run::run_output("git", args);
+    let git = |args: &[&str]| probe_text("git", args);
     let head = git(&["--no-replace-objects", "rev-parse", "HEAD"])?;
     let tree = git(&["--no-replace-objects", "rev-parse", "HEAD^{tree}"])?;
     let dirty = git(&["status", "--porcelain", "--untracked-files=all"])?;
@@ -130,10 +172,9 @@ fn snapshot(context_path: &str) -> Result<Snapshot, String> {
         tree: tree.trim().to_string(),
         ledger: file_hash("policy/non-rust-allowlist.toml")?,
         lock: file_hash("Cargo.lock")?,
-        environment: environment_hash(),
         context_sha256: file_hash(context_path)?,
-        cargo_version_sha256: hash(crate::run::run_output("cargo", &["--version"])?.as_bytes()),
-        rustc_version_sha256: hash(crate::run::run_output("rustc", &["-vV"])?.as_bytes()),
+        cargo_version_sha256: hash(&bounded_probe("cargo", &["--version"], PROBE_TIMEOUT)?),
+        rustc_version_sha256: hash(&bounded_probe("rustc", &["-vV"], PROBE_TIMEOUT)?),
     })
 }
 fn context_is_well_formed(c: &DeclaredContext) -> bool {
@@ -191,8 +232,8 @@ pub(crate) fn produce(args: &[String]) -> Result<(), String> {
     let output_path = crate::reports_dir().join(RECEIPT_NAME);
     let output = output_path.as_path();
     prepare_output(args, output)?;
-    let context_text =
-        fs::read_to_string(&args[1]).map_err(|e| format!("cannot read declared context: {e}"))?;
+    let context_text = String::from_utf8(read_input(Path::new(&args[1]))?)
+        .map_err(|_| "declared context is not UTF-8".to_string())?;
     let context: DeclaredContext = serde_json::from_str(&context_text)
         .map_err(|e| format!("invalid declared context: {e}"))?;
     if !context_is_well_formed(&context) {
@@ -258,7 +299,10 @@ fn produce_after_clear(
     let rows = rows(native()?)?;
     let after = capture()?;
     if before != after {
-        return Err("native receipt source or execution context changed during validation".into());
+        return Err(
+            "native receipt source, declared context or tool observation changed during validation"
+                .into(),
+        );
     }
     let receipt = Receipt {
         schema: SCHEMA.into(),
@@ -267,18 +311,46 @@ fn produce_after_clear(
         source_tree: before.tree,
         ledger_sha256: before.ledger,
         lock_sha256: before.lock,
-        environment_sha256: before.environment,
         cargo_version_sha256: before.cargo_version_sha256,
         rustc_version_sha256: before.rustc_version_sha256,
         rows,
     };
     let text = serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?;
-    fs::create_dir_all(output.parent().ok_or("receipt has no parent")?)
-        .map_err(|e| format!("cannot create receipt directory: {e}"))?;
-    fs::write(output, format!("{text}\n")).map_err(|e| format!("cannot write receipt: {e}"))?;
+    publish_receipt_with(output, format!("{text}\n").as_bytes(), |file, bytes| {
+        file.write_all(bytes)
+    })?;
     println!(
         "native validation completed; full_proof_pending: effective Cargo context is unverified"
     );
+    Ok(())
+}
+
+/// Publish only complete bytes. The temporary path is owned only after an
+/// exclusive create; a preexisting path is never overwritten or removed.
+fn publish_receipt_with(
+    output: &Path,
+    bytes: &[u8],
+    write: impl FnOnce(&mut fs::File, &[u8]) -> std::io::Result<()>,
+) -> Result<(), String> {
+    let parent = output.parent().ok_or("receipt has no parent")?;
+    fs::create_dir_all(parent).map_err(|e| format!("cannot create receipt directory: {e}"))?;
+    let temp = parent.join(format!(".{RECEIPT_NAME}.{}.tmp", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| format!("cannot exclusively create receipt temporary file: {e}"))?;
+    let written = write(&mut file, bytes).and_then(|()| file.flush());
+    drop(file);
+    let result = written.and_then(|()| fs::rename(&temp, output));
+    if let Err(error) = result {
+        return match fs::remove_file(&temp) {
+            Ok(()) => Err(format!("cannot publish receipt: {error}")),
+            Err(cleanup) => Err(format!(
+                "cannot publish receipt: {error}; cannot remove owned temporary file: {cleanup}"
+            )),
+        };
+    }
     Ok(())
 }
 
@@ -293,6 +365,20 @@ pub(crate) fn validate_binding(
 ) -> Result<(), String> {
     let receipt: Receipt =
         serde_json::from_str(text).map_err(|e| format!("invalid native receipt: {e}"))?;
+    let hex = |value: &str, len: usize| {
+        value.len() == len && value.bytes().all(|b| b.is_ascii_hexdigit())
+    };
+    if !hex(&receipt.source_tree, 40)
+        || !hex(&receipt.ledger_sha256, 64)
+        || !hex(&receipt.lock_sha256, 64)
+        || !hex(&receipt.cargo_version_sha256, 64)
+        || !hex(&receipt.rustc_version_sha256, 64)
+        || !hex(&source.tree, 40)
+        || !hex(&source.ledger_sha256, 64)
+        || !hex(&source.lock_sha256, 64)
+    {
+        return Err("native receipt or expected source has malformed digest".into());
+    }
     if receipt.schema != SCHEMA || receipt.status != STATUS {
         return Err("unsupported or pending native receipt".into());
     }
@@ -349,7 +435,7 @@ pub(crate) fn require_full(
         producer_result,
         verifier_attempt,
     )?;
-    Err("native receipt cannot authorize full proof: effective features and configuration are unverified".into())
+    Err("native receipt cannot authorize full proof: environment, tool and build context, row completeness, packet identities and producer provenance are unverified".into())
 }
 
 #[cfg(test)]
@@ -384,7 +470,6 @@ mod tests {
             source_tree: source.tree,
             ledger_sha256: source.ledger_sha256,
             lock_sha256: source.lock_sha256,
-            environment_sha256: "1".repeat(64),
             cargo_version_sha256: "2".repeat(64),
             rustc_version_sha256: "3".repeat(64),
             rows: vec![Row {
@@ -405,7 +490,6 @@ mod tests {
             tree: "d".repeat(40),
             ledger: "e".repeat(64),
             lock: "f".repeat(64),
-            environment: "1".repeat(64),
             context_sha256: "4".repeat(64),
             cargo_version_sha256: "2".repeat(64),
             rustc_version_sha256: "3".repeat(64),
@@ -493,6 +577,47 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn hung_probe_is_refused() -> Result<(), String> {
+        let ready = bounded_probe("sh", &["-c", "printf ready"], Duration::from_secs(2))?;
+        assert_eq!(ready, b"ready");
+        let result = bounded_probe("sh", &["-c", "sleep 2"], Duration::from_millis(50));
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oversized_probe_output_is_refused() -> Result<(), String> {
+        let within =
+            bounded_probe_with_limit("sh", &["-c", "printf 1234"], Duration::from_secs(2), 4)?;
+        assert_eq!(within, b"1234");
+        let too_large =
+            bounded_probe_with_limit("sh", &["-c", "printf 12345"], Duration::from_secs(2), 4);
+        assert!(too_large.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_write_failure_never_publishes_receipt() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-native-atomic-{}", std::process::id()));
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let output = root.join(RECEIPT_NAME);
+        let result = publish_receipt_with(&output, b"complete", |file, _| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::other("injected write failure"))
+        });
+        assert!(result.is_err());
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(&root).map_err(|e| e.to_string())?.count(), 0);
+        publish_receipt_with(&output, b"complete", |file, bytes| file.write_all(bytes))?;
+        assert_eq!(fs::read(&output).map_err(|e| e.to_string())?, b"complete");
+        fs::remove_file(&output).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     #[test]
     fn binding_accepts_valid_diagnostic_but_full_proof_refuses_unverified_context()
     -> Result<(), String> {
@@ -515,6 +640,19 @@ mod tests {
         assert!(validate_binding(&baseline, &context(), &source(), 1, "success", 2).is_err());
         assert!(validate_binding(&baseline, &context(), &source(), 2, "success", 1).is_err());
         assert!(validate_binding(&baseline, &context(), &source(), 2, "failure", 2).is_err());
+        let mut malformed_digest = receipt();
+        malformed_digest.cargo_version_sha256 = "not-a-digest".into();
+        assert!(
+            validate_binding(
+                &text(&malformed_digest)?,
+                &context(),
+                &source(),
+                2,
+                "success",
+                2
+            )
+            .is_err()
+        );
         let mut stale = source();
         stale.tree = "0".repeat(40);
         assert!(validate_binding(&baseline, &context(), &stale, 2, "success", 2).is_err());
