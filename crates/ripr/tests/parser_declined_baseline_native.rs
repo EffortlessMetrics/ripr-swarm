@@ -15,11 +15,7 @@ impl Drop for Fixture {
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = run_status(root, args)?;
     if output.status.success() {
         Ok(())
     } else {
