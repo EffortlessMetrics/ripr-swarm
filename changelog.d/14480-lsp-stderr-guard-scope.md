@@ -4,5 +4,6 @@
   an `eprintln!` in `serve_stdio` or any other production function fails the
   guard; the excluded ranges come from the parser, so a `#[cfg(test)]` module
   holding a char literal such as `.find('{')` no longer hides the production
-  code after it, and a file that does not parse fails the guard instead of
-  passing it (#14480).
+  code after it, a char literal such as `'"'` no longer flips the quote parity
+  of the comment-and-literal blinder and masks a real call, and a file that does
+  not parse fails the guard instead of passing it (#14480).

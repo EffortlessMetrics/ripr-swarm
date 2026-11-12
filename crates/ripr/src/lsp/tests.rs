@@ -29636,6 +29636,46 @@ fn without_comments_and_literals(source: &str) -> String {
             continue;
         }
         let ch = source[i..].chars().next().unwrap_or(' ');
+        if ch == '\'' {
+            // A char literal is `'x'`, `'\n'`, `'\''`, `'"'` or `'\u{..}'`; a
+            // lifetime is `'a` with no closing quote. Only the literal form is
+            // blinded, and its interior must never be read as a string opener:
+            // `let quote = '"';` used to flip quote parity for the rest of the
+            // file and mask a real `eprintln!` (#14480).
+            let mut j = i + 1;
+            let mut closed = false;
+            if let Some(next) = source[j..].chars().next() {
+                if next == '\\' {
+                    j += 1;
+                    if let Some(escaped) = source[j..].chars().next() {
+                        j += escaped.len_utf8();
+                        if escaped == 'u' && source[j..].starts_with('{') {
+                            if let Some(close) = source[j..].find('}') {
+                                j += close + 1;
+                            }
+                        }
+                    }
+                } else {
+                    j += next.len_utf8();
+                }
+                if source[j..].starts_with('\'') {
+                    closed = true;
+                    j += 1;
+                }
+            }
+            if closed {
+                out.push('\'');
+                for inner in source[i + 1..j - 1].chars() {
+                    out.push(if inner == '\n' { '\n' } else { ' ' });
+                }
+                out.push('\'');
+                i = j;
+                continue;
+            }
+            out.push('\'');
+            i += 1;
+            continue;
+        }
         if ch == '"' {
             out.push('"');
             i += 1;
@@ -29751,57 +29791,62 @@ fn production_source(source: &str) -> Option<String> {
 }
 
 #[test]
-fn production_source_excludes_only_the_cfg_test_gated_items() {
+fn production_source_excludes_only_the_cfg_test_gated_items() -> Result<(), String> {
     let source = "fn before() {}\n\n#[cfg(test)]\nmod tests {\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("fn before()"), "{production}");
     assert!(production.contains("fn after()"), "{production}");
     assert!(!production.contains("eprintln"), "{production}");
     assert!(!production.contains("mod tests"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_excludes_a_one_line_test_module_declaration() {
+fn production_source_excludes_a_one_line_test_module_declaration() -> Result<(), String> {
     let source = "fn production() {}\n#[cfg(test)]\nmod fixture_tests;\nfn later() {}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("fn production()"), "{production}");
     assert!(production.contains("fn later()"), "{production}");
     assert!(!production.contains("mod fixture_tests"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_excludes_a_gated_block_containing_a_raw_string() {
+fn production_source_excludes_a_gated_block_containing_a_raw_string() -> Result<(), String> {
     // backend.rs gates a test module that holds a multi-line `r#"{...}"#`
     // ledger; braces inside it must not end the module early.
     let source = "fn before() {}\n#[cfg(test)]\nmod tests {\n    fn ledger() -> &'static str {\n        r#\"{ \"kind\": \"gap_decision_ledger\" }\"#\n    }\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n\nfn after() {}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("fn before()"), "{production}");
     assert!(production.contains("fn after()"), "{production}");
     assert!(!production.contains("eprintln"), "{production}");
     assert!(!production.contains("ledger"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_excludes_a_gated_module_holding_a_char_literal_brace() {
+fn production_source_excludes_a_gated_module_holding_a_char_literal_brace() -> Result<(), String> {
     // The defect this round repairs: `backend.rs`'s gated test module contains
     // `.find('{')`, and brace balancing read that as a real block opener, so
     // the module never closed and 305 production lines were dropped.
     let source = "fn before() {}\n#[cfg(test)]\nmod tests {\n    fn probe(text: &str) -> bool {\n        text.find('{').is_some()\n    }\n}\n\nfn after() {}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("fn after()"), "{production}");
     assert!(!production.contains("fn probe"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_excludes_all_test_and_keeps_not_test() {
+fn production_source_excludes_all_test_and_keeps_not_test() -> Result<(), String> {
     let source = "fn before() {}\n#[cfg(all(test, feature = \"slow\"))]\nmod slow_tests {\n    fn noisy() {\n        eprintln!(\"skip notice\");\n    }\n}\n#[cfg(not(test))]\nfn production_only() {}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(!production.contains("slow_tests"), "{production}");
     assert!(production.contains("fn production_only()"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_handles_cfg_forms_and_doc_comments() {
+fn production_source_handles_cfg_forms_and_doc_comments() -> Result<(), String> {
     // The forms the brace scanner could not model: a trailing comment on the
     // attribute, a doc comment between the attribute and its item, and a
     // compound `cfg(all(test, ...))` gate.
@@ -29820,7 +29865,7 @@ fn production_source_handles_cfg_forms_and_doc_comments() {
         ),
     ];
     for (label, source) in cases {
-        let production = production_source(source).expect("parses");
+        let production = production_source(source).ok_or("the fixture must parse")?;
         assert!(
             !mentions_stderr_macro(&production),
             "{label}: a gated stderr write must stay excluded: {production}"
@@ -29834,6 +29879,7 @@ fn production_source_handles_cfg_forms_and_doc_comments() {
             "{label}: production after the gated item must be scanned: {production}"
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -29842,46 +29888,51 @@ fn production_source_fails_closed_on_an_unparseable_file() {
 }
 
 #[test]
-fn production_source_blinds_comment_prose_that_names_eprintln() {
+fn production_source_blinds_comment_prose_that_names_eprintln() -> Result<(), String> {
     // #14476's `write_session_notice` doc comment names `eprintln!` in prose;
     // the widened scan must not read that as a call.
     let source = "fn notice() {\n    /// `eprintln!` panics when stderr is closed\n    let _ = writeln!(out, \"x\");\n}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("fn notice()"), "{production}");
     assert!(!production.contains("eprintln"), "{production}");
     assert!(production.contains("writeln!"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_still_sees_a_real_call_after_a_comment_or_url() {
+fn production_source_still_sees_a_real_call_after_a_comment_or_url() -> Result<(), String> {
     let source = "fn f() {\n    // not `eprintln!` here\n    let url = \"https://example.test/a\";\n    eprintln!(\"{url}\");\n}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("let url"), "{production}");
     assert!(mentions_stderr_macro(&production), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_blinds_a_multi_line_block_comment() {
+fn production_source_blinds_a_multi_line_block_comment() -> Result<(), String> {
     let source =
         "fn f() {\n    /*\n       eprintln!(\"only prose\");\n    */\n    let ok = 1;\n}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(production.contains("let ok = 1"), "{production}");
     assert!(!production.contains("eprintln"), "{production}");
+    Ok(())
 }
 
 #[test]
-fn production_source_blinds_a_message_that_names_the_macro() {
+fn production_source_blinds_a_message_that_names_the_macro() -> Result<(), String> {
     let source = "fn f() {\n    let note = \"do not use eprintln! here\";\n    let _ = note;\n}\n";
-    let production = production_source(source).expect("parses");
+    let production = production_source(source).ok_or("the fixture must parse")?;
     assert!(!mentions_stderr_macro(&production), "{production}");
+    Ok(())
 }
 
 /// Per-line "inside a test-gated item" flags, derived from the syntax tree by
 /// walking item nodes, independently of the attribute-parent walk the scanner
 /// uses. A line counts as gated only when the item's range covers all of its
 /// non-whitespace content.
-fn gated_line_flags(source: &str) -> Vec<bool> {
-    let parse = parse_clean_source_file(source).expect("parses");
+fn gated_line_flags(source: &str) -> Result<Vec<bool>, String> {
+    let parse = parse_clean_source_file(source)
+        .ok_or_else(|| "the source must parse for the coverage check".to_string())?;
     let mut ranges = Vec::new();
     for node in parse.tree().syntax().descendants() {
         if !ra_ap_syntax::ast::Item::can_cast(node.kind()) {
@@ -29909,16 +29960,121 @@ fn gated_line_flags(source: &str) -> Vec<bool> {
             usize::from(range.start()) <= content_start && content_end <= usize::from(range.end())
         });
     }
-    flags
+    Ok(flags)
 }
 
 #[test]
-fn production_scan_covers_every_line_outside_cfg_test_items() {
+fn gated_line_flags_matches_a_hand_written_expectation() -> Result<(), String> {
+    // The coverage check compares the scanner against `gated_line_flags`, and
+    // both go through `attribute_requires_test`, so a classifier bug would be
+    // invisible to that comparison. This expectation is written by hand from the
+    // fixture below, so a change in the classifier's verdict shows up here.
+    let source = concat!(
+        "fn before() {}\n",                                    // 1  production
+        "#[cfg(test)]\n",                                      // 2  gated
+        "mod tests {\n",                                       // 3  gated
+        "    fn noisy() {}\n",                                 // 4  gated
+        "}\n",                                                 // 5  gated
+        "#[cfg(not(test))]\n",                                 // 6  production
+        "fn production_only() {}\n",                           // 7  production
+        "#[cfg(all(test, feature = \"slow\"))]\n",             // 8  gated
+        "mod slow_tests {\n",                                  // 9  gated
+        "    fn slow() {}\n",                                  // 10 gated
+        "}\n",                                                 // 11 gated
+        "fn after() {}\n",                                     // 12 production
+    );
+    let expected = [
+        false, true, true, true, true, false, false, true, true, true, true, false,
+    ];
+    let actual = gated_line_flags(source)?;
+    assert_eq!(
+        actual, expected,
+        "the gated-line classifier disagrees with the hand-written expectation"
+    );
+    Ok(())
+}
+
+/// Production line numbers whose RAW text invokes `eprintln!`/`eprint!` outside
+/// a comment line, derived from the parser's gated-item ranges and the raw
+/// source. This is deliberately blinder-free: the coverage check must not share
+/// `without_comments_and_literals`, or a blinder bug (a char literal flipping
+/// quote parity) would hide a real call from the proof as well as the guard
+/// (#14480).
+fn raw_production_stderr_lines(source: &str) -> Result<Vec<usize>, String> {
+    let gated = gated_line_flags(source)?;
+    let mut hits = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        if gated.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("*/")
+        {
+            continue;
+        }
+        if line.contains("eprintln!(") || line.contains("eprint!(") {
+            hits.push(index);
+        }
+    }
+    Ok(hits)
+}
+
+/// Assert that every raw production stderr call in `source` survives the scan,
+/// and return how many there were. The raw text is the oracle, so a blinder bug
+/// cannot make this check agree with the guard by construction.
+fn assert_scan_flags_raw_calls(name: &str, source: &str) -> Result<usize, String> {
+    let production = production_source(source)
+        .ok_or_else(|| format!("{name} did not parse, so the guard cannot verify it"))?;
+    let raw_hits = raw_production_stderr_lines(source)?;
+    let scanned: Vec<&str> = production.lines().collect();
+    for index in &raw_hits {
+        let line = scanned.get(*index).copied().unwrap_or("");
+        assert!(
+            mentions_stderr_macro(line),
+            "{name}:{}: a raw production stderr call was masked by the scan: {line:?}",
+            index + 1
+        );
+    }
+    Ok(raw_hits.len())
+}
+
+/// Insert `probe` immediately after the innermost item that contains `needle`.
+/// Used to place a stderr probe after a real char-literal site without editing
+/// the production file on disk.
+fn insert_probe_after_enclosing_item(source: &str, needle: &str, probe: &str) -> Option<String> {
+    let parse = parse_clean_source_file(source)?;
+    let offset = source.find(needle)?;
+    let item = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| ra_ap_syntax::ast::Item::can_cast(node.kind()))
+        .filter(|node| {
+            let range = node.text_range();
+            usize::from(range.start()) <= offset && offset < usize::from(range.end())
+        })
+        .last()?;
+    let end = usize::from(item.text_range().end());
+    let mut out = String::with_capacity(source.len() + probe.len() + 1);
+    out.push_str(&source[..end]);
+    out.push('\n');
+    out.push_str(probe);
+    out.push_str(&source[end..]);
+    Some(out)
+}
+
+const CHAR_PROBE: &str = "fn probe_14480_char() {\n    eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+
+#[test]
+fn production_scan_covers_every_line_outside_cfg_test_items() -> Result<(), String> {
     for (name, source) in lsp_sources() {
         let production = production_source(source)
-            .unwrap_or_else(|| panic!("{name} did not parse, so the guard cannot verify it"));
+            .ok_or_else(|| format!("{name} did not parse, so the guard cannot verify it"))?;
         let blinded = without_comments_and_literals(source);
-        let gated = gated_line_flags(source);
+        let gated = gated_line_flags(source)?;
         let expected: Vec<&str> = blinded.lines().collect();
         let scanned: Vec<&str> = production.lines().collect();
         assert_eq!(
@@ -29959,13 +30115,73 @@ fn production_scan_covers_every_line_outside_cfg_test_items() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]
-fn production_scan_reaches_backend_production_after_the_gated_module() {
+fn production_scan_flags_every_raw_stderr_call() -> Result<(), String> {
+    for (name, source) in lsp_sources() {
+        assert_scan_flags_raw_calls(name, source)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_a_char_literal() -> Result<(), String> {
+    // The fail-open this round repairs: `'"'` used to open a string, flip quote
+    // parity, and mask the real call that follows.
+    let source = "fn probe() {\n    let quote = '\"';\n    eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+    let hits = assert_scan_flags_raw_calls("char-literal fixture", source)?;
+    assert!(hits > 0, "the fixture must contain a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_a_char_literal_immediately_before_it() -> Result<(), String> {
+    // Same line, so the blinder cannot recover by resetting at a newline: the
+    // `'"'` opens a string that swallows the call that follows it.
+    let source = "fn probe() {\n    let c = '\"'; eprintln!(\"PROBE-14480-CHAR\");\n}\n";
+    let hits = assert_scan_flags_raw_calls("char-literal-before-call fixture", source)?;
+    assert!(hits > 0, "the fixture must contain a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_the_gap_artifacts_char_literal() -> Result<(), String> {
+    // gap_artifacts.rs:1784 has `(None, '"' | '\'') => {`; a probe after that
+    // item must stay visible, because the char literal must not flip parity.
+    let source = include_str!("gap_artifacts.rs");
+    let mutated =
+        insert_probe_after_enclosing_item(source, r#"(None, '"' | '\'') => {"#, CHAR_PROBE)
+            .ok_or_else(|| {
+                "gap_artifacts.rs must parse and contain the char-literal arm".to_string()
+            })?;
+    let hits = assert_scan_flags_raw_calls("gap_artifacts.rs + probe", &mutated)?;
+    assert!(hits > 0, "the probe must be a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_flags_a_call_after_the_component_outcome_char_literal() -> Result<(), String> {
+    // component_outcome.rs:353 has `&['`', '\'', '"', '[', '{']`; a probe after
+    // that const must stay visible for the same reason.
+    let source = include_str!("component_outcome.rs");
+    let mutated =
+        insert_probe_after_enclosing_item(source, "PATH_TOKEN_LEADING_WRAPPERS: &[char]", CHAR_PROBE)
+            .ok_or_else(|| {
+                "component_outcome.rs must parse and contain the wrapper slice".to_string()
+            })?;
+    let hits = assert_scan_flags_raw_calls("component_outcome.rs + probe", &mutated)?;
+    assert!(hits > 0, "the probe must be a raw production call");
+    Ok(())
+}
+
+#[test]
+fn production_scan_reaches_backend_production_after_the_gated_module() -> Result<(), String> {
     // The flipping control for this round: on the brace-balancing scanner these
     // three items were dropped because the gated module never closed.
-    let production = production_source(include_str!("backend.rs")).expect("backend.rs parses");
+    let production = production_source(include_str!("backend.rs"))
+        .ok_or_else(|| "backend.rs must parse".to_string())?;
     for item in [
         "struct DiskContentStatKey",
         "fn disk_content_stat_key",
@@ -29976,6 +30192,7 @@ fn production_scan_reaches_backend_production_after_the_gated_module() {
             "backend.rs production item {item} is missing from the scan"
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -30000,7 +30217,8 @@ fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), St
     // lsp.rs every marker is a one-line `mod <name>;` declaration near the top,
     // so a "split at the first marker" scan skipped `serve`, `serve_stdio` and
     // `serve_streams` entirely.
-    let lsp = production_source(include_str!("../lsp.rs")).expect("lsp.rs parses");
+    let lsp = production_source(include_str!("../lsp.rs"))
+        .ok_or_else(|| "lsp.rs must parse".to_string())?;
     assert!(
         lsp.contains("async fn serve_stdio"),
         "the production scan must reach serve_stdio"
@@ -30010,7 +30228,8 @@ fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), St
     // still be scanned, so the exclusion is per gated item and not "everything
     // after the first marker".
     let diagnostics = include_str!("diagnostics.rs");
-    let production = production_source(diagnostics).expect("diagnostics.rs parses");
+    let production =
+        production_source(diagnostics).ok_or_else(|| "diagnostics.rs must parse".to_string())?;
     assert!(
         production.contains("fn canonicalize_diagnostic_batches"),
         "the production scan must reach diagnostics.rs code declared after its first #[cfg(test)] marker"
@@ -30026,9 +30245,9 @@ fn lsp_production_sources_have_no_stderr_degradation_fallback() -> Result<(), St
         "fn site_fingerprint(finding: &Finding) -> String {\n    eprintln!(\"probe\");",
         1,
     );
-    assert!(mentions_stderr_macro(
-        &production_source(&mutated).expect("the mutated file parses")
-    ));
+    let mutated_production = production_source(&mutated)
+        .ok_or_else(|| "the mutated diagnostics.rs must parse".to_string())?;
+    assert!(mentions_stderr_macro(&mutated_production));
     Ok(())
 }
 
