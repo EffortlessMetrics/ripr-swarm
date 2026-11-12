@@ -1059,6 +1059,12 @@ fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
     let text = rendered(&output(vec![error_path.clone(), second_missing]));
     assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
 
+    // The same value with a different discriminator shape is a different test.
+    let mut other_shape = return_value.clone();
+    other_shape.activation.missing_discriminators[0].shape = DiscriminatorShape::Other;
+    let text = rendered(&output(vec![error_path.clone(), other_shape]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
     // A different strongest related test keeps both rows.
     let mut other_test = return_value.clone();
     other_test.related_tests[0].name = "discount_other".to_string();

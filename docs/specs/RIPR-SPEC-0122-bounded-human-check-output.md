@@ -974,7 +974,9 @@ change, never a smoke-only caller. Rows without a recorded relation rank as
 `check --format agent` prints one gap row for findings whose records would
 print identically apart from `id=`: class, `FILE:LINE`, changed expression,
 `missing=`, the strongest related test's whole `tK=` line and the `stages=`
-row, compared unclipped and over every missing discriminator. The first
+row, compared unclipped and over every missing discriminator's value,
+shape and flow sink (the explanatory prose counts only when no discriminator
+is named). The first
 finding in triage order keeps the row, so the top gap and
 `next=` do not move. `gaps=` counts rows (tests to write) and `folded_gaps=`
 the extra findings. Any printed difference keeps the rows apart. Folding is

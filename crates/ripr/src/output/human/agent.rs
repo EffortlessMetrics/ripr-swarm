@@ -1003,9 +1003,9 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
 /// id: class, location, expression, `missing=`, the strongest related test
 /// (its full `tN=` line) and the `stages=` row, compared unclipped. Then
 /// one test closes both, so a second row would only make an agent plan a
-/// second test. The first
-/// finding in triage order keeps the row, so the top gap and `next=` are
-/// unchanged; any difference keeps the rows separate (fail closed).
+/// second test. The first finding in triage order keeps the row, so the top
+/// gap and `next=` are unchanged; any difference keeps the rows separate
+/// (fail closed).
 fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
     let mut seen: Vec<String> = Vec::new();
     let mut rows = Vec::with_capacity(gaps.len());
@@ -1028,14 +1028,16 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     // the fallback `missing=` prints, since its wording differs by probe
     // family ("no exact error variant" vs "no strong discriminator") for
     // one value.
-    let missing: Vec<&str> = if finding.activation.missing_discriminators.is_empty() {
-        finding.missing.iter().map(String::as_str).collect()
+    // Each fact also keys its shape and flow sink: one value asserted at two
+    // different sinks is two tests.
+    let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
+        finding.missing.clone()
     } else {
         finding
             .activation
             .missing_discriminators
             .iter()
-            .map(|fact| fact.value.as_str())
+            .map(|fact| format!("{:?} {:?} {:?}", fact.value, fact.shape, fact.flow_sink))
             .collect()
     };
     let test = strongest_test(finding).map(|test| {
@@ -1053,7 +1055,7 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
         &crate::output::stage_rows::evidence_stage_rows(finding),
     );
     format!(
-        "{}\n{}:{}\n{}\n{:?}\n{:?}\n{}",
+        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
         finding.class.as_str(),
         repository_display_path(root, &finding.probe.location.file),
         finding.probe.location.line,
