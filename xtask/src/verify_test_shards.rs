@@ -1135,11 +1135,20 @@ mod tests {
     #[test]
     fn native_artifact_traversal_refuses_depth_and_node_exhaustion() -> Result<(), String> {
         let root = crate::tests::temp_dir("native-artifact-limits");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         fs::create_dir_all(root.join("a/b/c")).map_err(|e| e.to_string())?;
-        assert!(find_native_receipts_with_limits(&root, 100, 2).is_err());
+        assert!(find_native_receipts_with_limits(&root, 100, 32)?.is_empty());
+        let depth = find_native_receipts_with_limits(&root, 100, 2)
+            .err()
+            .ok_or("depth accepted")?;
+        assert!(depth.contains("depth limit"), "{depth}");
         fs::write(root.join("first"), "x").map_err(|e| e.to_string())?;
         fs::write(root.join("second"), "x").map_err(|e| e.to_string())?;
-        assert!(find_native_receipts_with_limits(&root, 1, 32).is_err());
+        assert!(find_native_receipts_with_limits(&root, 100, 32)?.is_empty());
+        let nodes = find_native_receipts_with_limits(&root, 1, 32)
+            .err()
+            .ok_or("node limit accepted")?;
+        assert!(nodes.contains("node limit"), "{nodes}");
         fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -1148,7 +1157,7 @@ mod tests {
     #[test]
     fn native_artifact_traversal_refuses_symlink_cycle() -> Result<(), String> {
         let root = crate::tests::temp_dir("native-artifact-cycle");
-        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         std::os::unix::fs::symlink(&root, root.join("cycle")).map_err(|e| e.to_string())?;
         let error = find_native_receipts_with_limits(&root, 100, 32)
             .err()
@@ -1162,6 +1171,7 @@ mod tests {
     fn native_receipt_uses_selected_shard_attempt_and_refuses_missing_or_ambiguous()
     -> Result<(), String> {
         let root = crate::tests::temp_dir("verify-native-selected-attempt");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
         lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
         fs::write(

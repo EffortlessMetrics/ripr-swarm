@@ -644,8 +644,21 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fifo_without_writer_is_refused_before_open() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!("ripr-native-fifo-{}", std::process::id()));
-        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        if std::env::var("RIPR_NATIVE_FIFO_GUARD_CHILD")
+            .ok()
+            .as_deref()
+            == Some("1")
+        {
+            let name = std::env::var("RIPR_NATIVE_FIFO_GUARD_PATH").map_err(|e| e.to_string())?;
+            let error = read_input(Path::new(&name))
+                .err()
+                .ok_or("FIFO was accepted")?;
+            assert!(error.contains("expected regular file/directory"), "{error}");
+            println!("native FIFO refused before open");
+            return Ok(());
+        }
+        let root = crate::tests::temp_dir("ripr-native-fifo");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
         let fifo = root.join("receipt");
         let name = fifo.to_str().ok_or("non-UTF-8 FIFO path")?;
         bounded_probe("mkfifo", &[name], Duration::from_secs(2))?;
@@ -656,12 +669,34 @@ mod tests {
                 .file_type()
                 .is_fifo()
         );
-        let started = std::time::Instant::now();
-        let result = read_input(&fifo);
-        assert!(result.is_err());
-        assert!(started.elapsed() < Duration::from_secs(5));
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let args = ["--exact".to_string(), "policy::file_policy::native_receipt::tests::fifo_without_writer_is_refused_before_open".to_string(), "--nocapture".to_string()];
+        let env = [
+            ("RIPR_NATIVE_FIFO_GUARD_CHILD", "1"),
+            ("RIPR_NATIVE_FIFO_GUARD_PATH", name),
+        ];
+        let output = crate::run::capture_bytes_in_dir_with_env_budget(
+            &exe,
+            &args,
+            Path::new("."),
+            (&env, &[]),
+            crate::run::ByteCaptureBudget {
+                timeout: Duration::from_secs(5),
+                stdout_bytes: 64 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            "native FIFO reader control",
+        )?;
+        assert!(
+            !output.timed_out && output.status.is_some_and(|s| s.success()),
+            "FIFO reader did not complete successfully"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("native FIFO refused before open")
+        );
         let regular = root.join("regular");
         fs::write(&regular, "ok").map_err(|e| e.to_string())?;
+        assert_eq!(read_input(&regular)?, b"ok");
         let link = root.join("link");
         std::os::unix::fs::symlink(&regular, &link).map_err(|e| e.to_string())?;
         let error = read_input(&link).err().ok_or("symlink input accepted")?;
