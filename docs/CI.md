@@ -3186,3 +3186,39 @@ A branch is ready to merge when:
 Local `--allow-dirty` packaging checks are useful during review but are not a
 substitute for plain package and publish dry-run checks on the final committed
 branch.
+
+## Invocation-local policy preparation
+
+The file-policy coverage producer records which explicit `--lib`, `--bin` and
+`--test` selectors belong to each existing package-set combined build. A successful
+combined build supplies preparation for those members during the same
+invocation. Native Cargo listings still execute with the original selector
+arguments, flags and host scope and remain the acceptance evidence. Failed,
+timed-out or unavailable combined builds fall back to individual preparation;
+targetless and unsupported selectors retain their own preparation. This shares
+no executable between jobs, stores no reusable successful result, and changes
+no package grouping, test selection, listing deadline or required test command.
+
+An earlier retained allowlist command trace removes twelve redundant preparation
+invocations (18 to 6) and preserves all 33 ordered listings. Native small-Cargo
+controls establish the three-to-one preparation reduction for two explicit
+integration targets, including missing-subject and compiler-failure refusals.
+They do not establish product compilation savings or complete-lane timing.
+
+Explicit-library follow-through also reuses a library-only selector when that
+library target is in the combined build. A native library/binary/integration-test
+fixture reduces preparation from two invocations to one and retains all three
+original listings. Changing the launch context during preparation or before
+sibling reuse restores individual preparation; missing selectors and compiler
+failures still refuse. Targetless and feature-changing selectors keep their own
+builds. These controls establish eliminated redundant Cargo invocations, not a
+measured whole-repo CPU, memory, storage or wall-time reduction.
+
+The reuse boundary and its test mapping are specified in
+[RIPR-SPEC-0280](specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md#invocation-local-preparation-reuse).
+The retained native fixtures use one package; they do not establish freshness
+after cross-package builds or headroom within the five-minute listing budget.
+Package-set isolation remains in place after the Windows rebuild findings in
+#12245. Cargo still checks freshness during every native listing, so matching a
+preparation identity alone is not evidence that the listing performs no
+compilation.

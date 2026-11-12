@@ -23,12 +23,14 @@ Linked issues:
 - #8956 (this spec and its traceability)
 - #8793 (the lock-wait instrument failure and `precommit` deferral)
 - #8939 (the lock-wait wall-clock ceiling)
+- #8198 (eliminate repeated policy preparation)
 - #13705 (local `precommit` skips enumeration for an unaffected change set)
 
 Linked PRs:
 
 - #8905 (lock-wait retry and the `covered_by_lock_wait_timeout` class)
 - #8941 (90-minute ceiling and the `precommit-v2` composition tests)
+- #13481 (reuse successful combined preparation within one invocation)
 - #14185 (rule 6, the local skip for an unaffected change set)
 
 Support-tier impact:
@@ -41,10 +43,11 @@ Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
-- Rules 1 to 5 state the contract that #8905 and #8941 implemented and map
-  it to its tests and code, with no behavior change. Rule 6 is the one
-  behavior this spec added later (#14185). The spec does not bolt onto
-  RIPR-SPEC-0191, which governs host-scoped `covered_by` selection only.
+- Rules 1 to 5 state the contract implemented by #8905 and #8941. Rule 6
+  specifies the local skip for an unaffected change set added by #14185. The
+  preparation-reuse subsection specifies the boundary added by #13481, with
+  its test mapping in `.ripr/traceability.d/8198-combined-preparation.toml`.
+  RIPR-SPEC-0191 continues to govern host-scoped `covered_by` selection.
 
 ## Problem
 
@@ -57,6 +60,11 @@ unresolved pointer sends the author to repair a correct pointer. Passing it
 silently hides a pointer that was never checked. Before this contract the
 behavior (retry bound, ceiling, classification, deferral) was implemented but
 governed by no spec, so it sat outside the spec-test-code chain.
+
+The producer also prepares test targets before enumeration. Repeating a
+successful combined build for each of its members adds Cargo invocations.
+Reusing that preparation must preserve the distinction between preparing a
+target and obtaining native evidence that the selected test exists.
 
 ## Behavior
 
@@ -136,6 +144,50 @@ failure kind `infrastructure`.
 - Exhausted retries or an exhausted ceiling stay failures; they are never
   converted to a pass or to an unresolved-pointer finding.
 
+### Invocation-local preparation reuse
+
+Combined preparation retains the existing exact package-set groups. A group
+is attempted only when at least two applicable selectors use the supported
+shape: `cargo test`, explicit `-p`/`--package` values, `--lib`, `--bin` or
+`--test` targets, `--locked`/`--offline` flags, and test-name positionals.
+Feature, profile, platform and other unsupported options stay outside these
+groups. Different package sets are not combined: selecting `ripr` tests and
+`xtask` together previously changed dependency features and forced repeated
+Windows executable builds (#12245).
+
+Only a selector with an explicit `--lib`, `--bin` or `--test` target covered
+by the group's union may reuse its successful preparation. A targetless
+selector can select Cargo's broader default target set and keeps its normal
+individual preparation, as does a selector outside the supported shape.
+Documentation-test selectors keep their existing single enumeration under
+the build budget; they never acquire a `--no-run` preparation.
+
+Preparation is reusable only within the current validator invocation. Its
+identity includes the member's normal preparation arguments, current working
+directory and complete process environment. Only one unambiguous test-name
+filter may be removed from that argument identity; option values remain
+significant, and unknown or ambiguous forms retain exact argument identity.
+The combined build snapshots each member's identity before launch, admits it
+only if the same identity is available after successful completion, and
+compares it again before skipping the member's individual build. A missing
+snapshot or changed context prevents that reuse.
+
+A combined build seeds preparation only when capture succeeds, the process
+has a successful exit status and it did not time out. A failed exit, missing
+status, timeout or capture error seeds no members; their normal individual
+preparation remains available. Skipping preparation never supplies a selected
+test result. Original native listing arguments, host scope and selected-test
+validation remain authoritative, including the existing reuse of successful
+list output by exact arguments. A missing selected test still fails.
+
+This changes neither the 30-minute build budget nor the five-minute ordinary
+listing budget, and preserves the lock-wait rules above. A matching
+preparation identity is not a guarantee that Cargo's outputs remain fresh:
+Cargo still performs its own freshness checks during each native listing.
+The validator stores no reusable success or executable across invocations
+or jobs. Fewer preparation calls alone establish no compilation, memory or
+whole-lane timing reduction.
+
 ### Rule 6: local `precommit` skips enumeration for an unaffected change set
 
 Enumeration builds test binaries, and the `ripr` library test build alone
@@ -173,8 +225,11 @@ the `selected=` tokens the retained-evidence readers accept.
 3. **Defer, do not skip.** Adopted: run the remaining stages so one lock wait
    does not hide later findings, then fail. Rejected: passing, or stopping at
    the lock wait.
+4. **Reuse preparation, retain native acceptance.** Only successful, explicit
+   members in the same launch context may omit their redundant build. The
+   native listing and each selector's validation still decide acceptance.
 
-4. **Skip by change-set premise, disclosed.** Adopted: the premise that
+5. **Skip by change-set premise, disclosed.** Adopted: the premise that
    already skips local Clippy, with the skip written into both reports.
    Rejected: enumerating on every local run (the build does not fit a 15 GB
    container), and skipping silently or on an incomplete change set.
@@ -195,6 +250,14 @@ the `selected=` tokens the retained-evidence readers accept.
   `infrastructure_failure` after the diff checks and selected Clippy run, and a
   real policy failure alongside as `source_or_policy_failure` with no later
   stage.
+- Preparation-reuse tests pin explicit library, binary and integration-test
+  membership; unchanged native listing arguments; targetless, unsupported and
+  foreign-host boundaries; every unsuccessful combined-build outcome; and
+  missing or changed launch context before seeding or sibling reuse.
+- Native preparation evidence must identify its package and target coverage.
+  Single-package fixtures do not establish freshness after cross-package
+  builds or headroom within the listing deadline. Performance claims require
+  measured compilation or elapsed time for the claimed scope.
 
 - The skip decision is pinned as a table in both directions, including a
   rename away from a Rust or policy path, an incomplete change set and
@@ -229,8 +292,15 @@ the `selected=` tokens the retained-evidence readers accept.
 6. The same with a failing later policy gate: `source_or_policy_failure`, not
    infrastructure. A later diff-check or Clippy failure instead carries its own
    kind, with the instrument text only in limitations.
+7. A successful combined library/binary/integration-test build in a stable
+   context: its explicit members omit their individual builds, but all three
+   original native listings remain. A targetless or feature-changing selector
+   still receives its normal preparation.
+8. The combined build fails, times out or has no status, or its launch context
+   cannot be matched: affected members retain their individual preparation.
+   A later missing selected test still fails even if preparation succeeded.
 
-7. Local `precommit` with only `docs/guide.md` changed: no test binary is
+9. Local `precommit` with only `docs/guide.md` changed: no test binary is
    built, `file-policy.md` has the `not_enumerated;` row, the run can pass.
    With `crates/a/src/lib.rs` or `policy/non-rust-allowlist.toml` changed, or
    under `ci-policy`, enumeration runs.
@@ -242,6 +312,15 @@ the `selected=` tokens the retained-evidence readers accept.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
 - `xtask/src/policy/file_policy.rs`: the policy side of rule 6.
+- `xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_replaces_only_member_builds`:
+  successful member reuse, failed exit, timeout, missing status and capture
+  error, with both native listings retained.
+- `xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_reuses_lib_and_keeps_uncovered_builds`:
+  explicit library/binary/integration targets, targetless and feature-changing
+  fallback, foreign-host exclusion and unchanged ordered listing arguments.
+- `xtask/src/policy/file_policy.rs::tests::successful_combined_preparation_requires_unchanged_launch_context`:
+  working-directory and environment changes, missing snapshots, and a context
+  change between the first listing and sibling reuse.
 
 ## Implementation Mapping
 
@@ -249,6 +328,11 @@ the `selected=` tokens the retained-evidence readers accept.
   `LOCK_WAIT_CEILING`, `lock_wait_note`, `capture_past_lock_wait`,
   `enumeration_result`, `validate_test_covered_by_with`,
   `is_covered_by_instrument_failure`.
+- `xtask/src/policy/file_policy.rs`: `combined_preparation_plans`,
+  `validate_test_covered_by_combined_with`,
+  `validate_test_covered_by_warmed_with`, `PreparationKey`,
+  `preparation_key`, `preparation_args_identity`, `enumeration_spawns`,
+  `build_args_before_list` implement the preparation-reuse boundary.
 - `xtask/src/main.rs`: `check_file_policy_deferring`,
   `finish_precommit_policy`, `PRECOMMIT_INSTRUMENT_PREFIX`.
 - `xtask/src/precommit_v2.rs`: the deferred-instrument handling in

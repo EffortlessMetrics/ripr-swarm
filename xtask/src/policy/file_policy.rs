@@ -443,47 +443,114 @@ fn validate_test_covered_by_recorded(
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let host = FilePolicyHost::current()?;
-    // Cargo serializes builds on the target-dir lock, so the per-selector
-    // preparations below compile one package at a time. One combined build
-    // per package set lets Cargo schedule each set's targets together; it
-    // only pre-fills the cache.
-    for args in combined_preparation_builds(commands, host) {
-        let captured = announce_cargo_child(
-            &cargo_child_label("test-valued covered_by combined build", &args),
-            || {
+    validate_test_covered_by_combined_with(
+        path,
+        commands,
+        host,
+        diagnostics,
+        |spawn| {
+            announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
                 capture_output_with_timeout(
                     "cargo",
-                    &args,
+                    &spawn.args,
                     &[],
-                    TEST_COVERED_BY_BUILD_TIMEOUT,
-                    "test-valued covered_by combined build",
+                    spawn.timeout,
+                    spawn.description,
                 )
-            },
-        );
-        diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
-    }
-    validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
-            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
-        })
-    })
+            })
+        },
+        preparation_key,
+    )
 }
 
-fn validate_test_covered_by_recorded_with(
+fn validate_test_covered_by_combined_with(
     path: &str,
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
     diagnostics: &mut Vec<CommandDiagnostic>,
     mut capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+    mut key_for: impl FnMut(&[String]) -> Option<PreparationKey>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let mut warmed = BTreeSet::new();
+    for plan in combined_preparation_plans(commands, host) {
+        let spawn = CoveredBySpawn {
+            args: plan.args,
+            timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
+            description: "test-valued covered_by combined build",
+        };
+        // Bind preparation to the context that actually launched it. A cwd
+        // or environment change during capture must not seed another context.
+        let member_keys: Vec<_> = plan
+            .members
+            .into_iter()
+            .filter_map(|member| {
+                let args: Vec<_> = commands[member]
+                    .command
+                    .split_whitespace()
+                    .skip(1)
+                    .map(str::to_owned)
+                    .collect();
+                build_args_before_list(&args).and_then(|args| key_for(&args))
+            })
+            .collect();
+        let captured = capture(&spawn);
+        diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
+        if captured.as_ref().is_ok_and(|output| {
+            !output.timed_out && output.status.is_some_and(|status| status.success())
+        }) {
+            for key in member_keys {
+                if key_for(&key.args).as_ref() == Some(&key) {
+                    warmed.insert(key);
+                }
+            }
+        }
+    }
+    validate_test_covered_by_warmed_with(
+        path,
+        commands,
+        host,
+        diagnostics,
+        warmed,
+        capture,
+        key_for,
+    )
+}
+
+#[cfg(test)]
+fn validate_test_covered_by_recorded_with(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_warmed_with(
+        path,
+        commands,
+        host,
+        diagnostics,
+        BTreeSet::new(),
+        capture,
+        preparation_key,
+    )
+}
+
+fn validate_test_covered_by_warmed_with(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    mut warmed: BTreeSet<PreparationKey>,
+    mut capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+    mut key_for: impl FnMut(&[String]) -> Option<PreparationKey>,
+) -> Result<Vec<TestCoverageObservation>, String> {
     validate_test_covered_by_with(path, commands, host, |args| {
         let spawns = enumeration_spawns(args);
         let warmup = spawns.len() == 2;
         let mut listed = None;
         for (index, spawn) in spawns.into_iter().enumerate() {
             let key = (index == 0 && warmup)
-                .then(|| preparation_key(&spawn.args))
+                .then(|| key_for(&spawn.args))
                 .flatten();
             if key.as_ref().is_some_and(|key| warmed.contains(key)) {
                 continue;
@@ -514,11 +581,12 @@ fn validate_test_covered_by_recorded_with(
 }
 
 /// One `cargo test --no-run` per package set, each covering every applicable
-/// selector of that set whose build is only `-p`, `--bin`, `--test` and lock
+/// selector of that set whose build is only `-p`, `--lib`, `--bin`, `--test` and lock
 /// flags. Selectors with any other shape are left to their own preparation. A
 /// set with a single selector is also left to its own preparation. This is a
-/// cache fill, not evidence: a failure here is ignored and each selector still
-/// builds, lists and fails under its own spawn.
+/// cache fill, not evidence: successful explicit-target members reuse its
+/// preparation within this invocation. Every native listing still runs and
+/// owns acceptance. Failure falls back to each selector's own preparation.
 ///
 /// The sets are built separately on purpose. `-p ripr` in test mode adds
 /// ripr's dev-dependencies, which changes the features of crates `xtask`
@@ -531,19 +599,20 @@ fn validate_test_covered_by_recorded_with(
 /// A `--lib` selector joins its package's set: the lib unit-test target shares
 /// the package's feature set, so `-p ripr --lib` and `-p ripr --test …` build
 /// in one Cargo invocation instead of two serial ones (#13705).
-fn combined_preparation_builds(
+fn combined_preparation_plans(
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
-) -> Vec<Vec<String>> {
+) -> Vec<CombinedPreparation> {
     #[derive(Default)]
     struct Group {
         bins: BTreeSet<String>,
         tests: BTreeSet<String>,
         lib: bool,
+        members: Vec<usize>,
         merged: usize,
     }
     let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
-    for selector in commands {
+    for (index, selector) in commands.iter().enumerate() {
         if selector.host.is_some_and(|declared| declared != host)
             || !is_cargo_test_command(&selector.command)
         {
@@ -583,10 +652,15 @@ fn combined_preparation_builds(
         }
         if mergeable && !command_packages.is_empty() {
             let group = groups.entry(command_packages).or_default();
+            group.merged += 1;
+            // Only explicit targets are covered by the union. A targetless
+            // selector may name Cargo's broader default target set.
+            if command_lib || !command_bins.is_empty() || !command_tests.is_empty() {
+                group.members.push(index);
+            }
             group.bins.extend(command_bins);
             group.tests.extend(command_tests);
             group.lib |= command_lib;
-            group.merged += 1;
         }
     }
     groups
@@ -607,8 +681,27 @@ fn combined_preparation_builds(
                     args.push(value);
                 }
             }
-            args
+            CombinedPreparation {
+                args,
+                members: group.members,
+            }
         })
+        .collect()
+}
+
+struct CombinedPreparation {
+    args: Vec<String>,
+    members: Vec<usize>,
+}
+
+#[cfg(test)]
+fn combined_preparation_builds(
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+) -> Vec<Vec<String>> {
+    combined_preparation_plans(commands, host)
+        .into_iter()
+        .map(|plan| plan.args)
         .collect()
 }
 
@@ -1178,6 +1271,256 @@ mod tests {
         let result =
             super::accept_file_policy_coverage(|| Err("native inventory failed".to_string()));
         assert!(matches!(result, Err(error) if error == "native inventory failed"));
+    }
+
+    #[test]
+    fn successful_combined_preparation_replaces_only_member_builds() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask --test one alpha"),
+            common(2, "cargo test -p xtask --test two beta"),
+        ];
+        for failure in ["none", "exit", "timeout", "status", "capture"] {
+            let mut calls = Vec::new();
+            let observations = super::validate_test_covered_by_combined_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut Vec::new(),
+                |spawn| {
+                    calls.push(spawn.args.clone());
+                    if spawn.description == "test-valued covered_by combined build" {
+                        match failure {
+                            "exit" => {
+                                return Ok(timed_output(
+                                    Some(status(7)),
+                                    "",
+                                    "seeded build failure",
+                                    false,
+                                ));
+                            }
+                            "timeout" => {
+                                return Ok(timed_output(Some(status(0)), "", "partial", true));
+                            }
+                            "status" => return Ok(timed_output(None, "", "partial", false)),
+                            "capture" => return Err("capture failure".to_string()),
+                            _ => {}
+                        }
+                    }
+                    let output = if spawn.args.iter().any(|a| a == "alpha") {
+                        "alpha: test\n"
+                    } else {
+                        "beta: test\n"
+                    };
+                    Ok(timed_output(Some(status(0)), output, "", false))
+                },
+                super::preparation_key,
+            )?;
+            assert_eq!(observations.len(), 2);
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|a| a == "--no-run"))
+                    .count(),
+                if failure == "none" { 1 } else { 3 }
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|a| a == "--list"))
+                    .count(),
+                2
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn successful_combined_preparation_reuses_lib_and_keeps_uncovered_builds() -> Result<(), String>
+    {
+        let commands = [
+            common(1, "cargo test -p sample --lib alpha"),
+            common(2, "cargo test -p sample --bin sample-tool beta"),
+            common(3, "cargo test -p sample --test integration gamma"),
+            common(4, "cargo test -p sample targetless"),
+            common(5, "cargo test -p sample --lib --all-features feature"),
+            FilePolicyTestCommand {
+                line: 6,
+                command: "cargo test -p sample --lib foreign".to_string(),
+                host: Some(FilePolicyHost::Windows),
+            },
+        ];
+        for failure in ["none", "exit", "timeout", "status", "capture"] {
+            let mut calls = Vec::new();
+            let observations = super::validate_test_covered_by_combined_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut Vec::new(),
+                |spawn| {
+                    calls.push(spawn.args.clone());
+                    if spawn.description == "test-valued covered_by combined build" {
+                        return match failure {
+                            "exit" => Ok(timed_output(Some(status(7)), "", "build failed", false)),
+                            "timeout" => Ok(timed_output(Some(status(0)), "", "partial", true)),
+                            "status" => Ok(timed_output(None, "", "partial", false)),
+                            "capture" => Err("capture failure".to_string()),
+                            _ => Ok(timed_output(Some(status(0)), "", "", false)),
+                        };
+                    }
+                    let name = ["alpha", "beta", "gamma", "targetless", "feature"]
+                        .into_iter()
+                        .find(|name| spawn.args.iter().any(|arg| arg == name))
+                        .ok_or_else(|| format!("unexpected selector: {:?}", spawn.args))?;
+                    Ok(timed_output(
+                        Some(status(0)),
+                        &format!("{name}: test\n"),
+                        "",
+                        false,
+                    ))
+                },
+                super::preparation_key,
+            )?;
+            assert_eq!(observations.len(), commands.len(), "{failure}");
+            assert!(observations[5].selected.is_none(), "{failure}");
+            let builds: Vec<_> = calls
+                .iter()
+                .filter(|args| args.iter().any(|arg| arg == "--no-run"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                builds.len(),
+                if failure == "none" { 3 } else { 6 },
+                "preparation count for {failure}"
+            );
+            assert_eq!(
+                builds[0],
+                argv("test --no-run -p sample --lib --bin sample-tool --test integration")
+            );
+            if failure == "none" {
+                assert_eq!(builds[1], argv("test -p sample targetless --no-run"));
+                assert_eq!(
+                    builds[2],
+                    argv("test -p sample --lib --all-features feature --no-run")
+                );
+            }
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|arg| arg == "--list"))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                vec![
+                    argv("test -p sample --lib alpha -- --list --format terse"),
+                    argv("test -p sample --bin sample-tool beta -- --list --format terse"),
+                    argv("test -p sample --test integration gamma -- --list --format terse"),
+                    argv("test -p sample targetless -- --list --format terse"),
+                    argv("test -p sample --lib --all-features feature -- --list --format terse"),
+                ],
+                "native listings for {failure}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn successful_combined_preparation_requires_unchanged_launch_context() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask --test one alpha"),
+            common(2, "cargo test -p xtask --test two beta"),
+        ];
+        // Change only the injected snapshot. Process-global cwd/environment
+        // mutation would race other tests and is unnecessary for this boundary.
+        for change in [
+            "stable",
+            "cwd",
+            "cwd_before_reuse",
+            "environment",
+            "missing_before",
+            "missing_after",
+        ] {
+            let launched = std::cell::Cell::new(false);
+            let first_listed = std::cell::Cell::new(false);
+            let mut calls = Vec::new();
+            let observations = super::validate_test_covered_by_combined_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut Vec::new(),
+                |spawn| {
+                    calls.push(spawn.args.clone());
+                    if spawn.description == "test-valued covered_by combined build" {
+                        launched.set(true);
+                    }
+                    if spawn.args.iter().any(|arg| arg == "--list")
+                        && spawn.args.iter().any(|arg| arg == "alpha")
+                    {
+                        first_listed.set(true);
+                    }
+                    let output = if spawn.args.iter().any(|arg| arg == "alpha") {
+                        "alpha: test\n"
+                    } else {
+                        "beta: test\n"
+                    };
+                    Ok(timed_output(Some(status(0)), output, "", false))
+                },
+                |args| {
+                    let after = if change == "cwd_before_reuse" {
+                        first_listed.get()
+                    } else {
+                        launched.get()
+                    };
+                    if (change == "missing_before" && !after)
+                        || (change == "missing_after" && after)
+                    {
+                        return None;
+                    }
+                    Some(super::PreparationKey {
+                        args: super::preparation_args_identity(args),
+                        cwd: std::path::PathBuf::from(
+                            if matches!(change, "cwd" | "cwd_before_reuse") && after {
+                                "after"
+                            } else {
+                                "before"
+                            },
+                        ),
+                        environment: std::collections::BTreeMap::from([(
+                            std::ffi::OsString::from("RIPR_TEST_CONTEXT"),
+                            std::ffi::OsString::from(if change == "environment" && after {
+                                "after"
+                            } else {
+                                "before"
+                            }),
+                        )]),
+                    })
+                },
+            )?;
+            assert_eq!(observations.len(), 2, "{change}");
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|arg| arg == "--no-run"))
+                    .count(),
+                match change {
+                    "stable" => 1,
+                    "cwd_before_reuse" => 2,
+                    _ => 3,
+                },
+                "preparation count for {change}"
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|arg| arg == "--list"))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                vec![
+                    argv("test -p xtask --test one alpha -- --list --format terse"),
+                    argv("test -p xtask --test two beta -- --list --format terse"),
+                ],
+                "native listings for {change}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
