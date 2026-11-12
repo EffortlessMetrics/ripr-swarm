@@ -38,6 +38,7 @@ mod state;
 mod tests;
 mod transport_bounds;
 mod uri;
+mod watched_source_drift;
 mod workspace_folder_bounds;
 
 use backend::Backend;

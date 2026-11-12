@@ -662,11 +662,17 @@ fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
 }
 
-fn precommit() -> Result<(), String> {
-    precommit_policy(false)
+/// Local `precommit` policy leg. `coverage` comes from the precommit change
+/// set: a diff that cannot change any test-valued `covered_by` listing skips
+/// the test-binary builds that enumeration needs (#13705).
+fn precommit(coverage: policy::CoverageEnumeration) -> Result<(), String> {
+    precommit_policy(false, coverage)
 }
 
-fn precommit_policy(collect_all: bool) -> Result<(), String> {
+fn precommit_policy(
+    collect_all: bool,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
     // CI rejects stale/partial proof before compilation-bearing file policy.
@@ -690,7 +696,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
     let mut deferred = None;
-    check_file_policy_deferring(&mut deferred)?;
+    check_file_policy_deferring(&mut deferred, coverage)?;
     let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
     finish_precommit_policy(deferred, remaining, collect_all)
 }
@@ -703,8 +709,11 @@ const PRECOMMIT_INSTRUMENT_PREFIX: &str =
 
 /// `check_file_policy`, except that an instrument failure (cargo lock wait or
 /// timeout) is stored in `deferred` instead of returned.
-fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
-    match check_file_policy() {
+fn check_file_policy_deferring(
+    deferred: &mut Option<String>,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
+    match policy::check_file_policy_with(coverage) {
         Err(error) if policy::is_covered_by_instrument_failure(&error) => {
             *deferred = Some(error);
             Ok(())

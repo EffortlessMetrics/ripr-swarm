@@ -160,6 +160,39 @@ fn a_gc_checkout_in_the_build_workspace_is_rejected() -> Result<(), String> {
 }
 
 #[test]
+fn the_gc_sweep_stays_manual_only() -> Result<(), String> {
+    let on_block = "\non:\n  workflow_dispatch:\n";
+    assert!(
+        repo_text(SCRATCH_GC_PATH)?.contains(on_block),
+        "fixture anchor: the checked-in sweep declares only workflow_dispatch"
+    );
+    for (to, expected) in [
+        (
+            "\non:\n  schedule:\n    - cron: \"17,47 * * * *\"\n  workflow_dispatch:\n",
+            "trigger `schedule:` is not allowed",
+        ),
+        (
+            "\non:\n  workflow_dispatch:\n  pull_request:\n",
+            "trigger `pull_request:` is not allowed",
+        ),
+        (
+            "\non:\n  schedule:\n    - cron: \"17,47 * * * *\"\n",
+            "keep the `workflow_dispatch` trigger",
+        ),
+    ] {
+        let violations = violations_after_edit(SCRATCH_GC_PATH, on_block, to)?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.starts_with(SCRATCH_GC_PATH)
+                    && violation.contains(expected)),
+            "{to}: {violations:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_lease_taken_after_trees_exist_is_rejected() -> Result<(), String> {
     let (mut workflows, action) = repo_contract_inputs()?;
     let Some((_, text)) = workflows

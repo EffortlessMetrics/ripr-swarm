@@ -7342,6 +7342,130 @@ mod before_phase_stdout_tests {
              verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
         );
     }
+
+    /// `PACKET` with one member of its first packet replaced or added.
+    fn packet_with(member: &str, value: serde_json::Value) -> Result<String, String> {
+        let mut document: serde_json::Value = serde_json::from_str(PACKET)
+            .map_err(|error| format!("fixture packet must parse: {error}"))?;
+        document
+            .pointer_mut("/packets/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "fixture packet must carry one packet object".to_string())?
+            .insert(member.to_string(), value);
+        serde_json::to_string(&document).map_err(|error| error.to_string())
+    }
+
+    fn owns_start_result(packet: &str) -> bool {
+        super::before_phase_stdout_owns_start_result(packet, false, &continuation())
+    }
+
+    /// #13803: stderr may drop its copy of the start result only when the
+    /// human stdout summary carries it for a scorable attempt.
+    #[test]
+    fn stdout_owns_the_start_result_only_for_a_human_scorable_readable_summary()
+    -> Result<(), String> {
+        assert!(
+            owns_start_result(PACKET),
+            "a readable packet on the human route owns the start result"
+        );
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, true, &continuation()),
+            "--json prints the packet document, not the summary"
+        );
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..continuation()
+        };
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, false, &ambiguous),
+            "an ambiguous baseline keeps the stderr lines"
+        );
+        // Packets the stdout summary cannot read fall back to the one-line
+        // pointer, which names neither the target nor the edit surface.
+        assert!(!owns_start_result("not json"));
+        assert!(!owns_start_result(r#"{"packets": []}"#));
+        assert!(!owns_start_result(&packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?));
+        assert!(!owns_start_result(&packet_with(
+            "seam_id",
+            serde_json::json!("  "),
+        )?));
+        Ok(())
+    }
+
+    /// #13803 review: the summary names `recommended_test.file` while the cage
+    /// binds `allowed_edit_surface[0]`; stdout owns the result only when both
+    /// name the same file.
+    #[test]
+    fn stdout_does_not_own_the_start_result_when_the_cage_binds_another_file() -> Result<(), String>
+    {
+        let surface = |value: serde_json::Value| packet_with("allowed_edit_surface", value);
+
+        let same = surface(serde_json::json!(["tests/pricing.rs"]))?;
+        assert!(
+            owns_start_result(&same),
+            "the cage target is the summary target"
+        );
+        assert!(super::summary_target_is_the_cage_target(&same));
+
+        for (label, other) in [
+            (
+                "another file",
+                serde_json::json!(["tests/other_pricing.rs"]),
+            ),
+            (
+                "the summary target is not first",
+                serde_json::json!(["tests/other_pricing.rs", "tests/pricing.rs"]),
+            ),
+            ("an empty surface", serde_json::json!([])),
+            ("a non-array surface", serde_json::json!("tests/pricing.rs")),
+            ("a null surface", serde_json::Value::Null),
+        ] {
+            let packet = surface(other)?;
+            // The summary itself still renders and names the recommended
+            // file, so only the cage comparison can withhold ownership.
+            let summary = before_phase_stdout(
+                &packet,
+                "target/ripr/workflow/agent-packet.json",
+                false,
+                &continuation(),
+            )?;
+            assert!(
+                summary.contains("edit one test file: tests/pricing.rs"),
+                "{label}: the summary must still name its target:\n{summary}"
+            );
+            assert!(
+                !super::summary_target_is_the_cage_target(&packet),
+                "{label}: the cage does not bind the summary target"
+            );
+            assert!(
+                !owns_start_result(&packet),
+                "{label}: stderr must keep its directive"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_target_check_needs_a_first_packet_with_a_recommended_file() -> Result<(), String> {
+        assert!(super::summary_target_is_the_cage_target(PACKET));
+        assert!(!super::summary_target_is_the_cage_target("not json"));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": []}"#
+        ));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": {}}"#
+        ));
+        // No recommended file and no surface: nothing to compare.
+        let no_file = packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?;
+        assert!(!super::summary_target_is_the_cage_target(&no_file));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
