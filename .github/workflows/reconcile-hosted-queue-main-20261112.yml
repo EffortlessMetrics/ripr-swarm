@@ -54,17 +54,10 @@ jobs:
           import subprocess
 
           expected = {
-              '.github/workflows/main-health-sentinel.yml',
-              '.github/workflows/rust-gates.yml',
-              'changelog.d/12973-current-main-retirement.md',
-              'docs/CI.md',
-              'docs/RELEASE_TRANSACTION.md',
-              'policy/ci-lane-whitelist.toml',
-              'tools/repo-policy/src/queue_workflow.rs',
-              'tools/repo-policy/tests/merge_group_subject.rs',
+              '.github/actions/pr-candidate-admission/review_disposition.py',
+              '.github/workflows/routed-rust.yml',
               'tools/repo-policy/tests/review_disposition_admission.rs',
-              'xtask/tests/main_health_sentinel_contract.rs',
-              'xtask/tests/routed_queue_resolution.rs',
+              'xtask/tests/rust_gate_workflow_contract.rs',
           }
           raw = subprocess.check_output(
               ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
@@ -85,8 +78,8 @@ jobs:
               print(f'::group::{relative} ({len(marker_indexes)} markers)')
               covered: set[int] = set()
               for marker in marker_indexes:
-                  start = max(0, marker - 10)
-                  end = min(len(lines), marker + 11)
+                  start = max(0, marker - 12)
+                  end = min(len(lines), marker + 13)
                   for index in range(start, end):
                       if index in covered:
                           continue
