@@ -232,6 +232,11 @@ fn calibrated_gate_blocks_a_changed_file_that_was_not_parsed() -> Result<(), Str
     assert_eq!(blocked_gate["summary"]["evaluated"], 0, "{blocked_gate}");
     assert_eq!(blocked_gate["status"], "blocked", "{blocked_gate}");
     assert_eq!(blocked.status.code(), Some(3), "{blocked_gate}");
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert!(
+        stderr.contains("a changed file was not parsed") && stderr.contains("src/lib.rs"),
+        "{stderr}"
+    );
     let warnings = blocked_gate["warnings"].to_string();
     assert!(
         warnings.contains("calibrated-gate blocks while a changed file was not parsed")

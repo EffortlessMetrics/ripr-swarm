@@ -39,6 +39,9 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// The warning that marks a calibrated-gate block caused by a changed file the
+/// parser declined (#14485). The inline CLI detail looks for it.
+pub(crate) const UNPARSED_BLOCK_WARNING: &str = "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes";
 /// The closed top-level `status` set a gate decision may carry
 /// (`schemas/ripr/gate-decision.schema.json`, in schema order), mirrored
 /// from the `top_level_status` producer. Consumers validating an unknown
@@ -334,10 +337,7 @@ pub(crate) fn build_gate_decision_report(
         // coverage of the changed files is then not established.
         if declined.is_some() && input.mode == GateMode::CalibratedGate {
             unjudged_blocking = 1;
-            warnings.push(
-                "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes"
-                    .to_string(),
-            );
+            warnings.push(UNPARSED_BLOCK_WARNING.to_string());
         }
         warnings.extend(declined);
         warnings.extend(static_limited_scope_warning(scope));

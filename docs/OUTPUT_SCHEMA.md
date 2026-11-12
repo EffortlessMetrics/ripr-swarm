@@ -11759,7 +11759,8 @@ Field contract:
   `calibrated-gate` mode the same condition also makes the top-level `status`
   `blocked` (exit `3`) with an extra warning saying so, because the mode exists
   to stop a merge and nothing was judged for that file (#14485); the other
-  modes keep `advisory`. The same warning-only rule holds
+  modes keep the advisory outcome unless a candidate decision already sets a
+  higher status. The same warning-only rule holds
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
