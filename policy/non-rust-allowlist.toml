@@ -183,7 +183,7 @@ owner = "repo-policy"
 surface = "rust"
 classification = "config"
 reason = "Unpublished pure workflow-contract test package manifest (#14433)."
-covered_by = ["cargo check -p repo-policy-contracts --locked"]
+covered_by = ["cargo check -p repo-policy-contracts --tests --locked"]
 
 [[allow]]
 glob = "tools/repo-policy-test-identity/Cargo.toml"
