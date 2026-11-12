@@ -9220,6 +9220,51 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
     assert_eq!(args[0]["test_name"], "calls_owner_weakly");
 
+    // A strong test that only carries the owner's name ranks after the weak
+    // test that calls the owner.
+    let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "owner_named_strong".to_string(),
+        file: PathBuf::from("tests/named.rs"),
+        line: 2,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::OwnerNamedTest,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+    let named_first = commands_for(vec![name_strong.clone(), calling])?;
+    let Some((_, _, args)) = named_first
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {named_first:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+    let named_only = commands_for(vec![name_strong])?;
+    let Some((_, _, args)) = named_only
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "a name-matched test stays a fallback target, got {named_only:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "owner_named_strong");
+
     let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
     assert!(
         !proximity_only

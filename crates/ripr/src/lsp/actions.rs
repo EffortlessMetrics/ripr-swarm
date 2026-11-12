@@ -2633,20 +2633,27 @@ fn copy_seam_packet_target(
 /// proximity (same file, same module, a token substring) never runs the
 /// seam, so its oracle belongs to other code, and it is never offered: with
 /// no other related test there is no navigation, matching the witness fix
-/// site (#5354).
+/// site (#5354). Tests whose relation runs the owner
+/// (`RelationReason::establishes_reach`) are tried before name, import or
+/// fixture affinities, so a strong name-matched test never wins over a test
+/// that calls the change; within each group a strong oracle comes first, then
+/// the lowest relation-confidence rank.
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
     let tests = &seam.evidence.related_tests;
-    let call_bearing = || {
-        tests
-            .iter()
-            .filter(|test| !test.relation_reason.is_proximity_only())
+    let pick = |reaches: bool| {
+        let group = || {
+            tests.iter().filter(move |test| {
+                !test.relation_reason.is_proximity_only()
+                    && test.relation_reason.establishes_reach(true) == reaches
+            })
+        };
+        group()
+            .find(|test| test.oracle_strength == OracleStrength::Strong)
+            .or_else(|| {
+                group().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            })
     };
-    call_bearing()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            call_bearing().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })
-        .map(Arc::as_ref)
+    pick(true).or_else(|| pick(false)).map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {

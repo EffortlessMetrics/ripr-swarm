@@ -308,8 +308,22 @@ fn is_call_bearing(test: &RelatedTest) -> bool {
         .is_none_or(|reason| !reason.is_proximity_only())
 }
 
-/// Oracle strength then relation confidence rank only call-bearing rows;
-/// when none exists there is no fix site rather than a nearby test.
+/// Whether a row's relation shows the test runs the owner
+/// (`RelationReason::establishes_reach`: a direct call, a helper chain, a
+/// followed re-export). Rows with no recorded relation count too. A name,
+/// import or fixture affinity is still eligible as a fix site, but ranks
+/// after every reaching row: otherwise a name-matched test with a stronger
+/// oracle on other code would win over the test that calls the change, the
+/// #5335 defect. The owner is treated as a function, so an assertion-target
+/// affinity is a fallback here; that only orders candidates.
+fn reaches_owner(test: &RelatedTest) -> bool {
+    test.relation_reason
+        .is_none_or(|reason| reason.establishes_reach(true))
+}
+
+/// Rows that reach the owner first, then oracle strength, then relation
+/// confidence, over call-bearing rows only; when none exists there is no fix
+/// site rather than a nearby test.
 fn best_related_test<'a>(
     related_tests: impl Iterator<Item = &'a RelatedTest>,
 ) -> Option<&'a RelatedTest> {
@@ -320,10 +334,14 @@ fn best_related_test<'a>(
     related_tests
         .filter(|test| is_call_bearing(test))
         .min_by(|left, right| {
-            right
-                .oracle_strength
-                .rank()
-                .cmp(&left.oracle_strength.rank())
+            reaches_owner(right)
+                .cmp(&reaches_owner(left))
+                .then_with(|| {
+                    right
+                        .oracle_strength
+                        .rank()
+                        .cmp(&left.oracle_strength.rank())
+                })
                 .then_with(|| {
                     left.relation_confidence
                         .map_or(3, |confidence| confidence.rank())
@@ -565,6 +583,46 @@ mod tests {
         assert_eq!(fix_site.test_name, "shipping_runs");
         assert_eq!(fix_site.line, 19);
         assert_eq!(fix_site.current_oracle, None);
+        Ok(())
+    }
+
+    /// #5354: a test that only carries the owner's name, with a strong
+    /// oracle on other code, ranks after a weaker test that calls the owner.
+    #[test]
+    fn fix_site_prefers_a_calling_test_over_a_stronger_name_only_test() -> Result<(), String> {
+        use crate::domain::{RelatedTestMiss, RelationReason};
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests = vec![
+            rust_related(
+                "discount_named_elsewhere",
+                9,
+                RelationReason::OwnerNamedTest,
+                OracleStrength::Strong,
+                RelatedTestMiss::NoCallPath,
+            ),
+            rust_related(
+                "checkout_applies_discount",
+                21,
+                RelationReason::DirectOwnerCall,
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a weakly_exposed finding builds a witness")?;
+        let fix_site = witness.fix_site.ok_or("the calling test is the fix site")?;
+        assert_eq!(fix_site.test_name, "checkout_applies_discount");
+        assert_eq!(fix_site.line, 21);
+
+        // With no calling test the name-matched one is still offered.
+        finding.related_tests.truncate(1);
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or("a weakly_exposed finding builds a witness")?;
+        let fix_site = witness
+            .fix_site
+            .ok_or("a name-matched test remains a fallback fix site")?;
+        assert_eq!(fix_site.test_name, "discount_named_elsewhere");
         Ok(())
     }
 

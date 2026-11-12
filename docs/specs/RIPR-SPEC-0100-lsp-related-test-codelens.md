@@ -105,13 +105,16 @@ A lens click does something useful for its own row (#13389):
   or ambiguous declaration selects nothing and the lens keeps refresh. For
   other findings a test linked only by proximity (same test file, same module,
   a token substring) is never the target: a call-bearing test matching the
-  finding's suggested test name and file wins first, then the strongest
-  oracle, then the lowest relation-confidence rank, ties to the earliest
-  listed. With only proximity-linked tests the lens keeps refresh, and the
-  title count may then exceed the tests it can open (#5354). The seam code
-  action ranks the seam's related tests with the same proximity exclusion but
-  its own order (a strong oracle first, else the lowest relation-confidence
-  rank). Preview-tier (TypeScript, Python) findings navigate the same way and
+  finding's suggested test name and file wins first; otherwise a test whose
+  relation runs the owner (a direct call, a helper chain, a followed
+  re-export, or no recorded relation) ranks before one linked only by a name,
+  import or fixture affinity, then the strongest oracle, then the lowest
+  relation-confidence rank, ties to the earliest listed. With only
+  proximity-linked tests the lens keeps refresh, and the title count may then
+  exceed the tests it can open (#5354). The seam code action ranks the seam's
+  related tests with the same proximity exclusion and the same reach-first
+  grouping, but within a group takes a strong oracle first, else the lowest
+  relation-confidence rank. Preview-tier (TypeScript, Python) findings navigate the same way and
   keep their `preview:` title.
 - The title ends `· open TEST_NAME`. The name has whitespace and control
   characters collapsed to single spaces and is cut at 48 characters with an
@@ -323,6 +326,7 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function`
 - `crates/ripr/src/lsp/lens.rs::tests::lens_click_never_opens_a_proximity_only_test_over_a_calling_one`
 - `crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_call_bearing_test_over_a_proximity_only_oracle`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_calling_test_over_a_stronger_name_only_test`
 - `crates/ripr/src/domain/diagnostic_witness.rs::tests::a_suggested_proximity_only_test_is_not_the_fix_site`
 - `crates/ripr/src/domain/diagnostic_witness.rs::tests::proximity_only_related_tests_never_become_the_fix_site`
 - `crates/ripr/src/lsp/tests.rs::seam_code_actions_skip_proximity_only_related_tests`
