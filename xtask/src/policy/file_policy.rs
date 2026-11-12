@@ -35,6 +35,7 @@ impl NativeDeadline {
     fn remaining(&self) -> Result<Duration, String> {
         remaining_native_budget(NATIVE_RECEIPT_WORK_BUDGET, self.started.elapsed())
     }
+    #[cfg(test)]
     fn timeout(&self, nominal: Duration) -> Result<Duration, String> {
         Ok(nominal.min(self.remaining()?))
     }
