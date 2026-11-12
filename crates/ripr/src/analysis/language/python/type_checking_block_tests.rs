@@ -172,21 +172,54 @@ fn line_deleted_from_a_type_checking_block_is_not_probed() -> Result<(), String>
     Ok(())
 }
 
-/// Devin on #14455: runtime code moved into the block in the same added
-/// run as a changed runtime line. The moved line replaced a line that ran,
-/// so it keeps its probe beside the runtime edit.
+/// New side for the moved-line test: the block (3 to 5) ends right above
+/// the runtime constant on line 6, so lines 5 and 6 form one added run.
+const MOVED_PY: &str = "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from typing import TypeAlias\n    Basket: TypeAlias = list[str]\nRATE = 2\n\n\ndef total(prices, basket):\n    return RATE * sum(prices[item] for item in basket)\n";
+
+/// Devin on #14455: runtime code moved into the block in the same added run
+/// as a changed runtime line. Old line 5 `Basket = list` ran at module
+/// level; new line 5 is its block replacement and line 6 edits `RATE`. A run
+/// with a behavioral line drops its quiet lines, so the moved line keeps its
+/// probe only because its paired old line ran. The old side reconstructs
+/// (one added and one removed line at each position).
 #[test]
 fn runtime_code_moved_into_a_block_beside_a_runtime_edit_keeps_probe() -> Result<(), String> {
-    let findings = analyze(
-        "moved-beside-runtime",
-        PRICING_PY,
-        &[10, 11, 12, 13, 14],
-        vec![
-            line(10, "DISCOUNT = compute_discount()"),
-            line(14, "    return sum(prices[item] for item in basket) + 1"),
-        ],
-    )?;
-    assert!(probed_lines(&findings).contains(&10), "{findings:?}");
+    let added = [5, 6];
+    let removed = vec![line(5, "Basket = list"), line(6, "RATE = 1")];
+    let changed = crate::analysis::diff::ChangedFile {
+        path: PathBuf::from("src/pricing.py"),
+        added_lines: added
+            .iter()
+            .filter_map(|&number| {
+                MOVED_PY
+                    .lines()
+                    .nth(number - 1)
+                    .map(|text| line(number, text))
+            })
+            .collect(),
+        removed_lines: removed.clone(),
+    };
+    let old_source = crate::analysis::diff::reconstruct_old_source(MOVED_PY, &changed)
+        .ok_or("old source did not reconstruct")?;
+    let old_lines: Vec<&str> = old_source.lines().collect();
+    assert_eq!(
+        old_lines.get(4..6),
+        Some(&["Basket = list", "RATE = 1"][..]),
+        "{old_source}"
+    );
+    assert_eq!(
+        ranges(&old_source),
+        vec![3..=4],
+        "old line 5 is outside the block"
+    );
+    assert_eq!(
+        ranges(MOVED_PY),
+        vec![3..=5],
+        "new line 5 is inside the block"
+    );
+
+    let findings = analyze("moved-beside-runtime", MOVED_PY, &added, removed)?;
+    assert_eq!(probed_lines(&findings), vec![5, 6], "{findings:?}");
     Ok(())
 }
 
@@ -325,6 +358,22 @@ fn type_checking_block_shapes() {
         (
             "flag deleted",
             "from typing import TYPE_CHECKING\ndel TYPE_CHECKING\nif TYPE_CHECKING:\n    import a\n",
+        ),
+        (
+            "flag rebound by a named expression",
+            "from typing import TYPE_CHECKING\n(TYPE_CHECKING := True)\nif TYPE_CHECKING:\n    import a\n",
+        ),
+        (
+            "flag rebound in the test itself",
+            "from typing import TYPE_CHECKING\nif (TYPE_CHECKING := True):\n    import a\n",
+        ),
+        (
+            "flag rebound by a walrus split by a comment",
+            "from typing import TYPE_CHECKING\nenable(\n    TYPE_CHECKING  # on\n    := True\n)\nif TYPE_CHECKING:\n    import a\n",
+        ),
+        (
+            "typing alias rebound by a named expression",
+            "import typing as t\nif (t := load()):\n    pass\nif t.TYPE_CHECKING:\n    import a\n",
         ),
         (
             "does not parse",
