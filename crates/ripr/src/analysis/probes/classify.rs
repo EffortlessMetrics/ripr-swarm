@@ -752,14 +752,15 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || is_plain_extern_crate(text)
 }
 
-/// A plain `extern crate name;` (optionally visibility-qualified) only links a
-/// crate, the same way `use` imports one, so it holds no behavior for a test
-/// to notice (#14403). The renaming form (`extern crate core as std;`,
-/// `extern crate self as name;`) changes what a name means for the rest of the
-/// crate and stays probed, as does any line with trailing code.
+/// A private, plain `extern crate name;` only links a crate, the same way a
+/// private `use` imports one, so it holds no behavior for a test to notice
+/// (#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports
+/// the crate under the declaring module's path, like a visible `use`, and the
+/// renaming form (`extern crate core as std;`, `extern crate self as name;`)
+/// changes what a name means for the rest of the crate; both stay probed, as
+/// does any line with trailing code.
 fn is_plain_extern_crate(text: &str) -> bool {
-    let rest = super::diff::strip_visibility(text);
-    let Some(body) = rest.strip_suffix(';') else {
+    let Some(body) = text.strip_suffix(';') else {
         return false;
     };
     body.strip_prefix("extern")
@@ -1156,20 +1157,21 @@ mod tests {
         assert!(!is_visible_module_declaration("pub use a::b;"));
     }
 
-    /// #14403: a plain `extern crate name;` links a crate and has no behavior;
-    /// a renaming `extern crate a as b;` and any trailing code stay probed.
+    /// #14403: a private plain `extern crate name;` links a crate and has no
+    /// behavior; a re-export (`pub extern crate x;`), a renaming
+    /// `extern crate a as b;` and any trailing code stay probed.
     #[test]
     fn plain_extern_crate_is_ignored_but_a_rename_is_not() {
         for ignored in [
             "extern crate alloc;",
-            "pub extern crate core;",
-            "pub(crate) extern crate serde_json;",
             "extern  crate  std ;",
             "extern crate r#async;",
         ] {
             assert!(should_ignore_changed_line(ignored), "`{ignored}`");
         }
         for kept in [
+            "pub extern crate core;",
+            "pub(crate) extern crate serde_json;",
             "extern crate core as std;",
             "pub extern crate other as u32;",
             "extern crate self as my_crate;",
