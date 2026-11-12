@@ -313,11 +313,19 @@ fn literal_construction(
     let Expr::Name(class) = &*call.func else {
         return None;
     };
-    if !call.args.iter().all(is_literal_argument)
+    // The inert-tool read keeps bare literals only; the instance read also
+    // takes a display of literals (`Cart([3, 4])`), which builds the same
+    // fresh value on every call as the inlined construction would.
+    let literal: fn(&Expr) -> bool = if allow_request_param {
+        is_literal_argument
+    } else {
+        is_literal_display_argument
+    };
+    if !call.args.iter().all(literal)
         || !call
             .keywords
             .iter()
-            .all(|keyword| keyword.arg.is_some() && is_literal_argument(&keyword.value))
+            .all(|keyword| keyword.arg.is_some() && literal(&keyword.value))
     {
         return None;
     }
@@ -337,6 +345,26 @@ pub(super) fn is_literal_argument(expr: &Expr) -> bool {
                 if matches!(constant.value, Constant::Int(_) | Constant::Float(_))
         ),
         _ => false,
+    }
+}
+
+/// A literal argument, or a list, tuple, set or dict display built only from
+/// such arguments (`[3, 4]`, `(1, "a")`, `{"k": [1]}`). A display names no
+/// variable and calls nothing, so each evaluation builds an equal fresh value.
+/// A starred element, a `**` entry or a comprehension is not a display of
+/// literals.
+fn is_literal_display_argument(expr: &Expr) -> bool {
+    match expr {
+        Expr::List(list) => list.elts.iter().all(is_literal_display_argument),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(is_literal_display_argument),
+        Expr::Set(set) => set.elts.iter().all(is_literal_display_argument),
+        Expr::Dict(dict) => {
+            dict.keys
+                .iter()
+                .all(|key| key.as_ref().is_some_and(is_literal_display_argument))
+                && dict.values.iter().all(is_literal_display_argument)
+        }
+        other => is_literal_argument(other),
     }
 }
 
