@@ -34,7 +34,7 @@ fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
 #[cfg(unix)]
 #[test]
 fn history_sync_scope_real_bash_controls_pass() -> Result<(), String> {
-    run_python_control("test_history_sync_scope.py", "-q", "Ran 22 tests in")
+    run_python_control("test_history_sync_scope.py", "-q", "Ran 27 tests in")
 }
 
 #[cfg(unix)]
