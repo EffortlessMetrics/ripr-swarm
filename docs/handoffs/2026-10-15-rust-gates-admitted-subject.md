@@ -3,7 +3,7 @@
 ## Scope
 
 This leaf changes only `.github/workflows/rust-gates.yml`, adds its static
-contract (`tools/repo-policy/tests/rust_gates_admission.rs`) and this note. The
+contract (`tools/repo-policy-contracts/tests/workflow_contracts/rust_gates_admission.rs`) and this note. The
 exact-subject `ci.yml` leaf landed earlier; this is the reusable gate it and a
 later routed caller will invoke. No caller is added or changed and nothing is
 activated.

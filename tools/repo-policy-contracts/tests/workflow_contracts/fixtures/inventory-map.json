@@ -1,0 +1,797 @@
+{
+  "baseline_source": "46b62971d1ea2e06d916c09e35212c10fe4c7835",
+  "cases": [
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "effective_shell_precedence_matches_the_actual_workflow_declarations",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::effective_shell_precedence_matches_the_actual_workflow_declarations",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "feature_command_action_and_manual_denominators_are_unchanged",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::feature_command_action_and_manual_denominators_are_unchanged",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "independent_event_labels_reject_request_guard_removal",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::independent_event_labels_reject_request_guard_removal",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "literal_runtime_commands_propagate_native_failure",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::literal_runtime_commands_propagate_native_failure",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "pr_owned_step_allowance_is_exact_and_job_scoped",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::pr_owned_step_allowance_is_exact_and_job_scoped",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "release_steps_preserve_manual_semantics_and_ignore_labels_on_calls",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::release_steps_preserve_manual_semantics_and_ignore_labels_on_calls",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "removing_the_declared_shell_reproduces_masked_pkgid_failures",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::removing_the_declared_shell_reproduces_masked_pkgid_failures",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "selected_child_missing_failed_cancelled_or_unexpected_cannot_pass",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::selected_child_missing_failed_cancelled_or_unexpected_cannot_pass",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "staged_and_explicit_activation_event_matrix",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::staged_and_explicit_activation_event_matrix",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "unlocked_install_and_readiness_preserve_each_native_failure",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::unlocked_install_and_readiness_preserve_each_native_failure",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "vscode_payload_requires_every_command_in_order",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::vscode_payload_requires_every_command_in_order",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "ci_leaf_contract",
+      "old_test": "wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::ci_leaf_contract::wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "actual_result_block_requires_successful_detection_and_selected_proof",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::actual_result_block_requires_successful_detection_and_selected_proof",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_keeps_empty_diff_and_both_rename_sides",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_keeps_empty_diff_and_both_rename_sides",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_preserves_diff_and_selected_command_failures",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_preserves_diff_and_selected_command_failures",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_rejects_unrelated_and_hostile_path_records",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_rejects_unrelated_and_hostile_path_records",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_runs_both_checks_for_docs_only_add_edit_delete",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_runs_both_checks_for_docs_only_add_edit_delete",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_selects_quoted_spec_paths",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_selects_quoted_spec_paths",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "capability_selector_uses_nul_records_independent_of_quote_path",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::capability_selector_uses_nul_records_independent_of_quote_path",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "event_commit_bindings_are_exact_and_history_is_available",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::event_commit_bindings_are_exact_and_history_is_available",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselected_skip",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselected_skip",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "extension_surface_selection_selects_the_surface_labels_and_every_doubt",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::extension_surface_selection_selects_the_surface_labels_and_every_doubt",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "filename_records_deletions_and_both_sides_of_renames_are_classified",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::filename_records_deletions_and_both_sides_of_renames_are_classified",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "invalid_identities_empty_diff_and_non_pr_events_use_full_proof",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::invalid_identities_empty_diff_and_non_pr_events_use_full_proof",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "spec_registration_surfaces_classify_as_docs_only",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::spec_registration_surfaces_classify_as_docs_only",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "docs_only_routing",
+      "old_test": "stale_event_base_and_synthetic_merge_checkout_use_pr_head",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::docs_only_routing::stale_event_base_and_synthetic_merge_checkout_use_pr_head",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "admission_scope_cannot_remove_the_main_push_cache_writer",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::admission_scope_cannot_remove_the_main_push_cache_writer",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "broadening_saves_is_not_a_trusted_default_scope_writer",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::broadening_saves_is_not_a_trusted_default_scope_writer",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "current_source_preserves_a_main_scope_writer_opportunity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::current_source_preserves_a_main_scope_writer_opportunity",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "disabled_hosted_job_or_filtered_push_is_not_writer_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::disabled_hosted_job_or_filtered_push_is_not_writer_continuity",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "disabled_producer_or_additional_cache_is_not_writer_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::disabled_producer_or_additional_cache_is_not_writer_continuity",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "missing_caller_dependencies_cannot_supply_guard_outputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::missing_caller_dependencies_cannot_supply_guard_outputs",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "missing_or_rebound_producer_is_not_a_writer_opportunity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::missing_or_rebound_producer_is_not_a_writer_opportunity",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "retiring_main_push_is_not_cache_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::retiring_main_push_is_not_cache_continuity",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "exact_checkout_and_full_platform_shell_payload_are_preserved",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::exact_checkout_and_full_platform_shell_payload_are_preserved",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "execution::actual_payload_native_failure_is_not_hidden",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::execution::actual_payload_native_failure_is_not_hidden",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "execution::callable_admission_removal_is_rejected",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::execution::callable_admission_removal_is_rejected",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "execution::callable_job_admission_preserves_inherited_events_and_refuses_sticky_labels",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::execution::callable_job_admission_preserves_inherited_events_and_refuses_sticky_labels",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "execution::malformed_wrong_stale_and_injected_subjects_fail_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::execution::malformed_wrong_stale_and_injected_subjects_fail_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "execution::production_guard_event_matrix",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::execution::production_guard_event_matrix",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "input_binding_and_guard_removal_mutants_are_rejected",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::input_binding_and_guard_removal_mutants_are_rejected",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "printed_command_admission",
+      "old_test": "removal_and_failure_masking_controls_reject_wrong_workflows",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::printed_command_admission::removal_and_failure_masking_controls_reject_wrong_workflows",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "full_real_review_bodies_admit_or_refuse_as_recorded",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::full_real_review_bodies_admit_or_refuse_as_recorded",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "issue_8157_narrative_false_positive_controls",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::issue_8157_narrative_false_positive_controls",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "live_read_merges_pages_and_fails_closed_on_gh_error",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::live_read_merges_pages_and_fails_closed_on_gh_error",
+      "ignored": false,
+      "platform": "unix"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "malformed_review_pages_refuse_instead_of_crashing",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::malformed_review_pages_refuse_instead_of_crashing",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "pull_description_carrier_binds_the_exact_head_and_adds_no_authority",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::pull_description_carrier_binds_the_exact_head_and_adds_no_authority",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "review_disposition_self_test_passes",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::review_disposition_self_test_passes",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "utf8_review_input_ignores_legacy_stdin_encoding",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::utf8_review_input_ignores_legacy_stdin_encoding",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "review_disposition_admission",
+      "old_test": "wrong_head_changes_requested_and_identity_controls",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::review_disposition_admission::wrong_head_changes_requested_and_identity_controls",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "malformed_retry_delay_falls_back_without_changing_retries",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::malformed_retry_delay_falls_back_without_changing_retries",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "persistent_failure_retries_three_times_then_reports_without_error_text",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::persistent_failure_retries_three_times_then_reports_without_error_text",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "rejected_inventory_token_is_a_warning_not_a_failure",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::rejected_inventory_token_is_a_warning_not_a_failure",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "successful_empty_inventory_records_zero_without_changing_route",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::successful_empty_inventory_records_zero_without_changing_route",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "successful_inventory_preserves_capability_selection",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::successful_inventory_preserves_capability_selection",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "summary_reports_the_final_failed_attempts_http_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::summary_reports_the_final_failed_attempts_http_status",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "transient_failures_recover_within_the_retry_bound",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::transient_failures_recover_within_the_retry_bound",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "unauthorized_after_transient_failure_stops_at_that_attempt",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::unauthorized_after_transient_failure_stops_at_that_attempt",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "unauthorized_inventory_stops_before_retry_or_sleep",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::unauthorized_inventory_stops_before_retry_or_sleep",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "untrusted_pr_never_queries_or_claims_a_command_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::untrusted_pr_never_queries_or_claims_a_command_status",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission",
+      "old_test": "admitted_subject_is_verified_before_any_proof_step",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission::admitted_subject_is_verified_before_any_proof_step",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "rust_gates_admission",
+      "old_test": "existing_callers_keep_working_without_admitted_inputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission::existing_callers_keep_working_without_admitted_inputs",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "rust_gates_admission",
+      "old_test": "legacy_profile_publishes_no_outputs_and_keeps_main_expressions",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission::legacy_profile_publishes_no_outputs_and_keeps_main_expressions",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "rust_gates_admission",
+      "old_test": "main_dropped_nextest_archive_measurement_stays_dropped",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission::main_dropped_nextest_archive_measurement_stays_dropped",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "rust_gates_admission",
+      "old_test": "pr_evidence_and_summary_prefer_admitted_identities",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission::pr_evidence_and_summary_prefer_admitted_identities",
+      "ignored": false,
+      "platform": "all"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "constituent_identity_missing_empty_or_contradictory_fails_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::constituent_identity_missing_empty_or_contradictory_fails_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "legacy_profile_is_inert_and_rejects_partial_or_unknown_input",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::legacy_profile_is_inert_and_rejects_partial_or_unknown_input",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "malformed_or_mismatched_subject_json_fails_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::malformed_or_mismatched_subject_json_fails_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "parent_order_mismatch_fails_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::parent_order_mismatch_fails_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "stale_or_wrong_head_base_tree_and_merge_fail_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::stale_or_wrong_head_base_tree_and_merge_fail_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "valid_merge_group_shaped_tuple_passes_and_publishes_identities",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::valid_merge_group_shaped_tuple_passes_and_publishes_identities",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_gates_admission_replay",
+      "old_test": "verification_step_never_reads_the_pull_request_payload",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_gates_admission_replay::verification_step_never_reads_the_pull_request_payload",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checked",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checked",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "each_named_job_guard_removal_is_rejected_with_concurrency_unchanged",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::each_named_job_guard_removal_is_rejected_with_concurrency_unchanged",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "event_commit_bindings_are_exact_and_history_is_available",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::event_commit_bindings_are_exact_and_history_is_available",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "filename_records_deletions_and_both_sides_of_renames_are_classified",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::filename_records_deletions_and_both_sides_of_renames_are_classified",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "fixture_retention_preserves_only_explicitly_retained_evidence",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::fixture_retention_preserves_only_explicitly_retained_evidence",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "invalid_identities_empty_diff_and_non_pr_events_use_full_proof",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::invalid_identities_empty_diff_and_non_pr_events_use_full_proof",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::job_guard_scanner_rejects_unguarded_jobs_even_after_column_zero_comments",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "missing_event_objects_can_be_recovered_without_changing_checkout",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::missing_event_objects_can_be_recovered_without_changing_checkout",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "named_job_conditions_handle_folding_and_ignore_step_or_neighbor_conditions",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::named_job_conditions_handle_folding_and_ignore_step_or_neighbor_conditions",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "rust_step_contract_refuses_missing_guards_and_misplaced_commands",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::rust_step_contract_refuses_missing_guards_and_misplaced_commands",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "stale_event_base_and_synthetic_merge_checkout_use_pr_head",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::stale_event_base_and_synthetic_merge_checkout_use_pr_head",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "timeout_terminates_shell_descendants",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::timeout_terminates_shell_descendants",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "rust_only_routing",
+      "old_test": "witness_observer_distinguishes_identity_state_and_incomplete_evidence",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::rust_only_routing::witness_observer_distinguishes_identity_state_and_incomplete_evidence",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "unlocked_install",
+      "old_test": "unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_commands",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::unlocked_install::unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_commands",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "unlocked_install",
+      "old_test": "unlocked_success_resolves_identity_once_and_checks_only_regenerated_package",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::unlocked_install::unlocked_success_resolves_identity_once_and_checks_only_regenerated_package",
+      "ignored": false,
+      "platform": "linux"
+    },
+    {
+      "old_binary": "wheel_trap_markers",
+      "old_test": "wheel_traps_preserve_literal_marker_paths_and_native_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::wheel_trap_markers::wheel_traps_preserve_literal_marker_paths_and_native_status",
+      "ignored": false,
+      "platform": "linux"
+    }
+  ]
+}

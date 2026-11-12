@@ -19,5 +19,8 @@ rustix = { version = "1.1.5", features = ["process", "event", "fs"] }
 [build-dependencies]
 sha2 = "0.10"
 
+[dev-dependencies]
+repo-policy-test-identity = { path = "../repo-policy-test-identity" }
+
 [lints]
 workspace = true

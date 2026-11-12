@@ -1,0 +1,16 @@
+[package]
+name = "repo-policy-test-identity"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+sha2 = "0.10"
+
+[lints]
+workspace = true

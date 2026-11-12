@@ -2,9 +2,10 @@
 #![cfg(target_os = "linux")]
 use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
-const VSCODE_E2E: &str = include_str!("../../../.github/workflows/vscode-e2e.yml");
-const ORIGINAL: &str = include_str!("../../../fixtures/convergence/ci-exact-subject/original.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/ci.yml");
+const VSCODE_E2E: &str = include_str!("../../../../.github/workflows/vscode-e2e.yml");
+const ORIGINAL: &str =
+    include_str!("../../../../fixtures/convergence/ci-exact-subject/original.yml");
 const JOBS: &[(&str, &str)] = &[
     ("rust-only-features", "run_rust_only"),
     ("release-proof", "run_release_proof"),

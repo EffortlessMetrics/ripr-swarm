@@ -187,7 +187,7 @@ guard = "binding_names_skip_defaults_and_keys"
 
 [[flake]]
 id = "rust-only-routing-timeout-windows"
-test = "repo-policy rust_only_routing::timeout_terminates_shell_descendants"
+test = "repo-policy-contracts workflow_contracts::rust_only_routing::timeout_terminates_shell_descendants"
 lane = "repo-policy tests"
 class = "wall-clock-bound"
 status = "open"

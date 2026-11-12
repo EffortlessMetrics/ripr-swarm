@@ -14,7 +14,8 @@ fn main() -> Result<(), String> {
     ] {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }
-    let stamp = source_identity::source_identity(&root)?;
+    let _full_resource_identity = source_identity::source_identity(&root)?;
+    let stamp = source_identity::implementation_identity(&root)?;
     println!("cargo:rustc-env=REPO_POLICY_SOURCE_ID={stamp}");
     let compiler = std::env::var("RUSTC").map_err(|e| e.to_string())?;
     let output = std::process::Command::new(compiler)

@@ -50,7 +50,7 @@ pub fn enter_workspace_root() -> Result<(), String> {
 }
 
 pub fn verify_executable_identity() -> Result<(), String> {
-    let current = source_identity::source_identity(Path::new("."))?;
+    let current = source_identity::implementation_identity(Path::new("."))?;
     if current != env!("REPO_POLICY_SOURCE_ID") {
         return Err("policy executable is stale or belongs to a different source tree; rerun with cargo policy".into());
     }
@@ -74,6 +74,7 @@ pub fn verify_executable_identity() -> Result<(), String> {
 }
 
 fn input_identity() -> Result<String, String> {
+    let full_resource_identity = source_identity::source_identity(Path::new("."))?;
     // Include ignored/untracked policy inputs too: Cargo/git freshness alone
     // cannot notice an ignored workflow created after a successful preflight.
     let mut paths = Vec::new();
@@ -123,6 +124,7 @@ fn input_identity() -> Result<String, String> {
     paths.sort();
     paths.dedup();
     let mut hash = Sha256::new();
+    hash.update(full_resource_identity.as_bytes());
     for path in paths {
         let name = crate::normalize_path(&path);
         hash.update((name.len() as u64).to_le_bytes());

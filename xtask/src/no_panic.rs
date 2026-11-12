@@ -16,12 +16,14 @@ use crate::{
     read_text_lossy, write_report,
 };
 
-fn no_panic_source_roots() -> [&'static Path; 4] {
+fn no_panic_source_roots() -> [&'static Path; 6] {
     [
         Path::new("crates/ripr/src"),
         Path::new("crates/ripr/tests"),
         Path::new("xtask/src"),
         Path::new("tools/repo-policy"),
+        Path::new("tools/repo-policy-contracts"),
+        Path::new("tools/repo-policy-test-identity"),
     ]
 }
 

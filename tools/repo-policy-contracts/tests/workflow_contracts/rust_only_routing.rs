@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/ci.yml");
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -386,50 +386,53 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
 }
 
 const GATED: [(&str, &str); 12] = [
-    ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+    (
+        "ci.yml",
+        include_str!("../../../../.github/workflows/ci.yml"),
+    ),
     (
         "coverage.yml",
-        include_str!("../../../.github/workflows/coverage.yml"),
+        include_str!("../../../../.github/workflows/coverage.yml"),
     ),
     (
         "future-clippy.yml",
-        include_str!("../../../.github/workflows/future-clippy.yml"),
+        include_str!("../../../../.github/workflows/future-clippy.yml"),
     ),
     (
         "macos-advisory.yml",
-        include_str!("../../../.github/workflows/macos-advisory.yml"),
+        include_str!("../../../../.github/workflows/macos-advisory.yml"),
     ),
     (
         "npm-launcher.yml",
-        include_str!("../../../.github/workflows/npm-launcher.yml"),
+        include_str!("../../../../.github/workflows/npm-launcher.yml"),
     ),
     (
         "pilot-ranking.yml",
-        include_str!("../../../.github/workflows/pilot-ranking.yml"),
+        include_str!("../../../../.github/workflows/pilot-ranking.yml"),
     ),
     (
         "printed-command-paste.yml",
-        include_str!("../../../.github/workflows/printed-command-paste.yml"),
+        include_str!("../../../../.github/workflows/printed-command-paste.yml"),
     ),
     (
         "public-proof.yml",
-        include_str!("../../../.github/workflows/public-proof.yml"),
+        include_str!("../../../../.github/workflows/public-proof.yml"),
     ),
     (
         "security.yml",
-        include_str!("../../../.github/workflows/security.yml"),
+        include_str!("../../../../.github/workflows/security.yml"),
     ),
     (
         "test-analytics.yml",
-        include_str!("../../../.github/workflows/test-analytics.yml"),
+        include_str!("../../../../.github/workflows/test-analytics.yml"),
     ),
     (
         "windows-advisory.yml",
-        include_str!("../../../.github/workflows/windows-advisory.yml"),
+        include_str!("../../../../.github/workflows/windows-advisory.yml"),
     ),
     (
         "zed-extension.yml",
-        include_str!("../../../.github/workflows/zed-extension.yml"),
+        include_str!("../../../../.github/workflows/zed-extension.yml"),
     ),
 ];
 
@@ -1294,7 +1297,7 @@ fn timeout_terminates_shell_descendants() -> TestResult {
                 .owned_command(&executable)?
                 .args([
                     "--exact",
-                    "timeout_terminates_shell_descendants",
+                    "workflow_contracts::rust_only_routing::timeout_terminates_shell_descendants",
                     "--nocapture",
                 ])
                 .env(MODE, mode),

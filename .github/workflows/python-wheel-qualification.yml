@@ -52,6 +52,8 @@ on:
       - "rust-toolchain.toml"
       - "xtask/**"
       - "tools/repo-policy/**"
+      - "tools/repo-policy-contracts/**"
+      - "tools/repo-policy-test-identity/**"
 
 # This workflow builds and consumes local artifacts only. It cannot publish,
 # mint an OIDC token, create a release, mutate a tag, or write repository data.

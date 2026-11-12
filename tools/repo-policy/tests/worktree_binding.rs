@@ -297,3 +297,6 @@ fn cached_production_build_script_binds_the_current_backdated_worktree() -> Resu
     verify_run(&b, &fixture.cargo(&b, &args)?, true)?;
     Ok(())
 }
+
+#[path = "common/resource_watch.rs"]
+mod resource_watch;

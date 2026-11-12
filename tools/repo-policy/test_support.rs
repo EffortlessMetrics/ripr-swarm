@@ -8,14 +8,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "source_identity.rs"]
 pub(crate) mod source_identity;
 
+const COMPILED_IDENTITIES: (&str, &str) = repo_policy_test_identity::identities!();
+
 pub fn workspace_root() -> Result<PathBuf, String> {
+    if COMPILED_IDENTITIES.0 != env!("REPO_POLICY_SOURCE_ID") {
+        return Err("policy test implementation identity differs from its library".into());
+    }
     let manifest = runtime_path(
         std::env::var_os("CARGO_MANIFEST_DIR"),
         env!("CARGO_MANIFEST_DIR"),
         std::env::var_os("NEXTEST").is_some(),
         "CARGO_MANIFEST_DIR",
     )?;
-    workspace_from_manifest(&manifest, env!("REPO_POLICY_SOURCE_ID"))
+    let root = workspace_from_manifest(&manifest, COMPILED_IDENTITIES.1)?;
+    if source_identity::implementation_identity(&root)? != COMPILED_IDENTITIES.0 {
+        return Err("policy test current implementation differs from its library".into());
+    }
+    Ok(root)
 }
 
 fn workspace_from_manifest(manifest: &Path, expected: &str) -> Result<PathBuf, String> {
@@ -120,6 +129,32 @@ pub fn scratch(label: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sibling_test_resources_do_not_change_production_identity() -> Result<(), String> {
+        let root = scratch("policy-resource-boundary")?;
+        let package = root.join("tools/repo-policy");
+        let contracts = root.join("tools/repo-policy-contracts");
+        std::fs::create_dir_all(&package).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&contracts).map_err(|error| error.to_string())?;
+        for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+            std::fs::write(root.join(name), name).map_err(|error| error.to_string())?;
+        }
+        let leaf = contracts.join("fixture.rs");
+        std::fs::write(&leaf, "before").map_err(|error| error.to_string())?;
+        let production = source_identity::implementation_identity(&root)?;
+        let resources = source_identity::source_identity(&root)?;
+        std::fs::write(&leaf, "after").map_err(|error| error.to_string())?;
+        assert_eq!(production, source_identity::implementation_identity(&root)?);
+        assert_ne!(resources, source_identity::source_identity(&root)?);
+        std::fs::write(contracts.join("new-resource"), "new").map_err(|error| error.to_string())?;
+        assert_eq!(production, source_identity::implementation_identity(&root)?);
+        assert_ne!(resources, source_identity::source_identity(&root)?);
+        std::fs::write(package.join("unknown-source"), "new").map_err(|error| error.to_string())?;
+        assert_ne!(production, source_identity::implementation_identity(&root)?);
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn refusal<T>(result: Result<T, String>) -> Result<String, String> {
         match result {
             Err(error) => Ok(error),
@@ -149,10 +184,7 @@ mod tests {
         );
         let root = workspace_root()?;
         assert_eq!(
-            workspace_from_manifest(
-                &root.join("tools/repo-policy"),
-                env!("REPO_POLICY_SOURCE_ID")
-            )?,
+            workspace_from_manifest(&root.join("tools/repo-policy"), COMPILED_IDENTITIES.1)?,
             root
         );
         let wrong_source = refusal(workspace_from_manifest(
@@ -164,7 +196,7 @@ mod tests {
         assert!(
             refusal(workspace_from_manifest(
                 &root.join("missing"),
-                env!("REPO_POLICY_SOURCE_ID")
+                COMPILED_IDENTITIES.1
             ))?
             .starts_with("policy test resource root ")
         );
