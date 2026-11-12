@@ -37,6 +37,8 @@ fn exact_classifier_accepts_supported_test_defining_attributes() {
         "#[test]",
         "#[ tokio :: test (flavor = \"multi_thread\") ]",
         "#[async_std::test]",
+        "#[actix_rt::test]",
+        "#[::actix_web::test]",
         "#[rstest]",
         "#[rstest::rstest]",
         "#[quickcheck]",
@@ -65,6 +67,9 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
     let unsupported = [
         "#[tokio::test_helper]",
         "#[async_std::test_config]",
+        "#[actix_rt::test_helper]",
+        "#[actix_web::rt::test]",
+        "#[actix::test]",
         "#[rstest_helper]",
         "#[quickcheck_config]",
         "#[wasm_bindgen_test_helper]",
