@@ -1494,35 +1494,20 @@ pub(crate) fn render_summary_refusal_json(
     base: Option<&str>,
     mode: &str,
 ) -> String {
-    let value = serde_json::json!({
-        "schema_version": REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION,
-        "format": "repo-exposure-summary-json",
-        "tool": "ripr",
-        "ripr_version": env!("CARGO_PKG_VERSION"),
-        "scope": "repo",
-        "basis": "canonical_actionable_gap",
-        "run_status": "refused",
-        "limitations": [{
-            "category": notice.identity,
-            "repair_route": notice.repair_route,
-            "message": notice.message,
-        }],
-        "metadata": {
-            "root": display_path(root),
-            "base": base,
-            "head": "HEAD",
-            "mode": mode,
-        },
-        "metrics": {
-            "raw_seams": 0,
-            "headline_eligible_seams": 0,
-            "canonical_gap_records": 0,
-            "raw_actionable_seam_records": 0,
-            "unsuppressed_exposure_gaps": 0,
-            "suppressed_exposure_gaps": 0,
-        },
-        "top_files": [],
-    });
+    // The empty-inventory summary supplies every aggregate, breakdown and
+    // limit field at zero, so the refused document keeps the normal shape.
+    let mut value = repo_exposure_summary_json_value(&[], root, base, mode);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("run_status".to_string(), json!("refused"));
+        object.insert(
+            "limitations".to_string(),
+            json!([{
+                "category": notice.identity,
+                "repair_route": notice.repair_route,
+                "message": notice.message,
+            }]),
+        );
+    }
     match serde_json::to_string_pretty(&value) {
         Ok(mut json) => {
             json.push('\n');

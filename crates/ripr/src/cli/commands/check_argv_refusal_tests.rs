@@ -1025,3 +1025,70 @@ fn check_findings_json_refusal_is_rejected_as_a_verify_artifact() -> Result<(), 
     );
     Ok(())
 }
+
+/// #14499 review: a scope-guard refusal keeps its `diff_scope_oversized`
+/// identity in every JSON-family format, not only `json`.
+#[test]
+fn json_family_refusals_keep_the_scope_guard_identity() -> Result<(), String> {
+    let input = CheckInput {
+        root: PathBuf::from("."),
+        ..CheckInput::default()
+    };
+    let error = CoreError::message(
+        "diff_scope_oversized: 2301 changed Rust lines across 42 Rust files exceed \
+         RIPR_MAX_DIFF_CHANGED_LINES=2000",
+    );
+    for format in [
+        OutputFormat::Json,
+        OutputFormat::JsonCompact,
+        OutputFormat::JsonTerse,
+        OutputFormat::CheckFindingsJson,
+    ] {
+        let document = machine_refusal_document(&input, format, &error)
+            .ok_or(format!("{format:?} must carry a refusal document"))??;
+        let value: serde_json::Value =
+            serde_json::from_str(&document).map_err(|err| format!("{format:?}: {err}"))?;
+        assert_eq!(
+            value["analysis_scope"]["run_status"], "diff_scope_oversized",
+            "{format:?}: {value}"
+        );
+        assert_eq!(
+            value["analysis_scope"]["repair_route"], "analysis/diff-scope-budget",
+            "{format:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14499 review: the refused exposure summary keeps every aggregate,
+/// breakdown and limit field of the normal summary shape.
+#[test]
+fn refused_exposure_summary_keeps_the_normal_summary_shape() -> Result<(), String> {
+    let input = CheckInput {
+        root: PathBuf::from("."),
+        ..CheckInput::default()
+    };
+    let error = CoreError::repository_root_unusable("synthetic refusal");
+    let document = machine_refusal_document(&input, OutputFormat::RepoExposureSummaryJson, &error)
+        .ok_or("summary must carry a refusal document")??;
+    let value: serde_json::Value =
+        serde_json::from_str(&document).map_err(|err| err.to_string())?;
+    for pointer in [
+        "/metrics/grip_class",
+        "/reason_breakdown/actionability",
+        "/reason_breakdown/gap_state",
+        "/reason_breakdown/seam_kind",
+        "/reason_breakdown/grip_class",
+        "/limits/top_files_limit",
+        "/limits/top_files_total",
+        "/limits/top_files_truncated",
+    ] {
+        assert!(
+            value.pointer(pointer).is_some(),
+            "missing {pointer}: {value}"
+        );
+    }
+    assert_eq!(value["limits"]["top_files_total"], 0);
+    assert_eq!(value["run_status"], "refused");
+    Ok(())
+}

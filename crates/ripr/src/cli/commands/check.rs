@@ -670,18 +670,10 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json | OutputFormat::JsonCompact => {
-            let display = error.to_string();
-            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
-                envelope_input,
-                &display,
-            ) {
-                Ok(Some(rendered)) => Ok(rendered),
-                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
-                Err(render) => Err(render),
-            };
-            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
-        }
+        OutputFormat::Json | OutputFormat::JsonCompact => Some(
+            check_json_refusal(envelope_input, error)
+                .map(|document| output::compact_json::finish(document, &format)),
+        ),
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
         // which an empty stream is not.
@@ -718,13 +710,10 @@ pub(super) fn machine_refusal_document(
         // refusal envelope. check-findings-json carries no artifact identity,
         // so a verify that requires a snapshot still rejects it.
         OutputFormat::JsonTerse => Some(
-            output::limited_check::render_check_failure_json(envelope_input, error)
+            check_json_refusal(envelope_input, error)
                 .and_then(|document| output::json::render_terse(&document)),
         ),
-        OutputFormat::CheckFindingsJson => Some(output::limited_check::render_check_failure_json(
-            envelope_input,
-            error,
-        )),
+        OutputFormat::CheckFindingsJson => Some(check_json_refusal(envelope_input, error)),
         // Every other badge family: the same degraded badge under its own
         // kind and scope, in its own native or Shields projection.
         OutputFormat::BadgeShields
@@ -783,6 +772,21 @@ pub(super) fn machine_refusal_document(
             )))
         }
         _ => None,
+    }
+}
+
+/// The check JSON refusal envelope every JSON-family `check` format shares:
+/// a scope-guard refusal keeps its frozen `diff_scope_oversized` /
+/// `repo_scope_oversized` document, and every other failure gets the typed
+/// refusal (#14499 review: the guard runs first for every JSON format).
+fn check_json_refusal(envelope_input: &CheckInput, error: &CoreError) -> Result<String, String> {
+    match output::limited_check::render_diff_scope_limited_check_json(
+        envelope_input,
+        &error.to_string(),
+    ) {
+        Ok(Some(rendered)) => Ok(rendered),
+        Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+        Err(render) => Err(render),
     }
 }
 
