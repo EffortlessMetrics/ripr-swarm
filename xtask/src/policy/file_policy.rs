@@ -153,38 +153,14 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
             );
         }
     };
-    let mut violations = Vec::new();
-
-    let files = match collect_files(Path::new(".")) {
-        Ok(files) => files,
+    let violations = match file_policy_path_violations(&allowlist) {
+        Ok(violations) => violations,
         Err(error) => {
             return file_policy_failure_report("file enumeration", &error, &diagnostics, |body| {
                 crate::write_report("file-policy.md", body)
             });
         }
     };
-    for path in files {
-        let normalized = normalize_path(&path);
-        if !is_file_policy_candidate(&normalized) {
-            continue;
-        }
-        if normalized.ends_with(".rs") {
-            continue;
-        }
-        if !matches_any_glob(&allowlist, &normalized) {
-            violations.push(format!(
-                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
-            ));
-            continue;
-        }
-        if is_non_rust_programming_candidate(&normalized)
-            && non_rust_programming_retention_reason(&normalized).is_none()
-        {
-            violations.push(format!(
-                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
-            ));
-        }
-    }
 
     let result = finish_policy_report_with_disclosures(
         PolicyReportSpec {
@@ -225,6 +201,90 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
         super::file_policy_retained_evidence::remove_retained_subject();
     }
     result
+}
+
+/// Source-only prerequisite. Success is deliberately incomplete and cannot
+/// produce the full report or its retained native-coverage subject.
+pub(crate) fn check_file_policy_source_only() -> Result<(), String> {
+    invalidate_prior_evidence(&crate::reports_dir().join("file-policy-source-only.md"))?;
+    invalidate_prior_evidence(Path::new(
+        super::file_policy_retained_evidence::SUBJECT_RELATIVE,
+    ))?;
+    let path = "policy/non-rust-allowlist.toml";
+    let result: Result<(), String> = (|| {
+        let allowlist = validate_source_declarations(path)?;
+        let violations = file_policy_path_violations(&allowlist)?;
+        if !violations.is_empty() {
+            return Err(violations.join("\n"));
+        }
+        Ok(())
+    })();
+    let body = source_only_report(&result);
+    crate::write_report("file-policy-source-only.md", &body)?;
+    if result.is_ok() {
+        println!("full_proof_pending: native test enumeration and packet coverage remain pending");
+    }
+    result
+}
+
+fn validate_source_declarations(path: &str) -> Result<Vec<crate::GlobAllow>, String> {
+    let allowlist = read_file_policy_allowlist(path)?;
+    for selector in &read_file_policy_test_commands(path)? {
+        validate_source_selector(path, selector)?;
+    }
+    Ok(allowlist)
+}
+
+fn invalidate_prior_evidence(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot remove prior file-policy evidence: {error}")),
+    }
+}
+
+fn source_only_report(result: &Result<(), String>) -> String {
+    match result {
+        Ok(()) => "# check-file-policy-source-only\n\nStatus: full_proof_pending\n\nDeclarations, paths, and basic selector operands were checked; Cargo option and target validity remain unverified. Native test enumeration and packet coverage remain pending; run `cargo xtask check-file-policy` for full validation.\n".to_string(),
+        Err(error) => format!("# check-file-policy-source-only\n\nStatus: failed\n\n{error}\n"),
+    }
+}
+
+fn file_policy_path_violations(allowlist: &[crate::GlobAllow]) -> Result<Vec<String>, String> {
+    file_policy_path_violations_at(Path::new("."), allowlist)
+}
+
+fn file_policy_path_violations_at(
+    root: &Path,
+    allowlist: &[crate::GlobAllow],
+) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    let files = collect_files(root)?;
+    for path in files {
+        let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+        let normalized = normalize_path(relative);
+        if !is_file_policy_candidate(&normalized) {
+            continue;
+        }
+        if normalized.ends_with(".rs") {
+            continue;
+        }
+        if !matches_any_glob(allowlist, &normalized) {
+            violations.push(format!(
+                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
+            ));
+            continue;
+        }
+        if is_non_rust_programming_candidate(&normalized)
+            && non_rust_programming_retention_reason(&normalized).is_none()
+        {
+            violations.push(format!(
+                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
+            ));
+        }
+    }
+
+    Ok(violations)
 }
 
 fn file_policy_failure_report(
@@ -811,6 +871,79 @@ fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, 
     )
 }
 
+/// Preserve the declared argv exactly. Unknown options remain Cargo's native
+/// responsibility. Source-only checks additionally validate basic operands.
+fn covered_by_listing_args(
+    path: &str,
+    selector: &FilePolicyTestCommand,
+) -> Result<Vec<String>, String> {
+    let command = &selector.command;
+    if !is_cargo_test_command(command) {
+        return Err(format!(
+            "{path}:{} unsupported test-valued `covered_by`: {command}",
+            selector.line
+        ));
+    }
+    let words: Vec<_> = command.split_whitespace().skip(2).collect();
+    let mut args = vec!["test".to_string()];
+    args.extend(words.into_iter().map(ToString::to_string));
+    args.extend([
+        "--".to_string(),
+        "--list".to_string(),
+        "--format".to_string(),
+        "terse".to_string(),
+    ]);
+    Ok(args)
+}
+
+fn validate_source_selector(path: &str, selector: &FilePolicyTestCommand) -> Result<(), String> {
+    let command = &selector.command;
+    covered_by_listing_args(path, selector)?;
+    let words: Vec<_> = command.split_whitespace().skip(2).collect();
+    for (index, word) in words.iter().enumerate() {
+        if *word == "--" {
+            break;
+        }
+        if [
+            "--package=",
+            "--bin=",
+            "--test=",
+            "--example=",
+            "--features=",
+            "--target=",
+            "--profile=",
+            "--manifest-path=",
+        ]
+        .contains(word)
+        {
+            return Err(format!(
+                "{path}:{} missing operand for `{word}` in test-valued `covered_by`: {command}",
+                selector.line
+            ));
+        }
+        if matches!(
+            *word,
+            "-p" | "--package"
+                | "--bin"
+                | "--test"
+                | "--example"
+                | "--features"
+                | "--target"
+                | "--profile"
+                | "--manifest-path"
+        ) && words
+            .get(index + 1)
+            .is_none_or(|value| value.starts_with('-'))
+        {
+            return Err(format!(
+                "{path}:{} missing operand for `{word}` in test-valued `covered_by`: {command}",
+                selector.line
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_test_covered_by_with(
     path: &str,
     commands: &[FilePolicyTestCommand],
@@ -823,11 +956,7 @@ fn validate_test_covered_by_with(
     let mut enumerated = BTreeMap::<Vec<String>, (bool, String, String)>::new();
     for selector in commands {
         let FilePolicyTestCommand { line, command, .. } = selector;
-        if !is_cargo_test_command(command) {
-            return Err(format!(
-                "{path}:{line} unsupported test-valued `covered_by`: {command}"
-            ));
-        }
+        let args = covered_by_listing_args(path, selector)?;
         if selector.host.is_some_and(|declared| declared != host) {
             observations.push(TestCoverageObservation {
                 selector: selector.clone(),
@@ -836,15 +965,6 @@ fn validate_test_covered_by_with(
             });
             continue;
         }
-        let words = command.split_whitespace().skip(2);
-        let mut args = vec!["test".to_string()];
-        args.extend(words.map(ToString::to_string));
-        args.extend([
-            "--".to_string(),
-            "--list".to_string(),
-            "--format".to_string(),
-            "terse".to_string(),
-        ]);
         let (success, stdout, stderr) = match enumerated.get(&args) {
             Some(output) => output.clone(),
             None => enumerate(&args)
@@ -883,6 +1003,118 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_declarations_reject_bad_toml_and_missing_selector_operand() -> Result<(), String> {
+        let file = std::env::temp_dir().join(format!(
+            "ripr-file-policy-declaration-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&file, "[[allow]\n").map_err(|error| error.to_string())?;
+        let path = file.to_str().ok_or("non-UTF-8 fixture path")?;
+        assert!(super::validate_source_declarations(path).is_err());
+        let entry = "[[allow]]\nglob = \"examples/**\"\nkind = \"fixture\"\nowner = \"test\"\nsurface = \"fixture\"\nclassification = \"fixture\"\nreason = \"test\"\ncovered_by = [\"cargo test -p\"]\n";
+        std::fs::write(&file, entry).map_err(|error| error.to_string())?;
+        let error = super::validate_source_declarations(path)
+            .err()
+            .ok_or("malformed selector passed")?;
+        assert!(error.contains("missing operand"), "{error}");
+        std::fs::remove_file(&file).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn source_only_path_scan_rejects_unapproved_file() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-file-policy-source-{}", std::process::id()));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let file = root.join("unexpected.py");
+        std::fs::write(&file, "print(1)\n").map_err(|error| error.to_string())?;
+        let violations = super::file_policy_path_violations_at(&root, &[])?;
+        std::fs::remove_file(&file).map_err(|error| error.to_string())?;
+        std::fs::remove_dir(&root).map_err(|error| error.to_string())?;
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("unexpected.py"));
+        Ok(())
+    }
+
+    #[test]
+    fn source_only_refuses_unremovable_native_subject() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-file-policy-subject-{}", std::process::id()));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let stale = root.join("pending.md");
+        std::fs::write(&stale, "Status: full_proof_pending\n")
+            .map_err(|error| error.to_string())?;
+        super::invalidate_prior_evidence(&stale)?;
+        assert!(!stale.exists());
+        assert!(super::invalidate_prior_evidence(&root).is_err());
+        std::fs::remove_dir(&root).map_err(|error| error.to_string())?;
+        super::invalidate_prior_evidence(&root)
+    }
+
+    #[test]
+    fn source_only_report_cannot_claim_full_success() {
+        let pending = super::source_only_report(&Ok(()));
+        assert!(pending.contains("Status: full_proof_pending"));
+        assert!(!pending.contains("Status: pass"));
+        assert!(
+            super::super::file_policy_retained_evidence::validate_nonempty_pass_report(&pending)
+                .is_err()
+        );
+        assert!(pending.contains("Cargo option and target validity remain unverified"));
+        let failed = super::source_only_report(&Err("bad declaration".to_string()));
+        assert!(failed.contains("Status: failed"));
+        assert!(!failed.contains("Status: full_proof_pending"));
+    }
+
+    #[test]
+    fn source_selector_preparation_preserves_native_argv_and_rejects_missing_operand()
+    -> Result<(), String> {
+        let selector = crate::FilePolicyTestCommand {
+            line: 7,
+            command: "cargo test -p probe --lib exact_filter".to_string(),
+            host: None,
+        };
+        let args = super::covered_by_listing_args("policy.toml", &selector)?;
+        assert_eq!(
+            args,
+            [
+                "test",
+                "-p",
+                "probe",
+                "--lib",
+                "exact_filter",
+                "--",
+                "--list",
+                "--format",
+                "terse"
+            ]
+        );
+        for command in [
+            "cargo test -p",
+            "cargo test --test --lib",
+            "cargo test --test=",
+            "cargo build -p probe",
+        ] {
+            let invalid = crate::FilePolicyTestCommand {
+                line: 7,
+                command: command.to_string(),
+                host: None,
+            };
+            assert!(
+                super::validate_source_selector("policy.toml", &invalid).is_err(),
+                "{command}"
+            );
+        }
+        let harness = crate::FilePolicyTestCommand {
+            line: 7,
+            command: "cargo test -p probe -- --test".to_string(),
+            host: None,
+        };
+        super::validate_source_selector("policy.toml", &harness)?;
+        Ok(())
+    }
+
     /// #13705: a skipped enumeration publishes one row that cannot be read as
     /// an enumerated selector, and an enumerated run publishes none of it.
     #[test]

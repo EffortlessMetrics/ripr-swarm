@@ -161,6 +161,16 @@ sidecar; a stale sidecar is removed. `file-policy.md` carries one row starting
 report lists the skipped enumeration under `skipped`. The row carries none of
 the `selected=` tokens the retained-evidence readers accept.
 
+### Rule 7: explicit source-only prerequisite
+
+`cargo xtask check-file-policy-source-only` checks the existing declaration
+parser, basic Cargo selector operands and the same file paths as full policy.
+It does not resolve Cargo options, targets, features or test names. Its separate
+report and console output say `full_proof_pending`; it removes the retained
+native-coverage subject and cannot satisfy the full file-policy or packet
+coverage obligation. Standalone `check-file-policy` and hosted `ci-policy`
+continue native enumeration. No hosted result depends on this prerequisite.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -241,7 +251,7 @@ the `selected=` tokens the retained-evidence readers accept.
   rule 5.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
-- `xtask/src/policy/file_policy.rs`: the policy side of rule 6.
+- `xtask/src/policy/file_policy.rs`: the policy side of rule 6 and source-only declaration, path, pending and retained-subject controls for rule 7.
 
 ## Implementation Mapping
 
@@ -255,7 +265,7 @@ the `selected=` tokens the retained-evidence readers accept.
   `run_composition_in`; `coverage_enumeration` (rule 6).
 - `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
   `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
-  `coverage_disclosure_items` (rule 6).
+  `coverage_disclosure_items` (rule 6); `check_file_policy_source_only` and shared path and selector preparation (rule 7).
 
 ## Metrics
 

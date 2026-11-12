@@ -20964,6 +20964,11 @@ tests = [
   "xtask/src/precommit_v2.rs::tests::composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip",
   "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject",
   "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_is_disclosed_as_not_enumerated_never_as_coverage",
+  "xtask/src/policy/file_policy.rs::tests::source_declarations_reject_bad_toml_and_missing_selector_operand",
+  "xtask/src/policy/file_policy.rs::tests::source_only_path_scan_rejects_unapproved_file",
+  "xtask/src/policy/file_policy.rs::tests::source_only_refuses_unremovable_native_subject",
+  "xtask/src/policy/file_policy.rs::tests::source_only_report_cannot_claim_full_success",
+  "xtask/src/policy/file_policy.rs::tests::source_selector_preparation_preserves_native_argv_and_rejects_missing_operand",
 ]
 fixtures = []
 code = [

@@ -220,6 +220,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckAllowAttributes => super::check_allow_attributes(),
         XtaskCommand::CheckLocalContext => super::check_local_context(),
         XtaskCommand::CheckFilePolicy => super::check_file_policy(),
+        XtaskCommand::CheckFilePolicySourceOnly => super::policy::check_file_policy_source_only(),
         XtaskCommand::CheckCoveredBy => super::check_covered_by(),
         XtaskCommand::Kani(args) => super::kani_lane::run_lane(&args),
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
