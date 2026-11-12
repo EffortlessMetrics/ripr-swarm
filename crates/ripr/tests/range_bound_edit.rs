@@ -483,6 +483,49 @@ fn a_separating_input_on_a_match_arm_body_range_is_unknown_not_weak() -> Result<
 }
 
 #[test]
+fn a_str_match_range_pattern_keeps_moved_input_credit() -> Result<(), String> {
+    // The arms are `&str`, so the fold cannot read them; the arm selector on
+    // the parameter scrutinee still credits the input that moves arms.
+    let lib = "/// Name a count.\npub fn f(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        1..=9 => \"digit\",",
+        "        1..=8 => \"digit\",",
+        &test_calling("assert_eq!(f(9), \"digit\");"),
+    )?;
+    assert_eq!(
+        classes(&findings),
+        vec![ExposureClass::Exposed],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_str_match_range_pattern_on_a_computed_scrutinee_is_not_exposed_at_an_inside_input()
+-> Result<(), String> {
+    // `match n + 1` has no established arm selector and the fold cannot read
+    // `&str` arms. The range gate keeps the ordinary infection reading for a
+    // pattern, and the discriminator stage still withholds credit from the
+    // inside input `f(4)` (scrutinee 5, in both `1..=8` and `1..=9`).
+    let lib = "/// Name a successor.\npub fn f(n: u32) -> &'static str {\n    match n + 1 {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "        1..=9 => \"digit\",",
+        "        1..=8 => \"digit\",",
+        &test_calling("assert_eq!(f(4), \"digit\");"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        classes(&findings)
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_glob_import_in_the_test_body_does_not_supply_a_separating_input() -> Result<(), String> {
     let lib = "/// Sum below the bound.\npub fn sum_to(n: u32) -> u32 {\n    (0..=n).sum()\n}\n\npub mod rival {\n    pub fn sum_to(_n: u32) -> u32 {\n        6\n    }\n}\n";
     let test = "use ranges::*;\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(0), 0);\n    {\n        use ranges::rival::*;\n        assert_eq!(sum_to(3), 6);\n    }\n}\n";
