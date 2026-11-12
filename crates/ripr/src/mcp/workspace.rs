@@ -1192,9 +1192,10 @@ impl WorkspaceSession {
                 .map(|limitation| limitation.kind.as_str())
                 .collect::<Vec<_>>(),
         });
-        // #13280: a committed zero-item no-scope snapshot examined no behavior;
-        // say so beside the typed kind so zero items never read as clean.
-        if snapshot_analyzed_no_behavior(snapshot) {
+        // #13280: a zero-item no-scope snapshot examined no behavior, from
+        // either capture source (#13096); say so beside the typed kind so
+        // zero items never read as clean.
+        if snapshot_examined_no_behavior(snapshot) {
             outcome["analysis_status"] = json!("not_analyzed");
             outcome["clean"] = json!(false);
         }
@@ -1393,10 +1394,11 @@ impl WorkspaceSession {
                 "total_items": snapshot.selection.total_canonical_items,
             });
             // #13096: the status session block is the other primary place an
-            // agent reads `finding_count: 0`; a committed empty-scope snapshot
-            // examined no behavior, so say so beside the count, using the same
-            // predicate as the refresh and gap-list surfaces.
-            if snapshot_analyzed_no_behavior(snapshot) {
+            // agent reads `finding_count: 0`; an empty-scope snapshot from
+            // either source examined no behavior, so say so beside the
+            // count, using the same predicate as the refresh and gap-list
+            // surfaces.
+            if snapshot_examined_no_behavior(snapshot) {
                 summary["analysis_status"] = json!("not_analyzed");
                 summary["clean"] = json!(false);
             }
@@ -1791,15 +1793,22 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
-/// A committed, zero-item snapshot whose outcome kind says no behavior was
-/// examined (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`). One
-/// owner for the refresh disclosure and the gap-list outcome (#13096, #13280):
-/// a complete-clean result, a filtered or past-end page over a nonempty
-/// snapshot, and a worktree snapshot never qualify.
+/// A zero-item snapshot whose outcome kind says no behavior was examined
+/// (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`), whatever
+/// its capture source. The `analysis_status`/`clean` fields on the refresh,
+/// gap-list and status surfaces describe this outcome, not the source
+/// (#13096, #13280): a complete-clean result and a filtered or past-end page
+/// over a nonempty snapshot never qualify.
+fn snapshot_examined_no_behavior(snapshot: &Snapshot) -> bool {
+    snapshot.outcome.kind.is_empty_scope() && snapshot.items.is_empty()
+}
+
+/// The committed variant above: only a committed capture carries the
+/// `empty_scope_hint`, whose cause sentence and base/source retry wording
+/// describe a committed diff. A worktree snapshot gets the primary fields
+/// but never that hint.
 fn snapshot_analyzed_no_behavior(snapshot: &Snapshot) -> bool {
-    snapshot.outcome.kind.is_empty_scope()
-        && snapshot.items.is_empty()
-        && snapshot.source == RefreshSource::Committed
+    snapshot_examined_no_behavior(snapshot) && snapshot.source == RefreshSource::Committed
 }
 
 /// #11213: a committed snapshot that analyzed nothing (`no_scope`,
@@ -1844,7 +1853,6 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
-    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
         let mut summary = json!({
             "snapshot_id": snapshot.snapshot_id,
@@ -1855,10 +1863,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
         });
         // #13096: an empty-scope snapshot completed without examining any
-        // behavior. Say so in the primary fields an agent reads first, not
-        // only in the later `empty_scope_hint`, so zero findings never read
-        // as a clean result.
-        if empty_scope {
+        // behavior, from either capture source. Say so in the primary
+        // fields an agent reads first, not only in the later
+        // `empty_scope_hint` (which stays committed-only), so zero
+        // findings never read as a clean result.
+        if snapshot_examined_no_behavior(snapshot) {
             summary["analysis_status"] = json!("not_analyzed");
             summary["clean"] = json!(false);
         }
@@ -3363,12 +3372,14 @@ mod tests {
         Ok(())
     }
 
-    /// #13280: a committed zero-item snapshot that examined no behavior says
-    /// `not_analyzed` and not clean in the gap list too; complete-clean,
-    /// worktree and nonempty-but-filtered-to-zero lists never do.
+    /// #13280: a zero-item snapshot that examined no behavior says
+    /// `not_analyzed` and not clean in the gap list too, whatever its source;
+    /// complete-clean and nonempty-but-filtered-to-zero lists never do. The
+    /// fields describe the outcome kind, not the capture source: the
+    /// committed-specific explanation stays in `empty_scope_hint`, which a
+    /// worktree snapshot still never carries (#13096 worktree leg).
     #[test]
-    fn gap_list_says_not_analyzed_only_for_a_committed_empty_scope_snapshot() -> Result<(), String>
-    {
+    fn gap_list_says_not_analyzed_for_an_empty_scope_snapshot() -> Result<(), String> {
         let list = |session: &WorkspaceSession, filter: &GapListFilter| {
             session
                 .list_gaps(
@@ -3417,18 +3428,22 @@ mod tests {
                 "{kind:?} list must say not_analyzed: {document}"
             );
             assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
-            // Control: the same zero-item snapshot from a worktree source
-            // keeps the pre-existing outcome shape.
+            // #13096 worktree leg: the same zero-item snapshot from a
+            // worktree source examined no saved behavior either, so the
+            // source-neutral fields apply to it as well. Only the
+            // committed-specific `empty_scope_hint` stays withheld (pinned
+            // in the refresh test below).
             let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
                 .map_err(|failure| failure.detail)?;
             worktree.source = RefreshSource::Worktree;
             session.last_good = Some(Arc::new(worktree));
             let document = list(&session, &GapListFilter::default())?;
-            assert!(
-                document["outcome"].get("analysis_status").is_none()
-                    && document["outcome"].get("clean").is_none(),
-                "a worktree snapshot must not be labeled committed-empty: {document}"
+            assert_eq!(
+                document["outcome"]["analysis_status"],
+                json!("not_analyzed"),
+                "{kind:?} worktree list must say not_analyzed: {document}"
             );
+            assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
         }
         // Control: a complete-clean zero-item snapshot is a decision, not an
         // unexamined scope.
@@ -5838,11 +5853,40 @@ mod tests {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
         }
+        // #13096 worktree leg: a worktree-source empty-scope snapshot gets
+        // the same source-neutral primary fields, but never the
+        // committed-specific hint (its base/source retry wording describes
+        // a committed capture).
+        let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        empty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            Default::default(),
+            Vec::new(),
+        )?);
+        let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        worktree.source = RefreshSource::Worktree;
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        session.last_good = Some(Arc::new(worktree));
+        let document = refresh_document(&session);
+        if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+            || document["snapshot"]["clean"] != json!(false)
+        {
+            return Err(format!(
+                "worktree empty-scope snapshot must say not_analyzed and not clean: {document}"
+            ));
+        }
+        if document.get("empty_scope_hint").is_some() {
+            return Err(format!(
+                "worktree snapshot must not carry the committed hint: {document}"
+            ));
+        }
         Ok(())
     }
 
     /// #13096: the `ripr_workspace_status` session block must not present a
-    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    /// zero-item empty-scope snapshot as a bare `finding_count: 0`.
     #[test]
     fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
     {
@@ -5897,6 +5941,30 @@ mod tests {
             || completed.get("clean").is_some()
         {
             return Err(format!("complete-clean must stay undisclosed: {completed}"));
+        }
+        // #13096 worktree leg: the same empty scope captured from the
+        // worktree is disclosed in the status block too.
+        let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        empty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            Default::default(),
+            Vec::new(),
+        )?);
+        let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        worktree.source = RefreshSource::Worktree;
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        session.last_good = Some(Arc::new(worktree));
+        let document = session.session_document(&SessionProfile::built_in());
+        let completed = &document["last_completed_snapshot"];
+        if completed["analysis_status"] != json!("not_analyzed")
+            || completed["clean"] != json!(false)
+            || completed["finding_count"] != json!(0)
+        {
+            return Err(format!(
+                "worktree empty-scope status must say not_analyzed: {completed}"
+            ));
         }
         Ok(())
     }

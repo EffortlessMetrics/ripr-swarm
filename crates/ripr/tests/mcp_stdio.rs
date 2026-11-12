@@ -7071,6 +7071,46 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         return Err(format!("explicit committed must equal omitted: {explicit}"));
     }
 
+    // #13096 worktree leg over the real producer and wire: before any saved
+    // edit, a worktree refresh captures an empty saved diff. Its primary
+    // snapshot, list outcome, and status summary must say `not_analyzed`,
+    // while the committed-specific `empty_scope_hint` stays absent.
+    let clean_worktree = refresh(&mut session, "wt-clean", json!({ "source": "worktree" }))?;
+    if clean_worktree.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || clean_worktree.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || clean_worktree.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_worktree.pointer("/snapshot/clean") != Some(&json!(false))
+        || clean_worktree.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "clean worktree refresh must disclose its empty scope without the committed hint: {clean_worktree}"
+        ));
+    }
+    let clean_listed = session.call_tool("list-wt-clean", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let clean_listed = structured_tool_success(&clean_listed, "ripr_list_gaps")?;
+    if clean_listed.pointer("/outcome/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_listed.pointer("/outcome/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree list must say not_analyzed on the same snapshot: {clean_listed}"
+        ));
+    }
+    let clean_status = session.call_tool(
+        "status-wt-clean",
+        "ripr_workspace_status",
+        json!({}),
+        TIMEOUT,
+    )?;
+    let clean_status = structured_tool_success(&clean_status, "ripr_workspace_status")?;
+    if clean_status.pointer("/session/last_completed_snapshot/analysis_status")
+        != Some(&json!("not_analyzed"))
+        || clean_status.pointer("/session/last_completed_snapshot/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree status must say not_analyzed on the same snapshot: {clean_status}"
+        ));
+    }
+
     // Unstaged-only saved edit.
     std::fs::write(
         &source,
