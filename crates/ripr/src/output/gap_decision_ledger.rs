@@ -84,9 +84,13 @@ pub(crate) struct GapDecisionLedgerReport {
     warnings: Vec<String>,
     limits: Vec<String>,
     /// Why the supplied source could not be read as this source kind (not
-    /// JSON, or not a gap-ledger input shape). Not rendered: the CLI refuses
-    /// the run with it instead of writing a `blocked` ledger (#14311).
+    /// JSON, or not a gap-ledger input shape). Not rendered: the CLI writes
+    /// the `blocked` ledger, then refuses the run with it (#14311).
     source_parse_error: Option<String>,
+    /// Why a source that parsed is a producer refusal (`downstream_consumable:
+    /// false`): nothing was analyzed. Not rendered: the CLI writes the
+    /// `blocked` ledger, then refuses the run with it (#14434).
+    source_refusal: Option<String>,
 }
 
 impl GapDecisionLedgerReport {
@@ -94,6 +98,12 @@ impl GapDecisionLedgerReport {
     /// was not a valid input of the selected source kind.
     pub(crate) fn source_parse_error(&self) -> Option<&str> {
         self.source_parse_error.as_deref()
+    }
+
+    /// The producer refusal the supplied source discloses, when it parsed
+    /// but nothing was analyzed (#14434).
+    pub(crate) fn source_refusal(&self) -> Option<&str> {
+        self.source_refusal.as_deref()
     }
 }
 
@@ -685,6 +695,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut source_value_snapshot = None;
     let mut source_content_committed = false;
     let mut source_parse_error = None;
+    let mut source_refusal = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -768,6 +779,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     {
         match refusal_status {
             Some(status) => {
+                source_refusal = Some(format!("a producer refusal (run_status: {status})"));
                 warnings.push(format!(
                     "gap decision ledger input {} is a producer refusal (run_status: {status}, \
                      downstream_consumable: false): nothing was analyzed, so no gap records can \
@@ -777,6 +789,7 @@ pub(crate) fn build_gap_decision_ledger_report(
                 ));
             }
             None => {
+                source_refusal = Some("a non-consumable producer record".to_string());
                 warnings.push(format!(
                     "gap decision ledger input {} discloses a non-consumable producer record \
                      (downstream_consumable: false) with no known typed run status: nothing \
@@ -928,6 +941,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         records,
         warnings,
         source_parse_error,
+        source_refusal,
         limits: vec![
             "Advisory static gap decisions only.".to_string(),
             "Gate-decision artifacts remain the only configured pass/fail authority.".to_string(),

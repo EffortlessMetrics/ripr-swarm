@@ -139,7 +139,25 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             cause,
         ));
     }
+    // A source that parsed but is a producer refusal (`downstream_consumable:
+    // false`) means nothing was analyzed, so the ledger cannot be built from
+    // it either: same exit 2 after the `blocked` write (#14434).
+    if let Some(refusal) = report.source_refusal() {
+        return Err(format!(
+            "reports gap-ledger {} {} is {refusal}: nothing was analyzed, so the ledger was written as `blocked` with no records. Follow the source's repair_route (a narrower diff or scope budget), re-run it, then rebuild this ledger",
+            source_flag(&options.source),
+            output::path::human_path(options.source.path()),
+        ));
+    }
     Ok(())
+}
+
+fn source_flag(source: &GapDecisionLedgerSource) -> &'static str {
+    match source {
+        GapDecisionLedgerSource::Records(_) => "--records",
+        GapDecisionLedgerSource::RepoExposure(_) => "--repo-exposure",
+        GapDecisionLedgerSource::CheckOutput(_) => "--check-output",
+    }
 }
 
 fn ledger_source_path(path: &Path) -> Result<String, String> {
@@ -882,6 +900,97 @@ mod tests {
         let input = dir.join("empty-array.json");
         std::fs::write(&input, "[]").map_err(|err| format!("write input: {err}"))?;
         let ledger = gap_ledger_from(&root, "--records", &input, &dir.join("ok.json"))?;
+        assert_eq!(ledger["status"], "no_records");
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    /// #14434: a source that parses but is a producer refusal envelope
+    /// (`downstream_consumable: false`) means nothing was analyzed, so the
+    /// command exits non-zero after writing `blocked`, like a malformed
+    /// source. A complete check output with no findings stays a successful
+    /// run, and a bounded refusal keeps its own typed handling.
+    #[test]
+    fn reports_gap_ledger_refuses_a_producer_refusal_source_after_writing_blocked()
+    -> Result<(), String> {
+        let dir = unique_command_test_dir("gap-ledger-refusal-source");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let root = dir.display().to_string();
+        let refusal = serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {
+                "changed_rust_files": 0,
+                "probes": 0,
+                "findings": 0,
+                "exposed": 0,
+                "weakly_exposed": 0,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0,
+                "infection_unknown": 0,
+                "propagation_unknown": 0,
+                "static_unknown": 0,
+                "changed_files_by_language": []
+            },
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        });
+        let input = dir.join("refusal.json");
+        std::fs::write(&input, refusal.to_string()).map_err(|err| format!("write input: {err}"))?;
+        let out = dir.join("ledger.json");
+        std::fs::write(
+            &out,
+            r#"{"kind":"gap_decision_ledger","status":"advisory"}"#,
+        )
+        .map_err(|err| format!("write stale ledger: {err}"))?;
+        let Err(err) = gap_ledger_from(&root, "--check-output", &input, &out) else {
+            return Err("a producer refusal source must be refused, not exit 0".to_string());
+        };
+        assert!(
+            err.contains("reports gap-ledger --check-output ")
+                && err.contains("is a producer refusal (run_status: diff_scope_oversized)")
+                && err.contains("the ledger was written as `blocked`")
+                && err.contains("repair_route"),
+            "{err}"
+        );
+        assert_eq!(read_json_file(&out)?["status"], "blocked");
+
+        // Control: a findings-bounded run also carries the explicit false
+        // flag but keeps its own typed handling (the gate refuses it by
+        // name), so this path must not refuse it.
+        let mut bounded = refusal.clone();
+        bounded["analysis_scope"] = serde_json::json!({"scope": "diff", "run_status": "complete"});
+        bounded["run_limitations"] = serde_json::json!([{
+            "category": crate::output::json::FINDINGS_BOUND_RUN_STATUS,
+            "run_status": crate::output::json::FINDINGS_BOUND_RUN_STATUS,
+            "downstream_consumable": false
+        }]);
+        let input = dir.join("bounded.json");
+        std::fs::write(&input, bounded.to_string()).map_err(|err| format!("write input: {err}"))?;
+        gap_ledger_from(
+            &root,
+            "--check-output",
+            &input,
+            &dir.join("bounded-ledger.json"),
+        )?;
+
+        // Control: the same document as a complete, consumable run with no
+        // findings is a healthy empty source, not a refusal.
+        let mut complete = refusal;
+        complete["analysis_scope"] = serde_json::json!({"scope": "diff", "run_status": "complete"});
+        let input = dir.join("complete.json");
+        std::fs::write(&input, complete.to_string())
+            .map_err(|err| format!("write input: {err}"))?;
+        let ledger = gap_ledger_from(&root, "--check-output", &input, &dir.join("ok.json"))?;
         assert_eq!(ledger["status"], "no_records");
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())

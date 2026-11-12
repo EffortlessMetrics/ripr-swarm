@@ -163,7 +163,9 @@ reached the caller.
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
 - **Unusable report input**: `ripr reports gap-ledger` with a source that
-  is readable but not valid JSON or not that source kind's shape, and
+  is readable but not valid JSON, not that source kind's shape, or a
+  producer refusal (`downstream_consumable: false`, nothing analyzed;
+  #14434); and
   `ripr policy readiness` with a supplied input that is missing, unreadable,
   not a JSON object, or empty, a baseline delta, waiver aging, suppression
   health or previous readiness input whose `kind` names another report, or a
