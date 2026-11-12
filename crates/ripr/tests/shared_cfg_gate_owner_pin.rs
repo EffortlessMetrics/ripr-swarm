@@ -465,3 +465,38 @@ fn an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn a_shared_module_gate_never_hides_the_tests_own_refusal() -> Result<(), String> {
+    // The gated declaration binds owner and test alike, but the test's own
+    // shape still keeps its assertion from settling the outcome: ignored, an
+    // expected panic, or an assertion only one path reaches (#14463).
+    let shapes = [
+        (
+            "an ignored test",
+            "    #[test]\n    #[ignore]\n    fn stamp_sets_the_version_nibble() {\n        assert_eq!(stamp(0xffff), 0x4fff);\n    }\n",
+        ),
+        (
+            "an expected-panic test",
+            "    #[test]\n    #[should_panic]\n    fn stamp_sets_the_version_nibble() {\n        assert_eq!(stamp(0xffff), 0x4fff);\n    }\n",
+        ),
+        (
+            "an assertion behind a condition",
+            "    #[test]\n    fn stamp_sets_the_version_nibble() {\n        if std::env::var(\"STAMP\").is_ok() {\n            assert_eq!(stamp(0xffff), 0x4fff);\n        }\n    }\n",
+        ),
+    ];
+    for (what, test) in shapes {
+        let same_file =
+            format!("{STAMP}\n#[cfg(test)]\nmod tests {{\n    use super::stamp;\n\n{test}}}\n");
+        let found = finding_in_files(
+            &[
+                ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+                ("src/v4.rs", &same_file),
+            ],
+            "src/v4.rs",
+            2,
+        )?;
+        assert_gap(&found, what);
+    }
+    Ok(())
+}

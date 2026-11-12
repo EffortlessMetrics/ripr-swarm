@@ -108,8 +108,9 @@ chain carries only `cfg` gates ripr cannot evaluate, and the changed owner's
 file is reached through that same declaration on a single module chain, the
 refusal is an analyzer limit, provided every other declaration on the test's
 chain is either shared with the owner or available in every test build (no
-attribute, or `cfg(test)`), and the test's in-file `cfg` gates are a subset of
-the owner's. `#[cfg(feature = "v4")] mod v4;` with the owner
+attribute, or `cfg(test)`), the test's in-file `cfg` gates are a subset of
+the owner's, and the test's own reading of each assertion past that refusal is
+admitted or itself an analyzer limit. `#[cfg(feature = "v4")] mod v4;` with the owner
 and its tests in `src/v4.rs`, or in sibling files under `src/v4/`, reads
 `static_unknown`. A gated declaration only the test's chain carries (alone or
 below a shared one), an inline gate only the test's module carries, owner and
@@ -1222,7 +1223,8 @@ and repair still does not start.
   an ignored test keep the gap. Its out-of-line rows (#14463) read a shared
   gated `mod name;` declaration as `static_unknown` for the owner's own file
   and for sibling files, and keep the gap for a test-only declaration,
-  different declarations and `cfg(any())`.
+  different declarations and `cfg(any())`, and for an ignored test, an
+  expected-panic test or a conditional assertion under a shared declaration.
 - A paired fixture: a default-feature `cfg` test is withheld
   (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
   (`gap_kept_ignored_test`).

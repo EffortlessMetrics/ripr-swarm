@@ -3522,6 +3522,40 @@ impl AssertionRefusal {
         }
     }
 
+    /// The test's own in-file refusal of each assertion, read without the
+    /// module provenance that refused its file first (#14463). A shared gated
+    /// declaration only explains the provenance refusal; an ignored test, an
+    /// expected panic or a conditional assertion still keeps the gap. `None`
+    /// when the test's file is not in the index, or the test is a property or
+    /// doc test whose assertions are not read from the file's own text.
+    pub(in crate::analysis) fn test_local_refusals(
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<Vec<Option<Self>>> {
+        if index.proptest_source(test).is_some() || index.doctest_source(test).is_some() {
+            return None;
+        }
+        let facts = index.files().get(&test.file)?;
+        let pins = owner_pin_assertions(
+            &expanded_assertion_view(&facts.source, facts.tests.iter()),
+            &assertion_context_macros(),
+        );
+        Some(
+            test.assertions
+                .iter()
+                .map(|assertion| {
+                    pins.refusal(
+                        (test.start_line, test.end_line, &test.name),
+                        &test.body,
+                        (assertion.line, &assertion.text),
+                        &BTreeSet::new(),
+                    )
+                    .map(Self::Syntax)
+                })
+                .collect(),
+        )
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         // Evidence text is host-independent: use the stable slash spelling

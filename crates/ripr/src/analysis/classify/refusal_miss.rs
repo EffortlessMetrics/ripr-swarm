@@ -53,7 +53,10 @@ fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -
 ///   and available in every test build (no attribute, or `cfg(test)`); a
 ///   provably-off gate such as `cfg(any())` keeps the gap, as it does for the
 ///   inline form;
-/// - the test's in-file `cfg` gates are a subset of the owner's.
+/// - the test's in-file `cfg` gates are a subset of the owner's;
+/// - the test's own refusal of each assertion, read past the provenance
+///   refusal, is none, an analyzer limit, or that shared gate, so an ignored
+///   test, an expected panic or a conditional assertion keeps the gap.
 fn owner_compiled_only_under_refused_declaration(
     context: &ProbeContext<'_>,
     test: &TestSummary,
@@ -122,7 +125,19 @@ fn owner_compiled_only_under_refused_declaration(
         (Some(test_gates), Some(owner_gates)) => test_gates.is_subset(&owner_gates),
         _ => false,
     };
-    refused_is_unknown_gate && chain_admitted && in_file_shared
+    // The shared declaration explains only the provenance refusal: every
+    // assertion's own in-file reading must be admitted, an analyzer limit, or
+    // the enclosing gate the subset check above shares with the owner.
+    let test_local_admitted = AssertionRefusal::test_local_refusals(test, context.index)
+        .is_some_and(|refusals| {
+            !refusals.is_empty()
+                && refusals.iter().all(|refusal| {
+                    refusal.as_ref().is_none_or(|refusal| {
+                        refusal.is_analyzer_limit() || refusal.is_gated_item()
+                    })
+                })
+        });
+    refused_is_unknown_gate && chain_admitted && in_file_shared && test_local_admitted
 }
 
 /// A module edge's identity: declaring file, line and declaration text.
