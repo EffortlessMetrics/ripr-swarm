@@ -2259,9 +2259,9 @@ mod publication_response_order;
 /// outside the editor reaches the server only as a watched-file event, and
 /// the server must then retract the diagnostics it published for that file
 /// without waiting for a manual refresh. A watched-file event for the same
-/// file while its bytes are unchanged (a `touch`) is sent first: it must not
-/// be what clears the rows, so the empty publish is awaited only after the
-/// delete.
+/// file while its bytes are unchanged (a `touch`) is sent first and settled
+/// with a refresh round-trip while the file still exists: it must not be what
+/// clears the rows, so the empty publish is awaited only after the delete.
 #[test]
 fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Result<(), String> {
     let base = unique_compat_fixture_root("external-delete")?;
@@ -2299,11 +2299,26 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
         |count| count > 0,
     )?;
 
-    // Unchanged bytes: nothing to refresh. Then the real deletion.
+    // Unchanged bytes: the touch itself schedules nothing. Settle it with an
+    // explicit refresh while the file still exists so a delayed touch cannot
+    // observe the deletion and satisfy the retraction assertion instead.
     session.notify(
         "workspace/didChangeWatchedFiles",
         Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 2}]})),
     )?;
+    let touch_refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    await_publish_for(
+        &mut session,
+        &lib_uri,
+        "the post-touch diagnostics and refresh response",
+        Some(touch_refresh_id),
+        |count| count > 0,
+    )?;
+
     fs::remove_file(&lib).map_err(|err| format!("delete fixture file failed: {err}"))?;
     session.notify(
         "workspace/didChangeWatchedFiles",
