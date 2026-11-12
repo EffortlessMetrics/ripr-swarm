@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json",
+  "title": "RIPR native proof run v1 design contract",
+  "description": "Design contract only until the Kani runner emits and validates this DTO.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "repository",
+    "revision",
+    "tree",
+    "source_closure_digest",
+    "claim_registry_generation",
+    "provider",
+    "toolchain",
+    "runner",
+    "inventory",
+    "process",
+    "results"
+  ],
+  "properties": {
+    "schema": {"const": "ripr.native-proof-run.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "repository": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "minLength": 1},
+    "tree": {"type": "string", "minLength": 1},
+    "worktree_digest": {"type": ["string", "null"]},
+    "source_closure_digest": {"type": "string", "minLength": 1},
+    "claim_registry_generation": {"type": "string", "minLength": 1},
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "name", "version"],
+      "properties": {
+        "family": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "solver_version": {"type": ["string", "null"]}
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language"],
+      "properties": {
+        "language": {"type": "string", "minLength": 1},
+        "target": {"type": ["string", "null"]}
+      }
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "command_digest", "deadline_policy"],
+      "properties": {
+        "generation": {"type": "string", "minLength": 1},
+        "command_digest": {"type": "string", "minLength": 1},
+        "deadline_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "preflight_seconds",
+            "whole_run_seconds",
+            "per_subject_seconds"
+          ],
+          "properties": {
+            "preflight_seconds": {"type": "integer", "minimum": 1},
+            "whole_run_seconds": {"type": "integer", "minimum": 1},
+            "per_subject_seconds": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_claim_ids", "discovered_subjects", "complete"],
+      "properties": {
+        "expected_claim_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "discovered_subjects": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "complete": {"type": "boolean"},
+        "rejection_reasons": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "exit_code",
+        "timed_out",
+        "raw_output_digest",
+        "cleanup_state"
+      ],
+      "properties": {
+        "state": {
+          "enum": ["completed", "failed", "timed_out", "killed", "not_started"]
+        },
+        "exit_code": {"type": ["integer", "null"]},
+        "timed_out": {"type": "boolean"},
+        "raw_output_digest": {"type": ["string", "null"]},
+        "cleanup_state": {
+          "enum": ["complete", "residue", "failed", "not_applicable"]
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/result"}
+    }
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_generation",
+        "subject",
+        "source_digest",
+        "status",
+        "native_verdict",
+        "covers",
+        "bounds_digest",
+        "duration_ms",
+        "current",
+        "reasons",
+        "non_claims"
+      ],
+      "properties": {
+        "claim_id": {"type": "string", "minLength": 1},
+        "claim_generation": {"type": "integer", "minimum": 1},
+        "subject": {"type": "string", "minLength": 1},
+        "source_digest": {"type": "string", "minLength": 1},
+        "status": {
+          "enum": [
+            "ESTABLISHED",
+            "FAILED",
+            "NOT_ESTABLISHED",
+            "STALE",
+            "UNSUPPORTED",
+            "NOT_PROVEN"
+          ]
+        },
+        "native_verdict": {
+          "enum": [
+            "verified",
+            "counterexample",
+            "unreachable_cover",
+            "timeout",
+            "missing",
+            "ambiguous",
+            "abnormal_process",
+            "malformed",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "covers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "satisfied", "unreachable"],
+          "properties": {
+            "required": {"type": "integer", "minimum": 0},
+            "satisfied": {"type": "integer", "minimum": 0},
+            "unreachable": {"type": "integer", "minimum": 0}
+          }
+        },
+        "assumptions_digest": {"type": ["string", "null"]},
+        "bounds_digest": {"type": "string", "minLength": 1},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "peak_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "raw_block_digest": {"type": ["string", "null"]},
+        "current": {"type": "boolean"},
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "non_claims": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

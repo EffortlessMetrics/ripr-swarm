@@ -1,0 +1,51 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "ordinary_pr_critical",
+  "proposition": "For every admitted EvidenceState value, is_actionable() is true if and only if the state is Actionable.",
+  "non_claims": [
+    "Does not establish that upstream evidence admission is correct.",
+    "Does not establish specification adequacy or full-program correctness."
+  ],
+  "owners": [
+    "ripr::domain::evidence::EvidenceState::is_actionable"
+  ],
+  "source_closure": [
+    "crates/ripr/src/domain/evidence.rs",
+    "crates/ripr/src/domain/evidence/kani_proofs.rs"
+  ],
+  "domain": "all declared EvidenceState constructors",
+  "assumptions": [],
+  "trust_dependencies": [
+    "Rust/Kani closed-enum modeling",
+    "registered constructor inventory"
+  ],
+  "observable": "boolean return value",
+  "bounds": {"unwind": 1},
+  "subjects": [
+    "ripr::domain::evidence::kani_proofs::actionable_only_with_evidence"
+  ],
+  "required_covers": [
+    "actionable branch reachable",
+    "non-actionable branch reachable"
+  ],
+  "negative_controls": [
+    "Mutate one non-Actionable state to return true; the named claim must fail."
+  ],
+  "result_satisfaction": "Every subject has one exact current verified result and every required cover is reachable.",
+  "currentness_inputs": [
+    "repository/tree",
+    "source closure",
+    "claim generation",
+    "Rust/Kani/solver versions",
+    "runner generation",
+    "configuration and bounds"
+  ],
+  "transition_policy": "base_and_head_protected_until_replacement_or_retirement",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

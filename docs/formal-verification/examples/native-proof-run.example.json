@@ -1,0 +1,68 @@
+{
+  "schema": "ripr.native-proof-run.v1",
+  "run_id": "example-only",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "revision": "0000000000000000000000000000000000000000",
+  "tree": "0000000000000000000000000000000000000000",
+  "worktree_digest": null,
+  "source_closure_digest": "sha256:example",
+  "claim_registry_generation": "example",
+  "provider": {
+    "family": "bounded_model_check",
+    "name": "kani",
+    "version": "0.68.0",
+    "solver_version": "example"
+  },
+  "toolchain": {
+    "language": "rust-1.95.0",
+    "target": "x86_64-unknown-linux-gnu"
+  },
+  "runner": {
+    "generation": "example",
+    "command_digest": "sha256:example",
+    "deadline_policy": {
+      "preflight_seconds": 30,
+      "whole_run_seconds": 4200,
+      "per_subject_seconds": 420
+    }
+  },
+  "inventory": {
+    "expected_claim_ids": [
+      "ripr.classification.actionable-only-with-evidence.v1"
+    ],
+    "discovered_subjects": [
+      "ripr::domain::evidence::kani_proofs::actionable_only_with_evidence"
+    ],
+    "complete": true,
+    "rejection_reasons": []
+  },
+  "process": {
+    "state": "completed",
+    "exit_code": 0,
+    "timed_out": false,
+    "raw_output_digest": "sha256:example",
+    "cleanup_state": "complete"
+  },
+  "results": [
+    {
+      "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+      "claim_generation": 1,
+      "subject": "ripr::domain::evidence::kani_proofs::actionable_only_with_evidence",
+      "source_digest": "sha256:example",
+      "status": "ESTABLISHED",
+      "native_verdict": "verified",
+      "covers": {"required": 2, "satisfied": 2, "unreachable": 0},
+      "assumptions_digest": null,
+      "bounds_digest": "sha256:example",
+      "duration_ms": 1,
+      "peak_memory_bytes": null,
+      "raw_block_digest": "sha256:example",
+      "current": true,
+      "reasons": ["example schema conformance only"],
+      "non_claims": [
+        "This example is not a native execution receipt.",
+        "The zero revision and example digests are intentionally non-authoritative."
+      ]
+    }
+  ]
+}
