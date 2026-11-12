@@ -467,3 +467,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_observer (27)
+
+Reason:
+RIPR-SPEC-0122: the all-clear Start here says no test gap was found and that nothing is needed (#14080); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

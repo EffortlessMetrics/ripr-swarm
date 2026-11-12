@@ -46,6 +46,7 @@ mod out_parameter;
 mod owner_pin;
 mod owner_shape;
 mod owner_value;
+mod owner_value_sink;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;

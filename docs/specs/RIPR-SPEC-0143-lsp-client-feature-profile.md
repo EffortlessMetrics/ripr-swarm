@@ -84,7 +84,19 @@ profile fields.
   root gap ledger and root `.git/HEAD` watchers register as a
   `RelativePattern` anchored at the effective root when supported, otherwise
   as absolute string globs (skipped when the root path contains glob
-  metacharacters), and are re-registered on every root transition;
+  metacharacters), and are re-registered on every root transition. The same
+  registration carries one change-and-delete watcher for analyzed source
+  files (#14099): an event for a file that is not open and no longer holds
+  the bytes the committed snapshot consumed (deleted, renamed away, or
+  rewritten outside the editor) schedules one diagnostics refresh. For a
+  Rust source the snapshot recorded as consumed, an event for unchanged
+  bytes schedules none. Other sources have no recorded bytes to compare:
+  they are covered only while they carry committed diagnostics, and a
+  Changed event for one always refreshes. The glob matches files, so a
+  folder deletion is covered only when the client reports the files (or the
+  folder itself) anyway. Test files the snapshot did not record as consumed
+  are not covered; clients without dynamic registration must refresh
+  manually;
 - the session-configuration transport (RIPR-SPEC-0136).
 
 ### Captured RIPR experimental blocks
@@ -264,6 +276,12 @@ and never the raw capability document or the client name.
 - `crates/ripr/src/lsp/tests.rs::watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire`
   — the separate diagnostics-input registration is root-anchored and its
   events refresh diagnostics over the wire.
+- `crates/ripr/src/lsp/watched_source_drift.rs::tests`
+  — a rewritten or deleted committed source drifts, while unchanged bytes,
+  open documents, created files and paths outside the root do not (#14099).
+- `crates/ripr/tests/lsp_lifecycle.rs::deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics`
+  — the real server retracts a deleted file's diagnostics from the
+  watched-file event alone.
 - `crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers`
   — a root switch unregisters the old-root watchers and registers the new
   root.

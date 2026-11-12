@@ -109,6 +109,29 @@ negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding s
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
 
+When GitHub throttles review writes ("was submitted too quickly"; the limit is per
+account), the same attestation can be carried by the pull request description
+instead (#4984). Put exactly one line at column zero, outside code fences and HTML
+comments:
+
+```text
+Source review: REVIEW_READY <full 40-character head SHA>
+```
+
+`SOURCE_REVIEW_READY` is accepted in place of `REVIEW_READY`. The SHA must be the
+full lowercase current head, so the line goes stale on the next push and has to be
+rewritten for the new head. The line is read only for a same-repository pull
+request whose author association is OWNER, MEMBER or COLLABORATOR, the same accounts
+that could already self-attest with a COMMENT review. It is another carrier for the
+same statement, not another authority: a `CHANGES_REQUESTED` review or a trusted
+reviewer's current negative review still refuses, and removing the line withdraws
+the attestation before the Result job's recheck. A description that also carries a
+`disposition:` line attests nothing, and a trusted reviewer's negative current-head
+review keeps refusing after that reviewer's own neutral thread replies, until they
+post a ready review themselves. Record what the review inspected
+in the description or a later comment; the line itself carries no prose. Prefer
+the native review when it can be posted, since its commit binding is set by GitHub.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -144,14 +167,16 @@ superseded.
 - Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
   `clippy-future`, `release-check`) still select extra lanes, but only together
   with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
+  only when `merge-ready` is re-applied. UB is the explicit exception:
+  `full-ci` alone requests its advisory review, and `merge-ready` never does.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
-- Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+- Explicit exception: `ub-review` is requested by `full-ci` itself, never by
+  `merge-ready` alone. Its event, concurrency and publication contracts are
+  pinned by `pr_readiness_workflow_contract`. The Python wheel workflow and
+  `source-of-truth` keep their own triggers; their cutover is tracked under #4984.
 
 ### What starts what
 
@@ -162,6 +187,10 @@ superseded.
 | Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
 | Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
 | Any other label | no (posts `Merge-ready Nonrequest`) | no |
+
+The required-check and gated-lane columns here do not include UB's direct
+`full-ci` advisory event, which creates no required check. See the UB notes
+below for its separate publication and concurrency behavior.
 
 The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
 is review state only and starts no required work. Gating the required job by
@@ -183,7 +212,7 @@ reviewed candidate, never as a general "please run CI" signal.
 
 | State | How to read it on the PR | Next action |
 | --- | --- | --- |
-| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Candidate | Draft or Ready, no `merge-ready` for this head; light checks run on push, UB waits for `full-ci`, and gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
 | Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
 | Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
 | Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
@@ -191,7 +220,8 @@ reviewed candidate, never as a general "please run CI" signal.
 
 A green `ub-review` wrapper is advisory: read its review and sensor output, not
 only the conclusion (see the `ub-review` notes under Current Workflows). A
-cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
+cancelled `ub-review` run was superseded by re-requesting `full-ci` for a head
+and is not a result.
 
 ## Verification Economics Policy
 
@@ -461,8 +491,8 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. For the gated lanes in this table, add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; those labels have no effect without it. **UB is the exception:** `full-ci` alone requests UB advisory review, and `merge-ready` alone never requests UB. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `full-ci` | Its own labeled event requests advisory UB review, independently of `merge-ready`. It also selects required, advisory and release-like lanes when `merge-ready` is applied; for Routed Rust Small it must be present then. Demotes `ripr-waive` for this PR. Expected to cost more. Adding it afterward does not rerun those lanes or repeat UB; re-apply `full-ci` for a new head. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -521,7 +551,7 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 4`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -963,18 +993,30 @@ the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
-UB retains early review on `opened`, `synchronize`, and `reopened`, including
-Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
-cancels active UB review nor repeats completed advisory work. Its existing
-same-repository guard and concurrency remain unchanged. Automatic Droid PR
-review is retired under #5086; manual `@droid` commands and scheduled security
-scans retain their separate triggers and safeguards. UB explicitly lists all
-three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
+UB runs only for a same-repository `full-ci` labeled event. The workflow
+subscribes only to `labeled`, and its executable job guard additionally requires
+`github.event.action == 'labeled'` and `github.event.label.name == 'full-ci'`.
+Non-full-ci labels, `merge-ready` alone, Ready, reopen and push do not execute
+the UB job or invoke its sensors. `full-ci` requests one advisory review of the
+exact head passed by `pr-head-sha`. Remove and re-apply `full-ci` after a new
+head is ready for advisory review. The same-repository fork guard is unchanged.
+Admitted `full-ci` requests share a per-PR concurrency group with cancellation,
+so a new request supersedes its predecessor. Other labels use unique per-run
+groups and cannot cancel the admitted UB run before their own job is skipped.
+In either case, `cancel-in-progress` applies only within that group and a
+cancelled old run is not review evidence.
+
+The full-ci label is an explicit operator review request, so the job selects
+`run-pass: manual`. The pinned action's `pull_request_other` pass is
+artifact-only, while its documented manual operator request bypasses the pass
+publication list. The workflow still requires the same-repository/full-ci job
+guard and exact `pr-head-sha`; `manual` here records that explicit opt-in rather
+than relabeling it as `synchronize`. `.ub-review.toml` retains the original
+`opened`, `synchronize` and `reopened` publication events. The action pin,
+sensors, evidence receipts, exact head, artifacts and advisory posture are
+unchanged. Automatic Droid PR review remains retired under
+#5086; manual `@droid` commands and scheduled security scans retain their
+separate triggers and safeguards.
 
 Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
 action/config identity, and review receipts. The same PR head with a changed
@@ -982,10 +1024,11 @@ base or merge tree is a different review identity; this event change supplies
 no cache hit or integration re-review. Before merge, inspect material integration
 changes and obtain applicable fresh review through the existing review route.
 Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
+failed, or skipped provider remains missing review evidence; no synthetic
+success replaces it. A green wrapper remains advisory: inspect the review and
+sensor output rather than treating the wrapper as proof or qualification.
+`xtask/tests/pr_readiness_workflow_contract.rs` checks parsed event/config and
+executable guard contracts, not hosted provider execution.
 
 UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
 workflow test and run commands use `--no-default-features` to build the JSON
@@ -1025,8 +1068,8 @@ needs its own evidence.
 - A push after the request leaves the new head without the required check.
   Refresh affected proof and review, then remove and re-apply `merge-ready`
   for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+- For lanes other than UB, labels such as `full-ci` take effect at the next
+  `merge-ready` request, not when they are added; add them before the request.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1942,13 +1985,29 @@ outside-the-packet hand-off needs the full findings array.
 
 #### Large pull requests
 
-A PR whose diff exceeds a scope budget is a declined run, not a clean result:
-`ripr check` refuses before analyzing anything (exit 2) and writes a typed
-refusal envelope to `target/ripr/pr/check.json` — for example
-`analysis_scope.run_status = diff_scope_oversized` with the producer's message
-naming the measured lines and the `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit
-(currently 2000). The envelope also carries its repair route
-(`analysis_scope.repair_route` and `run_limitations[].repair_route`).
+A PR whose diff is larger than the per-language changed-line limits
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`,
+`RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`, each 2000 by default) is analyzed
+as a bounded partition instead of refused (#13641). `ripr check` analyzes a
+deterministic subset of whole files within the partial budgets
+(`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`, the line
+budget clamped to the smallest enabled limit) and reports
+`analysis_scope.run_status = limited_partial_scope` with the selected files,
+lower-bound uninspected counts, the stop reason, and
+`gate_eligibility = ineligible`. A file that alone exceeds its language's
+limit is never split or analyzed: it is left out, listed in
+`analysis_scope.over_limit_files`, and counted as uninspected. A partial
+result is advisory — never a gate, baseline, badge, or RIPR Zero input.
+
+A run is still declined, not a clean result, when no changed file fits its
+language limit, or when a memory guard fires (the streaming diff-parse guards
+such as `RIPR_MAX_DIFF_CHANGED_LINES`, or `RIPR_MAX_DIFF_INDEX_FILES`).
+`ripr check` then refuses before analyzing anything (exit 2) and writes a
+typed refusal envelope to `target/ripr/pr/check.json` — for example
+`analysis_scope.run_status = diff_scope_oversized` with the producer's
+message naming the measured lines and the limit that fired. The envelope also
+carries its repair route (`analysis_scope.repair_route` and
+`run_limitations[].repair_route`).
 
 Downstream packets name the refusal instead of discarding it (#11161):
 
@@ -1959,13 +2018,16 @@ Downstream packets name the refusal instead of discarding it (#11161):
   `producer refusal (run_status: …)` error carrying the same message and
   next step, instead of the generic `missing analysis_outcome`.
 
-Under a blocking `RIPR_GATE_MODE` the refusal still fails the gate closed —
-naming the cause does not admit the PR. To get guidance on a large PR,
-either split it into smaller stacked PRs, run a narrower diff
-(`ripr check --path <glob>` and/or `--exclude <glob>` to analyze a subset;
-files left out are reported as not analyzed), or raise the limit for a single
-command on a machine with enough memory
-(`RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>`). See
+Under a blocking `RIPR_GATE_MODE` both a refusal and a partial result fail
+the gate closed — naming the cause does not admit the PR. To get complete
+guidance on a large PR, either split it into smaller stacked PRs, run a
+narrower diff (`ripr check --path <glob>` and/or `--exclude <glob>` to analyze
+a subset; files left out are reported as not analyzed), or raise both the
+language limit and the partial budgets for a single command on a machine
+with enough memory (for example
+`RIPR_MAX_DIFF_CHANGED_RUST_LINES=5000 RIPR_PARTIAL_DIFF_LINE_BUDGET=5000`;
+raising the limit alone keeps the default 1000-line partial budget). The
+partial result's widen instruction names the exact values. See
 [Configuration](CONFIGURATION.md) for the budget variables.
 
 ```yaml

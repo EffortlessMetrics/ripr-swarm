@@ -280,3 +280,113 @@ fn is_drop_of(statement: &ast::Stmt, receiver: &str) -> bool {
         .iter()
         .any(|path| text == format!("{path}drop({receiver});"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::syntax::parse_clean_source_file;
+
+    /// The statements of the body of `fn t() { .. }`.
+    fn statements(body: &str) -> Result<Vec<ast::Stmt>, String> {
+        // A trailing sentinel keeps a block-like statement from becoming the tail.
+        let source = format!("fn t() {{ {body} let end = 0; }}");
+        let parse = parse_clean_source_file(&source).ok_or("source did not parse cleanly")?;
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)
+            .ok_or("no function")?;
+        let list = function
+            .body()
+            .and_then(|body| body.stmt_list())
+            .ok_or("no body")?;
+        Ok(list.statements().collect())
+    }
+
+    fn only_statement(body: &str) -> Result<ast::Stmt, String> {
+        let mut all = statements(body)?;
+        if all.len() != 2 {
+            return Err(format!("expected one statement in {body}"));
+        }
+        Ok(all.remove(0))
+    }
+
+    /// Any statement that can leave the test before the scope end is reached
+    /// keeps the destructor veto, including a `?` hidden in a macro argument.
+    #[test]
+    fn early_exit_tokens_defeat_the_scope_end_carrier() -> Result<(), String> {
+        for body in [
+            "return;",
+            "let v = f()?;",
+            "assert!(f()?);",
+            "loop { break; }",
+            "for _ in 0..1 { continue; }",
+            "std::process::exit(1);",
+            "abort();",
+        ] {
+            assert!(can_end_the_test_early(&only_statement(body)?), "{body}");
+        }
+        for body in [
+            "let g = Guard { sink: sink.clone() };",
+            "drop(g);",
+            "assert_eq!(wrapper.get(), 1);",
+            "let exited = 1;",
+        ] {
+            assert!(!can_end_the_test_early(&only_statement(body)?), "{body}");
+        }
+        Ok(())
+    }
+
+    /// Only a bare block holding exactly one `let` and no tail is the guard's
+    /// scope; anything that could remove, relabel or extend the block is not.
+    #[test]
+    fn guard_block_must_be_a_plain_single_let_block() -> Result<(), String> {
+        assert!(plain_guard_block(&only_statement("{ let g = G; }")?).is_some());
+        for body in [
+            "{ let g = G; let h = G; }",
+            "{ let g = G; g }",
+            "{ g }",
+            "{ }",
+            "{ g.touch(); }",
+            "#[cfg(any())] { let g = G; }",
+            "'a: { let g = G; }",
+            "unsafe { let g = G; }",
+            "let g = G;",
+            "if true { let g = G; }",
+        ] {
+            assert!(
+                plain_guard_block(&only_statement(body)?).is_none(),
+                "{body}"
+            );
+        }
+        Ok(())
+    }
+
+    /// An explicit drop must be the whole statement on the same guard name,
+    /// through the std paths only.
+    #[test]
+    fn explicit_drop_matches_only_the_guard_name_through_std_paths() -> Result<(), String> {
+        for body in [
+            "drop(g);",
+            "mem::drop(g);",
+            "std::mem::drop(g);",
+            "core::mem::drop(g);",
+            "drop( g ) ;",
+        ] {
+            assert!(is_drop_of(&only_statement(body)?, "g"), "{body}");
+        }
+        for body in [
+            "drop(h);",
+            "drop(&g);",
+            "drop(g.clone());",
+            "other::drop(g);",
+            "my::mem::drop(g);",
+            "let _ = drop(g);",
+            "forget(g);",
+        ] {
+            assert!(!is_drop_of(&only_statement(body)?, "g"), "{body}");
+        }
+        Ok(())
+    }
+}
