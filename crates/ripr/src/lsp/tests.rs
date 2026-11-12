@@ -29649,10 +29649,11 @@ fn without_comments_and_literals(source: &str) -> String {
                     j += 1;
                     if let Some(escaped) = source[j..].chars().next() {
                         j += escaped.len_utf8();
-                        if escaped == 'u' && source[j..].starts_with('{') {
-                            if let Some(close) = source[j..].find('}') {
-                                j += close + 1;
-                            }
+                        if escaped == 'u'
+                            && source[j..].starts_with('{')
+                            && let Some(close) = source[j..].find('}')
+                        {
+                            j += close + 1;
                         }
                     }
                 } else {
@@ -29970,18 +29971,18 @@ fn gated_line_flags_matches_a_hand_written_expectation() -> Result<(), String> {
     // invisible to that comparison. This expectation is written by hand from the
     // fixture below, so a change in the classifier's verdict shows up here.
     let source = concat!(
-        "fn before() {}\n",                                    // 1  production
-        "#[cfg(test)]\n",                                      // 2  gated
-        "mod tests {\n",                                       // 3  gated
-        "    fn noisy() {}\n",                                 // 4  gated
-        "}\n",                                                 // 5  gated
-        "#[cfg(not(test))]\n",                                 // 6  production
-        "fn production_only() {}\n",                           // 7  production
-        "#[cfg(all(test, feature = \"slow\"))]\n",             // 8  gated
-        "mod slow_tests {\n",                                  // 9  gated
-        "    fn slow() {}\n",                                  // 10 gated
-        "}\n",                                                 // 11 gated
-        "fn after() {}\n",                                     // 12 production
+        "fn before() {}\n",                        // 1  production
+        "#[cfg(test)]\n",                          // 2  gated
+        "mod tests {\n",                           // 3  gated
+        "    fn noisy() {}\n",                     // 4  gated
+        "}\n",                                     // 5  gated
+        "#[cfg(not(test))]\n",                     // 6  production
+        "fn production_only() {}\n",               // 7  production
+        "#[cfg(all(test, feature = \"slow\"))]\n", // 8  gated
+        "mod slow_tests {\n",                      // 9  gated
+        "    fn slow() {}\n",                      // 10 gated
+        "}\n",                                     // 11 gated
+        "fn after() {}\n",                         // 12 production
     );
     let expected = [
         false, true, true, true, true, false, false, true, true, true, true, false,
@@ -30166,11 +30167,12 @@ fn production_scan_flags_a_call_after_the_component_outcome_char_literal() -> Re
     // component_outcome.rs:353 has `&['`', '\'', '"', '[', '{']`; a probe after
     // that const must stay visible for the same reason.
     let source = include_str!("component_outcome.rs");
-    let mutated =
-        insert_probe_after_enclosing_item(source, "PATH_TOKEN_LEADING_WRAPPERS: &[char]", CHAR_PROBE)
-            .ok_or_else(|| {
-                "component_outcome.rs must parse and contain the wrapper slice".to_string()
-            })?;
+    let mutated = insert_probe_after_enclosing_item(
+        source,
+        "PATH_TOKEN_LEADING_WRAPPERS: &[char]",
+        CHAR_PROBE,
+    )
+    .ok_or_else(|| "component_outcome.rs must parse and contain the wrapper slice".to_string())?;
     let hits = assert_scan_flags_raw_calls("component_outcome.rs + probe", &mutated)?;
     assert!(hits > 0, "the probe must be a raw production call");
     Ok(())
