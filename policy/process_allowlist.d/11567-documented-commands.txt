@@ -1,0 +1,2 @@
+crates/ripr/tests/documented_commands.rs|Command::new|1|cli-tests|#11567: runs the built ripr binary (`help --json` and `help <command>`) to read the command catalog and usage lines the documented invocations are resolved against.
+crates/ripr/tests/documented_commands.rs|use std::process::Command|1|cli-tests|#11567: imports the spawner for the invocation above.

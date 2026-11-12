@@ -100,6 +100,50 @@ mod tests {
         Ok(())
     }
 
+    fn verbose_json(stats: Option<&FileFactCacheStats>) -> Result<serde_json::Value, String> {
+        let mut out = String::from("{\n  \"tool\": \"ripr\"");
+        append_verbose_json_fields(&mut out, stats);
+        out.push('}');
+        serde_json::from_str(&out).map_err(|error| format!("{error}:\n{out}"))
+    }
+
+    /// #14083 T5: a run with no cache receipt says why. `not_observed` (the
+    /// producer reported nothing) and `zero_work` (it reported, and did no
+    /// cache work) are different facts and must not collapse into one.
+    #[test]
+    fn verbose_json_names_why_the_cache_receipt_is_null() -> Result<(), String> {
+        for (stats, limitation) in [
+            (None, "not_observed"),
+            (Some(FileFactCacheStats::zero_work()), "zero_work"),
+        ] {
+            let value = verbose_json(stats.as_ref())?;
+            let object = value.as_object().ok_or("document is not an object")?;
+            if object.get("file_fact_cache") != Some(&serde_json::Value::Null) {
+                return Err(format!("{limitation}: file_fact_cache: {value}"));
+            }
+            if value["file_fact_cache_limitation"] != limitation {
+                return Err(format!("{limitation}: limitation: {value}"));
+            }
+        }
+        // A run that did cache work carries the receipt and no limitation.
+        let worked = FileFactCacheStats {
+            hits: 1,
+            ..FileFactCacheStats::default()
+        };
+        let value = verbose_json(Some(&worked))?;
+        if value["file_fact_cache"]["hits"] != 1
+            || value.get("file_fact_cache_limitation").is_some()
+        {
+            return Err(format!("worked: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn verbose_line_is_silent_without_cache_work() {
+        assert_eq!(render_verbose_line(&FileFactCacheStats::zero_work()), None);
+    }
+
     #[test]
     fn verbose_json_carries_receipt_and_store_failures() -> Result<(), String> {
         let mut stats = FileFactCacheStats {
