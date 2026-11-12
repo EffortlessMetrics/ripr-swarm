@@ -213,6 +213,11 @@
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-closure-named-like-owner-map.json",
+      "cache_schema_version": "1.178",
+      "reason": "the producer-owned reach limit (#5492) adds a crate-private evidence field and renames only the trait-dispatch reach summary token; this capture has no unresolved reach stage, so its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     }
   ],
   "report_digest_exemptions": [],

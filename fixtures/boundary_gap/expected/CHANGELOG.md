@@ -1566,3 +1566,12 @@ The per-byte slice-counter boundary credit bumps the analyzer cache schema to
 commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing
 remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.179 after #12541 (#5492)
+
+The producer-owned repo-seam reach limit bumps the analyzer cache schema to
+1.179. Move the portable unchanged-attempt snapshots to 1.179, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.

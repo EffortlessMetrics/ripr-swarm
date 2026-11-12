@@ -5700,6 +5700,7 @@ fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(
                     crate::domain::Confidence::High,
                     "related test calls owner",
                 ),
+                unresolved_reach_limit: None,
                 activate: crate::domain::StageEvidence::new(
                     crate::domain::StageState::Yes,
                     crate::domain::Confidence::High,
@@ -17157,6 +17158,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 Confidence::High,
                 "related test calls owner",
             ),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::Yes, Confidence::High, "test reaches branch"),
             propagate: StageEvidence::new(StageState::Yes, Confidence::Medium, "return value sink"),
             observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "exact assertion"),
@@ -17213,6 +17215,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             seam_id,
             related_tests: Vec::new(),
             reach: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::No, Confidence::Low, "no activation value"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "unknown sink"),
             observe: StageEvidence::new(StageState::No, Confidence::Low, "no observer"),

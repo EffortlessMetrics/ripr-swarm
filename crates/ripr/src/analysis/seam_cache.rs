@@ -734,7 +734,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
 /// (#5346, #12641) — cached boundary verdicts from before the widening are not
 /// reused.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
+/// `1.179`: repo-seam reach stages carry producer-owned `unresolved_reach_limit`
+/// through classified-seam cache round trips (#5492).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.179";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -954,7 +956,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.181`: same producer-owned reach `unresolved_reach_limit` as full `1.179` (#5492).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.181";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1176,7 +1179,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.181`: same producer-owned reach `unresolved_reach_limit` as full `1.179` (#5492).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.181";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5599,7 +5603,8 @@ mod tests {
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
         // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.178");
+        // 1.178 -> 1.179: producer-owned reach limit survives cache round trip (#5492).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.179");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5759,8 +5764,9 @@ mod tests {
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
         // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        // 0.180 -> 0.181: same producer-owned reach limit as full 1.179 (#5492).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.181");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.181");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6615,6 +6621,7 @@ mod tests {
             seam_id: seam.id().clone(),
             related_tests: Vec::new(),
             reach: StageEvidence::new(StageState::Yes, Confidence::High, "reach"),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "activate"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "propagate"),
             observe: StageEvidence::new(StageState::Weak, Confidence::Low, "observe"),

@@ -88,6 +88,7 @@ mod tests {
             seam_id: seam.id().clone(),
             related_tests: related.into_iter().map(Arc::new).collect(),
             reach: stage("reach"),
+            unresolved_reach_limit: None,
             activate: stage("activate"),
             propagate: stage("propagate"),
             observe: stage("observe"),

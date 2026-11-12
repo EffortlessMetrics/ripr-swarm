@@ -1819,6 +1819,7 @@ mod seam_hover_tests {
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
             })],
             reach: stage(StageState::Yes, "Related tests reach discounted_total"),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes, "Observed amount = 50, amount = 10000"),
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
             observe: stage(StageState::Yes, "Exact value assertion exists"),
@@ -1923,6 +1924,7 @@ mod seam_hover_tests {
             missing_discriminators: Vec::new(),
             new_test_target: None,
             statically_contradicted_related_tests: 0,
+            unresolved_reach_limit: None,
         };
         let entry = ClassifiedSeam {
             seam,

@@ -1429,7 +1429,10 @@ fn push_stage_limitation(
             StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
         } else if framework_unresolved {
             StaticLimitKind::RustFrameworkOracleUnresolved.as_str()
-        } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
+        } else if stage == "reach"
+            && (entry.evidence.unresolved_reach_limit.is_some()
+                || rust_macro_reach_limitation_reason(&evidence.summary))
+        {
             "opaque_static_evidence"
         } else {
             let base_category = static_limitation_category(stage, state, &evidence.summary);
@@ -2090,6 +2093,7 @@ mod tests {
                     relation_confidence: RelationConfidence::High,
                 })],
                 reach: stage(StageState::Yes, "owner is reached"),
+                unresolved_reach_limit: None,
                 activate: stage(activate_state, "activation evidence unavailable"),
                 propagate: stage(StageState::Yes, "return value flow"),
                 observe: stage(StageState::Yes, "assertion observes output"),
@@ -2163,6 +2167,7 @@ mod tests {
                     StageState::Yes,
                     "binding seam is visible through external tests",
                 ),
+                unresolved_reach_limit: None,
                 activate: stage(
                     StageState::Yes,
                     "configured binding route reaches the Rust seam",
@@ -2242,6 +2247,7 @@ mod tests {
                     relation_confidence: RelationConfidence::Medium,
                 })],
                 reach: stage(StageState::Yes, "owner is reached"),
+                unresolved_reach_limit: None,
                 activate: stage(
                     StageState::Unknown,
                     "No direct owner call observed for value-insensitive seam `zq_render_target_token(path)`",
@@ -4309,6 +4315,47 @@ mod tests {
             Some("macro_generated_value"),
             "example 22 generated-entry inference stays out of this lane"
         );
+    }
+
+    #[test]
+    fn evidence_record_maps_a_producer_typed_reach_limit_to_opaque_static_evidence() {
+        // RIPR-SPEC-0236 examples 21 and 22 as the reach producer emits them
+        // (#5492): the producer-owned limit decides the category, so a test,
+        // entry or type name quoted in the summary cannot. The two tests above
+        // keep the untyped summaries on the substring classifier.
+        for (summary, limit) in [
+            (
+                "Reach unresolved (rust_integration_public_api_path_unresolved): `snapshot_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_integration_public_api_path_unresolved): `mock_checkout` (tests/checkout.rs:2) calls `checkout`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_transitive_reach_unresolved): `checks_out` (src/lib.rs:9) calls `generated_route`, which may lead to `tier` through a call path ripr does not fully trace; no gap is reported",
+                StaticLimitKind::RustTransitiveReachUnresolved,
+            ),
+            (
+                "Reach unresolved (rust_trait_dispatch_unresolved): `fmt` is a trait method of `MockSnapshot`, which operators, formatting and generic calls run without naming it; test `renders` (tests/render.rs:2) uses `MockSnapshot`. ripr does not trace trait dispatch, so no gap is reported",
+                StaticLimitKind::RustTraitDispatchUnresolved,
+            ),
+        ] {
+            let mut entry = example_23_macro_witness_classified(summary);
+            entry.evidence.unresolved_reach_limit = Some(limit);
+            let json = evidence_record_json_value(&evidence_record_for(&entry, None));
+
+            assert_eq!(
+                reach_limitation(&json).and_then(|item| item["category"].as_str()),
+                Some("opaque_static_evidence"),
+                "{summary}"
+            );
+            assert_eq!(
+                reach_limitation(&json).and_then(|item| item["repair_route"].as_str()),
+                Some("analysis/static-limitation-taxonomy"),
+                "{summary}"
+            );
+        }
     }
 
     #[test]

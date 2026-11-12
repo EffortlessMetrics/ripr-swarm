@@ -70,6 +70,7 @@ mod tests {
                 missing_discriminators: Vec::new(),
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
+                unresolved_reach_limit: None,
             },
         }
     }

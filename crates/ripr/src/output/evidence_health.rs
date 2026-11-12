@@ -976,6 +976,7 @@ mod tests {
                     relation_confidence: RelationConfidence::High,
                 })],
                 reach: StageEvidence::new(StageState::Yes, Confidence::High, "direct call"),
+                unresolved_reach_limit: None,
                 activate: StageEvidence::new(StageState::Yes, Confidence::High, "value observed"),
                 propagate: StageEvidence::new(
                     StageState::Weak,
@@ -1051,6 +1052,7 @@ mod tests {
                     relation_confidence: RelationConfidence::Opaque,
                 })],
                 reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "same file"),
+                unresolved_reach_limit: None,
                 activate: StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Unknown,

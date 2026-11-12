@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub const ALL: [StaticLimitKind; 35] = [
+    pub const ALL: [StaticLimitKind; 36] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -30,6 +30,7 @@ impl StaticLimitKind {
         StaticLimitKind::CrossLanguageOracleVisibilityUnresolved,
         StaticLimitKind::RustTransitiveReachUnresolved,
         StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+        StaticLimitKind::RustTraitDispatchUnresolved,
         StaticLimitKind::RustMacroReachUnresolved,
         StaticLimitKind::RustMacroWrappedTestCallUnresolved,
         StaticLimitKind::RustMacroWrappedAssertionUnresolved,
@@ -110,6 +111,11 @@ impl StaticLimitKind {
                 "Call the changed owner directly from a test if tests can name it; if it is a \
                  private helper reached only through the public API, ripr cannot trace that \
                  edge, so it stays unresolved even when the public-API assertion is exact."
+            }
+            StaticLimitKind::RustTraitDispatchUnresolved => {
+                "Call the changed owner directly from a test if tests can name it; if it is a \
+                 trait method tests run only through formatting or comparison syntax, ripr cannot \
+                 trace that dispatch, so the limitation can remain even when the assertion is exact."
             }
             StaticLimitKind::RustMacroReachUnresolved => {
                 "Call the changed owner directly from a plain `#[test]` body if tests can name \
@@ -353,32 +359,33 @@ mod tests {
                 StaticLimitKind::CrossLanguageOracleVisibilityUnresolved => 9,
                 StaticLimitKind::RustTransitiveReachUnresolved => 10,
                 StaticLimitKind::RustIntegrationPublicApiPathUnresolved => 11,
-                StaticLimitKind::RustMacroReachUnresolved => 12,
-                StaticLimitKind::RustMacroWrappedTestCallUnresolved => 13,
-                StaticLimitKind::RustMacroWrappedAssertionUnresolved => 14,
-                StaticLimitKind::RustValuePropagationUnresolved => 15,
-                StaticLimitKind::RustFieldMatchSelectorUnresolved => 16,
-                StaticLimitKind::RustSubprocessBinaryReachUnresolved => 17,
-                StaticLimitKind::WrapperErrorBindingUnresolved => 18,
-                StaticLimitKind::PythonTransitiveReachUnresolved => 19,
-                StaticLimitKind::RustAssertionContextUnresolved => 20,
-                StaticLimitKind::RustLogCaptureUnresolved => 21,
-                StaticLimitKind::RustPanicOutcomeUnresolved => 22,
-                StaticLimitKind::RustDebugAssertionProfileUnresolved => 23,
-                StaticLimitKind::RustCallFactBudget => 24,
-                StaticLimitKind::RustFrameworkOracleUnresolved => 25,
-                StaticLimitKind::RustPinnedShapeUnresolved => 26,
-                StaticLimitKind::RustImplicitCallUnresolved => 27,
-                StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
-                StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
-                StaticLimitKind::ProofHarnessNotEvaluated => 30,
-                StaticLimitKind::RustInherentReceiverUnestablished => 31,
-                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
-                StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
-                StaticLimitKind::RustFutureNeverPolled => 34,
+                StaticLimitKind::RustTraitDispatchUnresolved => 12,
+                StaticLimitKind::RustMacroReachUnresolved => 13,
+                StaticLimitKind::RustMacroWrappedTestCallUnresolved => 14,
+                StaticLimitKind::RustMacroWrappedAssertionUnresolved => 15,
+                StaticLimitKind::RustValuePropagationUnresolved => 16,
+                StaticLimitKind::RustFieldMatchSelectorUnresolved => 17,
+                StaticLimitKind::RustSubprocessBinaryReachUnresolved => 18,
+                StaticLimitKind::WrapperErrorBindingUnresolved => 19,
+                StaticLimitKind::PythonTransitiveReachUnresolved => 20,
+                StaticLimitKind::RustAssertionContextUnresolved => 21,
+                StaticLimitKind::RustLogCaptureUnresolved => 22,
+                StaticLimitKind::RustPanicOutcomeUnresolved => 23,
+                StaticLimitKind::RustDebugAssertionProfileUnresolved => 24,
+                StaticLimitKind::RustCallFactBudget => 25,
+                StaticLimitKind::RustFrameworkOracleUnresolved => 26,
+                StaticLimitKind::RustPinnedShapeUnresolved => 27,
+                StaticLimitKind::RustImplicitCallUnresolved => 28,
+                StaticLimitKind::RustIndirectOwnerCallUnresolved => 29,
+                StaticLimitKind::RustCallerLoopSelectorUnresolved => 30,
+                StaticLimitKind::ProofHarnessNotEvaluated => 31,
+                StaticLimitKind::RustInherentReceiverUnestablished => 32,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 33,
+                StaticLimitKind::TypescriptWorkspaceReadLimited => 34,
+                StaticLimitKind::RustFutureNeverPolled => 35,
             }
         }
-        const COUNT: usize = 35;
+        const COUNT: usize = 36;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

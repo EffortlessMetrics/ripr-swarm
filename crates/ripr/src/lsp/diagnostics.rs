@@ -4900,6 +4900,7 @@ mod seam_diagnostic_tests {
             seam_id: seam.id().clone(),
             related_tests: Vec::new(),
             reach: stage(StageState::Yes),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
