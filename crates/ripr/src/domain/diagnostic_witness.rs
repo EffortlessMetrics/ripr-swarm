@@ -298,8 +298,14 @@ fn best_related_test<'a>(
     related_tests: impl Iterator<Item = &'a RelatedTest>,
 ) -> Option<&'a RelatedTest> {
     // #14454: a row whose assertion cannot observe the change is never the
-    // fix site while another row can, however strong its oracle.
-    let observes = |test: &RelatedTest| test.miss != Some(RelatedTestMiss::AssertionNotObserving);
+    // fix site while another row can, however strong its oracle. A row with no
+    // call path to the changed code reaches it least of all, so it ranks below
+    // a direct caller whose assertion pins only the success arm.
+    let observes = |test: &RelatedTest| match test.miss {
+        Some(RelatedTestMiss::NoCallPath) => 0u8,
+        Some(RelatedTestMiss::AssertionNotObserving) => 1,
+        _ => 2,
+    };
     related_tests.max_by(|left, right| {
         observes(left)
             .cmp(&observes(right))
@@ -477,6 +483,15 @@ mod tests {
                 .map(|site| site.test_name)
         };
         assert_eq!(fix_test(&finding).as_deref(), Some("rejects_long_names"));
+        // A strong row with no call path to the change ranks below the
+        // Ok-only direct caller, never above it.
+        let mut no_call = finding.clone();
+        no_call.related_tests[1] = related(
+            "checks_other",
+            OracleStrength::Strong,
+            RelatedTestMiss::NoCallPath,
+        );
+        assert_eq!(fix_test(&no_call).as_deref(), Some("accepts_short_names"));
         finding.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
         assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
     }

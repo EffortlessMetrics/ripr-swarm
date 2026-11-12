@@ -403,7 +403,8 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   drop them: the agent `tK=` row (`strongest_test`) and the fix site
   (`DiagnosticWitness::best_related_test`) demote a row whose miss is
   `assertion_not_observing`. The fix site places it after every row that can
-  observe the change. The `tK=` row keeps relation confidence as its leading
+  observe the change, and places a `no_call_path` row after it, because a
+  test with no call to the changed code reaches it least of all. The `tK=` row keeps relation confidence as its leading
   key (#13603), so it places the row after every observing row of the same
   confidence tier; a non-observing direct caller can still outrank an
   observing row linked only by file location.
@@ -472,7 +473,12 @@ written and must not copy these gaps.
   whose oracle is a plain `assert_eq!` pinning only the `Ok` arm (an
   `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
   naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
-  `.map_err(..)`) becomes `assertion_not_observing` with no `miss_support`
+  `.map_err(..)`; and the `Ok` side is the changed call's result: an
+  `Ok(..)` wrapping a call compared with a bare binding, or an unwrap of a
+  bare binding compared with a call, fails closed; an empty `()` argument
+  list is not read as a call, so a no-argument owner call in those shapes is
+  a known limit) becomes
+  `assertion_not_observing` with no `miss_support`
   (#14454). Such a pin cannot separate one `Err` variant from another: if its
   input reaches the changed branch it fails on old and new code alike, and if
   not it never sees the change. A guard flip or an `Ok`-to-`Err` change is

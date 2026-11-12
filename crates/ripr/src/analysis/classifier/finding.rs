@@ -609,15 +609,30 @@ fn pins_only_the_ok_arm(oracle: &str) -> bool {
         return false;
     }
     crate::analysis::classify::assertion_comparison_operands(oracle).is_some_and(|operands| {
-        operands.iter().any(|side| {
-            let side = side.trim();
-            side.starts_with("Ok(")
-                || side.ends_with(".unwrap()")
-                || side
-                    .rfind(".expect(")
-                    .is_some_and(|at| side.ends_with(')') && !side[at..].contains(")."))
-        })
+        let [left, right] = &operands;
+        let (left, right) = (left.trim(), right.trim());
+        pins_ok_against(left, right) || pins_ok_against(right, left)
     })
+}
+
+/// Whether `side` pins the success arm of the call compared against `other`.
+/// Fails closed when the Ok side cannot be the changed call's result: an
+/// `Ok(..)` wrapping a call compared with a bare binding (`Ok(f(x))` against
+/// `expected`, which may hold an `Err`), or an unwrap of a bare binding
+/// compared with a call (`f(x)` against `expected.unwrap()`).
+fn pins_ok_against(side: &str, other: &str) -> bool {
+    // An argument list marks a call; `()` (a unit value or a no-argument
+    // method such as `.to_string()`) does not.
+    let has_call = |text: &str| text.replace("()", "").contains('(');
+    if let Some(inner) = side.strip_prefix("Ok(") {
+        return !(has_call(inner) && !has_call(other));
+    }
+    let receiver = side.strip_suffix(".unwrap()").or_else(|| {
+        side.rfind(".expect(")
+            .filter(|&at| side.ends_with(')') && !side[at..].contains(")."))
+            .map(|at| &side[..at])
+    });
+    receiver.is_some_and(|receiver| has_call(receiver) || !has_call(other))
 }
 
 /// Strongest first.
@@ -1436,6 +1451,36 @@ mod tests {
                     OracleStrength::Strong,
                     "assert_eq!(parse_name(\"abcdefghij\").err().unwrap(), Problem::TooLong);",
                 ),
+                row(
+                    "wraps_the_call",
+                    OracleStrength::Strong,
+                    "assert_eq!(Ok(parse_name(\"abcdefghij\")), expected);",
+                ),
+                row(
+                    "unwraps_the_expectation",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"abcdefghij\"), expected.unwrap());",
+                ),
+                row(
+                    "pins_a_bound_result",
+                    OracleStrength::Strong,
+                    "assert_eq!(Ok(7), result);",
+                ),
+                row(
+                    "pins_a_bound_string",
+                    OracleStrength::Strong,
+                    "assert_eq!(result, Ok(\"ada\".to_string()));",
+                ),
+                row(
+                    "unwraps_a_bound_result",
+                    OracleStrength::Strong,
+                    "assert_eq!(result.unwrap(), \"ada\".to_string());",
+                ),
+                row(
+                    "pins_unit",
+                    OracleStrength::Strong,
+                    "assert_eq!(result, Ok(()));",
+                ),
             ];
             let activation = ActivationEvidence {
                 missing_discriminators: vec![fact(kind)],
@@ -1477,10 +1522,30 @@ mod tests {
             ("not_an_ok".to_string(), exact),
             ("names_err".to_string(), exact),
             ("unwraps_the_error".to_string(), exact),
+            ("wraps_the_call".to_string(), exact),
+            ("unwraps_the_expectation".to_string(), exact),
+            ("pins_a_bound_result".to_string(), exact),
+            ("pins_a_bound_string".to_string(), exact),
+            ("unwraps_a_bound_result".to_string(), exact),
+            ("pins_unit".to_string(), exact),
         ];
         let mut swapped = unchanged.clone();
         for row in &mut swapped[..3] {
             row.1 = not_observing;
+        }
+        // An `Ok` pin or unwrap of a bound result still pins the success arm,
+        // in either operand order and with a no-argument or unit inner value.
+        for row in &mut swapped {
+            if [
+                "pins_a_bound_result",
+                "pins_a_bound_string",
+                "unwraps_a_bound_result",
+                "pins_unit",
+            ]
+            .contains(&row.0.as_str())
+            {
+                row.1 = not_observing;
+            }
         }
         assert_eq!(run(FlowSinkKind::ErrorVariant, &swap), swapped);
         // The return_value probe on the same line gets the same rows.
