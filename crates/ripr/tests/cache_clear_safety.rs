@@ -864,7 +864,13 @@ fn cache_root_flag_rejects_missing_repeated_and_unresolvable_values() -> Result<
             "takes --root once",
             &[][..],
         ),
-        (&["cache", "status", "--root=a"][..], "--root", &[][..]),
+        // `--root=a` means `--root a` (#14292): refused because `a` does not
+        // exist, not because of the `=` spelling.
+        (
+            &["cache", "status", "--root=a"][..],
+            "pass an existing directory to `--root`",
+            &[][..],
+        ),
         (
             &["cache", "status", "--root", "/definitely/not/a/dir"][..],
             "/definitely/not/a/dir",

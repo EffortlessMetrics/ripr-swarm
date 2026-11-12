@@ -86,7 +86,7 @@ use crate::analysis::syntax::{
     RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
+    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan, module_path_targets,
     owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
     qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
     source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
@@ -2906,61 +2906,207 @@ const UNINDEXED_MEMBER_ROOTS: &[&str] =
     &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
 const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
 
+/// The most `#[path]`-named files one unindexed member's walk follows before
+/// it fails closed. Crate roots, including every explicitly declared target,
+/// are not counted.
+const UNINDEXED_MEMBER_PATH_FILES: usize = 64;
+
 /// Whether an unindexed member's crate-root sources look like they could
 /// compile another crate's files. Unreadable, oversized, or missing crate
 /// roots fail closed: the member exists and its compilation effect is
 /// unknown. A readable crate root with no `include!` / `#[path]` is not a
 /// mount, so a namesake dependency of an indexed test crate does not
 /// disable placement.
+///
+/// #14260: a literal `#[path]` on a top-level `mod name;` whose target is a
+/// file inside the member's own directory names the member's own file, as a
+/// plain `mod name;` would. That file is read under the same rule instead
+/// of failing closed; a missing or unreadable one still fails closed.
 fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
-    let mut candidates: BTreeSet<PathBuf> = UNINDEXED_MEMBER_ROOTS
-        .iter()
-        .map(|candidate| member_dir.join(candidate))
-        .collect();
-    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
-        Ok(manifest) => {
-            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
-                candidates.insert(member_dir.join(relative));
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return true,
-    }
-    let mut inspected = false;
-    for path in candidates {
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
-                    return true;
-                }
-                let Ok(source) = std::str::from_utf8(&bytes) else {
-                    return true;
-                };
-                inspected = true;
-                if source_may_mount_foreign_files(source) {
-                    return true;
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return true,
-        }
+    let Some((inspected, saw_path)) = walk_unindexed_member(member_dir, false) else {
+        return true;
+    };
+    // Once a `#[path]` is accepted the member is no longer the plain layout
+    // the roots above describe, so the walk repeats strictly: Cargo's
+    // auto-discovered roots are read and no file may declare a default-layout
+    // child this walk would not read.
+    if saw_path && walk_unindexed_member(member_dir, true).is_none() {
+        return true;
     }
     !inspected
 }
 
-fn source_may_mount_foreign_files(source: &str) -> bool {
+/// Crate roots Cargo discovers without a manifest entry: `src/bin/*.rs`,
+/// `src/bin/*/main.rs`, and the same shapes under `tests`, `examples` and
+/// `benches`. `None` when a directory cannot be listed.
+fn auto_discovered_roots(member_dir: &Path) -> Option<Vec<PathBuf>> {
+    let mut roots = Vec::new();
+    for directory in ["src/bin", "tests", "examples", "benches"] {
+        let entries = match std::fs::read_dir(member_dir.join(directory)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        for entry in entries {
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                roots.push(path.join("main.rs"));
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                roots.push(path);
+            }
+        }
+    }
+    Some(roots)
+}
+
+/// One walk of an unindexed member's sources. `None` when something may
+/// compile a file outside the member; otherwise `(inspected, saw_path)`:
+/// whether any source was read and whether any own-file `#[path]` was seen.
+/// `strict` adds the auto-discovered roots and refuses default-layout
+/// children in every file, not only in files reached through `#[path]`.
+fn walk_unindexed_member(member_dir: &Path, strict: bool) -> Option<(bool, bool)> {
+    let mut pending: Vec<(PathBuf, bool)> = UNINDEXED_MEMBER_ROOTS
+        .iter()
+        .map(|candidate| (member_dir.join(candidate), false))
+        .collect();
+    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
+        Ok(manifest) => {
+            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
+                pending.push((member_dir.join(relative), false));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return None,
+    }
+    if strict {
+        pending.extend(
+            auto_discovered_roots(member_dir)?
+                .into_iter()
+                .map(|root| (root, false)),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    let mut followed = 0;
+    let mut inspected = false;
+    let mut saw_path = false;
+    // `required`: a `#[path]` named the file, so its absence is not a guess
+    // that missed but a module whose source ripr cannot read.
+    while let Some((path, required)) = pending.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        if required {
+            followed += 1;
+            if followed > UNINDEXED_MEMBER_PATH_FILES {
+                return None;
+            }
+        }
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                // A root that links outside the member is another file's
+                // compilation context, not the member's own source.
+                if !path
+                    .canonicalize()
+                    .is_ok_and(|target| target.starts_with(member_dir))
+                {
+                    return None;
+                }
+                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+                    return None;
+                }
+                let source = std::str::from_utf8(&bytes).ok()?;
+                inspected = true;
+                for literal in own_path_literals(source, required || strict)? {
+                    saw_path = true;
+                    pending.push((member_own_file(&path, &literal, member_dir)?, true));
+                }
+            }
+            Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    Some((inspected, saw_path))
+}
+
+/// The `#[path]` literals of `source` when they are all it could mount
+/// through: no `include!`, no inner `#![path]`, and every `#[path` in the
+/// text is the one plain literal of a top-level out-of-line `mod name;`.
+/// A file reached through `#[path]` (`followed`) must also declare no
+/// default-layout `mod child;`, whose file this walk would not read.
+/// `None` for anything else, which the caller reads as a foreign mount.
+fn own_path_literals(source: &str, followed: bool) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(source);
-    whole_word_offsets(&masked, "include")
+    let includes = whole_word_offsets(&masked, "include")
         .into_iter()
         .any(|offset| {
             masked
                 .get(offset + "include".len()..)
                 .is_some_and(|rest| rest.trim_start().starts_with('!'))
-        })
-        || {
-            let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
-            compact.contains("#[path") || compact.contains("#![path")
+        });
+    let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
+    // `#![path]`, a raw-identifier `r#path`, and a `cfg_attr` that may
+    // introduce a `path` are spellings the `#[path` count below cannot see.
+    if includes
+        || compact.contains("#![path")
+        || compact.contains("r#path")
+        || cfg_attr_may_introduce_path(&compact)
+    {
+        return None;
+    }
+    let attributes = compact.matches("#[path").count();
+    if attributes == 0 && !followed {
+        return Some(Vec::new());
+    }
+    let mut literals = Vec::new();
+    for target in module_path_targets(source)? {
+        match target {
+            ModulePathTarget::Literal(literal) => literals.push(literal),
+            ModulePathTarget::Default if !followed => {}
+            ModulePathTarget::Default | ModulePathTarget::Unknown => return None,
         }
+    }
+    (literals.len() == attributes).then_some(literals)
+}
+
+/// Whether a `cfg_attr(..)` in whitespace-stripped source lists `path = ..`
+/// among the attributes it applies. Only the `cfg_attr` argument list is read,
+/// so an unrelated `path` elsewhere in the file (`use std::path::PathBuf;`)
+/// does not count.
+fn cfg_attr_may_introduce_path(compact: &str) -> bool {
+    const NEEDLE: &str = "cfg_attr(";
+    let mut rest = compact;
+    while let Some(at) = rest.find(NEEDLE) {
+        let body = &rest[at + NEEDLE.len()..];
+        let mut depth = 1usize;
+        let mut end = body.len();
+        for (index, ch) in body.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = index;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if body[..end].contains(",path=") {
+            return true;
+        }
+        rest = body;
+    }
+    false
+}
+
+/// The existing file a `#[path = "literal"]` in `declaring` names, when it
+/// lies inside `member_dir` (canonical). A non-inline `#[path]` is relative
+/// to the declaring file's directory. Symlinks are followed first, so a link
+/// out of the member is not the member's own file.
+fn member_own_file(declaring: &Path, literal: &str, member_dir: &Path) -> Option<PathBuf> {
+    let target = declaring.parent()?.join(literal).canonicalize().ok()?;
+    (target.is_file() && target.starts_with(member_dir)).then_some(target)
 }
 
 impl TargetRoots {
@@ -3083,8 +3229,10 @@ impl TargetRoots {
 
 /// The crate root file `file` composes under: a recognized Cargo target root
 /// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
-/// example or build script), or `None` when composition is unresolved, goes
-/// through `include!`, or ends at an unrecognized file.
+/// example or build script), a root the package manifest names (`[lib] path`,
+/// or an explicit `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+/// `path`), or `None` when composition is unresolved, goes through
+/// `include!`, or ends at a file no target is known to root.
 pub(super) fn target_root(
     file: &Path,
     index: &RustIndex,
@@ -3111,7 +3259,8 @@ fn target_context_roots(
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
                 || !(recognized_target_root(root, src_dirs)
-                    || index.member_crates.is_custom_lib_path_root(root))
+                    || index.member_crates.is_custom_lib_path_root(root)
+                    || index.member_crates.is_declared_target_entry(root))
         })
     {
         return None;

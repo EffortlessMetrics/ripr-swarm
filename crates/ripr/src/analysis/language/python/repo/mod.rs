@@ -19,11 +19,6 @@
 //! working-set limit with its cap source, the retained operator recovery
 //! routes, and the test framework detected by the shared producer.
 
-#![allow(
-    dead_code,
-    reason = "PythonRepoRunStatus::Disabled and the config-disabled wrappers stay typed ahead of a config producer; remaining unconsumed items are exercised by unit tests (#3554)"
-)]
-
 mod discovery;
 mod evidence;
 mod roles;

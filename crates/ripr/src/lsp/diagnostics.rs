@@ -4718,8 +4718,10 @@ fn lsp_message(finding: &Finding) -> String {
     // The recommended next step is generic ("add boundary tests ..."); the
     // Problems panel row is the only text many editors show, so name the
     // concrete missing input or value the witness already carries.
+    // The check leads (#14465): a Problems row cut to its first words then
+    // still shows what to test rather than the generic step.
     let base = match missing_check_suffix(finding, &base) {
-        Some(suffix) => format!("{base} {suffix}"),
+        Some(check) => format!("{check} {base}"),
         None => base,
     };
     if finding
@@ -6836,7 +6838,7 @@ mod diagnostic_policy_tests {
         let message = lsp_message(&finding);
         assert_eq!(
             message,
-            "Add boundary tests for the changed threshold. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add boundary tests for the changed threshold."
         );
 
         // A step that already quotes the value is not repeated.
@@ -6862,7 +6864,7 @@ mod diagnostic_policy_tests {
         assert_eq!(with_value(&mut finding, "   ".to_string()), "Add a test.");
         assert_eq!(
             with_value(&mut finding, " age == 18 ".to_string()),
-            "Add a test. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add a test."
         );
         // The 80-character limit counts characters, not bytes.
         assert_eq!(
@@ -6872,11 +6874,11 @@ mod diagnostic_policy_tests {
         );
         assert_eq!(
             with_value(&mut finding, "x".repeat(80)),
-            format!("Add a test. Missing check: `{}`.", "x".repeat(80))
+            format!("Missing check: `{}`. Add a test.", "x".repeat(80))
         );
         assert_eq!(
             with_value(&mut finding, "é".repeat(40)),
-            format!("Add a test. Missing check: `{}`.", "é".repeat(40))
+            format!("Missing check: `{}`. Add a test.", "é".repeat(40))
         );
         // Values that would break the Markdown code span are left out.
         assert_eq!(with_value(&mut finding, "a`b".to_string()), "Add a test.");
@@ -6920,8 +6922,8 @@ mod diagnostic_policy_tests {
         ];
         assert_eq!(
             lsp_message(&finding),
-            "Add boundary tests for below, equal, and above the changed threshold. \
-             Missing check: `n == 0`."
+            "Missing check: `n == 0`. \
+             Add boundary tests for below, equal, and above the changed threshold."
         );
 
         // Without a boundary input the first check is still named.
@@ -6930,7 +6932,7 @@ mod diagnostic_policy_tests {
             crate::domain::DiscriminatorShape::Other,
         )];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -6946,7 +6948,7 @@ mod diagnostic_policy_tests {
             fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
         ];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );

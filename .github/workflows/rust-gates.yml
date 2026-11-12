@@ -96,7 +96,7 @@ on:
       test-shards:
         description: >-
           1 runs the required nextest step in this job. 4 leaves it to
-          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+          rust-test-shards.yml, which the caller must also run and require (#10507).
         required: false
         default: 1
         type: number
@@ -199,7 +199,7 @@ jobs:
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
-      # directory age. The same action is the scheduled scratch-gc.yml authority.
+      # directory age. The same action is the scratch-gc.yml sweep authority.
       - name: Acquire scratch lease
         if: inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease

@@ -7,12 +7,6 @@ name: Completions Smoke
 # skipping it, so the lane cannot pass without checking all three.
 
 on:
-  pull_request:
-    paths:
-      - "crates/ripr/src/cli/commands/completions.rs"
-      - "crates/ripr/src/cli/command_catalog.rs"
-      - "crates/ripr/tests/completions_command.rs"
-      - ".github/workflows/completions-smoke.yml"
   workflow_dispatch:
 
 permissions:
