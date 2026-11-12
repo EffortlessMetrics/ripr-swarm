@@ -35804,7 +35804,6 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     Ok(())
 }
 
-
 /// The artifact flags below read their file with an unbounded
 /// `std::fs::read`/`read_to_string`: pointed at an endless device, each grew
 /// until the kernel ended the process (about six seconds on a 16 GB host)
