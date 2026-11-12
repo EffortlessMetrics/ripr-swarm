@@ -92,12 +92,21 @@ pub fn serve() -> Result<(), String> {
 
 async fn serve_stdio() -> Result<(), String> {
     let ending = serve_stdio_session().await?;
-    if let Some(notice) = ending.stderr_notice() {
-        // #14219: the session ends with exit 0 either way; this line is the
-        // only place a client's server log shows why it stopped.
-        eprintln!("{notice}");
-    }
+    // #14219: the session ends with exit 0 either way; this line is the
+    // only place a client's server log shows why it stopped.
+    write_session_notice(ending, &mut std::io::stderr().lock());
     Ok(())
+}
+
+/// Writes the ending's stderr notice, if any, best effort. `eprintln!`
+/// panics when stderr is closed, which the startup boundary would turn into
+/// exit 2; a client that stopped reading the server log must still see the
+/// session's exit 0. The notice is fixed text, so no terminal sanitizing is
+/// needed.
+fn write_session_notice(ending: SessionEnding, stderr: &mut impl std::io::Write) {
+    if let Some(notice) = ending.stderr_notice() {
+        let _ = writeln!(stderr, "{notice}");
+    }
 }
 
 async fn serve_stdio_session() -> Result<SessionEnding, String> {

@@ -1219,4 +1219,41 @@ mod tests {
         assert_eq!(exited.stderr_notice(), None);
         Ok(())
     }
+
+    struct ClosedStderr;
+
+    impl std::io::Write for ClosedStderr {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+    }
+
+    #[test]
+    fn session_notice_is_one_line_only_for_undecodable_input_and_tolerates_closed_stderr() {
+        use super::super::{SessionEnding, write_session_notice};
+
+        let mut written = Vec::new();
+        write_session_notice(SessionEnding::UndecodableInput, &mut written);
+        let text = String::from_utf8_lossy(&written);
+        assert!(
+            text.starts_with("ripr lsp: stopped while input was still open")
+                && text.ends_with('\n')
+                && text.matches('\n').count() == 1,
+            "expected exactly one notice line, got: {text:?}"
+        );
+
+        for silent in [SessionEnding::InputClosed, SessionEnding::Exit] {
+            let mut written = Vec::new();
+            write_session_notice(silent, &mut written);
+            assert!(written.is_empty(), "{silent:?} must write nothing");
+        }
+
+        // A client that closed its server-log pipe must not turn the
+        // session's exit 0 into a panic (exit 2).
+        write_session_notice(SessionEnding::UndecodableInput, &mut ClosedStderr);
+    }
 }
