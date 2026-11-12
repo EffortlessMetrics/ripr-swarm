@@ -80,7 +80,10 @@ added `return R;` seed no probe on either side when the `match` scrutinee and
 the `let ... else` scrutinee are the same text, the added statement is the
 first added line after its opener, and each text occurs exactly once in the
 window (#14428). A changed scrutinee, a changed return value, a multi-line
-`None => { .. }` arm, or a repeated statement keeps both probes.
+`None => { .. }` arm, or a repeated statement keeps both probes. A pattern
+that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
+{ .. }`) is not split from its scrutinee, so it fails closed and both probes
+stay; `a_pattern_with_an_equals_sign_never_pairs` pins that limit.
 
 A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
