@@ -506,6 +506,36 @@ fn unbound_namesake_routes_get_no_credit() -> Result<(), String> {
         ExposureClass::Exposed,
         "{test_crate_reexport:#?}"
     );
+    let foreign_glob_module = finding_with_files(
+        OWNER,
+        "tests/t.rs",
+        &format!("mod common;\nuse self::common::*;\n{}", test_body(O_FIELD)),
+        &[("tests/common/mod.rs", "pub use extdep::*;\n")],
+    )?;
+    assert_ne!(
+        foreign_glob_module.class,
+        ExposureClass::Exposed,
+        "{foreign_glob_module:#?}"
+    );
+    let owner_file_reexport = format!(
+        "{OWNER}mod ext {{\n    pub use extdep::Counter;\n}}\n#[cfg(test)]\nmod tests {{\n    use super::ext::*;\n    #[test]\n    fn reference() {{\n        let mut c = Counter {{ n: 5, m: 0 }};\n        c.reset();\n        assert_eq!(c.n, 1);\n    }}\n}}\n"
+    );
+    let found = finding_at(&owner_file_reexport, "src/lib.rs", "")?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let macro_namesake = finding_with_files(
+        OWNER,
+        "tests/t.rs",
+        &format!("mk!(Counter);\n{}", test_body(O_FIELD)),
+        &[(
+            "tests/support.rs",
+            "#[macro_export]\nmacro_rules! mk {\n    ($t:ident) => {\n        pub struct $t { pub n: u32, pub m: u32 }\n    };\n}\n",
+        )],
+    )?;
+    assert_ne!(
+        macro_namesake.class,
+        ExposureClass::Exposed,
+        "{macro_namesake:#?}"
+    );
     let inline_owner = "pub mod inner {\n    pub struct Counter {\n        pub n: u32,\n        pub m: u32,\n    }\n    impl Counter {\n        pub fn reset(&mut self) {\n            self.n = 1;\n        }\n    }\n}\npub use dep::Counter;\n";
     let found = finding_at(
         inline_owner,

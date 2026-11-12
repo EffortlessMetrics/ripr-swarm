@@ -813,10 +813,12 @@ changes `self.count += 2` to `self.count += 1`.
   `krate::<owner module path>::Name` elsewhere (or `krate::Name` when the
   library root declares it or re-exports it from the owner's module); a glob
   is `super::*` or `crate::<owner module path>::*` in the owner's file, or
-  `krate::*` elsewhere when the root binds no other type of the name, and
-  any other `self`/`super`/`crate` glob needs no other indexed file to
-  name it in code (a declaration or an import); and `krate::Name { .. }` is spelled only when the root
-  names the owner's type. A same-named type elsewhere in
+  `krate::*` elsewhere when the root binds no other type of the name; any
+  other glob refuses, in-crate ones included, since the module it reaches may
+  re-export (`pub use dep::*;`) another type of the name; a test in another
+  file that imports neither the name nor a glob spells the name only
+  path-qualified (a bare name there may be a macro-made type); and
+  `krate::Name { .. }` is spelled only when the root names the owner's type. A same-named type elsewhere in
   the workspace that the test does not bind does not withdraw the credit. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that

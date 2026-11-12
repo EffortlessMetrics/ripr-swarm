@@ -4598,10 +4598,10 @@ fn test_file_declares_owner_type_namesake(
 ///   ([`super::related_tests::root_library_names_owner_type`]).
 /// - A glob must be `super::*` or `crate::<owner module>::*` in the owner's
 ///   file, or `krate::*` elsewhere when the library root binds no other type
-///   of the name. Another glob rooted at `self`/`super`/`crate` is admitted
-///   only when no indexed file but the owner's and the test's names it in
-///   code (a declaration or an import such as `pub use dep::Name;`); any other
-///   glob (`use foreign::*;`, `use std::x::*;`) refuses.
+///   of the name. Any other glob refuses, in-crate ones included, since the
+///   module it reaches may re-export another type of the name.
+/// - A test in another file that imports neither the name nor a glob must
+///   spell the name only path-qualified; a bare name there is another type.
 pub(in crate::analysis) fn test_binds_owner_type(
     owner: &FunctionSummary,
     test: &TestSummary,
@@ -4652,60 +4652,59 @@ pub(in crate::analysis) fn test_binds_owner_type(
     // binary target's file has neither).
     let crate_module = joined("crate");
     let krate_module = krate.and_then(joined);
-    // A glob rooted at `self`/`super`/`crate` may reach any module of its
-    // crate, which may declare or import (`pub use dep::Name;`) its own type
-    // of the name: it is admitted only when no indexed file other than the
-    // owner's and the test's mentions the name in code at all, and the
-    // test's own file is scanned item by item below.
-    let elsewhere_free = || {
-        index.files().iter().all(|(file, facts)| {
-            file == &owner.file
-                || file == &test.file
-                || !facts.source.contains(impl_type)
-                || super::owner_pin::whole_word_offsets(
-                    &crate::analysis::extract::mask_comments_and_strings(&facts.source),
-                    impl_type,
-                )
-                .is_empty()
-        })
-    };
-    super::reveal::flattened_use_paths(&test_facts.source)
-        .iter()
-        .all(|item| {
-            let path = item.path.trim_start_matches("::");
-            if let Some(prefix) = path.strip_suffix("::*") {
-                let first = prefix.split("::").next().unwrap_or(prefix);
-                if same_file && (prefix == "super" || Some(prefix) == crate_module.as_deref()) {
-                    return true;
-                }
-                if matches!(first, "self" | "super" | "crate") {
-                    return elsewhere_free();
-                }
-                return !same_file
-                    && Some(prefix) == krate
-                    && (root_names_owner
-                        || !super::related_tests::library_root_binds_type_name(index, impl_type));
-            }
-            let binding = item
+    let uses = super::reveal::flattened_use_paths(&test_facts.source);
+    // Another file reaches the owner's type by a path or an import; with
+    // neither, a bare name there is some other type (one a macro made).
+    let binds_name = |item: &super::reveal::UsePath| {
+        let path = item.path.trim_start_matches("::");
+        path.ends_with("::*")
+            || item
                 .alias
                 .as_deref()
-                .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path));
-            if binding != impl_type {
+                .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path))
+                == impl_type
+    };
+    if !same_file && !uses.iter().any(binds_name) {
+        let masked = crate::analysis::extract::mask_comments_and_strings(&test_facts.source);
+        let qualified_only = super::owner_pin::whole_word_offsets(&masked, impl_type)
+            .iter()
+            .all(|offset| masked[..*offset].trim_end().ends_with("::"));
+        if !qualified_only {
+            return false;
+        }
+    }
+    uses.iter().all(|item| {
+        let path = item.path.trim_start_matches("::");
+        if let Some(prefix) = path.strip_suffix("::*") {
+            if same_file && (prefix == "super" || Some(prefix) == crate_module.as_deref()) {
                 return true;
             }
-            if item.alias.is_some() {
-                return false;
-            }
-            let Some(parent) = path.strip_suffix(&format!("::{impl_type}")) else {
-                return false;
-            };
-            if same_file {
-                parent == "super" || Some(parent) == crate_module.as_deref()
-            } else {
-                Some(parent) == krate_module.as_deref()
-                    || (Some(parent) == krate && root_names_owner)
-            }
-        })
+            // Any other in-crate glob may reach a module that declares or
+            // re-exports (`pub use dep::*;`) another type of the name.
+            return !same_file
+                && Some(prefix) == krate
+                && (root_names_owner
+                    || !super::related_tests::library_root_binds_type_name(index, impl_type));
+        }
+        let binding = item
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| path.rsplit("::").next().unwrap_or(path));
+        if binding != impl_type {
+            return true;
+        }
+        if item.alias.is_some() {
+            return false;
+        }
+        let Some(parent) = path.strip_suffix(&format!("::{impl_type}")) else {
+            return false;
+        };
+        if same_file {
+            parent == "super" || Some(parent) == crate_module.as_deref()
+        } else {
+            Some(parent) == krate_module.as_deref() || (Some(parent) == krate && root_names_owner)
+        }
+    })
 }
 
 /// #14407: whether the field the assertion reads already held the expected
