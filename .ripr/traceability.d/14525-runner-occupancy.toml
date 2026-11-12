@@ -1,14 +1,16 @@
 [[behavior]]
-id = "RIPR-SPEC-14525"
+id = "RIPR-SPEC-0441"
 name = "Advisory raw runner occupancy with incomplete attempt accounting"
-spec = "docs/specs/RIPR-SPEC-14525-runner-occupancy.md"
+spec = "docs/specs/RIPR-SPEC-0441-runner-occupancy.md"
 code = ["xtask/src/reports/ci_budget.rs", "xtask/src/reports/ci_budget/occupancy.rs"]
 tests = [
   "xtask/src/reports/ci_budget/occupancy.rs::tests::parallel_and_failed_work_sum",
+  "xtask/src/reports/ci_budget/occupancy.rs::tests::skipped_work_does_not_fabricate_occupancy",
   "xtask/src/reports/ci_budget/occupancy.rs::tests::duplicate_is_counted_once_and_conflict_excluded",
   "xtask/src/reports/ci_budget/occupancy.rs::tests::earlier_attempts_retained_not_multiplied",
   "xtask/src/reports/ci_budget/occupancy.rs::tests::timestamps_are_validated_not_truncated",
   "xtask/src/reports/ci_budget.rs::tests::occupancy_renders_nonlegacy_jobs_and_incompleteness",
+  "xtask/src/reports/ci_budget.rs::tests::multiple_attempt_snapshots_label_legacy_ordinals_and_deduped_work",
 ]
-outputs = ["docs/specs/RIPR-SPEC-14525-runner-occupancy.md"]
+outputs = ["docs/specs/RIPR-SPEC-0441-runner-occupancy.md"]
 metrics = ["unit_test_pass_rate"]

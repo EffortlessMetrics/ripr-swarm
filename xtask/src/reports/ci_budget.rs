@@ -839,7 +839,7 @@ fn report_markdown(report: &CiBudgetReport) -> String {
     if report.by_conclusion.is_empty() {
         body.push_str("(no runs)\n\n");
     } else {
-        body.push_str("| Conclusion | Runs |\n| --- | --- |\n");
+        body.push_str("| Conclusion | Snapshots |\n| --- | --- |\n");
         for (conclusion, count) in &report.by_conclusion {
             let label = if conclusion.is_empty() {
                 "(unknown)"
@@ -1105,6 +1105,8 @@ mod tests {
         assert!(md.contains("Input run snapshots scanned: 3"));
         assert!(md.contains("Sum of attempt ordinals across input snapshots: 5"));
         assert!(md.contains("Observed subtotal: 120 raw runner-seconds"));
+        assert!(md.contains("| Conclusion | Snapshots |"));
+        assert!(!md.contains("| Conclusion | Runs |"));
         assert!(!md.contains("Total attempts across scanned runs"));
         Ok(())
     }

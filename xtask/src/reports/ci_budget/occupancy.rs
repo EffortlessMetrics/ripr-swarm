@@ -178,7 +178,7 @@ pub(super) fn calculate(snapshots: &[Snapshot]) -> Occupancy {
             continue;
         }
         // GitHub can attach scheduler timestamps to skipped, unallocated jobs.
-        if job.conclusion == "skipped" {
+        if job.conclusion.eq_ignore_ascii_case("skipped") {
             continue;
         }
         if job.conclusion.is_empty() {
@@ -241,12 +241,14 @@ mod tests {
     }
     #[test]
     fn skipped_work_does_not_fabricate_occupancy() {
-        let mut j = job(1);
-        j.conclusion = "skipped".into();
-        assert_eq!(
-            calculate(&[snapshot(vec![j])]).observed_runner_seconds,
-            Some(0)
-        );
+        for conclusion in ["skipped", "SKIPPED", "Skipped"] {
+            let mut j = job(1);
+            j.conclusion = conclusion.into();
+            let result = calculate(&[snapshot(vec![j])]);
+            assert_eq!(result.observed_runner_seconds, Some(0), "{conclusion}");
+            assert_eq!(result.counted_jobs, 0, "{conclusion}");
+            assert!(result.complete, "{conclusion}");
+        }
     }
     #[test]
     fn duplicate_is_counted_once_and_conflict_excluded() {
