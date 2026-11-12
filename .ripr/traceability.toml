@@ -11480,6 +11480,8 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::encoding_views_preserve_wire_bytes_and_digest",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::encoder_refuses_writer_and_serialization_failures",
   "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
   "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
   "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
@@ -11591,6 +11593,7 @@ fixtures = [
   "fixtures/cache-payload-tamper-recovery/corpus.json",
 ]
 code = [
+  "crates/ripr-contract/src/cache_integrity.rs",
   "crates/ripr/src/analysis/classify/targeted_calls.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
