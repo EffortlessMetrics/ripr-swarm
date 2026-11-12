@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/routed-rust.yml");
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
