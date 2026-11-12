@@ -883,36 +883,64 @@ fn macro_binding_ambiguity_sets(
     };
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
-    let scan = |names: &[&str]| {
+    let scan = |names: &[&str], known: &[&str], known_bound: &BTreeSet<String>| {
         macro_binding_sites_in_tree(
             source,
             packages,
-            names,
+            &ScanNames {
+                trusted: names,
+                known,
+                known_bound,
+            },
             allowed_empty,
             module_resolved,
             drop_in_verified,
             &binding_free,
         )
     };
-    let union = scan(trusted);
+    let union = scan(trusted, trusted, &BTreeSet::new());
+    // #14115: a per-name query reads the other trusted macros as the union
+    // scan does. A call to one is opaque only when that macro has a binding
+    // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
+    // would be named as a wrapper that may define `assert_eq`, a site the
+    // admission scan never reports.
+    let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
     let singletons = singleton_names
         .into_iter()
         .flatten()
         .filter(|name| macro_binding_scan_needed(source, &[name]))
-        .flat_map(|name| scan(&[name]))
+        .flat_map(|name| {
+            if trusted.contains(name) {
+                scan(&[name], trusted, &union_bound)
+            } else {
+                scan(&[name], &[name], &BTreeSet::new())
+            }
+        })
         .collect();
     (union, singletons)
+}
+
+/// The names one binding-site scan reads. `trusted` are the names whose
+/// sites are reported. `known` are the names whose calls are standard macros
+/// unless bound: `trusted` itself for the admission union, the whole union
+/// list for a per-name query, with `known_bound` the names the union found a
+/// binding site for in this file.
+struct ScanNames<'a> {
+    trusted: &'a [&'a str],
+    known: &'a [&'a str],
+    known_bound: &'a BTreeSet<String>,
 }
 
 fn macro_binding_sites_in_tree(
     source: &str,
     packages: &BTreeSet<String>,
-    trusted: &[&str],
+    names: &ScanNames<'_>,
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
     binding_free: &BindingFreeFileIndex,
 ) -> NamedMacroSites {
+    let (trusted, known, known_bound) = (names.trusted, names.known, names.known_bound);
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
@@ -1183,7 +1211,7 @@ fn macro_binding_sites_in_tree(
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && let Some(path) = call.path()
-            && !is_trusted_macro(&path.syntax().text().to_string(), trusted)
+            && !is_trusted_macro(&path.syntax().text().to_string(), known)
             && let Some(tree) = call.token_tree()
         {
             let tokens: Vec<_> = tree
@@ -1310,7 +1338,7 @@ fn macro_binding_sites_in_tree(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
+            if binding_free_local_wrapper(binding_free, &call, &tokens, known) {
                 continue;
             }
             // An accepted identity invocation over literal `fn` items binds
@@ -1566,7 +1594,11 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    let mut bound: BTreeSet<String> = ambiguous
+        .iter()
+        .map(|(name, _)| name.clone())
+        .chain(known_bound.iter().cloned())
+        .collect();
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1591,7 +1623,7 @@ fn macro_binding_sites_in_tree(
     loop {
         let before = bound.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, known) {
                 continue;
             }
             let tokens: Vec<_> = tree
@@ -1619,9 +1651,10 @@ fn macro_binding_sites_in_tree(
             // shows an expansion that cannot bind a name stays transparent.
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
-            if call.as_ref().is_some_and(|call| {
-                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
-            }) {
+            if call
+                .as_ref()
+                .is_some_and(|call| binding_free_local_wrapper(binding_free, call, &tokens, known))
+            {
                 continue;
             }
             for token in &tokens {

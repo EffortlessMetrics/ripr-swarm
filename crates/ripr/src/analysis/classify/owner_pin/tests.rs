@@ -68,6 +68,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 
 mod shared_macro_scan;
 mod shared_target_context;
+mod standard_wrapper_disclosure;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
