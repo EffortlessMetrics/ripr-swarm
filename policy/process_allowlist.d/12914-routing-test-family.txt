@@ -1,0 +1,1 @@
+tools/repo-policy/tests/routing_contracts.rs|Command::new|1|routing-native-inventory|#12914: test-only re-execution of this exact libtest binary with list and ignored-list flags verifies the preserved native case inventory; no product execution or network.

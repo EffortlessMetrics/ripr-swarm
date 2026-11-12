@@ -1,0 +1,177 @@
+[
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection",
+    "new_case": "ci_leaf_contract::actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection",
+    "new_case": "ci_leaf_contract::ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "effective_shell_precedence_matches_the_actual_workflow_declarations",
+    "new_case": "ci_leaf_contract::effective_shell_precedence_matches_the_actual_workflow_declarations"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs",
+    "new_case": "ci_leaf_contract::exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "feature_command_action_and_manual_denominators_are_unchanged",
+    "new_case": "ci_leaf_contract::feature_command_action_and_manual_denominators_are_unchanged"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "independent_event_labels_reject_request_guard_removal",
+    "new_case": "ci_leaf_contract::independent_event_labels_reject_request_guard_removal"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "literal_runtime_commands_propagate_native_failure",
+    "new_case": "ci_leaf_contract::literal_runtime_commands_propagate_native_failure"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "pr_owned_step_allowance_is_exact_and_job_scoped",
+    "new_case": "ci_leaf_contract::pr_owned_step_allowance_is_exact_and_job_scoped"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "release_steps_preserve_manual_semantics_and_ignore_labels_on_calls",
+    "new_case": "ci_leaf_contract::release_steps_preserve_manual_semantics_and_ignore_labels_on_calls"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "removing_the_declared_shell_reproduces_masked_pkgid_failures",
+    "new_case": "ci_leaf_contract::removing_the_declared_shell_reproduces_masked_pkgid_failures"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "selected_child_missing_failed_cancelled_or_unexpected_cannot_pass",
+    "new_case": "ci_leaf_contract::selected_child_missing_failed_cancelled_or_unexpected_cannot_pass"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history",
+    "new_case": "ci_leaf_contract::selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged",
+    "new_case": "ci_leaf_contract::shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "staged_and_explicit_activation_event_matrix",
+    "new_case": "ci_leaf_contract::staged_and_explicit_activation_event_matrix"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "unlocked_install_and_readiness_preserve_each_native_failure",
+    "new_case": "ci_leaf_contract::unlocked_install_and_readiness_preserve_each_native_failure"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "vscode_payload_requires_every_command_in_order",
+    "new_case": "ci_leaf_contract::vscode_payload_requires_every_command_in_order"
+  },
+  {
+    "old_binary": "ci_leaf_contract",
+    "old_case": "wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections",
+    "new_case": "ci_leaf_contract::wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed",
+    "new_case": "docs_only_routing::actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "actual_result_block_requires_successful_detection_and_selected_proof",
+    "new_case": "docs_only_routing::actual_result_block_requires_successful_detection_and_selected_proof"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies",
+    "new_case": "docs_only_routing::actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_keeps_empty_diff_and_both_rename_sides",
+    "new_case": "docs_only_routing::capability_selector_keeps_empty_diff_and_both_rename_sides"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_preserves_diff_and_selected_command_failures",
+    "new_case": "docs_only_routing::capability_selector_preserves_diff_and_selected_command_failures"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_rejects_unrelated_and_hostile_path_records",
+    "new_case": "docs_only_routing::capability_selector_rejects_unrelated_and_hostile_path_records"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_runs_both_checks_for_docs_only_add_edit_delete",
+    "new_case": "docs_only_routing::capability_selector_runs_both_checks_for_docs_only_add_edit_delete"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_selects_quoted_spec_paths",
+    "new_case": "docs_only_routing::capability_selector_selects_quoted_spec_paths"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "capability_selector_uses_nul_records_independent_of_quote_path",
+    "new_case": "docs_only_routing::capability_selector_uses_nul_records_independent_of_quote_path"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "event_commit_bindings_are_exact_and_history_is_available",
+    "new_case": "docs_only_routing::event_commit_bindings_are_exact_and_history_is_available"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselected_skip",
+    "new_case": "docs_only_routing::extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselected_skip"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases",
+    "new_case": "docs_only_routing::extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "extension_surface_selection_selects_the_surface_labels_and_every_doubt",
+    "new_case": "docs_only_routing::extension_surface_selection_selects_the_surface_labels_and_every_doubt"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "filename_records_deletions_and_both_sides_of_renames_are_classified",
+    "new_case": "docs_only_routing::filename_records_deletions_and_both_sides_of_renames_are_classified"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "invalid_identities_empty_diff_and_non_pr_events_use_full_proof",
+    "new_case": "docs_only_routing::invalid_identities_empty_diff_and_non_pr_events_use_full_proof"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed",
+    "new_case": "docs_only_routing::missing_disjoint_ambiguous_merge_bases_and_partial_diff_fail_closed"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "spec_registration_surfaces_classify_as_docs_only",
+    "new_case": "docs_only_routing::spec_registration_surfaces_classify_as_docs_only"
+  },
+  {
+    "old_binary": "docs_only_routing",
+    "old_case": "stale_event_base_and_synthetic_merge_checkout_use_pr_head",
+    "new_case": "docs_only_routing::stale_event_base_and_synthetic_merge_checkout_use_pr_head"
+  }
+]
