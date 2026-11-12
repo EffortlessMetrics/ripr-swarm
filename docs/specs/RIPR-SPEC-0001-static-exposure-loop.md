@@ -113,6 +113,14 @@ length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
 non-empty input. A set collect or an input where both ranges are empty is the
 known limit there.
 
+A removed line that is one bare literal (a number, `true`/`false`, or one
+quoted string or char, optionally followed by `,` or `;`) adds no removed-side
+`static_unknown` probe when its positional replacement in the same block
+already carries a modeled-family probe whose `before` is that literal
+(#14325). That probe judges the replaced value; a base-side catch-all would
+keep verification refused for code no test can reach. An equal literal
+deleted with no replacement keeps its own probe.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without

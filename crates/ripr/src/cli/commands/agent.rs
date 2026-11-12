@@ -4736,6 +4736,11 @@ pub(in crate::cli) fn before_phase_stdout(
         ));
     } else {
         let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        // #14320: name the exact native command for the suggested test, so
+        // the developer does not have to work out the cargo target filter.
+        if let Some(command) = &continuation.focused_test_command {
+            document.push_str(&format!("Run the new test: {command}\n"));
+        }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
@@ -7099,6 +7104,7 @@ mod before_phase_stdout_tests {
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
             typescript_test_cache_guidance: false,
+            focused_test_command: None,
         }
     }
 
@@ -7136,6 +7142,37 @@ mod before_phase_stdout_tests {
         // A scorable baseline adds no ambiguity member: the scorable stdout
         // bytes stay exactly as before (#7204).
         assert!(value["repair_attempt"].get("baseline_ambiguous").is_none());
+        Ok(())
+    }
+
+    /// #14320: the human summary names the exact native test command just
+    /// before the continue step; `--json` stays the unchanged continuation.
+    #[test]
+    fn human_stdout_names_the_focused_test_command_when_known() -> Result<(), String> {
+        let with_command = BeforePhaseAttemptContinuation {
+            focused_test_command: Some(
+                "cargo test --manifest-path Cargo.toml --test pricing t".to_string(),
+            ),
+            ..continuation()
+        };
+        let summary = before_phase_stdout(PACKET, "p", false, &with_command)?;
+        let run = summary
+            .find("Run the new test: cargo test --manifest-path Cargo.toml --test pricing t")
+            .ok_or_else(|| format!("missing run line:\n{summary}"))?;
+        let next = summary
+            .find("Next, after the test edit:")
+            .ok_or_else(|| format!("missing next line:\n{summary}"))?;
+        assert!(run < next, "{summary}");
+        let without = before_phase_stdout(PACKET, "p", false, &continuation())?;
+        assert!(!without.contains("Run the new test"), "{without}");
+        let json = before_phase_stdout(PACKET, "p", true, &with_command)?;
+        assert!(!json.contains("Run the new test"), "{json}");
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..with_command
+        };
+        let ambiguous = before_phase_stdout(PACKET, "p", false, &ambiguous)?;
+        assert!(!ambiguous.contains("Run the new test"), "{ambiguous}");
         Ok(())
     }
 
