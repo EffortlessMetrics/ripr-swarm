@@ -5900,4 +5900,370 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn failure_detail_bound_is_exact_character_counted_and_marks_truncation() {
+        let exact = "x".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(exact.clone()), exact);
+        let over = "x".repeat(MAX_FAILURE_DETAIL_CHARS + 1);
+        let truncated = bounded_detail(over);
+        assert_eq!(
+            truncated,
+            format!("{}…", "x".repeat(MAX_FAILURE_DETAIL_CHARS))
+        );
+        // The bound counts characters, not bytes: a multibyte detail at the
+        // character limit is whole, and one more character truncates cleanly.
+        let wide = "é".repeat(MAX_FAILURE_DETAIL_CHARS);
+        assert_eq!(bounded_detail(wide.clone()), wide);
+        let wide_over = bounded_detail("é".repeat(MAX_FAILURE_DETAIL_CHARS + 1));
+        assert_eq!(wide_over.chars().count(), MAX_FAILURE_DETAIL_CHARS + 1);
+        assert!(wide_over.ends_with('…'));
+        assert!(wide_over.starts_with(&wide));
+    }
+
+    #[test]
+    fn failure_recovery_bound_is_exact_byte_counted_and_never_truncated() {
+        let exact = "r".repeat(MAX_FAILURE_RECOVERY_BYTES);
+        assert_eq!(bounded_recovery(exact.clone()), exact);
+        assert_eq!(
+            bounded_recovery("r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1)),
+            RECOVERY_TOO_LONG
+        );
+        // Bytes, not characters: 2049 two-byte characters are 4098 bytes.
+        assert_eq!(
+            bounded_recovery("é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2 + 1)),
+            RECOVERY_TOO_LONG
+        );
+        let kept = "é".repeat(MAX_FAILURE_RECOVERY_BYTES / 2);
+        assert_eq!(bounded_recovery(kept.clone()), kept);
+        // The constructor applies both bounds and the value block carries the
+        // typed code, the bounded text and the (default empty) data object.
+        let failure = AttemptFailure::new(
+            CODE_ANALYSIS_FAILED,
+            "d".repeat(MAX_FAILURE_DETAIL_CHARS + 1),
+            "r".repeat(MAX_FAILURE_RECOVERY_BYTES + 1),
+        );
+        let value = failure.value();
+        assert_eq!(value["code"], CODE_ANALYSIS_FAILED);
+        assert_eq!(value["recovery"], RECOVERY_TOO_LONG);
+        assert_eq!(value["data"], json!({}));
+        assert!(
+            value["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.ends_with('…'))
+        );
+        let with_data = failure.with_data(json!({"current_snapshot_id": "snapshot:x"}));
+        assert_eq!(
+            with_data.value()["data"]["current_snapshot_id"],
+            "snapshot:x"
+        );
+    }
+
+    #[test]
+    fn available_root_serves_the_resolved_root_and_names_a_restart_otherwise() -> Result<(), String>
+    {
+        let root = PathBuf::from("resolved-root");
+        assert_eq!(available_root(Some(&root)), Ok(root.as_path()));
+        let Err(failure) = available_root(None) else {
+            return Err("an unresolved root must not yield a path".to_string());
+        };
+        assert_eq!(failure.code, CODE_WORKSPACE_UNAVAILABLE);
+        assert!(
+            failure
+                .recovery
+                .contains("restart the server with `ripr mcp --stdio --root <repository>`"),
+            "{}",
+            failure.recovery
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn document_byte_measure_counts_compact_utf8_bytes() -> Result<(), String> {
+        let value = json!({"a": "é"});
+        // `{"a":"é"}` is nine characters and ten bytes: the wire cap is bytes.
+        assert_eq!(document_bytes(&value).map_err(|f| f.detail)?, 10);
+        assert_eq!(
+            document_bytes(&value).map_err(|f| f.detail)?,
+            value.to_string().len()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_document_admits_exactly_the_wire_cap_and_refuses_one_byte_more() -> Result<(), String>
+    {
+        let cap = crate::mcp::MAX_RESPONSE_BYTES;
+        // `{"k":""}` is eight bytes of framing around the padded value.
+        let at_cap = json!({"k": "x".repeat(cap - 8)});
+        assert_eq!(document_bytes(&at_cap).map_err(|f| f.detail)?, cap);
+        assert_eq!(
+            bounded_document(at_cap.clone(), "unused").map_err(|f| f.detail)?,
+            at_cap
+        );
+        let over = json!({"k": "x".repeat(cap - 7)});
+        let Err(failure) = bounded_document(over, "narrow the read") else {
+            return Err("a document one byte over the cap was accepted".to_string());
+        };
+        assert_eq!(failure.code, CODE_RESULT_TOO_LARGE);
+        assert_eq!(failure.recovery, "narrow the read");
+        assert_eq!(
+            failure.detail,
+            format!(
+                "document is {} bytes; the MCP response bound is {cap}",
+                cap + 1
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn committed_withheld_remedy_routes_each_reason_to_its_own_recovery() {
+        let head = committed_withheld_remedy(COMMITTED_HEAD_MOVED_REASON);
+        assert!(head.starts_with("Run ripr_refresh again once the repository head settles"));
+        let unestablished = format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} (git failed)");
+        let list = committed_withheld_remedy(&unestablished);
+        assert!(list.contains("check that git can read the repository"));
+        let dirty = committed_withheld_remedy(
+            "uncommitted Rust source or test files (src/h.rs) are read by the seam inventory and the committed findings never saw them",
+        );
+        assert!(dirty.starts_with("Commit the uncommitted Rust source or test files"));
+        assert!(dirty.contains("source `worktree`"));
+        // The head reason is matched exactly, not as a prefix.
+        let extended = format!("{COMMITTED_HEAD_MOVED_REASON} again");
+        assert!(committed_withheld_remedy(&extended).starts_with("Commit the uncommitted"));
+        let distinct = [head, list, dirty];
+        assert_eq!(
+            distinct
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn card_withheld_details_embed_the_reason_and_their_own_recovery() {
+        let committed = committed_card_withheld_detail("reason-alpha");
+        assert!(committed.contains("analyzed committed content"));
+        assert!(committed.contains("(reason-alpha)"));
+        assert!(committed.contains("repair readiness and cards are withheld"));
+        assert!(committed.ends_with(committed_withheld_remedy("reason-alpha")));
+        let moved = committed_card_withheld_detail(COMMITTED_HEAD_MOVED_REASON);
+        assert!(moved.ends_with("Run ripr_refresh again once the repository head settles"));
+        let worktree = worktree_card_withheld_detail("reason-beta");
+        assert!(worktree.contains("saved tracked-worktree edits"));
+        assert!(worktree.contains("(reason-beta)"));
+        assert!(worktree.contains("repair readiness and cards are withheld"));
+        assert!(worktree.contains("run ripr_refresh without `source` for committed repair cards"));
+        assert!(!worktree.contains("analyzed committed content"));
+        assert!(!committed.contains("saved tracked-worktree edits"));
+    }
+
+    #[test]
+    fn refresh_retry_arguments_name_only_the_requested_source_and_base() -> Result<(), String> {
+        let parse = |text: String| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string());
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Committed))?,
+            json!({})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Committed))?,
+            json!({"base": "b"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(None, RefreshSource::Worktree))?,
+            json!({"source": "worktree"})
+        );
+        assert_eq!(
+            parse(refresh_retry_arguments(Some("b"), RefreshSource::Worktree))?,
+            json!({"source": "worktree", "base": "b"})
+        );
+        Ok(())
+    }
+
+    fn typed_failure(
+        error: crate::core_error::CoreError,
+        base: Option<&str>,
+        source: RefreshSource,
+    ) -> AttemptFailure {
+        let failure = check_failure(&error, Path::new("typed-root"), base, source);
+        assert_eq!(failure.code, CODE_ANALYSIS_FAILED);
+        assert!(
+            failure
+                .detail
+                .starts_with("shared check authority failed: "),
+            "{}",
+            failure.detail
+        );
+        failure
+    }
+
+    #[test]
+    fn committed_check_failures_route_by_typed_identity_and_requested_base() {
+        use crate::core_error::CoreError;
+        let committed = RefreshSource::Committed;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, committed);
+        assert!(unset.recovery.contains("(the detail names candidates)"));
+        assert!(unset.recovery.contains(r#"{"base": "<ref>"}"#));
+        assert!(!unset.recovery.contains("worktree"));
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            committed,
+        );
+        assert!(given.recovery.contains("a different `base`"));
+        assert!(given.recovery.contains("omit `base`"));
+        assert!(!given.recovery.contains("(the detail names candidates)"));
+        for base in [None, Some("b")] {
+            let unusable = typed_failure(
+                CoreError::repository_root_unusable("no repo"),
+                base,
+                committed,
+            );
+            assert!(
+                unusable
+                    .recovery
+                    .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+            );
+            assert!(unusable.recovery.contains("then retry ripr_refresh"));
+        }
+        // Any other typed identity keeps the generic, source-bound retry.
+        let other = typed_failure(
+            CoreError::config_invalid("bad config"),
+            Some("b"),
+            committed,
+        );
+        assert!(other.recovery.starts_with("retry ripr_refresh with "));
+        assert!(other.recovery.contains("run `"));
+        assert!(!other.recovery.contains("(the detail names candidates)"));
+        assert!(!other.recovery.contains("restart the server"));
+    }
+
+    #[test]
+    fn worktree_check_failures_carry_the_worktree_source_in_every_retry() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        let worktree = RefreshSource::Worktree;
+        let unset = typed_failure(CoreError::base_unresolvable("no base"), None, worktree);
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        let given = typed_failure(
+            CoreError::base_unresolvable("bad base"),
+            Some("gone"),
+            worktree,
+        );
+        assert!(
+            given
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"worktree"}"#)
+        );
+        // Omitting only `base` keeps the worktree source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"default branch: {"source":"worktree"}"#)
+        );
+        assert!(!given.recovery.contains("gone"));
+        let unusable = typed_failure(
+            CoreError::repository_root_unusable("no repo"),
+            Some("kept"),
+            worktree,
+        );
+        assert!(
+            unusable
+                .recovery
+                .starts_with("restart the server with `ripr mcp --stdio --root <repository>`")
+        );
+        assert!(
+            unusable
+                .recovery
+                .ends_with(r#"retry ripr_refresh with {"base":"kept","source":"worktree"}"#),
+            "{}",
+            unusable.recovery
+        );
+        let other = typed_failure(CoreError::config_invalid("bad config"), None, worktree);
+        assert!(other.recovery.contains("--worktree --json"));
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_reason_vocabulary_is_the_exact_wire_spelling() {
+        let overflow = [
+            (
+                DiagnosticOverflowReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                DiagnosticOverflowReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+            (
+                DiagnosticOverflowReason::InlineDetailLimit,
+                "inline_detail_limit",
+            ),
+        ];
+        for (reason, wire) in overflow {
+            assert_eq!(overflow_reason_as_str(reason), wire);
+        }
+        let omitted = [
+            (OmittedDiagnosticReason::ProfileFiltered, "profile_filtered"),
+            (
+                OmittedDiagnosticReason::DocumentItemLimit,
+                "document_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::WorkspaceItemLimit,
+                "workspace_item_limit",
+            ),
+            (
+                OmittedDiagnosticReason::SerializedByteLimit,
+                "serialized_byte_limit",
+            ),
+        ];
+        for (reason, wire) in omitted {
+            assert_eq!(omitted_reason_as_str(reason), wire);
+        }
+    }
+
+    #[test]
+    fn worktree_custody_fails_closed_on_missing_findings_or_unobserved_head() -> Result<(), String>
+    {
+        use crate::domain::LanguageId::Rust;
+        // Agreeing digests and an observed matching head establish a commitment.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        let commitment = worktree_custody(&out, &findings, &inventory)?;
+        assert!(!commitment.is_empty());
+        // No findings: nothing was bound, so no commitment is claimed.
+        let (mut none, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        none.findings.clear();
+        let Err(reason) = worktree_custody(&none, &findings, &inventory) else {
+            return Err("an empty refresh must not claim custody".to_string());
+        };
+        assert!(reason.contains("no findings"), "{reason}");
+        // Unlike the committed path, an unobserved producer head is a refusal.
+        let (out, findings, inventory) = refusal_inputs(Rust, None, b"a", b"a")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("an unobserved head must not establish custody".to_string());
+        };
+        assert!(reason.contains("or was not observed"), "{reason}");
+        // A moved head refuses even though the source digests agree.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-b"), b"a", b"a")?;
+        if worktree_custody(&out, &findings, &inventory).is_ok() {
+            return Err("a moved head must not establish custody".to_string());
+        }
+        // Moved source bytes refuse and name the owner's path.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let Err(reason) = worktree_custody(&out, &findings, &inventory) else {
+            return Err("moved source must not establish custody".to_string());
+        };
+        assert!(reason.contains("src/lib.rs"), "{reason}");
+        Ok(())
+    }
 }
