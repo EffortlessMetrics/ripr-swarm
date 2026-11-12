@@ -130,6 +130,10 @@ tests = [
   "crates/ripr/tests/removed_field_declaration.rs::removed_item_macro_empty_array_value_keeps_field_construction",
   "crates/ripr/tests/removed_field_declaration.rs::removed_item_macro_identifier_element_list_keeps_field_construction",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_wrapped_struct_field_is_a_declaration_but_a_construction_is_not",
+  "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_wrapped_fn_parameter_is_a_declaration_but_a_call_argument_is_not",
+  "crates/ripr/src/analysis/probes/classify/declarations.rs::macro_fn_parameter_reads_through_generic_bounds_and_item_containers",
+  "crates/ripr/src/analysis/probes/diff.rs::macro_body_fn_parameters_are_not_field_construction_probes",
+  "crates/ripr/src/analysis/probes/diff.rs::macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::enum_variant_fields_preserve_trivia_and_byte_identity",
   "crates/ripr/src/analysis/probes/classify/declarations.rs::enum_variant_declaration_authority_rejects_expressions_and_shared_lines",
   "crates/ripr/tests/removed_field_declaration.rs::removed_only_struct_field_is_static_unknown",
@@ -20970,6 +20974,10 @@ tests = [
   "xtask/src/precommit_v2.rs::tests::deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure",
   "xtask/src/precommit_v2.rs::tests::composition_with_deferred_instrument_failure_is_infrastructure_after_remaining_stages",
   "xtask/src/precommit_v2.rs::tests::composition_with_real_policy_failure_and_instrument_failure_is_not_infrastructure",
+  "xtask/src/precommit_v2.rs::tests::coverage_enumeration_is_skipped_only_for_an_unaffected_local_change_set",
+  "xtask/src/precommit_v2.rs::tests::composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip",
+  "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_never_calls_the_enumerator_and_retains_no_subject",
+  "xtask/src/policy/file_policy.rs::tests::skipped_enumeration_is_disclosed_as_not_enumerated_never_as_coverage",
 ]
 fixtures = []
 code = [
