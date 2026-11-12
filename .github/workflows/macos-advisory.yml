@@ -142,3 +142,4 @@ jobs:
           name: macos-advisory-logs
           path: ${{ runner.temp }}/macos-advisory/
           if-no-files-found: ignore
+          retention-days: 14

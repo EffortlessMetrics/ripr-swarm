@@ -346,6 +346,30 @@ schedule/merge queue), not the default PR path.
 - Prefer upload-on-failure with short retention (3-7 days) for diagnostics.
 - Keep receipt uploads minimal, especially for docs/control-plane-only paths.
 
+#### Diagnostic retrieval windows
+
+These four diagnostic copies have an explicit 14-day retrieval window (#14250).
+The two-week window is the retrieval budget for investigating daily and manually requested runs;
+it does not depend on a later scheduled run succeeding. Workflow maintainers
+own the corresponding diagnostics. Their upload conditions and evidence checks
+remain in their producing workflows.
+
+| Workflow / artifact | Consumer and retained evidence |
+| --- | --- |
+| `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
+| `macos-advisory.yml` / `macos-advisory-logs` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
+| `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
+
+No workflow downloads these four artifacts. Their retrieval window is not a
+retention rule for release or qualification evidence, failure reproducer inputs,
+or reports consumed by later runs. In particular, `dx-scoreboard` feeds the
+outcome page, `outcome-receipts` carries historical trend inputs, and Windows
+Advisory artifacts support retained native dependency receipts. Those artifacts
+keep their existing retention. A diagnostic needed for a longer-lived proof or
+incident must receive its own retention treatment before its copy expires;
+rerunning produces a new observation, not the original evidence.
+
 ### 6) Required validation for CI-only efficiency PRs
 
 Every CI-efficiency PR should show evidence appropriate to the edited surface:
