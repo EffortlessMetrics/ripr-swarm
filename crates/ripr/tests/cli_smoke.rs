@@ -5674,6 +5674,69 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     Ok(())
 }
 
+/// #14452: `check --format agent` on a refused run prints the agent
+/// format's refusal record on stdout instead of zero bytes an agent could
+/// read as a clean run, keeping config file content off stdout.
+#[test]
+fn check_agent_refusal_emits_the_refused_record() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-agent-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "agent",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-14452",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.first()
+        != Some(
+            &"#ripr agent static-advisory refused run_status=base_unresolvable repair_route=analysis/base-resolution",
+        )
+    {
+        return Err(format!(
+            "agent refusal must open with the typed header:\n{stdout}"
+        ));
+    }
+    if !lines.get(1).is_some_and(|line| {
+        line.starts_with("stop=") && line.contains("definitely-not-a-real-ref-9f2a-14452")
+    }) {
+        return Err(format!(
+            "agent refusal must state the cause on stop=:\n{stdout}"
+        ));
+    }
+    if lines.last()
+        != Some(&"verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable")
+    {
+        return Err(format!(
+            "agent refusal must close with verify=refused:\n{stdout}"
+        ));
+    }
+
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14452]\n")
+        .map_err(|err| err.to_string())?;
+    let output = run_ripr(&["check", "--format", "agent", "--root", &root_arg]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    if !stdout.starts_with("#ripr agent static-advisory refused run_status=config_invalid ") {
+        return Err(format!(
+            "config refusal must name config_invalid:\n{stdout}"
+        ));
+    }
+    if stdout.contains("canary_table_14452") {
+        return Err(format!(
+            "agent stdout must not echo ripr.toml content:\n{stdout}"
+        ));
+    }
+    if !String::from_utf8_lossy(&output.stderr).contains("canary_table_14452") {
+        return Err("the full config diagnostic stays on stderr".to_string());
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #7332: `check --format repo-exposure-json` on a refused run emits the
 /// format's own run_status/limitations envelope with zeroed metrics and an
 /// empty seams array.
@@ -6189,6 +6252,40 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
     {
         return Err(format!(
             "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
+        ));
+    }
+
+    // #14452: the agent record carries the same bounded retry on `next=`,
+    // and stderr keeps the requested echo and retry the human format gets.
+    let agent = run(&["--format", "agent", "--mode", "draft"])?;
+    let agent_stdout = String::from_utf8_lossy(&agent.stdout);
+    let agent_stderr = String::from_utf8_lossy(&agent.stderr);
+    let next = agent_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or_else(|| format!("agent timeout record must carry next=: {agent_stdout}"))?;
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--format agent",
+        "--timeout 2",
+    ] {
+        if !next.contains(needle) {
+            return Err(format!("agent next= must contain `{needle}`: {next}"));
+        }
+    }
+    if agent.status.code() != Some(2)
+        || !agent_stdout
+            .starts_with("#ripr agent static-advisory refused run_status=analysis_timeout ")
+        || !agent_stdout.contains("verify=refused|")
+        || !agent_stderr.contains("bounded retry: ripr check")
+        || !agent_stderr.contains("requested input:")
+    {
+        return Err(format!(
+            "agent timeout record and stderr recovery, exit 2:\n{agent_stdout}\n{agent_stderr}"
         ));
     }
     ignore_remove_dir_all(&root);

@@ -1094,6 +1094,11 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- A run refused before analysis (unresolvable base, invalid `ripr.toml`,
+  unusable root) replaces this whole record with the short refusal record
+  described under the `ripr check` refusal documents below, whose header reads
+  `#ripr agent static-advisory refused run_status=<identity> repair_route=<route>`
+  (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
   `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
@@ -1769,6 +1774,17 @@ format and each carrying the same typed identity and repair route:
   class), and an empty `seams` array.
 - `--format agent-seam-packets-json` renders the same refused envelope with
   `packets_total: 0`, an empty `packets` array, and no `next` block.
+- `--format agent` renders a three- or four-line refusal record (#14452):
+  `#ripr agent static-advisory refused run_status=<identity>
+  repair_route=<route>`, then `stop=<diagnostic on one line>`, then
+  `next=<command>` only when the diagnostic names a command that runs as-is
+  (the same rule as the JSON refusal's `next`: unconditional, no placeholder,
+  no flags or environment named outside it), then
+  `verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>`.
+  An `analysis_timeout` refusal puts its bounded retry (the JSON envelope's
+  `input_context.recovery.command`) on `next=` instead, and stderr keeps the
+  requested-input echo and retry the human format prints; a stdin diff has
+  no replayable retry, so `next=` is absent there.
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
