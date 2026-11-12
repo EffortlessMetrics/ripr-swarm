@@ -1240,9 +1240,9 @@ cannot be `off`.
 ### `[severity.seams]`
 
 Seam severities apply to LSP seam diagnostics, SARIF seam results, the seam
-`severity` field in `review-comments` output, and agent results: agent-brief seam selection and its `severity` field, `ripr agent
-start` and `ripr agent card`. Valid values are `off`, `info`, `warning`, and
-`note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
+`severity` field in `review-comments` output, and agent results: agent-brief
+seam selection and its `severity` field, `ripr agent start` and `ripr agent
+card`. Valid values are `off`, `info`, `warning`, and `note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
 left out of agent results with the omission reason named (agent start and agent
 card refuse it); `review-comments` output still lists it, labelled `off`.
 `ripr check` findings use `[severity.findings]`.
