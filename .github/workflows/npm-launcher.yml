@@ -1,27 +1,6 @@
 name: npm Launcher
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - "packaging/npm/launcher/**"
-      - "policy/distribution.toml"
-      - "policy/non-rust-allowlist.toml"
-      - "policy/dependency_allowlist.txt"
-      - "policy/ci-risk-packs.toml"
-      - "xtask/src/policy/distribution/**"
-      - ".github/workflows/npm-launcher.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "packaging/npm/launcher/**"
-      - "policy/distribution.toml"
-      - "policy/non-rust-allowlist.toml"
-      - "policy/dependency_allowlist.txt"
-      - "policy/ci-risk-packs.toml"
-      - "xtask/src/policy/distribution/**"
-      - ".github/workflows/npm-launcher.yml"
   workflow_dispatch:
 
 permissions:

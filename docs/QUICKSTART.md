@@ -20,7 +20,7 @@ archive (about a second on Linux). Pick your platform; the
 [release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
 archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
-hosted runners and records the timings (#5311).
+hosted runners when explicitly dispatched and records the timings (#5311).
 
 Linux and macOS (Bash or zsh):
 
@@ -392,6 +392,8 @@ has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
 under `src/` or `tests/`. Work from a Python repository on a branch with a
 change to inspect.
+To try it first on a small project with a known gap, use the
+[Python starter example](../examples/python-bulk-discount/README.md).
 
 First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
 `agent repair` write reports under `target/ripr`, and ignoring it keeps
@@ -438,6 +440,8 @@ root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
+To try it first on a small project with a known gap, use the
+[TypeScript starter example](../examples/typescript-discount-threshold/README.md).
 First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
 `agent repair` write reports under `target/ripr`, and ignoring it keeps
 `git add -A` from committing them. Then run:
@@ -693,6 +697,9 @@ It also appears when no repairable PR-local gap was selected; read the printed
 `Reason:` line to tell which.
 
 ## Troubleshooting
+
+The [troubleshooting guide](TROUBLESHOOTING.md) lists each situation by the
+line `ripr` prints. The common ones:
 
 | Symptom | Next step |
 | --- | --- |

@@ -505,6 +505,25 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && output
+                    .analyzed_revisions
+                    .as_ref()
+                    .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+            {
+                // #14265: the base is ahead of HEAD and HEAD has no commit of
+                // its own, so committing "a change" is not the missing step
+                // the generic line implies: the reader is on a branch that is
+                // behind or already merged. Name that, then the two real moves.
+                if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or to check the last commit run `ripr check --base HEAD~1`\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or commit a change and re-run\n"
+                    ));
+                }
+            } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
@@ -778,7 +797,7 @@ pub(crate) fn render_human_triage(
         } else {
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
-        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        let listed = hidden_window(&triage.omitted);
         // #7643: when the omitted set mixes currentness categories, the
         // count line's clauses cannot be connected to individual bullets;
         // append each finding's category so the reader can tell an
@@ -797,7 +816,7 @@ pub(crate) fn render_human_triage(
         // collapse to one row with a repeat count so a diff with many
         // equivalent base-side findings stays scannable.
         let mut previous: Option<(String, usize)> = None;
-        for finding in triage.omitted.iter().take(listed) {
+        for finding in &listed {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
@@ -859,12 +878,7 @@ pub(crate) fn render_human_triage(
         // rerun to read them.
         let mut listed_classes: Vec<&ExposureClass> = Vec::new();
         for class in ExposureClass::ALL.iter() {
-            if triage
-                .omitted
-                .iter()
-                .take(listed)
-                .any(|finding| finding.class == *class)
-            {
+            if listed.iter().any(|finding| finding.class == *class) {
                 listed_classes.push(class);
             }
         }
@@ -878,10 +892,14 @@ pub(crate) fn render_human_triage(
                 ));
             }
         }
-        let remaining = triage.omitted.len() - listed;
+        let remaining = triage.omitted.len() - listed.len();
         if remaining > 0 {
+            // The window above holds the highest-priority omitted findings,
+            // so the remainder names its own class mix: the reader can see
+            // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                unlisted_class_mix(&triage.omitted)
             ));
         }
     }
@@ -894,6 +912,56 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The omitted findings the `Hidden:` list names. Within the window every
+/// omitted finding is listed in the report's file and line order. Beyond it,
+/// the window keeps the findings the check-JSON findings budget would keep
+/// (candidate-current gap classes first, `exposed` and non-candidate evidence
+/// last), still printed in file and line order, so a large diff does not spend
+/// the list on the alphabetically first files while later gaps go unnamed.
+fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    hidden_window_indices(omitted)
+        .into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
+    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
+        return (0..omitted.len()).collect();
+    }
+    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// Class counts of the omitted findings outside the listed window, in the
+/// plain vocabulary and class order of the rows above. Membership is by
+/// position in `omitted`, so findings that share an id are still counted.
+fn unlisted_class_mix(omitted: &[&Finding]) -> String {
+    let mut is_listed = vec![false; omitted.len()];
+    for index in hidden_window_indices(omitted) {
+        if let Some(slot) = is_listed.get_mut(index) {
+            *slot = true;
+        }
+    }
+    ExposureClass::ALL
+        .iter()
+        .filter_map(|class| {
+            let count = omitted
+                .iter()
+                .zip(&is_listed)
+                .filter(|(finding, listed)| !**listed && finding.class == *class)
+                .count();
+            (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -913,11 +981,8 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    triage
-        .omitted
-        .iter()
-        .take(HIDDEN_FINDINGS_LISTED)
-        .copied()
+    hidden_window(&triage.omitted)
+        .into_iter()
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -960,9 +1025,19 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::OwnerGeneric.reason() => {
             "call the function with concrete types for its type parameters and an input on each side of the changed behavior, and assert the exact result each time"
         }
-        ProbeFamily::Predicate => {
-            "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
-        }
+        // #14349: the input pair depends on the changed predicate's shape.
+        // Only an ordering comparison has a limit to sit below, on and above.
+        ProbeFamily::Predicate => match predicate_test_shape(&finding.probe.expression) {
+            PredicateTestShape::Ordering => {
+                "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
+            }
+            PredicateTestShape::Equality => {
+                "call the function once with inputs whose compared values are equal and once with inputs whose compared values differ, and assert the exact result each time"
+            }
+            PredicateTestShape::Condition => {
+                "call the function once with an input that makes the changed condition true and once with one that makes it false, and assert the exact result each time"
+            }
+        },
         ProbeFamily::FieldConstruction => {
             "call the function and assert the exact value of the changed field on what it returns"
         }
@@ -982,6 +1057,91 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // that no route exists beside it.
         format!("Write this test by hand: {shape}; then rerun `ripr check`.\n")
     }
+}
+
+/// The kind of input pair that tells a changed predicate's two outcomes apart.
+#[derive(Debug, PartialEq, Eq)]
+enum PredicateTestShape {
+    /// `<`, `<=`, `>`, `>=`: a limit with a just-below, on and just-above side.
+    Ordering,
+    /// `==` / `!=` with no ordering operator: equal versus different values.
+    Equality,
+    /// No comparison operator: the condition's true and false sides.
+    Condition,
+}
+
+/// Classify the changed predicate text for the hand-written step. Fails
+/// toward `Ordering` (the long-standing wording) whenever an angle bracket
+/// remains after removing arrows and shifts, since a generic argument or an
+/// unrecognised form must not lose the boundary advice.
+fn predicate_test_shape(expression: &str) -> PredicateTestShape {
+    let stripped = without_quoted_text(expression)
+        .replace("=>", " ")
+        .replace("->", " ")
+        .replace("<<", " ")
+        .replace(">>", " ");
+    if stripped.contains('<') || stripped.contains('>') {
+        PredicateTestShape::Ordering
+    } else if stripped.contains("==") || stripped.contains("!=") {
+        PredicateTestShape::Equality
+    } else {
+        PredicateTestShape::Condition
+    }
+}
+
+/// `text` with the contents of `"…"` and `` `…` `` literals blanked, so an
+/// operator character inside a string (`s == "<none>"`) is not read as the
+/// predicate's operator. Backslash escapes are skipped; an unterminated
+/// literal blanks to the end, which only removes operators and so fails
+/// toward the condition wording only when no operator sits outside it.
+fn without_quoted_text(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while let Some(&character) = characters.get(index) {
+        index += 1;
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                    out.push(character);
+                    continue;
+                }
+                out.push(' ');
+            }
+            None => {
+                // A Rust or Python character literal (`'"'`, `'\''`, `'<'`)
+                // is blanked whole, so its quote never opens a string. A
+                // lifetime (`'a`) has no closing quote within reach.
+                if character == '\'' {
+                    let rest = characters.get(index..).unwrap_or_default();
+                    let len = match rest {
+                        ['\\', _, '\'', ..] => Some(3),
+                        [_, '\'', ..] => Some(2),
+                        _ => None,
+                    };
+                    if let Some(len) = len {
+                        out.push('\'');
+                        out.extend(std::iter::repeat_n(' ', len - 1));
+                        out.push('\'');
+                        index += len;
+                        continue;
+                    }
+                }
+                if character == '"' || character == '`' {
+                    quote = Some(character);
+                }
+                out.push(character);
+            }
+        }
+    }
+    out
 }
 
 /// The repair view already counts the finding's seam as gripped or exposed.
@@ -2463,6 +2623,63 @@ mod tests {
         );
     }
 
+    /// #14349: the hand-written predicate step names inputs that fit the
+    /// changed predicate: a limit for an ordering comparison, equal and
+    /// different values for an equality, true and false for a plain condition.
+    #[test]
+    fn hand_written_predicate_step_matches_the_predicate_shape() {
+        let mut finding = test_finding("predicate-shape");
+        finding.probe.family = ProbeFamily::Predicate;
+        let refusal = TestStubRefusal::ObserverRequired.reason();
+        for (expression, expected, absent) in [
+            (
+                "if len(text) <= max_length:",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "amount > limit",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "self.key.get() == other.key.get()",
+                "compared values are equal",
+                "just below",
+            ),
+            ("left != right", "compared values differ", "just below"),
+            (
+                "if enabled && ready",
+                "condition true and once with one that makes it false",
+                "just below",
+            ),
+            ("Some(x) => x.is_empty()", "condition true", "just below"),
+            ("flags >> 2 == 0", "compared values are equal", "just below"),
+            ("x === limit", "compared values are equal", "just below"),
+            (
+                "if s == \"<none>\":",
+                "compared values are equal",
+                "just below",
+            ),
+            ("tag !== `<br>`", "compared values differ", "just below"),
+            ("if '\"' == ch", "compared values are equal", "just below"),
+            ("c != '<'", "compared values differ", "just below"),
+            // A mixed predicate keeps the limit wording.
+            ("a == b && c < d", "just below", "compared values"),
+            // A generic argument keeps the boundary wording (fail toward it).
+            ("v.is::<u8>() == true", "just below", "compared values"),
+        ] {
+            finding.probe.expression = expression.to_string();
+            let step = hand_written_test_step(&finding, refusal, true);
+            assert!(step.contains(expected), "{expression}: {step}");
+            assert!(!step.contains(absent), "{expression}: {step}");
+            assert!(
+                step.contains("exact result each time"),
+                "{expression}: {step}"
+            );
+        }
+    }
+
     /// #10710 review: render the selected finding with a stub decision and a
     /// repair refusal, and return the screen.
     fn render_with_refusal(
@@ -2605,10 +2822,31 @@ mod tests {
                 .map(|finding| finding.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert!(
-            candidates(&rows).is_empty(),
-            "take the displayed window before eligibility filtering"
+        // #14233: the one candidate-current row sorts last in report order,
+        // and the window keeps it ahead of the non-candidate rows.
+        assert_eq!(
+            candidates(&rows),
+            vec!["hidden:20"],
+            "the window keeps the candidate-current row"
         );
+        // Eligibility is still decided inside the displayed window: with 21
+        // candidate-current rows, the one that ranks last (no recommended next
+        // step) falls outside the window and offers no stub route.
+        let mut all_current = rows.clone();
+        for (index, row) in all_current.iter_mut().enumerate() {
+            row.source_currentness = SourceCurrentness::CandidateCurrent;
+            if index != 7 {
+                row.recommended_next_step = Some("inspect".to_string());
+            }
+        }
+        let windowed = candidates(&all_current);
+        assert_eq!(windowed.len(), 20, "{windowed:?}");
+        assert!(
+            !windowed.contains(&"hidden:7".to_string()),
+            "take the displayed window before eligibility filtering: {windowed:?}"
+        );
+        rows[20].source_currentness = SourceCurrentness::BaseDeleted;
+        assert!(candidates(&rows).is_empty());
         rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
         assert_eq!(candidates(&rows), vec!["hidden:0"]);
         rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
