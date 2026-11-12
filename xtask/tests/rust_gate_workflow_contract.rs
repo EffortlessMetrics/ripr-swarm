@@ -187,7 +187,8 @@ fn contract_violations(workflow: &str) -> Vec<String> {
 fn policy_owner_violations(source: &str, collect_all: &str) -> Vec<String> {
     let mut findings = Vec::new();
     let policy = source
-        .split_once("fn precommit_policy(collect_all: bool) -> Result<(), String> {")
+        .split_once("fn precommit_policy(")
+        .and_then(|(_, tail)| tail.split_once(") -> Result<(), String> {"))
         .and_then(|(_, tail)| tail.split_once("\n/// Prefix of a `precommit` failure"))
         .map(|(body, _)| body)
         .unwrap_or_default();
@@ -462,6 +463,34 @@ fn rust_gate_workflow_rejects_repeated_collected_policy_commands() {
                 .contains(&format!("{command}: already executed by ci-policy"))
         );
     }
+}
+
+#[test]
+fn rust_gate_policy_owner_accepts_compatible_signature_changes() -> Result<(), String> {
+    let (_, tail) = POLICY_SOURCE
+        .split_once("fn precommit_policy(")
+        .ok_or("precommit_policy function is missing")?;
+    let (parameters, _) = tail
+        .split_once(") -> Result<(), String> {")
+        .ok_or("precommit_policy body is missing")?;
+    let original = format!("fn precommit_policy({parameters}) -> Result<(), String> {{");
+    assert_eq!(POLICY_SOURCE.matches(&original).count(), 1);
+    for signature in [
+        "fn precommit_policy(collect_all: bool) -> Result<(), String> {",
+        "fn precommit_policy(\n    collect_all: bool,\n    coverage: policy::CoverageEnumeration,\n) -> Result<(), String> {",
+    ] {
+        let changed = POLICY_SOURCE.replacen(&original, signature, 1);
+        assert!(policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+        for replacement in [
+            "let _ = policy::check_policy_all();",
+            "Ok::<(), String>(())?;",
+        ] {
+            let omitted = changed.replacen("policy::check_policy_all()?;", replacement, 1);
+            assert_ne!(omitted, changed);
+            assert!(!policy_owner_violations(&omitted, COLLECT_ALL_SOURCE).is_empty());
+        }
+    }
+    Ok(())
 }
 
 #[test]

@@ -6,6 +6,7 @@ tests = [
   "xtask/tests/policy_all.rs::ci_policy_propagates_each_collected_process_and_network_failure",
   "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_rejects_repeated_collected_policy_commands",
   "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_keeps_collected_policy_owners_required",
+  "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_policy_owner_accepts_compatible_signature_changes",
   "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes",
   "xtask/src/product_gate_plan.rs::tests::collected_policy_predicates_require_their_workflow_owner",
 ]
