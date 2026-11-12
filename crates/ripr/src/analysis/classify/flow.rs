@@ -645,8 +645,24 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     if compact(&line[..arrow]) != compact(head) {
         return None;
     }
-    let result = line[arrow + 2..].trim().trim_end_matches(',').trim_end();
-    let masked_result = masked[arrow + 2..].trim().trim_end_matches(',').trim_end();
+    // A trailing line comment (`Size::Medium => 450, // new tier`) is cut
+    // when the `//` is outside every string: an even number of plain
+    // quotes before it, and no escape or char literal that would make the
+    // count unreliable.
+    let tail = &line[arrow + 2..];
+    let quotes_reliable = !tail.contains(['\\', '\'']);
+    let tail = tail
+        .match_indices("//")
+        .map(|(at, _)| at)
+        .find(|&at| tail[..at].matches('"').count() % 2 == 0)
+        .filter(|_| quotes_reliable)
+        .map_or(tail, |at| &tail[..at]);
+    let end = arrow + 2 + tail.len();
+    let result = tail.trim().trim_end_matches(',').trim_end();
+    let masked_result = masked[arrow + 2..end]
+        .trim()
+        .trim_end_matches(',')
+        .trim_end();
     let balanced = |open: char, close: char| {
         let mut depth = 0_i32;
         for ch in masked_result.chars() {
@@ -663,7 +679,9 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     };
     let plain = !result.is_empty()
         && result.chars().count() <= ARM_RESULT_BUDGET
-        && !result.contains("//")
+        // After the cut, a `//` left in a reliably quoted result is inside
+        // a string; otherwise it may be a comment.
+        && (quotes_reliable || !result.contains("//"))
         && !result.contains("/*")
         && !result.contains("Err(")
         && !masked_result.contains(['{', '}'])
@@ -3301,8 +3319,8 @@ mod tests {
             sinks[0].text.clone()
         };
         assert_eq!(sink_text("Size::Small =>", 3), "300");
-        // A trailing comment is not part of the result: keep the head.
-        assert_eq!(sink_text("Size::Medium =>", 4), "Size::Medium =>");
+        // A trailing line comment is not part of the result.
+        assert_eq!(sink_text("Size::Medium =>", 4), "450");
         // A block body, a body on the next line and a head that is not this
         // line's head keep the head too; a `=>` inside a string is not an arm.
         assert_eq!(sink_text("Size::Large =>", 5), "Size::Large =>");
@@ -3314,6 +3332,48 @@ mod tests {
         assert_eq!(sink_text("Size::Bad =>", 9), "Size::Bad =>");
         // A probe that already carries its body is unchanged.
         assert_eq!(sink_text("Size::Small => 301,", 3), "301");
+        // Two arms on one line are not one arm's result.
+        let mut packed = function(
+            "pub fn price(size: Size) -> u32 {\n    match size { Size::Small => 1, Size::Large => 2 }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 2),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Small =>"
+        );
+        // An owner that starts deep in its file reads the probe's own line;
+        // a `//` inside a string is kept, and multibyte text slices cleanly.
+        packed = function(
+            "pub fn label(size: Size) -> &'static str {\n    match size {\n        Size::Small => \"http://s/é\", // ü\n        Size::Large => \"ü\",\n    }\n}\n",
+        );
+        packed.start_line = 40;
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Small =>", 42),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"http://s/é\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 43),
+                Some(&packed)
+            )[0]
+            .text,
+            "\"ü\""
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "Size::Large =>", 3),
+                Some(&packed)
+            )[0]
+            .text,
+            "Size::Large =>"
+        );
         // Without an owner there is no source to read.
         let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
         assert_eq!(sinks[0].text, "Size::Small =>");
