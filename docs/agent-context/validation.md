@@ -116,7 +116,7 @@ PR-native continuation record's `Validation:` line (see
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
-| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). Hosted `ci-policy` and `cargo xtask check-file-policy` always list. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
 | Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |

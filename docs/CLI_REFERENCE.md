@@ -1688,19 +1688,20 @@ Environment variables:
                                           non-consumable limited artifact.
                                           Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
-                                          before check stops with
-                                          diff_scope_oversized. With --json, stdout
-                                          carries a non-consumable limited artifact.
-                                          Default: 2000.
+                                          analyzed. A larger diff degrades into a
+                                          limited_partial_scope partition; check
+                                          stops with diff_scope_oversized only when
+                                          no changed file fits within it. With
+                                          --json, stdout carries a non-consumable
+                                          limited artifact. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
-                                          lines before check stops with
-                                          diff_scope_oversized (the Rust guard's
-                                          memory bound for the Python adapter).
-                                          Default: 2000.
+                                          lines analyzed (the Rust guard's memory
+                                          bound for the Python adapter); degrades
+                                          like the Rust limit. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
                                           diff lines (the routed .ts/.tsx/.mts/
-                                          .cts/.js/.jsx/.mjs/.cjs family) before
-                                          check stops with diff_scope_oversized.
+                                          .cts/.js/.jsx/.mjs/.cjs family)
+                                          analyzed; degrades like the Rust limit.
                                           Default: 2000.
   RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
                                           index before check stops with
@@ -2221,6 +2222,9 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -2530,14 +2534,15 @@ Check options:
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
-  --mode                              Same modes as gate evaluate, but defaults to acknowledgeable.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
   --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
   --acknowledgements, --baseline, --out, --out-md
                                       As for gate evaluate.
-  gate check produces its own guidance, so it does not accept --pr-guidance,
-  --gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
-  --agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
-  run review-comments and gate evaluate yourself to supply them.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
 
 Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.

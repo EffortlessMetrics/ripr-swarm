@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input
 
-Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -27,24 +27,36 @@ Change type
   gap id (for scripts): gap:rust:util/src/stream/take.rs:impl Display for Take::fmt:predicate_boundary:predicate:self.remaining==4
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  infection_unknown (warning, confidence 0.43)
 
 Evidence
-  - reach weak: No test is seen calling fmt; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
-  - infection weak: Related tests contain the changed boundary literal [4] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected
+  - reach weak: No test is seen calling fmt; a trait method can run through formatting, operators or generic code
+  - infection unknown: No tests were found, so activation/infection cannot be estimated
   - propagation yes: Changed behavior appears to influence returned value: write!(f, "few")
-  - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
   - local flow reaches returned value: write!(f, "few") (line 10)
-  - related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);
-  - source assertion argument value 4 at line 8
 
 Weakness
   - No detected boundary input for the changed predicate
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+  - No tests were found, so activation/infection cannot be estimated
+
+Stop reasons:
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 
 Next step
-  The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none
+  Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast probe:util_src_stream_take.rs:predicate:b1141696
   ripr context --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast --at probe:util_src_stream_take.rs:predicate:b1141696
+
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
+  0 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

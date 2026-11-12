@@ -58,6 +58,8 @@ Current how-to docs:
 - [Integrations](INTEGRATIONS.md)
 - [Install channels](INSTALL_CHANNELS.md)
 - [Windows](WINDOWS.md)
+- [Troubleshooting](TROUBLESHOOTING.md) - match the line on your screen to
+  the cause when ripr reports nothing, stops, or reports something unexpected
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
