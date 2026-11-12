@@ -856,6 +856,65 @@ pub(crate) fn is_item_header(text: &str) -> bool {
     })
 }
 
+/// A one-line `type` item, whether a trait's associated type (`type Eq: CmpEq;`,
+/// `type Item;`), an impl's binding (`type Eq = __m128i;`) or a type alias
+/// (`pub type Map<K> = BTreeMap<K, u8>;`), declares a type and runs nothing
+/// (#14429). Its `name: Bound` only looks like a constructed field `name:
+/// value`, so it reads as one `static_unknown`, like an item header, and a
+/// changed type stays visible. The line must hold the whole item, ending in
+/// `;`. A type that holds an expression (a block, a macro, or any array
+/// length) keeps its ordinary families.
+pub(crate) fn is_type_item_declaration(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let text = masked.trim();
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("default")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    let Some(rest) = declared
+        .strip_prefix("type")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = rest.get(..name_len).unwrap_or_default();
+    let starts_like_identifier = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    // A `;` outside brackets joins a second statement (`type A = u8; f();`);
+    // one inside an array type (`[u8; 4]`) is part of the type.
+    let mut depth = 0usize;
+    let second_statement = body.chars().any(|c| match c {
+        '[' | '(' | '<' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' | '>' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    // An array length is a const expression evaluated in the type
+    // (`[T; 4]`), so the item keeps its ordinary families, as the inline
+    // bound owner rule requires.
+    let has_array_length = array_length_texts(body).next().is_some();
+    starts_like_identifier
+        && !second_statement
+        && !has_array_length
+        && !generics_hold_expression(body)
+}
+
 /// A const-generic default (`<const N: usize = { capacity() }>`) or an array
 /// length in a generic default is an expression that runs at compile time and
 /// can call code, so a header carrying one keeps its call probe instead of
@@ -1126,6 +1185,47 @@ mod tests {
         // `pub use` keeps its pre-existing ignore; the new helper must not
         // be what claims it.
         assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// #14429: a one-line `type` item declares a type; its bound only looks
+    /// like a constructed field. Expressions in the type and trailing code
+    /// keep their ordinary families.
+    #[test]
+    fn type_items_read_as_declarations_not_fields() {
+        use crate::analysis::probes::lexical::classify_changed_line;
+        for declaration in [
+            "type Eq: CmpEq;",
+            "type Mask: MoveMask;",
+            "type Item;",
+            "type Eq = __m128i;",
+            "pub type Map<K> = BTreeMap<K, u8>;",
+            "default type Output = Self;",
+            "type Error: std::error::Error + Send + Sync + 'static;",
+            "type F = fn(u8) -> u8;",
+        ] {
+            assert!(is_type_item_declaration(declaration), "`{declaration}`");
+            assert_eq!(
+                classify_changed_line(declaration),
+                vec![ProbeFamily::StaticUnknown],
+                "`{declaration}`"
+            );
+        }
+        for kept in [
+            "type Buf = [u8; cap()];",
+            "pub(crate) type Buf = [u8; 4];",
+            "type Packet<T: Clone> = [T; 4];",
+            "type A = u8; f();",
+            "type Out = { 1 };",
+            "type M = mac!(u8);",
+            "type Eq: CmpEq",
+            "type = u8;",
+            "type 1x = u8;",
+            "typed: u8,",
+            "type_: Kind,",
+            "let ty = Type::new();",
+        ] {
+            assert!(!is_type_item_declaration(kept), "`{kept}`");
+        }
     }
 
     /// Producer level: an added `pub mod new;` yields no probe, while a
