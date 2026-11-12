@@ -38,7 +38,15 @@ fn native_listing(arguments: &[&str]) -> Result<BTreeSet<String>, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("native inventory failed: {:?}", output.status));
+        let tail = |bytes: &[u8]| {
+            String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(2048)..]).into_owned()
+        };
+        return Err(format!(
+            "native inventory failed: {:?}; stdout tail: {}; stderr tail: {}",
+            output.status,
+            tail(&output.stdout),
+            tail(&output.stderr)
+        ));
     }
     let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
     let mut names = BTreeSet::new();
