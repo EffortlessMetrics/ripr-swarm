@@ -1006,6 +1006,11 @@ fn check_inner(
             // `help_request` already consumed `--all` alongside `--help`; here
             // it has no `--help` to widen, so it is still an unknown argument.
             "--all" => return Err(unknown_argument("check", "--all")),
+            // #14307: a bare argument is a `--path` scope, like `git diff
+            // PATH`; it shares --path's matching and fail-closed refusal.
+            path if !path.is_empty() && !path.starts_with('-') => {
+                scope_include.push(path.to_string());
+            }
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;

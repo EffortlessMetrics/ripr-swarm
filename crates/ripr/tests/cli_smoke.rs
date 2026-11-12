@@ -4339,6 +4339,8 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     for flags in [
         vec!["--exclude", "src/big.rs"],
         vec!["--path", "src/lib.rs"],
+        // #14307: a bare path argument is the same scope as --path.
+        vec!["src/lib.rs"],
     ] {
         let output = run(&flags);
         assert_success(&output);
@@ -4417,6 +4419,15 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             && message.contains("--path nowhere/**")
             && message.contains("src/big.rs"),
         "{message}"
+    );
+
+    // The bare path spelling fails closed the same way (#14307).
+    let bare_nothing = run(&["nowhere/**"]);
+    assert_eq!(bare_nothing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bare_nothing.stderr).contains("scope_filter_matched_nothing"),
+        "{}",
+        String::from_utf8_lossy(&bare_nothing.stderr)
     );
 
     // A scope that keeps only the oversized file leaves nothing that fits,
