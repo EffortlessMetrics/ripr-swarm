@@ -401,8 +401,12 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
   and its next step. Two ranking reads (#14454) order rows, never admit or
   drop them: the agent `tK=` row (`strongest_test`) and the fix site
-  (`DiagnosticWitness::best_related_test`) place a row whose miss is
-  `assertion_not_observing` after every row that can observe the change.
+  (`DiagnosticWitness::best_related_test`) demote a row whose miss is
+  `assertion_not_observing`. The fix site places it after every row that can
+  observe the change. The `tK=` row keeps relation confidence as its leading
+  key (#13603), so it places the row after every observing row of the same
+  confidence tier; a non-observing direct caller can still outrank an
+  observing row linked only by file location.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or

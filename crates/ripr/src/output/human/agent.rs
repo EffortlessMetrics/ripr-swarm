@@ -921,8 +921,9 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
             (
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
-                // #14454: a row whose assertion cannot observe the change is
-                // never the test to edit while another row can.
+                // #14454: within a confidence tier, a row whose assertion
+                // cannot observe the change is never the test to edit while
+                // another row can.
                 test.miss == Some(RelatedTestMiss::AssertionNotObserving),
                 strength_rank(&test.oracle_strength),
             )
