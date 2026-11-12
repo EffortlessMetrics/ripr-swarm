@@ -245,6 +245,14 @@ pub(in crate::app) fn selector_matches_file_line(
     if selector_line != stored_line.to_string() {
         return false;
     }
+    locator_paths_match(stored_file, selector_file)
+}
+
+/// The path half of [`selector_matches_file_line`]: whether a typed locator
+/// path names a stored finding file, under the same normalization and
+/// either-direction suffix rule. Shared so a miss diagnosis (#14077) reads
+/// "same file" exactly as selection does.
+pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str) -> bool {
     let stored = normalize_locator_path(stored_file);
     let wanted = normalize_locator_path(selector_file);
     if wanted.is_empty() || stored.is_empty() {
@@ -259,7 +267,7 @@ pub(in crate::app) fn selector_matches_file_line(
 /// `./`, and trim a trailing `/`. Lets the path a user copies from `check`
 /// output (or types naturally) match the stored form regardless of platform
 /// separators or the leading-current-directory prefix.
-fn normalize_locator_path(path: &str) -> String {
+pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
     let forward = path.replace('\\', "/");
     let trimmed = forward.strip_prefix("./").unwrap_or(forward.as_str());
     trimmed.trim_end_matches('/').to_string()

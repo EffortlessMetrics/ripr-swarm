@@ -7238,6 +7238,41 @@ mod source_currentness_tests {
         );
     }
 
+    /// #13983 remainder: the same holds behind a generic list with `=`/`->`
+    /// bounds, in a macro-wrapped `impl`/`trait` body and in a nested item
+    /// macro; a call argument in a method body there keeps its probe.
+    #[test]
+    fn macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "feature! {\n    pub fn assoc<I: Iterator<Item = u8>, F: Fn() -> u8>(\n        it: I,\n    ) -> usize {\n        it.count()\n    }\n    impl Foo {\n        pub fn method(\n            n: u32,\n        ) -> u32 {\n            make(\n                n: 1,\n            )\n        }\n    }\n    pub trait Tr {\n        fn req(\n            m: u32,\n        ) -> u32;\n    }\n    feature! {\n        pub fn nested(\n            z: u32,\n        ) -> u32 {\n            z\n        }\n    }\n}\n";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: source
+                .lines()
+                .enumerate()
+                .map(|(index, text)| ChangedLine {
+                    line: index + 1,
+                    new_side_line: index + 1,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let fields = probes
+            .iter()
+            .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        // Lines 3, 9, 18 and 23 are parameters; line 12 is a call argument.
+        assert_eq!(fields, vec![12], "all probes: {probes:?}");
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 5),
+            "fn body in the macro keeps a probe: {probes:?}"
+        );
+    }
+
     /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
     /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
     /// `static_unknown` probe per region and diff side (a replaced line pairs its

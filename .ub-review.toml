@@ -12,8 +12,9 @@ head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
-# The pinned action otherwise posts only on opened/Ready. Keep repaired-head
-# and reopened review publication when Ready no longer starts advisory work.
+# Retain publication for the original admitted passes. The workflow's
+# full-ci label is an explicit operator request and selects the action's manual
+# pass, which bypasses this list without relabeling the event as synchronize.
 post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to

@@ -734,7 +734,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
 /// (#5346, #12641) — cached boundary verdicts from before the widening are not
 /// reused.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
+/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
+/// is no longer read as an opaque closure, so its direct propagation witness
+/// can complete (#14326).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.180";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -954,7 +957,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.182";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1176,7 +1180,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.182";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5599,7 +5604,8 @@ mod tests {
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
         // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.178");
+        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.180");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5759,8 +5765,9 @@ mod tests {
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
         // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.182");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.182");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6798,7 +6805,11 @@ mod tests {
                             .map_err(|err| err.to_string())?,
                     )?;
                     assert_eq!(manifest.shards.len(), 2);
-                    cache.sharded_entry_dir(&key).join(&manifest.shards[1].file)
+                    // The manifest names a shard as `g<id>/shard-N.json`. Resolve it
+                    // through the loader's own resolver so the path below is spelled
+                    // the way the load-side reason spells it: on Windows a plain
+                    // `join` keeps the `/` and the reason would not contain it (#13897).
+                    cache.sharded_shard_path(&key, 1)?
                 } else {
                     cache.entry_path(&key)
                 };

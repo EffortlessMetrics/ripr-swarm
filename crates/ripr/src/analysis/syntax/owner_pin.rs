@@ -883,36 +883,64 @@ fn macro_binding_ambiguity_sets(
     };
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
-    let scan = |names: &[&str]| {
+    let scan = |names: &[&str], known: &[&str], known_bound: &BTreeSet<String>| {
         macro_binding_sites_in_tree(
             source,
             packages,
-            names,
+            &ScanNames {
+                trusted: names,
+                known,
+                known_bound,
+            },
             allowed_empty,
             module_resolved,
             drop_in_verified,
             &binding_free,
         )
     };
-    let union = scan(trusted);
+    let union = scan(trusted, trusted, &BTreeSet::new());
+    // #14115: a per-name query reads the other trusted macros as the union
+    // scan does. A call to one is opaque only when that macro has a binding
+    // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
+    // would be named as a wrapper that may define `assert_eq`, a site the
+    // admission scan never reports.
+    let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
     let singletons = singleton_names
         .into_iter()
         .flatten()
         .filter(|name| macro_binding_scan_needed(source, &[name]))
-        .flat_map(|name| scan(&[name]))
+        .flat_map(|name| {
+            if trusted.contains(name) {
+                scan(&[name], trusted, &union_bound)
+            } else {
+                scan(&[name], &[name], &BTreeSet::new())
+            }
+        })
         .collect();
     (union, singletons)
+}
+
+/// The names one binding-site scan reads. `trusted` are the names whose
+/// sites are reported. `known` are the names whose calls are standard macros
+/// unless bound: `trusted` itself for the admission union, the whole union
+/// list for a per-name query, with `known_bound` the names the union found a
+/// binding site for in this file.
+struct ScanNames<'a> {
+    trusted: &'a [&'a str],
+    known: &'a [&'a str],
+    known_bound: &'a BTreeSet<String>,
 }
 
 fn macro_binding_sites_in_tree(
     source: &str,
     packages: &BTreeSet<String>,
-    trusted: &[&str],
+    names: &ScanNames<'_>,
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
     binding_free: &BindingFreeFileIndex,
 ) -> NamedMacroSites {
+    let (trusted, known, known_bound) = (names.trusted, names.known, names.known_bound);
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
@@ -1177,7 +1205,7 @@ fn macro_binding_sites_in_tree(
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && let Some(path) = call.path()
-            && !is_trusted_macro(&path.syntax().text().to_string(), trusted)
+            && !is_trusted_macro(&path.syntax().text().to_string(), known)
             && let Some(tree) = call.token_tree()
         {
             let tokens: Vec<_> = tree
@@ -1304,7 +1332,7 @@ fn macro_binding_sites_in_tree(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
+            if binding_free_local_wrapper(binding_free, &call, &tokens, known) {
                 continue;
             }
             // An accepted identity invocation over literal `fn` items binds
@@ -1560,7 +1588,11 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
+    let mut bound: BTreeSet<String> = ambiguous
+        .iter()
+        .map(|(name, _)| name.clone())
+        .chain(known_bound.iter().cloned())
+        .collect();
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1585,7 +1617,7 @@ fn macro_binding_sites_in_tree(
     loop {
         let before = bound.len();
         for (path, tree, node, call) in &sites {
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, known) {
                 continue;
             }
             let tokens: Vec<_> = tree
@@ -1613,9 +1645,10 @@ fn macro_binding_sites_in_tree(
             // shows an expansion that cannot bind a name stays transparent.
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
-            if call.as_ref().is_some_and(|call| {
-                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
-            }) {
+            if call
+                .as_ref()
+                .is_some_and(|call| binding_free_local_wrapper(binding_free, call, &tokens, known))
+            {
                 continue;
             }
             for token in &tokens {
@@ -3068,7 +3101,7 @@ fn owner_pin_assertions_with_matches(
         } else if function.async_token().is_some()
             && !function.attrs().any(|attr| {
                 let test = function.syntax();
-                tokio_test_runs_body(&attr, test) || async_std_test_runs_body(&attr, test)
+                tokio_test_runs_body(&attr, test) || argument_free_async_test_runs_body(&attr, test)
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
@@ -4170,8 +4203,8 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
-    if is_async_std_test_path(&path) {
-        return async_std_test_runs_body(attr, test);
+    if argument_free_async_test_crate(&path).is_some() {
+        return argument_free_async_test_runs_body(attr, test);
     }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
@@ -4371,16 +4404,36 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
         })
 }
 
-/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
-fn is_async_std_test_path(path: &str) -> bool {
-    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
+/// Async test attributes that take the body of an `async fn` and run it to
+/// completion on their own runtime, failing the test when the body panics:
+/// `(crate, path)`. `#[async_std::test]` blocks on the async_std runtime;
+/// `#[actix_rt::test]` and `#[actix_web::test]` expand to a `#[test]` that
+/// blocks on an Actix `System` (#14073). Each is admitted only without
+/// arguments (see [`argument_free_async_test_runs_body`]).
+const ARGUMENT_FREE_ASYNC_TESTS: &[(&str, &str)] = &[
+    ("async_std", "async_std::test"),
+    ("actix_rt", "actix_rt::test"),
+    ("actix_web", "actix_web::test"),
+];
+
+/// The crate of an [`ARGUMENT_FREE_ASYNC_TESTS`] path, rooted or not. Only the
+/// exact crate-qualified path: same shadowing rule as `tokio::test`, so
+/// `actix_web::rt::test` and `actix_rt::test_helper` name nothing here.
+fn argument_free_async_test_crate(path: &str) -> Option<&'static str> {
+    let unrooted = path.strip_prefix("::").unwrap_or(path);
+    ARGUMENT_FREE_ASYNC_TESTS
+        .iter()
+        .find(|(_, test_path)| *test_path == unrooted)
+        .map(|(krate, _)| *krate)
 }
 
-/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
-/// completion on the async_std runtime. `async_std` must be the crate in the
-/// test's module under the same rule as `tokio`. Only a bare attribute or empty
-/// `()` is admitted; any other argument refuses.
-fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+/// Whether `attr` is an [`ARGUMENT_FREE_ASYNC_TESTS`] attribute on an
+/// `async fn` and runs the body to completion on that crate's runtime. The
+/// crate must be the crate in the test's module under the same rule as
+/// `tokio`. Only a bare attribute or empty `()` is admitted; any other
+/// argument refuses (`#[actix_rt::test(system = "..")]` swaps the runtime
+/// that runs the body).
+fn argument_free_async_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
     }
@@ -4390,16 +4443,18 @@ fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     let Some(path) = attr.path() else {
         return false;
     };
-    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+    let Some(krate) =
+        argument_free_async_test_crate(&path.syntax().text().to_string().replace(' ', ""))
+    else {
         return false;
-    }
+    };
     let Some(module) = test.parent() else {
         return false;
     };
-    extern_crate_path_holds(&module, "async_std") && async_std_test_has_no_arguments(attr)
+    extern_crate_path_holds(&module, krate) && async_test_has_no_arguments(attr)
 }
 
-fn async_std_test_has_no_arguments(attr: &ast::Attr) -> bool {
+fn async_test_has_no_arguments(attr: &ast::Attr) -> bool {
     match attr.meta() {
         Some(ast::Meta::PathMeta(_)) => true,
         Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
@@ -4862,8 +4917,15 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] =
-    &["serial_test", "tokio", "async_std", "rstest", "test_case"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &[
+    "serial_test",
+    "tokio",
+    "async_std",
+    "actix_rt",
+    "actix_web",
+    "rstest",
+    "test_case",
+];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -5014,8 +5076,12 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
     }
-    if unrooted.starts_with("async_std::") {
-        return trusted.contains(&"async_std") && is_async_std_test_path(&path);
+    if let Some((krate, _)) = ARGUMENT_FREE_ASYNC_TESTS.iter().find(|(krate, _)| {
+        unrooted
+            .strip_prefix(krate)
+            .is_some_and(|rest| rest.starts_with("::"))
+    }) {
+        return trusted.contains(krate) && argument_free_async_test_crate(&path) == Some(*krate);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");

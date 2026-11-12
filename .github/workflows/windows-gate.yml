@@ -235,6 +235,7 @@ jobs:
             target/gate-subset-clippy.status
             target/windows-gate-verdict.md
           if-no-files-found: ignore
+          retention-days: 14
 
   result:
     name: Ripr Windows Gate Result

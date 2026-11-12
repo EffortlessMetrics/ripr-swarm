@@ -4736,6 +4736,11 @@ pub(in crate::cli) fn before_phase_stdout(
         ));
     } else {
         let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        // #14320: name the exact native command for the suggested test, so
+        // the developer does not have to work out the cargo target filter.
+        if let Some(command) = &continuation.focused_test_command {
+            document.push_str(&format!("Run the new test: {command}\n"));
+        }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
@@ -7099,6 +7104,7 @@ mod before_phase_stdout_tests {
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
             typescript_test_cache_guidance: false,
+            focused_test_command: None,
         }
     }
 
@@ -7136,6 +7142,37 @@ mod before_phase_stdout_tests {
         // A scorable baseline adds no ambiguity member: the scorable stdout
         // bytes stay exactly as before (#7204).
         assert!(value["repair_attempt"].get("baseline_ambiguous").is_none());
+        Ok(())
+    }
+
+    /// #14320: the human summary names the exact native test command just
+    /// before the continue step; `--json` stays the unchanged continuation.
+    #[test]
+    fn human_stdout_names_the_focused_test_command_when_known() -> Result<(), String> {
+        let with_command = BeforePhaseAttemptContinuation {
+            focused_test_command: Some(
+                "cargo test --manifest-path Cargo.toml --test pricing t".to_string(),
+            ),
+            ..continuation()
+        };
+        let summary = before_phase_stdout(PACKET, "p", false, &with_command)?;
+        let run = summary
+            .find("Run the new test: cargo test --manifest-path Cargo.toml --test pricing t")
+            .ok_or_else(|| format!("missing run line:\n{summary}"))?;
+        let next = summary
+            .find("Next, after the test edit:")
+            .ok_or_else(|| format!("missing next line:\n{summary}"))?;
+        assert!(run < next, "{summary}");
+        let without = before_phase_stdout(PACKET, "p", false, &continuation())?;
+        assert!(!without.contains("Run the new test"), "{without}");
+        let json = before_phase_stdout(PACKET, "p", true, &with_command)?;
+        assert!(!json.contains("Run the new test"), "{json}");
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..with_command
+        };
+        let ambiguous = before_phase_stdout(PACKET, "p", false, &ambiguous)?;
+        assert!(!ambiguous.contains("Run the new test"), "{ambiguous}");
         Ok(())
     }
 
@@ -7341,6 +7378,130 @@ mod before_phase_stdout_tests {
              receipt: /repo/target/ripr/reports/agent-receipt.json\n  \
              verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
         );
+    }
+
+    /// `PACKET` with one member of its first packet replaced or added.
+    fn packet_with(member: &str, value: serde_json::Value) -> Result<String, String> {
+        let mut document: serde_json::Value = serde_json::from_str(PACKET)
+            .map_err(|error| format!("fixture packet must parse: {error}"))?;
+        document
+            .pointer_mut("/packets/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "fixture packet must carry one packet object".to_string())?
+            .insert(member.to_string(), value);
+        serde_json::to_string(&document).map_err(|error| error.to_string())
+    }
+
+    fn owns_start_result(packet: &str) -> bool {
+        super::before_phase_stdout_owns_start_result(packet, false, &continuation())
+    }
+
+    /// #13803: stderr may drop its copy of the start result only when the
+    /// human stdout summary carries it for a scorable attempt.
+    #[test]
+    fn stdout_owns_the_start_result_only_for_a_human_scorable_readable_summary()
+    -> Result<(), String> {
+        assert!(
+            owns_start_result(PACKET),
+            "a readable packet on the human route owns the start result"
+        );
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, true, &continuation()),
+            "--json prints the packet document, not the summary"
+        );
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..continuation()
+        };
+        assert!(
+            !super::before_phase_stdout_owns_start_result(PACKET, false, &ambiguous),
+            "an ambiguous baseline keeps the stderr lines"
+        );
+        // Packets the stdout summary cannot read fall back to the one-line
+        // pointer, which names neither the target nor the edit surface.
+        assert!(!owns_start_result("not json"));
+        assert!(!owns_start_result(r#"{"packets": []}"#));
+        assert!(!owns_start_result(&packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?));
+        assert!(!owns_start_result(&packet_with(
+            "seam_id",
+            serde_json::json!("  "),
+        )?));
+        Ok(())
+    }
+
+    /// #13803 review: the summary names `recommended_test.file` while the cage
+    /// binds `allowed_edit_surface[0]`; stdout owns the result only when both
+    /// name the same file.
+    #[test]
+    fn stdout_does_not_own_the_start_result_when_the_cage_binds_another_file() -> Result<(), String>
+    {
+        let surface = |value: serde_json::Value| packet_with("allowed_edit_surface", value);
+
+        let same = surface(serde_json::json!(["tests/pricing.rs"]))?;
+        assert!(
+            owns_start_result(&same),
+            "the cage target is the summary target"
+        );
+        assert!(super::summary_target_is_the_cage_target(&same));
+
+        for (label, other) in [
+            (
+                "another file",
+                serde_json::json!(["tests/other_pricing.rs"]),
+            ),
+            (
+                "the summary target is not first",
+                serde_json::json!(["tests/other_pricing.rs", "tests/pricing.rs"]),
+            ),
+            ("an empty surface", serde_json::json!([])),
+            ("a non-array surface", serde_json::json!("tests/pricing.rs")),
+            ("a null surface", serde_json::Value::Null),
+        ] {
+            let packet = surface(other)?;
+            // The summary itself still renders and names the recommended
+            // file, so only the cage comparison can withhold ownership.
+            let summary = before_phase_stdout(
+                &packet,
+                "target/ripr/workflow/agent-packet.json",
+                false,
+                &continuation(),
+            )?;
+            assert!(
+                summary.contains("edit one test file: tests/pricing.rs"),
+                "{label}: the summary must still name its target:\n{summary}"
+            );
+            assert!(
+                !super::summary_target_is_the_cage_target(&packet),
+                "{label}: the cage does not bind the summary target"
+            );
+            assert!(
+                !owns_start_result(&packet),
+                "{label}: stderr must keep its directive"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cage_target_check_needs_a_first_packet_with_a_recommended_file() -> Result<(), String> {
+        assert!(super::summary_target_is_the_cage_target(PACKET));
+        assert!(!super::summary_target_is_the_cage_target("not json"));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": []}"#
+        ));
+        assert!(!super::summary_target_is_the_cage_target(
+            r#"{"packets": {}}"#
+        ));
+        // No recommended file and no surface: nothing to compare.
+        let no_file = packet_with(
+            "recommended_test",
+            serde_json::json!({ "name": "discounted_total_boundary_discriminator" }),
+        )?;
+        assert!(!super::summary_target_is_the_cage_target(&no_file));
+        Ok(())
     }
 }
 
