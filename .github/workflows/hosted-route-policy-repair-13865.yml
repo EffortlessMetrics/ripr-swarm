@@ -1,0 +1,93 @@
+name: Hosted queue policy repair 13865
+
+on:
+  push:
+    branches: [codex/4838-queue-only-cutover]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact carrier branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: codex/4838-queue-only-cutover
+          fetch-depth: 1
+
+      - name: Apply the reviewed hosted generation
+        run: python3 -I scripts/ci/apply_hosted_queue_repair_13865.py
+
+      - name: Remove transaction-only files before repository policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/hosted-route-repair-13865.yml
+          rm .github/workflows/hosted-route-policy-repair-13865.yml
+          rm scripts/ci/apply_hosted_queue_repair_13865.py
+
+      - name: Verify intended final source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --locked -p repo-policy --test hosted_queue_route --test review_disposition_admission
+          cargo test --locked -p repo-policy --lib workflow
+          cargo test --locked -p repo-policy --test queue_intake --test merge_group_subject
+          cargo run --locked -p repo-policy -- check-workflows
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {
+              '.github/actions/pr-candidate-admission/review_disposition.py',
+              '.github/workflows/hosted-route-policy-repair-13865.yml',
+              '.github/workflows/hosted-route-repair-13865.yml',
+              '.github/workflows/routed-rust.yml',
+              'changelog.d/14200-hosted-queue-route.md',
+              'scripts/ci/apply_hosted_queue_repair_13865.py',
+              'tools/repo-policy/src/queue_workflow.rs',
+              'tools/repo-policy/tests/hosted_queue_route.rs',
+              'tools/repo-policy/tests/review_disposition_admission.rs',
+          }
+          import subprocess
+          actual = set(subprocess.check_output(
+              ['git', 'status', '--porcelain=v1'], text=True
+          ).splitlines())
+          paths = {line[3:] for line in actual}
+          if paths != expected:
+              raise SystemExit(f'unexpected final repair paths: {sorted(paths ^ expected)}')
+          PY
+
+      - name: Publish immutable hosted anchor and pin caller
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name EffortlessSteven
+          git config user.email 15812269+EffortlessSteven@users.noreply.github.com
+          git add -A
+          git commit -m 'ci: route queue qualification through hosted runners (#14200)'
+          anchor="$(git rev-parse HEAD)"
+          ANCHOR="$anchor" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          path = Path('.github/workflows/merge-queue.yml')
+          text = path.read_text(encoding='utf-8')
+          updated, count = re.subn(
+              r'(uses: EffortlessMetrics/ripr-swarm/\.github/workflows/routed-rust\.yml@)[0-9a-f]{40}',
+              lambda match: match.group(1) + os.environ['ANCHOR'],
+              text,
+          )
+          if count != 1:
+              raise SystemExit(f'expected one immutable workflow pin, found {count}')
+          path.write_text(updated, encoding='utf-8')
+          PY
+          git add .github/workflows/merge-queue.yml
+          git commit -m 'ci: pin hosted queue workflow anchor (#14200)'
+          git push origin HEAD:refs/heads/codex/4838-queue-only-cutover
