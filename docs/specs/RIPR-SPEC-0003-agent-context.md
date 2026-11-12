@@ -57,6 +57,16 @@ retain their existing behavior. Recorded `--from` lookups do not infer these
 facts from ambient configuration: the artifact has no complete advisory carrier.
 Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
 
+A well-formed `file:line` miss on any route (fresh or `--from`) adds one
+bounded sentence naming where this scope's findings are (#14384): up to five
+lines with findings in the named file (then "and N more"), shown
+root-relative, counting other files the path also matches, with a suggested
+`file:line` that the same resolver selects as exactly one finding (or a
+pointer to probe ids when every listed line holds several); otherwise up to
+five files that hold findings; otherwise that the scope has none. A
+`file:line:column` selector is told to drop the column. Id selectors keep
+their existing miss text, and the typed selector never enters a command.
+
 The packet should include:
 
 - task kind
