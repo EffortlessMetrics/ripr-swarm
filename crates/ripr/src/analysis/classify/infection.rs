@@ -1079,16 +1079,17 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
-            } else if let Some((before, after)) = probe.before.as_deref().and_then(|before| {
+            } else if let Some((before, after, kind)) = probe.before.as_deref().and_then(|before| {
                 // A match-arm probe carries only the arm head (`_ =>`) even
                 // when the edit sits in the arm body; read the whole arm line.
                 let after = full_arm_line(owner, &probe.expression, before)
                     .unwrap_or_else(|| probe.expression.clone());
-                changes_only_a_range_bound(before, &after).then_some((before, after))
+                range_bound_change(before, &after).map(|kind| (before, after, kind))
             }) {
                 range_bound_infection(
                     owner.filter(|_| !assertion_macros_rebound),
                     &aligned_range_texts(before, &after),
+                    kind,
                     related_tests,
                     owner_has_other_callers,
                 )
@@ -1110,9 +1111,15 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
 /// literal call at which the owner folds to different values on the
 /// baseline and the change. A rebound assertion macro (`owner` withheld by
 /// the caller) or an unread shape stays unknown, never `yes`.
+///
+/// A moved match range pattern routes an input to a different arm rather
+/// than absorbing an element; when the fold cannot read the arms (a `&str`
+/// result) it keeps the ordinary reading, so the arm-routing evidence
+/// (#5992) still decides between a moved input and one inside both patterns.
 fn range_bound_infection(
     owner: Option<&FunctionSummary>,
     (before, after): &(String, String),
+    kind: RangeConsumer,
     related_tests: &[&TestSummary],
     owner_has_other_callers: bool,
 ) -> StageEvidence {
@@ -1141,6 +1148,13 @@ fn range_bound_infection(
                 "Every related test asserts the owner only at inputs where the old and new range bounds give the same result (for example `{call}`), so no test input reaches the change"
             ),
         ),
+        Some(RangeChangeVisibility::NotEstablished) | None if kind == RangeConsumer::Pattern => {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "Reachable tests can plausibly activate this changed behavior",
+            )
+        }
         Some(RangeChangeVisibility::NotEstablished) | None => StageEvidence::new(
             StageState::Unknown,
             Confidence::Low,
@@ -1173,13 +1187,16 @@ fn range_bound_infection(
 /// and both ranges being empty at the test input (`(1..n)` and `(0..n)` at
 /// `n = 0`) leaves any consumer unchanged. Those shapes keep the ordinary
 /// reading and are a known limit.
-pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str) -> bool {
+///
+/// Returns the consumer kind: [`RangeConsumer::Pattern`] when the range is a
+/// match pattern on both sides, otherwise [`RangeConsumer::Absorbing`].
+fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
     use crate::analysis::language::mask_rust_comments_and_strings;
     let (before, after) = aligned_range_texts(before, after);
     let before = mask_rust_comments_and_strings(&before);
     let after = mask_rust_comments_and_strings(&after);
     if before == after {
-        return false;
+        return None;
     }
     let prefix = before
         .bytes()
@@ -1199,19 +1216,23 @@ pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str)
         range_consumer(&before, span(&before)),
         range_consumer(&after, span(&after)),
     ) {
-        (Some(RangeConsumer::Absorbing), Some(RangeConsumer::Absorbing)) => true,
-        (Some(_), Some(_)) => false,
+        (Some(RangeConsumer::Pattern), Some(RangeConsumer::Pattern)) => {
+            Some(RangeConsumer::Pattern)
+        }
+        (Some(RangeConsumer::Preserving), _) | (_, Some(RangeConsumer::Preserving)) => None,
+        (Some(_), Some(_)) => Some(RangeConsumer::Absorbing),
         _ => {
             let (short, long) = if before.len() < after.len() {
                 (&before, &after)
             } else {
                 (&after, &before)
             };
-            long.len() == short.len() + 1
+            (long.len() == short.len() + 1
                 && long.get(span(long)) == Some("=")
                 && long
                     .get(..prefix)
-                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("..."))
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("...")))
+            .then_some(RangeConsumer::Absorbing)
         }
     }
 }
@@ -1272,6 +1293,8 @@ enum RangeConsumer {
     /// A consumer that can leave the result unchanged when the range gains or
     /// loses an element.
     Absorbing,
+    /// A match range pattern: it routes an input to an arm.
+    Pattern,
     /// Only length-preserving adaptors, or the range value itself.
     Preserving,
 }
@@ -1346,7 +1369,7 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
             .filter(|node| ast::RangePat::can_cast(node.kind()))
             .any(|node| covers(&node, ARM_PREFIX.len()))
     {
-        return Some(RangeConsumer::Absorbing);
+        return Some(RangeConsumer::Pattern);
     }
     let (parse, offset) = match arm {
         Some(parse) => (parse, ARM_PREFIX.len()),
