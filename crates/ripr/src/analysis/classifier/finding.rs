@@ -625,7 +625,7 @@ fn pins_ok_against(side: &str, other: &str) -> bool {
     // method such as `.to_string()`) does not.
     let has_call = |text: &str| text.replace("()", "").contains('(');
     if let Some(inner) = side.strip_prefix("Ok(") {
-        return !(has_call(inner) && !has_call(other));
+        return !has_call(inner) || has_call(other);
     }
     let receiver = side.strip_suffix(".unwrap()").or_else(|| {
         side.rfind(".expect(")
