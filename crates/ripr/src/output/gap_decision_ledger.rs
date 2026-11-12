@@ -91,6 +91,11 @@ pub(crate) struct GapDecisionLedgerReport {
     /// false`): nothing was analyzed. Not rendered: the CLI writes the
     /// `blocked` ledger, then refuses the run with it (#14434).
     source_refusal: Option<String>,
+    /// The `repair_route` the refusing source records, when it records one
+    /// (`analysis_scope` or a non-consumable `run_limitations[]` entry). A
+    /// saved `blocked` ledger fed back as `--records` keeps the marker but
+    /// not the route, so this is `None` there (#14434).
+    source_refusal_repair_route: Option<String>,
 }
 
 impl GapDecisionLedgerReport {
@@ -105,6 +110,34 @@ impl GapDecisionLedgerReport {
     pub(crate) fn source_refusal(&self) -> Option<&str> {
         self.source_refusal.as_deref()
     }
+
+    /// The repair route the refusing source records, if any (#14434).
+    pub(crate) fn source_refusal_repair_route(&self) -> Option<&str> {
+        self.source_refusal_repair_route.as_deref()
+    }
+}
+
+/// The `repair_route` a refusing source records: `analysis_scope` first,
+/// then the first non-consumable `run_limitations[]` entry that carries one.
+fn recorded_refusal_repair_route(value: &Value) -> Option<String> {
+    let route = |entry: &Value| {
+        entry
+            .get("repair_route")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|route| !route.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    value.get("analysis_scope").and_then(route).or_else(|| {
+        value
+            .get("run_limitations")
+            .and_then(Value::as_array)?
+            .iter()
+            .filter(|entry| {
+                entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+            })
+            .find_map(route)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -696,6 +729,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut source_content_committed = false;
     let mut source_parse_error = None;
     let mut source_refusal = None;
+    let mut source_refusal_repair_route = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -777,6 +811,9 @@ pub(crate) fn build_gap_decision_ledger_report(
             .as_ref()
             .is_some_and(crate::output::gate::discloses_non_consumable_record)
     {
+        source_refusal_repair_route = source_value_snapshot
+            .as_ref()
+            .and_then(recorded_refusal_repair_route);
         match refusal_status {
             Some(status) => {
                 source_refusal = Some(format!("a producer refusal (run_status: {status})"));
@@ -942,6 +979,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         warnings,
         source_parse_error,
         source_refusal,
+        source_refusal_repair_route,
         limits: vec![
             "Advisory static gap decisions only.".to_string(),
             "Gate-decision artifacts remain the only configured pass/fail authority.".to_string(),
