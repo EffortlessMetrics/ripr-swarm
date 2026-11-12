@@ -829,7 +829,7 @@ fn singleton_layout_cannot_hide_mixed_named_or_duplicate_members() -> Result<(),
         fs::create_dir(&named).map_err(|err| err.to_string())?;
         fs::write(named.join("shard-1.status"), "100\n").map_err(|err| err.to_string())?;
         options.attempt = "2".to_string();
-        assert!(singleton_shard(&options).is_err());
+        assert!(singleton_shard(&options).err().is_some());
         let outcome = verify(&options, Ok(attempt_blobs()));
         assert!(
             outcome
