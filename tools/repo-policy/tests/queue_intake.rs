@@ -87,6 +87,82 @@ class Clock:
   self.sleeps.append(seconds);self.elapsed+=seconds
   if self.after_wait:self.after_wait()
 
+class TransportBoundaryControls(unittest.TestCase):
+ # Exercise the shipped HTTP boundary without sockets, real credentials or API writes.
+ # The semantic intake fixtures below replace the whole API and cannot prove these guards.
+ def setUp(self):
+  self.original=m.build_opener;self.addCleanup(setattr,m,'build_opener',self.original)
+  self.requests=[];self.read_sizes=[];self.handlers=[]
+  self.raw=b'{"observed":true}';self.status=200;self.returned_url=None;self.redirect=None
+  outer=self
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   @property
+   def status(self):return outer.status
+   def geturl(self):return outer.returned_url or outer.requests[-1][0].full_url
+   def read(self,size=-1):outer.read_sizes.append(size);return outer.raw if size<0 else outer.raw[:size]
+  class Opener:
+   def open(self,request,timeout):
+    outer.requests.append((request,timeout))
+    if outer.redirect is not None:
+     outer.handlers[0].redirect_request(request,None,302,'redirect',{},outer.redirect)
+    return Response()
+  def build(*handlers):
+   self.assertEqual(len(handlers),1,'the production redirect-denial handler must be installed')
+   self.handlers=list(handlers);return Opener()
+  m.build_opener=build
+ def test_fixed_origin_read_methods_and_per_request_deadline(self):
+  api=m.GitHub('offline-fixture-token')
+  self.assertEqual(api.get('/git/commits/'+G),{'observed':True})
+  request,deadline=self.requests[-1]
+  self.assertEqual(request.full_url,'https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/commits/'+G)
+  self.assertEqual(request.get_method(),'GET');self.assertIsNone(request.data)
+  self.assertEqual(request.get_header('Authorization'),'Bearer offline-fixture-token')
+  self.assertEqual(deadline,10);self.assertEqual(self.read_sizes,[1048577])
+  self.assertEqual(api.queue(),{'observed':True})
+  request,deadline=self.requests[-1];body=json.loads(request.data)
+  self.assertEqual(request.full_url,'https://api.github.com/graphql');self.assertEqual(request.get_method(),'POST')
+  self.assertEqual(set(body),{'query'});self.assertTrue(body['query'].startswith('query {'))
+  self.assertNotIn('mutation',body['query']);self.assertIn('name:"ripr-swarm"',body['query'])
+  self.assertEqual(deadline,10)
+ def test_redirects_are_refused_before_followup_requests(self):
+  for url in ['https://attacker.example/steal','https://api.github.com/another-path']:
+   with self.subTest(url=url):
+    self.redirect=url;before=len(self.requests)
+    with self.assertRaisesRegex(m.Refused,'redirects are not accepted'):m.GitHub('offline-fixture-token').queue()
+    self.assertEqual(len(self.requests),before+1);self.assertEqual(self.read_sizes,[])
+ def test_changed_response_origin_path_or_status_refuses_before_body_read(self):
+  for url,status in [('https://attacker.example/response',200),('https://api.github.com/other',200),
+                     ('http://api.github.com/graphql',200),(None,201),(None,302),(None,403)]:
+   with self.subTest(url=url,status=status):
+    self.returned_url=url;self.status=status
+    with self.assertRaisesRegex(m.Refused,'response identity changed'):m.GitHub('offline-fixture-token').queue()
+    self.assertEqual(self.read_sizes,[])
+ def test_response_size_duplicate_fields_and_nonfinite_json_refuse(self):
+  for raw,reason in [(b' '*1048577,'JSON observation exceeds bound'),
+                     (b'{"x":1,"x":2}','duplicate JSON field'),(b'{"x":NaN}','nonfinite JSON')]:
+   with self.subTest(reason=reason):
+    self.raw=raw
+    with self.assertRaisesRegex(m.Refused,reason):m.GitHub('offline-fixture-token').queue()
+    self.assertEqual(self.read_sizes[-1],1048577)
+  # The exact allowed byte count is accepted; this is a boundary, not an empty-body success.
+  self.raw=b'{"ok":true}'+b' '*(1048576-len(b'{"ok":true}'))
+  self.assertEqual(m.GitHub('offline-fixture-token').queue(),{'ok':True})
+ def test_observation_budget_refuses_before_the_129th_transport_call(self):
+  api=m.GitHub('offline-fixture-token')
+  for _ in range(128):self.assertEqual(api.queue(),{'observed':True})
+  self.assertEqual(len(self.requests),128)
+  with self.assertRaisesRegex(m.Refused,'observation bound exhausted'):api.queue()
+  self.assertEqual(len(self.requests),128)
+ def test_missing_token_and_nonrelative_path_never_reach_transport(self):
+  for token in [None,'',0]:
+   with self.subTest(token=token):
+    with self.assertRaisesRegex(m.Refused,'Checks-read token is absent'):m.GitHub(token)
+  with self.assertRaisesRegex(m.Refused,'observation bound exhausted'):
+   m.GitHub('offline-fixture-token').read('https://attacker.example/')
+  self.assertEqual(self.requests,[])
+
 class Controls(unittest.TestCase):
  def refused(self,call):
   with self.assertRaises((m.Refused,ValueError,KeyError,TypeError)):call()
@@ -585,7 +661,8 @@ raise AssertionError(a)
     before=copy.deepcopy(self.state);self.assertEqual(self.early().returncode,0)
     self.state[key]=value;self.assertNotEqual(self.eligibility().returncode,0);self.state=before
 
-suite=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(Controls),
+suite=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(TransportBoundaryControls),
+                         unittest.defaultTestLoader.loadTestsFromTestCase(Controls),
                          unittest.defaultTestLoader.loadTestsFromTestCase(WorkflowAuthorityControls),
                          unittest.defaultTestLoader.loadTestsFromTestCase(ReviewPreflightControls)])
 result=unittest.TextTestRunner(verbosity=2).run(suite)
