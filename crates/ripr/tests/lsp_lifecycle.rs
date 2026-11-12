@@ -2177,11 +2177,14 @@ fn refresh_publishes_diagnostics_under_a_spaced_unicode_root() -> Result<(), Str
 /// Reads publishes until one whose path ends with the root-relative
 /// `expected` satisfies `accept` (given its diagnostic count), failing at
 /// `ANALYSIS_TIMEOUT`. A suffix match needs no canonicalization, so it also
-/// names a file that no longer exists.
+/// names a file that no longer exists. Ids of responses read on the way are
+/// appended to `responses`, so a caller that fired a request without awaiting
+/// it can tell whether its response was already consumed (#14514).
 fn await_publish_for(
     session: &mut LspSession,
     expected: &Path,
     waiting_for: &str,
+    responses: &mut Vec<u64>,
     accept: impl Fn(usize) -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
@@ -2190,6 +2193,11 @@ fn await_publish_for(
         if message.get("method").and_then(serde_json::Value::as_str)
             != Some("textDocument/publishDiagnostics")
         {
+            if (message.get("result").is_some() || message.get("error").is_some())
+                && let Some(id) = message.get("id").and_then(serde_json::Value::as_u64)
+            {
+                responses.push(id);
+            }
             continue;
         }
         let names_expected = message
@@ -2239,14 +2247,19 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     )?;
     expect_result(&initialize, "initialize")?;
     session.notify("initialized", Some(serde_json::json!({})))?;
-    fire(
+    let refresh_id = fire(
         &mut session,
         "workspace/executeCommand",
         serde_json::json!({"command": "ripr.refresh", "arguments": []}),
     )?;
-    await_publish_for(&mut session, &relative, "the first diagnostics", |count| {
-        count > 0
-    })?;
+    let mut responses = Vec::new();
+    await_publish_for(
+        &mut session,
+        &relative,
+        "the first diagnostics",
+        &mut responses,
+        |count| count > 0,
+    )?;
 
     // Unchanged bytes: nothing to refresh. Then the real deletion.
     session.notify(
@@ -2262,8 +2275,15 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
         &mut session,
         &relative,
         "the retraction for the deleted file (no manual refresh was sent)",
+        &mut responses,
         |count| count == 0,
     )?;
+    // The refresh response can arrive before or after either publish. Read it
+    // if the waits above did not, so `shutdown` is the only response left
+    // to correlate (#14514).
+    if !responses.contains(&refresh_id) {
+        session.await_response(refresh_id, ANALYSIS_TIMEOUT)?;
+    }
     shutdown_exit_and_wait(&mut session)
 }
 
