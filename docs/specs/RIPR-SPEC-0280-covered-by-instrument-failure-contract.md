@@ -181,6 +181,9 @@ future acceptance must independently bind a successful producer. It refuses an
 observed dirty checkout or a difference between its before and after snapshots;
 ignored inputs and intermediate changes restored before the second snapshot are
 not observed. One writer and no concurrent source/context mutation are required.
+Within one process, overlapping publications use distinct exclusively created
+temporary paths; a failed publication removes only its own temporary file. This
+does not permit multiple producers to share the fixed output path.
 Duplicate declaration identities and duplicate names within one selector are
 refused; declaration identity uses the ledger line, declared host, and the
 same whitespace-tokenized Cargo listing arguments as native validation. Distinct
@@ -318,7 +321,7 @@ that case. Packet-specific exact-subject rules remain unchanged.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
 - `xtask/src/policy/file_policy.rs`: the policy side of rule 6 and source-only declaration, path, pending and retained-subject controls for rule 7.
-- `xtask/src/policy/file_policy_native_receipt.rs` and `xtask/src/verify_test_shards.rs`: diagnostic receipt binding and refusal controls for rule 8.
+- `xtask/src/policy/file_policy_native_receipt.rs` and `xtask/src/verify_test_shards.rs`: diagnostic receipt binding, overlapping-publication cleanup, and refusal controls for rule 8.
 
 ## Implementation Mapping
 

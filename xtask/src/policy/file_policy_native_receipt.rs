@@ -156,7 +156,7 @@ fn inspection_paths(path: &Path) -> Result<Vec<std::path::PathBuf>, String> {
         return Err("rooted path without drive is unsupported".into());
     }
     let mut current = std::path::PathBuf::new();
-    let mut parts = path.components().peekable();
+    let mut parts = path.components();
     let mut paths = Vec::new();
     while let Some(part) = parts.next() {
         if matches!(part, std::path::Component::ParentDir) {
@@ -473,7 +473,14 @@ fn publish_receipt_with(
     let parent = output.parent().ok_or("receipt has no parent")?;
     fs::create_dir_all(parent).map_err(|e| format!("cannot create receipt directory: {e}"))?;
     validate_output_parent(output)?;
-    let temp = parent.join(format!(".{RECEIPT_NAME}.{}.tmp", std::process::id()));
+    // Different publications in one process must not share an owned temporary
+    // path. This does not relax the fixed output's single-producer requirement.
+    static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = parent.join(format!(
+        ".{RECEIPT_NAME}.{}.{sequence}.tmp",
+        std::process::id()
+    ));
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -975,6 +982,51 @@ mod tests {
             b"new"
         );
         fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn overlapping_publications_keep_distinct_temporary_files() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-overlapping-publication");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let first = root.join(RECEIPT_NAME);
+        let second = root.join("other-receipt.json");
+        publish_receipt_with(&first, b"first", |file, bytes| {
+            // The outer temporary file is still open when the inner publication
+            // starts. A PID-only name deterministically refuses here.
+            publish_receipt_with(&second, b"second", |inner, body| inner.write_all(body))
+                .map_err(std::io::Error::other)?;
+            file.write_all(bytes)
+        })?;
+        assert_eq!(fs::read(&first).map_err(|e| e.to_string())?, b"first");
+        assert_eq!(fs::read(&second).map_err(|e| e.to_string())?, b"second");
+        assert_eq!(fs::read_dir(&root).map_err(|e| e.to_string())?.count(), 2);
+        fs::remove_file(&first).map_err(|e| e.to_string())?;
+        fs::remove_file(&second).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn overlapping_write_failure_cleans_only_its_owned_temporary() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-overlapping-failure");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let first = root.join(RECEIPT_NAME);
+        let second = root.join("other-receipt.json");
+        let error = publish_receipt_with(&first, b"first", |file, bytes| {
+            publish_receipt_with(&second, b"second", |inner, body| inner.write_all(body))
+                .map_err(std::io::Error::other)?;
+            file.write_all(bytes)?;
+            Err(std::io::Error::other("injected outer write failure"))
+        })
+        .err()
+        .ok_or("failed outer write was accepted")?;
+        assert!(error.contains("injected outer write failure"), "{error}");
+        assert!(!first.exists());
+        assert_eq!(fs::read(&second).map_err(|e| e.to_string())?, b"second");
+        assert_eq!(fs::read_dir(&root).map_err(|e| e.to_string())?.count(), 1);
+        fs::remove_file(&second).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
