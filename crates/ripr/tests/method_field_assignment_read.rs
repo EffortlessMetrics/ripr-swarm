@@ -282,6 +282,11 @@ fn a_namesake_counter_in_the_owner_file_gets_no_credit() -> Result<(), String> {
     );
     let found = finding_at(&owner, "src/lib.rs", "")?;
     assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let renamed = format!(
+        "{OWNER}#[cfg(test)]\nmod tests {{\n    use other::Gauge as Counter;\n    #[test]\n    fn reference() {{\n        let mut c = Counter {{ n: 5 }};\n        c.reset();\n        assert_eq!(c.n, 1);\n    }}\n}}\n"
+    );
+    let found = finding_at(&renamed, "src/lib.rs", "")?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }
 

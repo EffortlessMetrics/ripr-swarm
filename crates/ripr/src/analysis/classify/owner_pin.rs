@@ -11204,7 +11204,7 @@ pub(in crate::analysis) fn source_declares_or_aliases_type(source: &str, name: &
 
 /// How many `struct`/`enum`/`union` declarations named `name` `source`
 /// holds at any scope, by a text scan of its comment- and string-masked code,
-/// plus one when it aliases a type to that name. Used only to withhold credit
+/// plus each `as name` rename, plus one when it aliases a type to that name. Used only to withhold credit
 /// when a test shares the owner's file (#14407).
 pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &str) -> usize {
     if !source.contains(name) {
@@ -11222,7 +11222,13 @@ pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &st
                 .count()
         })
         .sum::<usize>();
-    declarations + usize::from(file_aliases_type(source, name))
+    // A `use path::Other as Name;` rename brings another type in under the
+    // name, like an alias.
+    let renames = whole_word_offsets(&masked, "as")
+        .into_iter()
+        .filter(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .count();
+    declarations + renames + usize::from(file_aliases_type(source, name))
 }
 
 /// Whether masked text declares a `trait` named `name`.
