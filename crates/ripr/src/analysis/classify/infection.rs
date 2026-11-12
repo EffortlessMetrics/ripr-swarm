@@ -1079,6 +1079,17 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
+            } else if let Some(before) = probe
+                .before
+                .as_deref()
+                .filter(|before| changes_only_a_range_bound(before, &probe.expression))
+            {
+                range_bound_infection(
+                    owner.filter(|_| !assertion_macros_rebound),
+                    before,
+                    &probe.expression,
+                    related_tests,
+                )
             } else {
                 StageEvidence::new(
                     StageState::Yes,
@@ -1088,6 +1099,160 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             }
         }
     }
+}
+
+/// #14419: a changed range bound (`0..n` to `0..=n`, `1..n` to `0..n`)
+/// changes the owner's result only at inputs where the two ranges yield
+/// different values, and `0..n` and `0..=n` both sum to 0 at `n = 0`. A
+/// reachable call is therefore not infection: credit needs an asserted
+/// literal call at which the owner folds to different values on the
+/// baseline and the change. A rebound assertion macro (`owner` withheld by
+/// the caller) or an unread shape stays unknown, never `yes`.
+fn range_bound_infection(
+    owner: Option<&FunctionSummary>,
+    before: &str,
+    after: &str,
+    related_tests: &[&TestSummary],
+) -> StageEvidence {
+    use crate::analysis::test_grip_evidence::{RangeChangeVisibility, range_change_visibility};
+    match owner.map(|owner| range_change_visibility(owner, before, after, related_tests)) {
+        Some(RangeChangeVisibility::ExactInputSeparates(call)) => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "A related test asserts an exact value for `{call}`, an input at which the old and new range bounds give different results, so the input reaches the change"
+            ),
+        ),
+        Some(RangeChangeVisibility::InexactInputSeparates(call)) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "A related test calls `{call}`, where the old and new range bounds give different results, but only a relational or inequality assertion checks it; no exact assertion pins an input that tells the two ranges apart"
+            ),
+        ),
+        Some(RangeChangeVisibility::EveryAssertedInputAgrees(call)) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Every related test asserts the owner only at inputs where the old and new range bounds give the same result (for example `{call}`), so no test input reaches the change"
+            ),
+        ),
+        Some(RangeChangeVisibility::NotEstablished) | None => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited",
+        ),
+    }
+}
+
+/// Whether `before` and `after` differ only inside one range expression: the
+/// operator (`..` to `..=`) or an endpoint (`1..n` to `0..n`). The changed
+/// span is the text between the longest common prefix and suffix; it must sit
+/// inside a range expression in both versions. A version that does not parse
+/// as a statement still counts when the whole difference is one `=` right
+/// after a `..` (`for i in 0..n {` to `for i in 0..=n {`).
+///
+/// A range that indexes a slice or string and is itself the whole changed
+/// value (`&s[..n]` to `&s[..=n]`) is excluded: the indexed result's length
+/// changes at every input the baseline accepts, so the ordinary reading
+/// stays.
+pub(in crate::analysis) fn changes_only_a_range_bound(before: &str, after: &str) -> bool {
+    use crate::analysis::language::mask_rust_comments_and_strings;
+    let before = mask_rust_comments_and_strings(before.trim());
+    let after = mask_rust_comments_and_strings(after.trim());
+    if before == after {
+        return false;
+    }
+    let prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let limit = before.len().min(after.len()) - prefix;
+    let suffix = before
+        .bytes()
+        .rev()
+        .zip(after.bytes().rev())
+        .take(limit)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let span = |text: &str| prefix..text.len() - suffix;
+    match (
+        range_holding_span(&before, span(&before)),
+        range_holding_span(&after, span(&after)),
+    ) {
+        (Some(RangeSite::Value), Some(RangeSite::Value)) => true,
+        (Some(_), Some(_)) => false,
+        _ => {
+            let (short, long) = if before.len() < after.len() {
+                (&before, &after)
+            } else {
+                (&after, &before)
+            };
+            long.len() == short.len() + 1
+                && long.get(span(long)) == Some("=")
+                && long[..prefix].ends_with("..")
+                && !long[..prefix].ends_with("...")
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RangeSite {
+    /// The range feeds a value the owner computes from (a reduction, a loop,
+    /// an iterator chain).
+    Value,
+    /// The range indexes a slice and the indexed place is the whole statement
+    /// value.
+    WholeIndex,
+}
+
+/// The innermost range expression of `text` (parsed as one block statement)
+/// whose text covers `span`.
+fn range_holding_span(text: &str, span: std::ops::Range<usize>) -> Option<RangeSite> {
+    const PREFIX: &str = "fn __ripr_range_probe() {\n";
+    let source = format!("{PREFIX}{text}\n}}\n");
+    let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let start = PREFIX.len() + span.start;
+    let end = PREFIX.len() + span.end;
+    let range = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::RangeExpr::cast)
+        .filter(|range| {
+            let covered = range.syntax().text_range();
+            usize::from(covered.start()) <= start && end <= usize::from(covered.end())
+        })
+        .last()?;
+    let Some(indexed) = range
+        .syntax()
+        .parent()
+        .and_then(ast::IndexExpr::cast)
+        .filter(|index| {
+            index
+                .index()
+                .is_some_and(|inner| inner.syntax() == range.syntax())
+        })
+    else {
+        return Some(RangeSite::Value);
+    };
+    let mut node = indexed.syntax().clone();
+    while let Some(parent) = node.parent() {
+        if ast::RefExpr::can_cast(parent.kind()) || ast::ParenExpr::can_cast(parent.kind()) {
+            node = parent;
+            continue;
+        }
+        let whole = ast::StmtList::can_cast(parent.kind())
+            || ast::ExprStmt::can_cast(parent.kind())
+            || ast::ReturnExpr::can_cast(parent.kind());
+        return Some(if whole {
+            RangeSite::WholeIndex
+        } else {
+            RangeSite::Value
+        });
+    }
+    Some(RangeSite::Value)
 }
 
 /// Resolve literal boundaries from live, non-computed local initializers.
