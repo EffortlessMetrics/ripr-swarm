@@ -189,6 +189,42 @@ fn weaker_reads_keep_the_field_write_gap_open() -> Result<(), String> {
             "declares a second binding of the name in a block",
             "    let mut c = other::Gauge { n: 5 };\n    {\n        let mut c = probe::Counter { n: 5, m: 0 };\n        c.m = 2;\n    }\n    c.reset();\n    assert_eq!(c.n, 1);",
         ),
+        // #14407 second review: a seed equal by value but spelled otherwise,
+        // or an expected operand that is not a plain literal.
+        (
+            "seeds the expected value through a constant",
+            "    const ONE: u32 = 1;\n    let mut c = probe::Counter { n: ONE, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "seeds the expected value through an expression",
+            "    let mut c = probe::Counter { n: 0 + 1, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "expects a variable equal to the seed",
+            "    let expected = 1;\n    let mut c = probe::Counter { n: 1, m: 0 };\n    c.reset();\n    assert_eq!(c.n, expected);",
+        ),
+        (
+            "expects another binding's field equal to the seed",
+            "    let mut c = probe::Counter { n: 1, m: 0 };\n    let d = probe::Counter { n: 1, m: 0 };\n    c.reset();\n    assert_eq!(c.n, d.n);",
+        ),
+        // #14407 second review: a pre-call write other than a plain
+        // `binding.field = value;` seeds the field too.
+        (
+            "seeds the field through a setter",
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.set_n(1);\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "reassigns the receiver before the call",
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c = probe::Counter { n: 1, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "seeds the field through an alias",
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    let r = &mut c;\n    r.n = 1;\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "seeds the field through mem::replace",
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    std::mem::replace(&mut c.n, 1);\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
     ] {
         let found = finding(&test_body(lines))?;
         assert_ne!(
@@ -234,6 +270,18 @@ fn a_namesake_counter_in_the_test_file_gets_no_credit() -> Result<(), String> {
             "{case} must not expose the write: {found:#?}"
         );
     }
+    Ok(())
+}
+
+/// #14407 second review: an inline `mod tests` in the owner's own file that
+/// declares its own `Counter` builds its receiver from that namesake.
+#[test]
+fn a_namesake_counter_in_the_owner_file_gets_no_credit() -> Result<(), String> {
+    let owner = format!(
+        "{OWNER}#[cfg(test)]\nmod tests {{\n    struct Counter {{\n        n: u32,\n    }}\n    impl Counter {{\n        fn reset(&mut self) {{\n            self.n = 1;\n        }}\n    }}\n    #[test]\n    fn reference() {{\n        let mut c = Counter {{ n: 5 }};\n        c.reset();\n        assert_eq!(c.n, 1);\n    }}\n}}\n"
+    );
+    let found = finding_at(&owner, "src/lib.rs", "")?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }
 

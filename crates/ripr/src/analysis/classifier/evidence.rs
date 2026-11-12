@@ -1383,10 +1383,15 @@ impl ClassifiedProbeEvidence {
                             .as_deref()
                             .is_some_and(|path| {
                                 // Only a receiver built by a visible struct
-                                // literal has a pre-call field value the
-                                // seeded-value refusal can read (#14407).
+                                // literal, with a literal seed that differs
+                                // from the expected literal and no other
+                                // pre-call use, has a pre-call field value
+                                // reveal can tell apart (#14407).
                                 crate::analysis::classify::assigned_field_seed_is_visible(
-                                    test, path, assertion,
+                                    test,
+                                    &owner.name,
+                                    path,
+                                    assertion,
                                 ) && crate::analysis::classify::assigned_field_read_confirms(
                                     owner,
                                     path,

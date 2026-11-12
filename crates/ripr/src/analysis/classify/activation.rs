@@ -4555,22 +4555,25 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// named like the owner's impl type, at any scope, may build its receiver from
 /// that namesake and run the namesake's same-named method. The relation's
 /// shadow check exempts a test file's own root, so this read rule refuses the
-/// whole file by a text scan instead. An owner without an impl type, or a
-/// test in the owner's own file, is unaffected.
+/// whole file by a text scan instead. A test in the owner's own file refuses
+/// when that file declares a type of the name more than once or aliases one.
+/// An owner without an impl type is unaffected.
 fn test_file_declares_owner_type_namesake(
     owner: &FunctionSummary,
     test: &TestSummary,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    if test.file == owner.file {
-        return false;
-    }
     let Some(impl_type) = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
         .and_then(|call| call.impl_type())
     else {
         return false;
     };
     match index.files().get(&test.file) {
+        // In the owner's own file, the owner's type is one declaration; a
+        // second one (an inline `mod tests` namesake) or an alias refuses.
+        Some(facts) if test.file == owner.file => {
+            super::owner_pin::source_declares_type_more_than_once(&facts.source, impl_type)
+        }
         Some(facts) => super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type),
         // An unindexed test file cannot be shown free of a namesake.
         None => true,
@@ -4607,19 +4610,33 @@ fn assertion_restates_seeded_field(test: &TestSummary, path: &str, assertion: &O
 }
 
 /// #14407: whether every binding the assertion reads the field `path` from
-/// has, before the read, exactly one `let` and that `let` is initialized by a
-/// visible struct literal, so [`assertion_restates_seeded_field`] can read the
-/// field's pre-call value. A constructor, call or other initializer may already
-/// leave the expected value in the field (`Counter::new()` building
-/// `Counter { n: 1 }`), so reveal's assigned-field credit refuses it. Activation
-/// and the repository seam do not ask this.
+/// has a pre-call value of that field that reveal can read and tell apart
+/// from the expected value. Before the read:
+/// - the binding has exactly one `let`, initialized by a visible struct
+///   literal that names `path` (a single field segment) with a plain literal;
+/// - the assertion's expected operand is a plain literal that differs from
+///   that seed by value (a `const`, a variable, another binding's field or an
+///   expression such as `0 + 1` may equal the seed, so it refuses); and
+/// - apart from that `let`, the binding appears only as the receiver of a
+///   top-level `binding.<owner>(..)` statement, so nothing else (a setter, a
+///   reassignment, `&mut binding`, an alias, `mem::replace`) can seed the
+///   field before the owner runs.
+///
+/// A constructor, call or other initializer may already leave the expected
+/// value in the field (`Counter::new()` building `Counter { n: 1 }`), so
+/// reveal's assigned-field credit refuses it. Activation and the repository
+/// seam do not ask this.
 pub(in crate::analysis) fn assigned_field_seed_is_visible(
     test: &TestSummary,
+    owner_name: &str,
     path: &str,
     assertion: &OracleFact,
 ) -> bool {
     let reads =
         super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path);
+    let Some(operands) = macro_arguments(&assertion.text) else {
+        return false;
+    };
     let body = test.body.as_str();
     let end = body
         .split_inclusive('\n')
@@ -4627,12 +4644,73 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
         .map(str::len)
         .sum::<usize>()
         .min(body.len());
-    let masked = crate::analysis::extract::mask_comments_and_strings(&body[..end]);
-    !reads.is_empty()
+    let Some(raw) = body.get(..end) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(raw);
+    !owner_name.is_empty()
+        && !path.contains('.')
+        && !reads.is_empty()
         && reads.iter().all(|read| {
-            super::related_tests::let_statement_count(&masked, &read.binding) == 1
-                && super::reveal::owner_call_binding_let_initializer(&masked, &read.binding)
-                    .is_some_and(super::related_tests::initializer_is_struct_literal)
+            let binding = read.binding.as_str();
+            let prefix = format!("{binding}.");
+            let mut others = operands.iter().take(2).filter(|operand| {
+                !operand
+                    .trim()
+                    .trim_start_matches(['&', '*'])
+                    .starts_with(&prefix)
+            });
+            let (Some(expected), None) = (others.next(), others.next()) else {
+                return false;
+            };
+            super::related_tests::let_statement_count(&masked, binding) == 1
+                && binding_mentioned_only_as_owner_receiver(&masked, binding, owner_name)
+                && super::reveal::owner_call_binding_let_initializer(&masked, binding)
+                    .filter(|init| super::related_tests::initializer_is_struct_literal(init))
+                    .and_then(|init| {
+                        let start = init.as_ptr() as usize - masked.as_ptr() as usize;
+                        let open = start + init.find('{')?;
+                        let close = start + init.rfind('}')?;
+                        (close > open).then(|| raw.get(open + 1..close)).flatten()
+                    })
+                    .is_some_and(|fields| {
+                        let fields = split_top_level_args(fields);
+                        let mut seeds = fields.iter().filter_map(|field| {
+                            field
+                                .split_once(':')
+                                .filter(|(name, _)| name.trim() == path)
+                                .map(|(_, value)| value.trim())
+                        });
+                        matches!(
+                            (seeds.next(), seeds.next()),
+                            (Some(seed), None)
+                                if super::builder_override::literals_equal(seed, expected.trim())
+                                    == Some(false)
+                        )
+                    })
+        })
+}
+
+/// #14407: whether every whole-word mention of `binding` in masked `text` is
+/// either its `let` declaration or the receiver of a statement that starts
+/// `binding.<owner_name>(`. Anything else may write the field before the
+/// owner runs, so it refuses.
+fn binding_mentioned_only_as_owner_receiver(text: &str, binding: &str, owner_name: &str) -> bool {
+    let call = format!("{binding}.{owner_name}(");
+    super::owner_pin::whole_word_offsets(text, binding)
+        .into_iter()
+        .all(|offset| {
+            let before = text[..offset].trim_end();
+            let declared = before.ends_with("let")
+                || before
+                    .strip_suffix("mut")
+                    .is_some_and(|rest| rest.trim_end().ends_with("let"));
+            let before_char = text[..offset].chars().next_back();
+            let qualified = before_char.is_some_and(|ch| ch == '.' || ch == ':');
+            !qualified
+                && (declared
+                    || (text[offset..].starts_with(&call)
+                        && (before.is_empty() || before.ends_with([';', '{', '}']))))
         })
 }
 
@@ -12498,7 +12576,7 @@ assert_eq!(input.amount, 100);"#
                 line: 10 + lines.len() - 1,
                 ..oracle_fact(assertion, OracleKind::ExactValue)
             };
-            assigned_field_seed_is_visible(&test, "n", &fact)
+            assigned_field_seed_is_visible(&test, "reset", "n", &fact)
         };
         for kept in [
             &[
@@ -12510,6 +12588,12 @@ assert_eq!(input.amount, 100);"#
                 "let mut c = Counter { n: 5 };",
                 "c.reset();",
                 "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 0u32, m: 7 };",
+                "c.reset();",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
             ],
         ] {
             assert!(visible(kept), "{kept:?}");
@@ -12535,6 +12619,73 @@ assert_eq!(input.amount, 100);"#
             &[
                 "let mut c = Counter::new();",
                 "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            // A seed equal to the expected value by value, not by spelling,
+            // or an expected operand that is not a plain literal.
+            &[
+                "let mut c = Counter { n: ONE };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 0 + 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 1u32 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let expected = 1;",
+                "let mut c = Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, expected);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "let d = Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, d.n);",
+            ],
+            &[
+                "let mut c = Counter { n: 5, ..Default::default() };",
+                "let mut c2 = Counter { ..c };",
+                "c2.reset();",
+                "assert_eq!(c2.n, 1);",
+            ],
+            // Any other pre-call use of the binding may seed the field.
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.set_n(1);",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c = Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "let r = &mut c;",
+                "r.n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "std::mem::replace(&mut c.n, 1);",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c . n = 1;",
                 "c.reset();",
                 "assert_eq!(c.n, 1);",
             ],

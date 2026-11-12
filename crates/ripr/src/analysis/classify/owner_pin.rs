@@ -11202,6 +11202,26 @@ pub(in crate::analysis) fn source_declares_or_aliases_type(source: &str, name: &
     declares_type(&mask_comments_and_strings(source), name) || file_aliases_type(source, name)
 }
 
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` more than
+/// once at any scope, or aliases a type to that name, by a text scan of its
+/// comment- and string-masked code. Used only to withhold credit when a test
+/// shares the owner's file (#14407).
+pub(in crate::analysis) fn source_declares_type_more_than_once(source: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let declarations = ["struct", "enum", "union"]
+        .iter()
+        .map(|keyword| {
+            whole_word_offsets(&masked, keyword)
+                .into_iter()
+                .filter(|offset| {
+                    starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
+                })
+                .count()
+        })
+        .sum::<usize>();
+    declarations > 1 || file_aliases_type(source, name)
+}
+
 /// Whether masked text declares a `trait` named `name`.
 fn declares_trait(masked: &str, name: &str) -> bool {
     whole_word_offsets(masked, "trait")
