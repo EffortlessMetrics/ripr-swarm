@@ -171,6 +171,75 @@ native-coverage subject and cannot satisfy the full file-policy or packet
 coverage obligation. Standalone `check-file-policy` and hosted `ci-policy`
 continue native enumeration. No hosted result depends on this prerequisite.
 
+### Rule 8: diagnostic native receipt, never full proof
+
+`cargo xtask file-policy-native-receipt --context <json>` clears its fixed
+receipt path before running the existing exact native enumeration and packet
+acceptance. If the context input aliases that path it refuses without deleting
+the input; the old diagnostic remains unverified and cannot be full proof. Any
+future acceptance must independently bind a successful producer. It refuses an
+observed dirty checkout or a difference between its before and after snapshots;
+ignored inputs and intermediate changes restored before the second snapshot are
+not observed. One writer and no concurrent source/context mutation are required.
+Within one process, overlapping publications use distinct exclusively created
+temporary paths; a failed publication removes only its own temporary file. This
+does not permit multiple producers to share the fixed output path.
+Duplicate declaration identities and duplicate names within one selector are
+refused; declaration identity uses the ledger line, declared host, and the
+same whitespace-tokenized Cargo listing arguments as native validation. Distinct
+declaration lines remain distinct. Binary identities are unavailable. A successful
+receipt is versioned and marked `native_valid_context_unverified`; its declared
+context and hashed observations are not evidence that effective Cargo features,
+configuration, environment, wrappers or ignored inputs were independently verified.
+Arbitrary environment values are not hashed or stored. Git and tool probes have
+bounded runtime and output; duplicate bare names within one selector are refused
+because the native listing lacks binary identity, so compatibility with every
+current multi-binary selector is not established.
+
+Opt-in `verify-test-shards` receipt mode reads only the selected shard-one
+attempt, compares declared run/context and independently resolved source tree,
+ledger and lock to the receipt, and refuses missing, ambiguous, stale, failed,
+wrong-attempt or unverified proof. Caller-supplied producer and verifier attempt
+values do not independently establish job or binary provenance. The diagnostic
+requires the selected shard-one artifact to be from the current Actions attempt,
+and compares its unique `xtask` member against bytes read from the running
+verifier's reopened executable path. Verifier-only reruns are refused until an
+independent job-result authority exists. The existing hosted workflow uploads
+its verifier separately and does not use this mode. Actions environment and
+producer-result values are not authenticated; the executable path comparison
+assumes it is not replaced while running. Binary reads have a 1 GiB per-file
+size limit but no hard wall deadline. Declared tool and context identity, receipt
+row completeness and packet observations are not independently authenticated.
+This diagnostic mode has no full-success path and is not wired into hosted CI.
+Receipt and context inputs refuse symlinks in any path component, including
+symlinked system roots; callers must use canonical trusted paths. Artifact
+traversal has node and depth limits and refuses symlinks and special files.
+Output parent checks refuse static symlink and nondirectory ancestors before
+removal and publication, while allowing missing directories to be created.
+Metadata checks and later opens are not atomic against hostile concurrent
+filesystem mutation. Windows drive and UNC prefixes are combined with their root before inspection;
+drive-relative and root-without-drive paths are refused. Native Windows runtime
+behavior is not established.
+The fixed output assumes one producer per worktree; concurrent producer safety
+is not established and must be enforced or proven before hosted use. The exact
+native selector enumerator retains its standalone per-command and lock-wait
+budgets. The diagnostic receipt producer instead starts one monotonic 1,170-second
+work budget at entry and clamps every snapshot probe, combined preparation,
+listing and lock-wait retry to its remaining time. It checks the budget at
+preflight and publication boundaries and removes a newly published receipt if
+the budget is exhausted. The remaining 30 seconds of the 1,200-second envelope
+are reserved for owned-child termination and drain. Blocking filesystem calls,
+OS scheduling and cleanup failures prevent this cooperative mechanism from
+proving a hard wall-clock limit; any real run still needs independently admitted
+outer cgroup/session-aware descendant containment and deadline. A plain
+parent-process or single-group timeout is not sufficient because owned native
+children can establish their own process groups. If capture and deadline both
+fail, retain both errors; budgeted warmup capture/cleanup errors stop the
+producer before another selector. Standalone best-effort warmup remains unchanged.
+A broad selector may still match a neighboring test after an intended test is
+deleted; the existing generic validator has no exact intended identity for
+that case. Packet-specific exact-subject rules remain unchanged.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -252,6 +321,7 @@ continue native enumeration. No hosted result depends on this prerequisite.
 - `xtask/src/precommit_v2.rs`: rules 4 and 5, and the decision and
   composition side of rule 6.
 - `xtask/src/policy/file_policy.rs`: the policy side of rule 6 and source-only declaration, path, pending and retained-subject controls for rule 7.
+- `xtask/src/policy/file_policy_native_receipt.rs` and `xtask/src/verify_test_shards.rs`: diagnostic receipt binding, overlapping-publication cleanup, and refusal controls for rule 8.
 
 ## Implementation Mapping
 
@@ -266,6 +336,7 @@ continue native enumeration. No hosted result depends on this prerequisite.
 - `xtask/src/policy/file_policy.rs`: `CoverageEnumeration`,
   `check_file_policy_with`, `coverage_for`, `retains_coverage_subject`,
   `coverage_disclosure_items` (rule 6); `check_file_policy_source_only` and shared path and selector preparation (rule 7).
+- `xtask/src/policy/file_policy_native_receipt.rs`: exact native producer and fail-closed diagnostic binding; `xtask/src/verify_test_shards.rs`: selected-attempt consumer (rule 8).
 
 ## Metrics
 

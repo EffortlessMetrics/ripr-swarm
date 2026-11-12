@@ -1,3 +1,11 @@
+#[path = "file_policy_native_receipt.rs"]
+mod native_receipt;
+pub(crate) use native_receipt::{
+    DeclaredContext, RECEIPT_NAME, expected_source as native_expected_source,
+    produce as produce_native_receipt, read_input as read_native_input,
+    require_full as require_native_receipt, validate_directory as validate_native_directory,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
@@ -10,6 +18,34 @@ use crate::{
     matches_any_glob, non_rust_programming_retention_reason, normalize_path,
     read_file_policy_allowlist, read_file_policy_test_commands,
 };
+
+/// Receipt producer leaves 30 seconds of its 1,200-second envelope for the
+/// owned-process termination/drain path and final fail-closed cleanup. This is
+/// cooperative with ordinary filesystem/scheduler behavior, not a hard OS deadline.
+const NATIVE_RECEIPT_WORK_BUDGET: Duration = Duration::from_secs(1_170);
+struct NativeDeadline {
+    started: std::time::Instant,
+}
+impl NativeDeadline {
+    fn start() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+        }
+    }
+    fn remaining(&self) -> Result<Duration, String> {
+        remaining_native_budget(NATIVE_RECEIPT_WORK_BUDGET, self.started.elapsed())
+    }
+    #[cfg(test)]
+    fn timeout(&self, nominal: Duration) -> Result<Duration, String> {
+        Ok(nominal.min(self.remaining()?))
+    }
+}
+fn remaining_native_budget(budget: Duration, elapsed: Duration) -> Result<Duration, String> {
+    budget
+        .checked_sub(elapsed)
+        .filter(|left| !left.is_zero())
+        .ok_or_else(|| "native receipt aggregate deadline exhausted".to_string())
+}
 
 const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// Compile budget, separate from listing. A cold `cargo test --list` spends
@@ -502,31 +538,107 @@ fn validate_test_covered_by_recorded(
     commands: &[FilePolicyTestCommand],
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_recorded_budgeted(path, commands, diagnostics, None)
+}
+
+fn validate_test_covered_by_recorded_budgeted(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    deadline: Option<&NativeDeadline>,
+) -> Result<Vec<TestCoverageObservation>, String> {
     let host = FilePolicyHost::current()?;
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
     // per package set lets Cargo schedule each set's targets together; it
     // only pre-fills the cache.
-    for args in combined_preparation_builds(commands, host) {
-        let captured = announce_cargo_child(
-            &cargo_child_label("test-valued covered_by combined build", &args),
-            || {
-                capture_output_with_timeout(
-                    "cargo",
-                    &args,
-                    &[],
-                    TEST_COVERED_BY_BUILD_TIMEOUT,
-                    "test-valued covered_by combined build",
-                )
-            },
-        );
-        diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
-    }
+    run_combined_preparations(
+        combined_preparation_builds(commands, host),
+        deadline.is_some(),
+        |args| {
+            let captured =
+                capture_with_native_deadline(deadline, TEST_COVERED_BY_BUILD_TIMEOUT, |timeout| {
+                    announce_cargo_child(
+                        &cargo_child_label("test-valued covered_by combined build", args),
+                        || {
+                            capture_output_with_timeout(
+                                "cargo",
+                                args,
+                                &[],
+                                timeout,
+                                "test-valued covered_by combined build",
+                            )
+                        },
+                    )
+                });
+            diagnostics.push(CommandDiagnostic::captured("cargo", args, &captured));
+            captured.map(|_| ())
+        },
+    )?;
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
-            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        // This closure runs again for every lock-wait retry; each gets only the
+        // current remaining envelope, never the original child budget.
+        capture_with_native_deadline(deadline, spawn.timeout, |timeout| {
+            announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
+                capture_output_with_timeout("cargo", &spawn.args, &[], timeout, spawn.description)
+            })
         })
     })
+}
+
+fn run_combined_preparations(
+    plans: Vec<Vec<String>>,
+    budgeted: bool,
+    mut capture: impl FnMut(&[String]) -> Result<(), String>,
+) -> Result<(), String> {
+    for args in plans {
+        finish_combined_capture(budgeted, capture(&args))?;
+    }
+    Ok(())
+}
+
+/// The standalone warmup remains a best-effort cache fill. The receipt's
+/// bounded path cannot launch another child after a capture/cleanup error.
+fn finish_combined_capture<T>(budgeted: bool, captured: Result<T, String>) -> Result<(), String> {
+    if budgeted {
+        captured.map(|_| ())
+    } else {
+        Ok(())
+    }
+}
+
+/// Preserve both errors when the capture's cleanup failed at the deadline.
+fn preserve_capture_and_deadline<T>(
+    captured: Result<T, String>,
+    remaining: Result<Duration, String>,
+) -> Result<T, String> {
+    match (captured, remaining) {
+        (Ok(value), Ok(_)) => Ok(value),
+        (Ok(_), Err(deadline)) => Err(deadline),
+        (Err(capture), Ok(_)) => Err(capture),
+        (Err(capture), Err(deadline)) => Err(format!("{capture}; {deadline}")),
+    }
+}
+
+fn capture_with_native_deadline<T>(
+    deadline: Option<&NativeDeadline>,
+    nominal: Duration,
+    capture: impl FnOnce(Duration) -> Result<T, String>,
+) -> Result<T, String> {
+    match deadline {
+        Some(deadline) => capture_with_remaining(|| deadline.remaining(), nominal, capture),
+        None => capture(nominal),
+    }
+}
+
+fn capture_with_remaining<T>(
+    remaining: impl Fn() -> Result<Duration, String>,
+    nominal: Duration,
+    capture: impl FnOnce(Duration) -> Result<T, String>,
+) -> Result<T, String> {
+    let timeout = nominal.min(remaining()?);
+    let result = capture(timeout);
+    preserve_capture_and_deadline(result, remaining())
 }
 
 fn validate_test_covered_by_recorded_with(
@@ -2580,6 +2692,117 @@ mod tests {
         if first_selector != 11_000 {
             return Err(format!("lock-wait attempts lost time: {first_selector}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn native_deadline_preserves_cleanup_error_and_stops_after_warmup() -> Result<(), String> {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let budget = Duration::from_secs(10);
+        let mut calls = 0;
+        let result = super::run_combined_preparations(
+            vec![vec!["first".into()], vec!["second".into()]],
+            true,
+            |_| {
+                calls += 1;
+                super::capture_with_remaining(
+                    || super::remaining_native_budget(budget, elapsed.get()),
+                    budget,
+                    |_| {
+                        elapsed.set(budget);
+                        Err::<(), _>("owned-process cleanup incomplete".to_string())
+                    },
+                )
+            },
+        );
+        let error = result.err().ok_or("failed warmup proceeded")?;
+        assert!(
+            error.contains("owned-process cleanup incomplete"),
+            "{error}"
+        );
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert_eq!(calls, 1, "later selector must not start");
+        let mut standalone_calls = 0;
+        super::run_combined_preparations(vec![vec![], vec![]], false, |_| {
+            standalone_calls += 1;
+            Err("old cache fill failure".to_string())
+        })?;
+        assert_eq!(standalone_calls, 2);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_deadline_real_hung_child_is_terminated() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-deadline-child");
+        let marker = root.join("descendant.pid");
+        let marker_value = marker.to_str().ok_or("non-UTF-8 marker path")?;
+        let args = vec!["-c".to_string(),
+            r#"sleep 30 & child=$!; printf '%s' "$child" > "$RIPR_NATIVE_DEADLINE_PID"; wait "$child""#.to_string()];
+        let started = std::time::Instant::now();
+        let budget = Duration::from_secs(5);
+        let timed_out = std::cell::Cell::new(false);
+        let primary_reaped = std::cell::Cell::new(false);
+        let result = super::capture_with_remaining(
+            || super::remaining_native_budget(budget, started.elapsed()),
+            budget,
+            |timeout| {
+                let output = crate::capture_output_with_timeout(
+                    "sh",
+                    &args,
+                    &[("RIPR_NATIVE_DEADLINE_PID", marker_value)],
+                    timeout,
+                    "native deadline child control",
+                )?;
+                timed_out.set(output.timed_out);
+                primary_reaped.set(output.status.is_some());
+                Ok(())
+            },
+        );
+        assert!(timed_out.get(), "hung child did not reach its timeout");
+        assert!(primary_reaped.get(), "primary child was not reaped");
+        let error = result.err().ok_or("expired child unexpectedly succeeded")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        let pid = std::fs::read_to_string(&marker).map_err(|e| e.to_string())?;
+        let pid: u32 = pid
+            .parse()
+            .map_err(|e| format!("invalid descendant pid: {e}"))?;
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => {
+                let state = stat
+                    .rsplit_once(") ")
+                    .and_then(|(_, tail)| tail.chars().next());
+                assert_eq!(state, Some('Z'), "owned descendant remains live: {stat}");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(format!("cannot inspect owned descendant {pid}: {error}")),
+        }
+        std::fs::remove_file(&marker).map_err(|e| e.to_string())?;
+        std::fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_deadline_stops_lock_retry_and_starts_no_more_children() -> Result<(), String> {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let budget = Duration::from_secs(10);
+        let mut calls = 0;
+        let error = capture_past_lock_wait(&lock_spawn(), &mut |spawn| {
+            super::capture_with_remaining(
+                || super::remaining_native_budget(budget, elapsed.get()),
+                spawn.timeout,
+                |timeout| {
+                    calls += 1;
+                    assert_eq!(timeout, budget);
+                    elapsed.set(budget);
+                    Ok(lock_wait_output(true))
+                },
+            )
+        })
+        .err()
+        .ok_or("exhausted deadline retried successfully")?;
+        assert!(error.contains("aggregate deadline exhausted"), "{error}");
+        assert_eq!(calls, 1);
         Ok(())
     }
 

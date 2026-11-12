@@ -36,8 +36,10 @@
 //! The flag changes only the expected `command` receipt (and its combined
 //! echo); every other conservation check is unchanged.
 
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 struct Options {
@@ -50,6 +52,13 @@ struct Options {
     shards: u32,
     out: PathBuf,
     all_features: bool,
+    native_receipt: Option<NativeReceiptOptions>,
+}
+
+struct NativeReceiptOptions {
+    context: PathBuf,
+    producer_result: String,
+    verifier_attempt: u32,
 }
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -105,11 +114,21 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--run-id" => "run-id",
             "--shards" => "shards",
             "--out" => "out",
+            "--native-receipt-context" => "native-receipt-context",
+            "--native-producer-result" => "native-producer-result",
+            "--native-verifier-attempt" => "native-verifier-attempt",
             other => return Err(format!("verify-test-shards: unknown argument `{other}`")),
         };
         let value = iter
             .next()
             .ok_or_else(|| format!("verify-test-shards: {flag} needs a value"))?;
+        if matches!(
+            name,
+            "native-receipt-context" | "native-producer-result" | "native-verifier-attempt"
+        ) && values.contains_key(name)
+        {
+            return Err(format!("verify-test-shards: duplicate option `{flag}`"));
+        }
         values.insert(name, value.clone());
     }
     let take = |name: &str| {
@@ -130,7 +149,28 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "verify-test-shards: --attempt must be a number, got {attempt:?}"
         ));
     }
+    let native_receipt = match (
+        values.get("native-receipt-context"),
+        values.get("native-producer-result"),
+        values.get("native-verifier-attempt"),
+    ) {
+        (None, None, None) => None,
+        (Some(context), Some(producer_result), Some(attempt)) => Some(NativeReceiptOptions {
+            context: PathBuf::from(context),
+            producer_result: producer_result.clone(),
+            verifier_attempt: attempt
+                .parse()
+                .map_err(|_| "invalid native verifier attempt".to_string())?,
+        }),
+        _ => {
+            return Err(
+                "native receipt mode requires context, producer result, and verifier attempt"
+                    .into(),
+            );
+        }
+    };
     Ok(Options {
+        native_receipt,
         dir: PathBuf::from(take("dir")?),
         artifact: take("artifact")?,
         attempt,
@@ -151,6 +191,51 @@ struct Outcome {
 }
 
 fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Outcome {
+    let identity = options
+        .native_receipt
+        .as_ref()
+        .map(|_| native_runner_identity());
+    let executable = options.native_receipt.as_ref().map(|_| {
+        std::env::current_exe().map_err(|e| format!("cannot identify running verifier: {e}"))
+    });
+    verify_with_native_authority(
+        options,
+        expected_blobs,
+        identity.as_ref(),
+        executable.as_ref(),
+    )
+}
+
+#[derive(Debug)]
+struct NativeRunnerIdentity {
+    repository: String,
+    sha: String,
+    run_id: String,
+    attempt: String,
+}
+
+/// Environment is a separate witness from command arguments, not an
+/// authentication boundary. Only an installed trusted workflow can give it
+/// that authority; full native proof is still always refused.
+fn native_runner_identity() -> Result<NativeRunnerIdentity, String> {
+    if !matches!(std::env::var("GITHUB_ACTIONS"), Ok(value) if value == "true") {
+        return Err("native receipt mode requires GitHub Actions identity".into());
+    }
+    let get = |key: &str| std::env::var(key).map_err(|_| format!("missing {key}"));
+    Ok(NativeRunnerIdentity {
+        repository: get("GITHUB_REPOSITORY")?,
+        sha: get("GITHUB_SHA")?,
+        run_id: get("GITHUB_RUN_ID")?,
+        attempt: get("GITHUB_RUN_ATTEMPT")?,
+    })
+}
+
+fn verify_with_native_authority(
+    options: &Options,
+    expected_blobs: Result<Vec<String>, String>,
+    identity: Option<&Result<NativeRunnerIdentity, String>>,
+    executable: Option<&Result<PathBuf, String>>,
+) -> Outcome {
     let mut problems = Vec::new();
     let expected_blobs = match expected_blobs {
         Ok(blobs) => Some(blobs),
@@ -188,6 +273,18 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         };
         if shard == 1 {
             first_dir = Some(dir.clone());
+            if let Some(native) = &options.native_receipt {
+                check_native_current_attempt(
+                    &dir,
+                    shard_attempt,
+                    options,
+                    native,
+                    identity,
+                    executable,
+                    &mut problems,
+                );
+                check_native_receipt(&dir, shard_attempt, options, native, &mut problems);
+            }
         }
         used_attempts.insert(shard_attempt);
         let list = read_named(&dir, &format!("list-{shard}.txt"), &tag, &mut problems);
@@ -313,6 +410,236 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         summary,
         junit,
         context,
+    }
+}
+
+/// Artifact traversal rejects symlinks and special files and has finite work.
+/// Metadata checks are not atomic against hostile concurrent mutations.
+fn find_native_receipts_with_limits(
+    root: &Path,
+    max_nodes: usize,
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, String> {
+    find_native_files_with_limits(root, crate::policy::RECEIPT_NAME, max_nodes, max_depth)
+}
+
+fn find_native_files_with_limits(
+    root: &Path,
+    name: &str,
+    max_nodes: usize,
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, String> {
+    crate::policy::validate_native_directory(root)?;
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut found = Vec::new();
+    let mut nodes = 0usize;
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|e| format!("cannot read {}: {e}", directory.display()))?
+        {
+            nodes += 1;
+            if nodes > max_nodes {
+                return Err("native receipt artifact node limit exceeded".into());
+            }
+            let entry = entry.map_err(|e| format!("cannot inspect native artifact entry: {e}"))?;
+            let next_depth = depth + 1;
+            if next_depth > max_depth {
+                return Err("native receipt artifact depth limit exceeded".into());
+            }
+            let kind = entry
+                .file_type()
+                .map_err(|e| format!("cannot inspect native artifact type: {e}"))?;
+            if kind.is_symlink() {
+                return Err("native receipt artifact contains a symlink".into());
+            }
+            if kind.is_dir() {
+                pending.push((entry.path(), next_depth));
+            } else if kind.is_file() {
+                if entry.file_name() == name {
+                    found.push(entry.path());
+                }
+                if found.len() > 1 {
+                    return Ok(found);
+                }
+            } else {
+                return Err("native receipt artifact contains a nonregular entry".into());
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Hash a regular file in bounded space; the static path checks are not atomic
+/// against hostile concurrent mutation. 1 GiB bounds the stripped hosted
+/// verifier and the diagnostic fails closed on larger files.
+fn native_binary_digest(path: &Path) -> Result<String, String> {
+    const MAX_BYTES: u64 = 1024 * 1024 * 1024;
+    let parent = path.parent().ok_or("verifier binary has no parent")?;
+    crate::policy::validate_native_directory(parent)?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| format!("cannot inspect verifier binary: {e}"))?;
+    if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > MAX_BYTES {
+        return Err("verifier binary must be a nonempty regular file within the size limit".into());
+    }
+    let file = fs::File::open(path).map_err(|e| format!("cannot open verifier binary: {e}"))?;
+    let mut input = file.take(MAX_BYTES + 1);
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|e| format!("cannot read verifier binary: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > MAX_BYTES {
+            return Err("verifier binary exceeds size limit".into());
+        }
+        hash.update(&buffer[..count]);
+    }
+    if total == 0 {
+        return Err("verifier binary is empty".into());
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn check_native_current_attempt(
+    dir: &Path,
+    selected_attempt: u32,
+    options: &Options,
+    native: &NativeReceiptOptions,
+    identity: Option<&Result<NativeRunnerIdentity, String>>,
+    executable: Option<&Result<PathBuf, String>>,
+    problems: &mut Vec<String>,
+) {
+    let Some(Ok(identity)) = identity else {
+        problems.push(
+            "native receipt mode has no separately observed Actions environment identity".into(),
+        );
+        return;
+    };
+    if identity.repository != options.repository
+        || identity.sha != options.sha
+        || identity.run_id != options.run_id
+        || identity.attempt != options.attempt
+        || identity.attempt != selected_attempt.to_string()
+        || native.verifier_attempt != selected_attempt
+        || selected_attempt == 0
+    {
+        problems.push("native receipt mode requires the current Actions producer attempt; verifier-only retries are not established".into());
+        return;
+    }
+    if native.producer_result != "success" {
+        problems.push("native producer matrix did not succeed".into());
+        return;
+    }
+    let Some(Ok(executable)) = executable else {
+        problems.push("cannot independently identify running verifier binary".into());
+        return;
+    };
+    let files = match find_native_files_with_limits(dir, "xtask", 10_000, 32) {
+        Ok(files) => files,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    let [member] = files.as_slice() else {
+        problems.push(format!(
+            "selected shard 1 must contain exactly one verifier binary (found {})",
+            files.len()
+        ));
+        return;
+    };
+    match (
+        native_binary_digest(executable),
+        native_binary_digest(member),
+    ) {
+        (Ok(running), Ok(retained)) if running == retained => (),
+        (Ok(_), Ok(_)) => {
+            problems.push("running verifier binary differs from selected shard 1 artifact".into())
+        }
+        (Err(error), _) | (_, Err(error)) => problems.push(error),
+    }
+}
+
+fn check_native_receipt(
+    dir: &Path,
+    selected_attempt: u32,
+    options: &Options,
+    native: &NativeReceiptOptions,
+    problems: &mut Vec<String>,
+) {
+    let found = match find_native_receipts_with_limits(dir, 10_000, 32) {
+        Ok(found) => found,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    let path = match found.as_slice() {
+        [path] => path,
+        [] => {
+            problems.push(format!(
+                "shard 1 native receipt: {} is missing",
+                crate::policy::RECEIPT_NAME
+            ));
+            return;
+        }
+        _ => {
+            problems.push(format!(
+                "shard 1 native receipt: {} is ambiguous ({} members)",
+                crate::policy::RECEIPT_NAME,
+                found.len()
+            ));
+            return;
+        }
+    };
+    let text = match crate::policy::read_native_input(path).and_then(|bytes| {
+        String::from_utf8(bytes).map_err(|_| "native receipt is not UTF-8".to_string())
+    }) {
+        Ok(text) => text,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    let expected = crate::policy::read_native_input(&native.context).and_then(|bytes| {
+        serde_json::from_slice::<crate::policy::DeclaredContext>(&bytes)
+            .map_err(|e| format!("invalid expected native context: {e}"))
+    });
+    let expected = match expected {
+        Ok(value) => value,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
+    if expected.repository != options.repository
+        || expected.checkout_sha != options.sha
+        || expected.run_id != options.run_id
+    {
+        problems.push("native expected context differs from verifier run identity".into());
+        return;
+    }
+    let source = match crate::policy::native_expected_source(&options.sha) {
+        Ok(source) => source,
+        Err(error) => {
+            problems.push(format!("cannot resolve native expected source: {error}"));
+            return;
+        }
+    };
+    if let Err(error) = crate::policy::require_native_receipt(
+        &text,
+        &expected,
+        &source,
+        selected_attempt,
+        &native.producer_result,
+        native.verifier_attempt,
+    ) {
+        problems.push(error);
     }
 }
 
@@ -876,6 +1203,7 @@ mod tests {
             shards,
             out: dir.join("out"),
             all_features: false,
+            native_receipt: None,
         }
     }
 
@@ -970,6 +1298,540 @@ mod tests {
         let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         Ok(outcome.problems)
+    }
+
+    #[test]
+    fn native_receipt_options_must_be_supplied_together() -> Result<(), String> {
+        let base = [
+            "--dir",
+            "in",
+            "--artifact",
+            "art",
+            "--attempt",
+            "2",
+            "--repository",
+            "o/r",
+            "--sha",
+            "a",
+            "--run-id",
+            "7",
+            "--shards",
+            "2",
+            "--out",
+            "out",
+        ];
+        let args = |extra: &[&str]| {
+            base.iter()
+                .chain(extra.iter())
+                .map(|s| (*s).to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(parse_options(&args(&["--native-receipt-context", "context.json"])).is_err());
+        let all = parse_options(&args(&[
+            "--native-receipt-context",
+            "context.json",
+            "--native-producer-result",
+            "success",
+            "--native-verifier-attempt",
+            "2",
+        ]))?;
+        let native = all.native_receipt.ok_or("native mode missing")?;
+        assert_eq!(native.verifier_attempt, 2);
+        assert_eq!(native.producer_result, "success");
+        Ok(())
+    }
+
+    #[test]
+    fn native_receipt_options_reject_duplicate_values_without_changing_legacy_options()
+    -> Result<(), String> {
+        let base = [
+            "--dir",
+            "in",
+            "--artifact",
+            "art",
+            "--attempt",
+            "2",
+            "--repository",
+            "o/r",
+            "--sha",
+            "a",
+            "--run-id",
+            "7",
+            "--shards",
+            "2",
+            "--out",
+            "out",
+        ];
+        let native = [
+            "--native-receipt-context",
+            "context.json",
+            "--native-producer-result",
+            "success",
+            "--native-verifier-attempt",
+            "2",
+        ];
+        for (flag, same, conflict) in [
+            ("--native-receipt-context", "context.json", "other.json"),
+            ("--native-producer-result", "success", "failure"),
+            ("--native-verifier-attempt", "2", "1"),
+        ] {
+            for duplicate in [same, conflict] {
+                for prefix in [true, false] {
+                    let mut args = base.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+                    if prefix {
+                        args.extend([flag.to_string(), duplicate.to_string()]);
+                    }
+                    args.extend(native.iter().map(|s| (*s).to_string()));
+                    if !prefix {
+                        args.extend([flag.to_string(), duplicate.to_string()]);
+                    }
+                    let error = parse_options(&args)
+                        .err()
+                        .ok_or("duplicate native option accepted")?;
+                    assert!(
+                        error.contains(&format!("duplicate option `{flag}`")),
+                        "{error}"
+                    );
+                }
+            }
+        }
+        let args = base
+            .iter()
+            .copied()
+            .chain(["--out", "later"])
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(parse_options(&args)?.out, PathBuf::from("later"));
+        Ok(())
+    }
+
+    #[test]
+    fn native_binary_digest_refuses_empty_oversized_and_nonregular_inputs() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-verifier-binary-bounds");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let regular = root.join("regular");
+        fs::write(&regular, b"abc").map_err(|e| e.to_string())?;
+        assert_eq!(
+            native_binary_digest(&regular)?,
+            format!("{:x}", Sha256::digest(b"abc"))
+        );
+        let empty = root.join("empty");
+        fs::write(&empty, b"").map_err(|e| e.to_string())?;
+        let empty_error = native_binary_digest(&empty)
+            .err()
+            .ok_or("empty binary accepted")?;
+        assert!(
+            empty_error.contains("nonempty regular file"),
+            "{empty_error}"
+        );
+        let sparse = root.join("sparse");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sparse)
+            .map_err(|e| e.to_string())?;
+        file.set_len(1024 * 1024 * 1024 + 1)
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        let large_error = native_binary_digest(&sparse)
+            .err()
+            .ok_or("oversized binary accepted")?;
+        assert!(large_error.contains("size limit"), "{large_error}");
+        let directory_error = native_binary_digest(&root)
+            .err()
+            .ok_or("directory accepted")?;
+        assert!(
+            directory_error.contains("regular file"),
+            "{directory_error}"
+        );
+        let missing = native_binary_digest(&root.join("missing"))
+            .err()
+            .ok_or("missing binary accepted")?;
+        assert!(
+            missing.contains("cannot inspect verifier binary"),
+            "{missing}"
+        );
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&regular, &link).map_err(|e| e.to_string())?;
+            let link_error = native_binary_digest(&link)
+                .err()
+                .ok_or("symlink binary accepted")?;
+            assert!(link_error.contains("regular file"), "{link_error}");
+        }
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_binary_digest_refuses_fifo_without_opening() -> Result<(), String> {
+        if std::env::var("RIPR_VERIFIER_FIFO_CHILD").ok().as_deref() == Some("1") {
+            let path = std::env::var("RIPR_VERIFIER_FIFO_PATH").map_err(|e| e.to_string())?;
+            let error = native_binary_digest(Path::new(&path))
+                .err()
+                .ok_or("FIFO binary accepted")?;
+            assert!(error.contains("regular file"), "{error}");
+            println!("native verifier FIFO refused before open");
+            return Ok(());
+        }
+        let root = crate::tests::temp_dir("native-verifier-fifo");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let fifo = root.join("fifo");
+        let fifo_text = fifo.to_str().ok_or("non-UTF-8 FIFO path")?;
+        let setup = crate::run::capture_bytes_in_dir_with_budget(
+            Path::new("mkfifo"),
+            &[fifo_text.to_string()],
+            (Path::new("."), None),
+            &[],
+            crate::run::ByteCaptureBudget {
+                timeout: std::time::Duration::from_secs(2),
+                stdout_bytes: 64 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            "native verifier FIFO setup",
+        )?;
+        assert!(
+            !setup.timed_out && setup.status.is_some_and(|s| s.success()),
+            "FIFO setup failed"
+        );
+        use std::os::unix::fs::FileTypeExt;
+        assert!(
+            fs::symlink_metadata(&fifo)
+                .map_err(|e| e.to_string())?
+                .file_type()
+                .is_fifo()
+        );
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let args = [
+            "--exact".to_string(),
+            "verify_test_shards::tests::native_binary_digest_refuses_fifo_without_opening"
+                .to_string(),
+            "--nocapture".to_string(),
+        ];
+        let env = [
+            ("RIPR_VERIFIER_FIFO_CHILD", "1"),
+            ("RIPR_VERIFIER_FIFO_PATH", fifo_text),
+        ];
+        let result = crate::run::capture_bytes_in_dir_with_env_budget(
+            &exe,
+            &args,
+            Path::new("."),
+            (&env, &[]),
+            crate::run::ByteCaptureBudget {
+                timeout: std::time::Duration::from_secs(5),
+                stdout_bytes: 64 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            "native verifier FIFO reader control",
+        )?;
+        assert!(
+            !result.timed_out && result.status.is_some_and(|s| s.success()),
+            "FIFO reader did not complete"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stdout)
+                .contains("native verifier FIFO refused before open")
+        );
+        fs::remove_file(&fifo).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_verify_requires_current_attempt_and_same_artifact_binary() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-current-producer");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        lay_out(&root, false)?;
+        let blobs = || Ok(vec![BLOB.to_string(); 4]);
+        let baseline = verify(&options(&root, 2), blobs());
+        assert!(baseline.problems.is_empty(), "{:?}", baseline.problems);
+        let running = root.join("running-verifier");
+        fs::write(&running, b"same verifier bytes").map_err(|e| e.to_string())?;
+        let executable = Ok(running);
+        let identity = |attempt: &str| {
+            Ok(NativeRunnerIdentity {
+                repository: "o/r".into(),
+                sha: SHA.into(),
+                run_id: "7".into(),
+                attempt: attempt.into(),
+            })
+        };
+        let mut strict = options(&root, 2);
+        strict.native_receipt = Some(NativeReceiptOptions {
+            context: root.join("context.json"),
+            producer_result: "success".into(),
+            verifier_attempt: 1,
+        });
+        let run = |opts: &Options, actor: &Result<NativeRunnerIdentity, String>| {
+            verify_with_native_authority(opts, blobs(), Some(actor), Some(&executable)).problems
+        };
+        let current = identity("1");
+        let no_identity = verify_with_native_authority(&strict, blobs(), None, Some(&executable));
+        assert!(
+            no_identity
+                .problems
+                .iter()
+                .any(|p| p.contains("no separately observed Actions environment identity")),
+            "{:?}",
+            no_identity.problems
+        );
+        let missing_binary = run(&strict, &current);
+        assert!(
+            missing_binary
+                .iter()
+                .any(|p| p.contains("exactly one verifier binary")),
+            "{missing_binary:?}"
+        );
+        let shard1 = shard_dir(&root, 1);
+        fs::write(shard1.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        let missing_receipt = run(&strict, &current);
+        assert!(
+            !missing_receipt
+                .iter()
+                .any(|p| p.contains("verifier binary")),
+            "{missing_receipt:?}"
+        );
+        assert!(
+            missing_receipt
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{missing_receipt:?}"
+        );
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .producer_result = "failure".into();
+        let failed = run(&strict, &current);
+        assert!(
+            failed
+                .iter()
+                .any(|p| p.contains("native producer matrix did not succeed")),
+            "{failed:?}"
+        );
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .producer_result = "success".into();
+        fs::write(shard1.join("xtask"), b"wrong bytes").map_err(|e| e.to_string())?;
+        let mismatch = run(&strict, &current);
+        assert!(
+            mismatch.iter().any(|p| p.contains("differs from selected")),
+            "{mismatch:?}"
+        );
+        fs::write(shard1.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        fs::create_dir(shard1.join("nested")).map_err(|e| e.to_string())?;
+        fs::write(shard1.join("nested/xtask"), b"same verifier bytes")
+            .map_err(|e| e.to_string())?;
+        let duplicates = run(&strict, &current);
+        assert!(
+            duplicates
+                .iter()
+                .any(|p| p.contains("exactly one verifier binary")),
+            "{duplicates:?}"
+        );
+        fs::remove_file(shard1.join("nested/xtask")).map_err(|e| e.to_string())?;
+        fs::write(
+            shard1.join(crate::policy::RECEIPT_NAME),
+            b"old green receipt",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            shard1.join("nested").join(crate::policy::RECEIPT_NAME),
+            b"duplicate",
+        )
+        .map_err(|e| e.to_string())?;
+        let duplicate_receipt = run(&strict, &current);
+        assert!(
+            duplicate_receipt.iter().any(|p| p.contains("ambiguous")),
+            "{duplicate_receipt:?}"
+        );
+        fs::remove_file(shard1.join("nested").join(crate::policy::RECEIPT_NAME))
+            .map_err(|e| e.to_string())?;
+        // An absent newer producer artifact must not fall back to the old one.
+        strict.attempt = "2".into();
+        strict
+            .native_receipt
+            .as_mut()
+            .ok_or("missing native options")?
+            .verifier_attempt = 2;
+        let retry = run(&strict, &identity("2"));
+        assert!(
+            retry
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{retry:?}"
+        );
+        let wrong_actor = run(&strict, &identity("1"));
+        assert!(
+            wrong_actor
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{wrong_actor:?}"
+        );
+        // Even a verifier-only rerun is refused until platform job provenance exists.
+        lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
+        let latest = strict.dir.join("art-nextest-shard-1-2");
+        fs::write(latest.join("xtask"), b"same verifier bytes").map_err(|e| e.to_string())?;
+        let new_missing = run(&strict, &identity("2"));
+        assert!(
+            new_missing
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{new_missing:?}"
+        );
+        assert!(
+            !new_missing
+                .iter()
+                .any(|p| p.contains("requires the current Actions producer attempt")),
+            "{new_missing:?}"
+        );
+        // Exercise the selected receipt through verify(), including Git-derived
+        // source resolution. A malformed latest receipt cannot fall back to the
+        // older member even when that older member is present.
+        let head = crate::run::run_output("git", &["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
+        assert_eq!(head.len(), 40, "fixture needs a full checkout commit");
+        for directory in [shard1.clone(), shard_dir(&root, 2), latest.clone()] {
+            let context_file = directory.join("run-context.txt");
+            let text = fs::read_to_string(&context_file).map_err(|e| e.to_string())?;
+            fs::write(&context_file, text.replace(SHA, &head)).map_err(|e| e.to_string())?;
+        }
+        strict.sha = head.clone();
+        let declared = serde_json::json!({
+            "repository": "o/r", "checkout_sha": head, "run_id": "7", "attempt": 2,
+            "target": "x86_64-unknown-linux-gnu", "cargo_profile": "test",
+            "configuration_sha256": "b".repeat(64), "features_sha256": "c".repeat(64),
+        });
+        fs::write(root.join("context.json"), declared.to_string()).map_err(|e| e.to_string())?;
+        fs::write(latest.join(crate::policy::RECEIPT_NAME), b"{broken")
+            .map_err(|e| e.to_string())?;
+        let actor = Ok(NativeRunnerIdentity {
+            repository: "o/r".into(),
+            sha: strict.sha.clone(),
+            run_id: "7".into(),
+            attempt: "2".into(),
+        });
+        let latest_bad = run(&strict, &actor);
+        assert!(
+            latest_bad
+                .iter()
+                .any(|p| p.contains("invalid native receipt")),
+            "{latest_bad:?}"
+        );
+        assert!(
+            !latest_bad
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{latest_bad:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_artifact_traversal_refuses_depth_and_node_exhaustion() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-artifact-limits");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("a/b/c")).map_err(|e| e.to_string())?;
+        assert!(find_native_receipts_with_limits(&root, 100, 32)?.is_empty());
+        let depth = find_native_receipts_with_limits(&root, 100, 2)
+            .err()
+            .ok_or("depth accepted")?;
+        assert!(depth.contains("depth limit"), "{depth}");
+        fs::write(root.join("first"), "x").map_err(|e| e.to_string())?;
+        fs::write(root.join("second"), "x").map_err(|e| e.to_string())?;
+        assert!(find_native_receipts_with_limits(&root, 100, 32)?.is_empty());
+        let nodes = find_native_receipts_with_limits(&root, 1, 32)
+            .err()
+            .ok_or("node limit accepted")?;
+        assert!(nodes.contains("node limit"), "{nodes}");
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_artifact_traversal_refuses_symlink_cycle() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-artifact-cycle");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&root, root.join("cycle")).map_err(|e| e.to_string())?;
+        let error = find_native_receipts_with_limits(&root, 100, 32)
+            .err()
+            .ok_or("symlink cycle accepted")?;
+        assert!(error.contains("symlink"), "{error}");
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_receipt_uses_selected_shard_attempt_and_refuses_missing_or_ambiguous()
+    -> Result<(), String> {
+        let root = crate::tests::temp_dir("verify-native-selected-attempt");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        lay_out_shard(&root, false, 1, 2, 1, &["b one", "b two"])?;
+        lay_out_shard(&root, false, 1, 2, 2, &["b one", "b two"])?;
+        fs::write(
+            shard_dir(&root, 1).join(crate::policy::RECEIPT_NAME),
+            "old receipt",
+        )
+        .map_err(|e| e.to_string())?;
+        let options = options_attempt(&root, 2, "2");
+        let (selected, attempt) = select_shard_dir(&options, 1)?.ok_or("missing selected shard")?;
+        assert_eq!(attempt, 2);
+        let native = NativeReceiptOptions {
+            context: root.join("context.json"),
+            producer_result: "success".into(),
+            verifier_attempt: 2,
+        };
+        let mut problems = Vec::new();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("file-policy-native-receipt.json is missing")),
+            "{problems:?}"
+        );
+        fs::create_dir_all(selected.join("nested")).map_err(|e| e.to_string())?;
+        fs::write(selected.join(crate::policy::RECEIPT_NAME), "one").map_err(|e| e.to_string())?;
+        fs::write(
+            selected.join("nested").join(crate::policy::RECEIPT_NAME),
+            "two",
+        )
+        .map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("ambiguous")),
+            "{problems:?}"
+        );
+        fs::remove_file(selected.join("nested").join(crate::policy::RECEIPT_NAME))
+            .map_err(|e| e.to_string())?;
+        fs::write(
+            selected.join(crate::policy::RECEIPT_NAME),
+            vec![b'x'; 8 * 1024 * 1024 + 1],
+        )
+        .map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("exceeds input budget")),
+            "{problems:?}"
+        );
+        fs::write(selected.join(crate::policy::RECEIPT_NAME), "{}").map_err(|e| e.to_string())?;
+        fs::write(&native.context, vec![b'x'; 8 * 1024 * 1024 + 1]).map_err(|e| e.to_string())?;
+        problems.clear();
+        check_native_receipt(&selected, attempt, &options, &native, &mut problems);
+        assert!(
+            problems.iter().any(|p| p.contains("exceeds input budget")),
+            "{problems:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[test]

@@ -114,10 +114,33 @@ selects, in this order, and record each command and native exit status in the
 PR-native continuation record's `Validation:` line (see
 [PR automation](../PR_AUTOMATION.md#pr-native-continuation-record)):
 
+The native policy receipt prototype's `--context` JSON requires `repository`,
+`checkout_sha` (40 hex characters), `run_id` (digits), `attempt` (positive
+integer), `target`, `cargo_profile`, `configuration_sha256`, and
+`features_sha256` (64 hex characters each). The configuration and feature
+digests are caller-declared, not independently verified. Optional
+`verify-test-shards` receipt mode requires `--native-receipt-context`,
+`--native-producer-result`, and `--native-verifier-attempt` together; it
+always refuses full proof while context and producer provenance are unverified.
+Its strict diagnostic check compares the supplied repository, SHA, run ID and
+attempt with `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_RUN_ID` and
+`GITHUB_RUN_ATTEMPT`, requires `GITHUB_ACTIONS=true`, and requires the selected
+shard-one attempt to be current. It requires one `xtask` binary in that same
+selected artifact and compares that file with the verifier's reopened
+`current_exe()` path by streaming SHA-256 over each file, at most 1 GiB per
+file. These two reads have bounded memory and size but no wall-clock deadline;
+their cost is not measured. The reopened path does not authenticate the running
+image and assumes no concurrent mutation. GitHub environment values and the
+caller-supplied producer result are not authenticated provenance. A verifier-only
+rerun with an older producer is refused until independent job authority exists.
+The current hosted workflow does not provide this same-artifact binary or enable
+this mode. All diagnostic receipts remain ineligible for full proof.
+
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
 | fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). Hosted `ci-policy` and `cargo xtask check-file-policy` always list. |
 | File-policy source prerequisite | `cargo xtask check-file-policy-source-only` | Checks declarations, paths, and basic selector operands without enumerating native tests. Its separate report says `full_proof_pending`; it does not satisfy full file policy, packet coverage, or hosted qualification. Run `cargo xtask check-file-policy` for full native validation. |
+| Native policy receipt prototype | `cargo xtask file-policy-native-receipt --context <json>` | Runs the original native selectors and writes a context-unverified diagnostic. Opt-in shard receipt validation always refuses full proof until effective context and producer provenance are established. Hosted routing remains unchanged. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
 | Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
