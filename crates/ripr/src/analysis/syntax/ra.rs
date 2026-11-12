@@ -4393,6 +4393,24 @@ pub fn split_condition(total: u32, vip: bool) -> u32 {
     if vip
         && total > 1 { 4 } else { 5 }
 }
+
+pub fn newline_keyword(total: u32, vip: bool) -> u32 {
+    if vip {
+        if
+            total > 10 { 3 } else { 2 }
+    } else {
+        match
+            total { 0 => 0, _ => 1 }
+    }
+}
+
+pub fn fallible(total: u32) -> Result<u32, Error> {
+    if total > 1 {
+        Ok(total)
+    } else {
+        Err(Error::Small)
+    }
+}
 "#;
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), text)?;
         let return_shapes = facts
@@ -4401,9 +4419,29 @@ pub fn split_condition(total: u32, vip: bool) -> u32 {
             .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
             .map(|shape| (shape.start_line, shape.text.as_str()))
             .collect::<Vec<_>>();
-        let expected = [(4, "total / 10"), (6, "total / 20"), (8, "0"), (28, "7")];
+        // `newline_keyword`: a nested `if`/`match` branch tail whose keyword
+        // ends its line is still control flow, so it gets no shape (Devin
+        // review on #14392); its inner values sit on condition lines.
+        let expected = [
+            (4, "total / 10"),
+            (6, "total / 20"),
+            (8, "0"),
+            (28, "7"),
+            (54, "Ok(total)"),
+            (56, "Err(Error::Small)"),
+        ];
         if return_shapes != expected {
             return Err(format!("unexpected return probe shapes: {return_shapes:?}").into());
+        }
+        // An own-line error branch value also carries its error-path shape.
+        let error_shapes = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| (shape.start_line, shape.text.as_str()))
+            .collect::<Vec<_>>();
+        if error_shapes != [(56, "Err(Error::Small)")] {
+            return Err(format!("unexpected error probe shapes: {error_shapes:?}").into());
         }
         Ok(())
     }

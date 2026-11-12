@@ -114,7 +114,17 @@ pub(super) fn push_tail_if_branch_return_values(
         let own_line = !condition_lines
             .as_ref()
             .is_some_and(|lines| lines.contains(&value_line));
-        if own_line && is_tail_return_value_text(&value_text) {
+        // A nested control-flow branch tail is decided by AST kind, not text,
+        // so `if\n` or `match\n` formatting cannot admit the whole expression.
+        let control_flow = matches!(
+            value,
+            ast::Expr::IfExpr(_)
+                | ast::Expr::MatchExpr(_)
+                | ast::Expr::WhileExpr(_)
+                | ast::Expr::ForExpr(_)
+                | ast::Expr::LoopExpr(_)
+        );
+        if own_line && !control_flow && is_tail_return_value_text(&value_text) {
             push_probe_shape(
                 shapes,
                 line_index,

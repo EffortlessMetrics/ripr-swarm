@@ -973,7 +973,10 @@ fn collect_command_specs<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
+                        // A null role is a role not offered: the evidence
+                        // record writes `null` for a non-actionable item
+                        // (#14385). Any other non-object still fails.
+                        if (role == "verify") == verify && !spec.is_null() {
                             subjects.push((format!("{child_location}/{role}"), spec));
                         }
                     }
@@ -1022,7 +1025,7 @@ fn collect_command_specs_exact<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
+                        if (role == "verify") == verify && !matches!(spec, ExactValue::Null) {
                             subjects.push((format!("{child_location}/{role}"), spec));
                         }
                     }
@@ -1620,12 +1623,37 @@ mod tests {
     }
 
     #[test]
+    fn null_command_spec_roles_are_roles_not_offered() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 0
+                || report
+                    .violations
+                    .iter()
+                    .any(|violation| violation.contains("packet.json/command_specs"))
+            {
+                return Err(format!(
+                    "null {role} role was validated as a spec: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn non_object_command_spec_roles_fail_in_both_binding_rows() -> Result<(), String> {
         for (role, verify) in [("verify", true), ("build", false)] {
             let root = example_root();
             write(
                 &root.join("fixtures/a/expected/packet.json"),
-                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+                &format!(r#"{{"command_specs":{{"{role}":"x"}}}}"#),
             );
             let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
             let row = &report.packet["rows"][0];

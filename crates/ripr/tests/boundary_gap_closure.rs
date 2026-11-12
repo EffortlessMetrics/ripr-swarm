@@ -55,10 +55,12 @@ fn verification_status(receipt: &Value) -> Result<&str, String> {
 
 fn assert_closed_outcome(outcome: &Value) -> Result<(), String> {
     if outcome.pointer("/summary/moved").and_then(Value::as_u64) != Some(1)
+        // The two tail `if`/`else` branch values are strongly gripped
+        // `return_value` seams that stay strongly gripped (#14385).
         || outcome
             .pointer("/summary/unchanged")
             .and_then(Value::as_u64)
-            != Some(0)
+            != Some(2)
         || outcome
             .pointer("/summary/gap_movement/closed")
             .and_then(Value::as_u64)

@@ -510,6 +510,30 @@ fn started_brief(root: &Path, brief: &serde_json::Value) -> Result<serde_json::V
     Ok(started)
 }
 
+/// The brief warnings a seam-scoped start carries. The owner's tail `if`/`else`
+/// branch values (`src/lib.rs:3` and `:5`) are strongly gripped `return_value`
+/// seams (#14385); a working-set brief discloses them as configured off, which a
+/// start scoped to the selected predicate seam has no reason to repeat.
+fn start_scope_warnings(brief: &serde_json::Value) -> serde_json::Value {
+    let hidden = |text: &str| {
+        text.starts_with("seams ")
+            && text.contains(" at src/lib.rs:3, ")
+            && text.contains(" at src/lib.rs:5 ")
+            && text.contains("configured off for strongly_gripped seams")
+    };
+    let kept: Vec<serde_json::Value> = brief["warnings"]
+        .as_array()
+        .map(|warnings| {
+            warnings
+                .iter()
+                .filter(|warning| !warning.as_str().is_some_and(hidden))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::Value::Array(kept)
+}
+
 fn close_boundary_gap(root: &Path) -> Result<(), String> {
     let path = root.join("tests/pricing.rs");
     let mut tests = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -572,7 +596,7 @@ fn cli_non_git_agent_start_brief_discloses_verify_provenance_limit() -> Result<(
         "the generated start brief must disclose its verification limitation: {}",
         started["warnings"]
     );
-    assert_eq!(started["warnings"], brief["warnings"]);
+    assert_eq!(started["warnings"], start_scope_warnings(&brief));
     assert!(!root.join(".git").exists(), "start must not initialize Git");
     Ok(())
 }
@@ -674,7 +698,10 @@ fn cli_git_patch_brief_without_base_verifies_real_boundary_edit() -> Result<(), 
             .is_some_and(|text| text.contains("Git/revision provenance"))),
         "a null diff base must not claim missing Git: {warnings:?}"
     );
-    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
+    assert_eq!(
+        started_brief(root, &brief)?["warnings"],
+        start_scope_warnings(&brief)
+    );
     let before = root.join("target/identity/before.json");
     let after = root.join("target/identity/after.json");
     write_agent_repo_exposure_snapshot(root, &before)?;
@@ -729,7 +756,10 @@ fn cli_unborn_git_patch_brief_and_snapshot_disclose_missing_revision() -> Result
                 })
             })
     );
-    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
+    assert_eq!(
+        started_brief(root, &brief)?["warnings"],
+        start_scope_warnings(&brief)
+    );
     let snapshot = root.join("target/identity/unborn.json");
     write_agent_repo_exposure_snapshot(root, &snapshot)?;
     let raw = std::fs::read_to_string(snapshot).map_err(|error| error.to_string())?;
@@ -808,6 +838,9 @@ fn cli_git_patch_brief_and_snapshot_disclose_unavailable_worktree() -> Result<()
         "a concrete HEAD must not hide unavailable worktree provenance: {}",
         brief["warnings"]
     );
-    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
+    assert_eq!(
+        started_brief(root, &brief)?["warnings"],
+        start_scope_warnings(&brief)
+    );
     Ok(())
 }
