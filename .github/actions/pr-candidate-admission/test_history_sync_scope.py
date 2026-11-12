@@ -228,5 +228,91 @@ class HistorySyncScopeTests(unittest.TestCase):
         self.assertIn('DOCS_ONLY: ${{ needs.admission.outputs.docs_only }}', downstream)
 
 
+class DocsGateBaseTests(unittest.TestCase):
+    """Run the real gate wrapper against Git graphs; Cargo is a scope witness."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='ripr-docs-base-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.env = {'PATH': os.environ.get('PATH', ''), 'HOME': self.temp.name,
+                    'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1'}
+        self.git('init', '-q')
+        self.git('config', 'user.name', 'Fixture')
+        self.git('config', 'user.email', 'fixture@example.invalid')
+        (self.root / 'source.rs').write_text('fn original() {}')
+        self.old = self.commit('original')
+        (self.root / 'source.rs').write_text('fn repaired() {}')
+        self.base = self.commit('base product repair')
+        (self.root / 'change.md').write_text('Changelog only')
+        self.head = self.commit('docs candidate')
+        self.git('update-ref', 'refs/remotes/origin/main', self.old)
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        cargo = bin_dir / 'cargo'
+        cargo.write_text('#!/bin/bash\nset -eu\nprintf "%s\\n" "$*" >> cargo-calls\n'
+                         'if [ "$*" = "xtask precommit" ]; then\n'
+                         '  test "$(git diff --name-only origin/main...HEAD)" = change.md\n'
+                         'fi\n')
+        cargo.chmod(0o755)
+        self.env.update(PATH=str(bin_dir) + os.pathsep + self.env['PATH'],
+                        BASE_SHA=self.base, EXPECTED_G=self.head)
+
+    def git(self, *args):
+        return subprocess.run(['git', *args], cwd=self.root, env=self.env,
+                              text=True, capture_output=True, check=True,
+                              timeout=10).stdout.strip()
+
+    def commit(self, message):
+        self.git('add', '.')
+        self.git('commit', '-qm', message)
+        return self.git('rev-parse', 'HEAD')
+
+    def execute_gate(self, **overrides):
+        script = step_block(WORKFLOW.read_text(), 'Doc/spec gates (full precommit table)')
+        return subprocess.run(['bash', '--noprofile', '--norc', '-e', '-c', script],
+                              cwd=self.root, env={**self.env, **overrides}, text=True,
+                              capture_output=True, timeout=10)
+
+    def test_stale_main_does_not_select_inherited_rust_changes(self):
+        result = self.execute_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.git('rev-parse', 'origin/main'), self.base)
+        self.assertEqual((self.root / 'cargo-calls').read_text().splitlines(),
+                         ['policy preflight', 'xtask precommit'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.head)
+
+    def test_binding_does_not_hide_real_rust_changes(self):
+        # Use the older event base intentionally: Rust really belongs to this
+        # event's delta, so the scope witness must refuse its docs-only claim.
+        result = self.execute_gate(BASE_SHA=self.old)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('source.rs', self.git('diff', '--name-only', 'origin/main...HEAD'))
+        self.assertEqual((self.root / 'cargo-calls').read_text().splitlines(),
+                         ['policy preflight', 'xtask precommit'])
+
+    def test_workflow_binds_event_base_and_checked_out_integration(self):
+        source = WORKFLOW.read_text()
+        block = source.split('      - name: Doc/spec gates (full precommit table)\n', 1)[1].split('      - name:', 1)[0]
+        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}', block)
+        self.assertIn('EXPECTED_G: ${{ github.sha }}', block)
+        self.assertIn('timeout-minutes: 20', source.split('  docs-gate:', 1)[1].split('  result:', 1)[0])
+
+    def test_invalid_base_or_checkout_refused_before_cargo(self):
+        for overrides in ({'BASE_SHA': ''}, {'BASE_SHA': 'main'},
+                          {'BASE_SHA': 'f' * 40}, {'EXPECTED_G': self.old}):
+            with self.subTest(overrides=overrides):
+                result = self.execute_gate(**overrides)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / 'cargo-calls').exists())
+
+    def test_nonancestor_base_refused(self):
+        # A parentless commit is unrelated without removing the Cargo witness.
+        unrelated = self.git('commit-tree', 'HEAD^{tree}', '-m', 'unrelated root')
+        result = self.execute_gate(BASE_SHA=unrelated)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / 'cargo-calls').exists())
+
+
 if __name__ == '__main__':
     unittest.main()
