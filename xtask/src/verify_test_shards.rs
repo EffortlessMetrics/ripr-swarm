@@ -350,6 +350,53 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
     }
 }
 
+/// Artifact traversal rejects symlinks and special files and has finite work.
+/// Metadata checks are not atomic against hostile concurrent mutations.
+fn find_native_receipts_with_limits(
+    root: &Path,
+    max_nodes: usize,
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, String> {
+    crate::policy::validate_native_directory(root)?;
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut found = Vec::new();
+    let mut nodes = 0usize;
+    while let Some((directory, depth)) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|e| format!("cannot read {}: {e}", directory.display()))?
+        {
+            nodes += 1;
+            if nodes > max_nodes {
+                return Err("native receipt artifact node limit exceeded".into());
+            }
+            let entry = entry.map_err(|e| format!("cannot inspect native artifact entry: {e}"))?;
+            let next_depth = depth + 1;
+            if next_depth > max_depth {
+                return Err("native receipt artifact depth limit exceeded".into());
+            }
+            let kind = entry
+                .file_type()
+                .map_err(|e| format!("cannot inspect native artifact type: {e}"))?;
+            if kind.is_symlink() {
+                return Err("native receipt artifact contains a symlink".into());
+            }
+            if kind.is_dir() {
+                pending.push((entry.path(), next_depth));
+            } else if kind.is_file() {
+                if entry.file_name() == crate::policy::RECEIPT_NAME {
+                    found.push(entry.path());
+                }
+                if found.len() > 1 {
+                    return Ok(found);
+                }
+            } else {
+                return Err("native receipt artifact contains a nonregular entry".into());
+            }
+        }
+    }
+    Ok(found)
+}
+
 fn check_native_receipt(
     dir: &Path,
     selected_attempt: u32,
@@ -357,8 +404,13 @@ fn check_native_receipt(
     native: &NativeReceiptOptions,
     problems: &mut Vec<String>,
 ) {
-    let mut found = Vec::new();
-    find_files(dir, crate::policy::RECEIPT_NAME, &mut found);
+    let found = match find_native_receipts_with_limits(dir, 10_000, 32) {
+        Ok(found) => found,
+        Err(error) => {
+            problems.push(error);
+            return;
+        }
+    };
     let path = match found.as_slice() {
         [path] => path,
         [] => {
@@ -1078,6 +1130,32 @@ mod tests {
         let outcome = verify(&options(&root, 2), Ok(vec![BLOB.to_string(); 4]));
         let _ = fs::remove_dir_all(&root);
         Ok(outcome.problems)
+    }
+
+    #[test]
+    fn native_artifact_traversal_refuses_depth_and_node_exhaustion() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-artifact-limits");
+        fs::create_dir_all(root.join("a/b/c")).map_err(|e| e.to_string())?;
+        assert!(find_native_receipts_with_limits(&root, 100, 2).is_err());
+        fs::write(root.join("first"), "x").map_err(|e| e.to_string())?;
+        fs::write(root.join("second"), "x").map_err(|e| e.to_string())?;
+        assert!(find_native_receipts_with_limits(&root, 1, 32).is_err());
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_artifact_traversal_refuses_symlink_cycle() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-artifact-cycle");
+        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&root, root.join("cycle")).map_err(|e| e.to_string())?;
+        let error = find_native_receipts_with_limits(&root, 100, 32)
+            .err()
+            .ok_or("symlink cycle accepted")?;
+        assert!(error.contains("symlink"), "{error}");
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[test]

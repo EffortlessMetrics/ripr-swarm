@@ -18,6 +18,7 @@ fn context_assignments_are_singletons_even_when_values_agree() -> Result<(), Str
         shards: 4,
         out: PathBuf::new(),
         all_features: false,
+        native_receipt: None,
     };
     let valid = format!(
         "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard=2/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:2/4\nnextest_exit=0\n",
@@ -273,6 +274,7 @@ fn attempt_options(root: &Path, attempt: u32) -> Options {
         shards: 2,
         out: root.join("out"),
         all_features: false,
+        native_receipt: None,
     }
 }
 

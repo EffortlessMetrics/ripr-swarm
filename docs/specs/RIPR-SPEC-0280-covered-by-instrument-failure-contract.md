@@ -193,6 +193,11 @@ wrong-attempt or unverified proof. Caller-supplied producer and verifier attempt
 values do not independently establish job or binary provenance. Declared tool and
 context identity, receipt row completeness and packet observations are not independently authenticated. In particular,
 this diagnostic mode has no full-success path and is not wired into hosted CI.
+Receipt and context inputs refuse symlinks and special files; artifact traversal
+has node and depth limits. Metadata checks and later opens are not atomic against
+hostile concurrent filesystem mutation. The fixed output assumes one producer per
+worktree; concurrent producer safety is not established and must be enforced or
+proven before hosted use.
 A broad selector may still match a neighboring test after an intended test is
 deleted; the existing generic validator has no exact intended identity for
 that case. Packet-specific exact-subject rules remain unchanged.

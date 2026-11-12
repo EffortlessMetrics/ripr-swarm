@@ -65,10 +65,11 @@ fn bounded_probe_with_limit(
         },
         "file-policy native receipt probe",
     )?;
-    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-        return Err(format!(
-            "native receipt {program} probe failed or timed out"
-        ));
+    if output.timed_out {
+        return Err(format!("native receipt {program} probe timed out"));
+    }
+    if !output.status.is_some_and(|status| status.success()) {
+        return Err(format!("native receipt {program} probe failed"));
     }
     Ok(output.stdout)
 }
@@ -144,7 +145,45 @@ fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 const INPUT_LIMIT: u64 = 8 * 1024 * 1024;
+/// Refuses symlinks and special files before opening. This check and the later
+/// open are not atomic against a concurrent hostile filesystem mutation.
+fn validate_components(path: &Path, final_file: bool) -> Result<(), String> {
+    let mut current = std::path::PathBuf::new();
+    let mut parts = path.components().peekable();
+    if parts.peek().is_none() {
+        return Err("native input path is empty".into());
+    }
+    while let Some(part) = parts.next() {
+        if matches!(part, std::path::Component::ParentDir) {
+            return Err("native input path contains parent traversal".into());
+        }
+        current.push(part.as_os_str());
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|e| format!("cannot inspect {}: {e}", current.display()))?;
+        let kind = metadata.file_type();
+        if kind.is_symlink() {
+            return Err(format!(
+                "native input path contains symlink: {}",
+                current.display()
+            ));
+        }
+        let last = parts.peek().is_none();
+        if (last && final_file && !kind.is_file()) || ((!last || !final_file) && !kind.is_dir()) {
+            return Err(format!(
+                "native input path is not an expected regular file/directory: {}",
+                current.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_directory(path: &Path) -> Result<(), String> {
+    validate_components(path, false)
+}
+
 pub(crate) fn read_input(path: &Path) -> Result<Vec<u8>, String> {
+    validate_components(path, true)?;
     let file = fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(INPUT_LIMIT + 1)
@@ -583,7 +622,10 @@ mod tests {
         let ready = bounded_probe("sh", &["-c", "printf ready"], Duration::from_secs(2))?;
         assert_eq!(ready, b"ready");
         let result = bounded_probe("sh", &["-c", "sleep 2"], Duration::from_millis(50));
-        assert!(result.is_err());
+        let error = result
+            .err()
+            .ok_or("sleeping probe unexpectedly succeeded")?;
+        assert!(error.contains("timed out"), "{error}");
         Ok(())
     }
 
@@ -596,6 +638,38 @@ mod tests {
         let too_large =
             bounded_probe_with_limit("sh", &["-c", "printf 12345"], Duration::from_secs(2), 4);
         assert!(too_large.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_without_writer_is_refused_before_open() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-native-fifo-{}", std::process::id()));
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let fifo = root.join("receipt");
+        let name = fifo.to_str().ok_or("non-UTF-8 FIFO path")?;
+        bounded_probe("mkfifo", &[name], Duration::from_secs(2))?;
+        use std::os::unix::fs::FileTypeExt;
+        assert!(
+            fs::symlink_metadata(&fifo)
+                .map_err(|e| e.to_string())?
+                .file_type()
+                .is_fifo()
+        );
+        let started = std::time::Instant::now();
+        let result = read_input(&fifo);
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let regular = root.join("regular");
+        fs::write(&regular, "ok").map_err(|e| e.to_string())?;
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&regular, &link).map_err(|e| e.to_string())?;
+        let error = read_input(&link).err().ok_or("symlink input accepted")?;
+        assert!(error.contains("symlink"), "{error}");
+        fs::remove_file(&link).map_err(|e| e.to_string())?;
+        fs::remove_file(&regular).map_err(|e| e.to_string())?;
+        fs::remove_file(&fifo).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
