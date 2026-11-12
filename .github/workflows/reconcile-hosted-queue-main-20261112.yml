@@ -1,4 +1,4 @@
-name: Split hosted queue reconciliation conflicts
+name: Prove hosted queue reconciliation with current main
 
 on:
   push:
@@ -8,33 +8,27 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  reconcile:
     if: github.repository == 'EffortlessMetrics/ripr-swarm'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
-      - name: Checkout exact rehearsal branch
+      - name: Checkout rehearsal history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: codex/4838-hosted-main-reconcile-20261112
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Split pinned diff3 conflicts into line-addressable files
+      - name: Construct exact two-parent reconciliation
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
           EXPECTED_MAIN: c5d50a38ba94799d6da3954fef004839fae5489c
-          OUT_DIR: .ci/staged/4838-conflicts-c5d50a38
         run: |
           set -euo pipefail
-          if [ -f "$OUT_DIR/04-rust_gate_workflow_contract.rs.txt" ]; then
-            echo "Pinned split conflict diagnostics already materialized."
-            exit 0
-          fi
-
           git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD || {
-            echo "::error::rehearsal no longer contains tested hosted source $HOSTED_SOURCE"
+            echo "::error::rehearsal history lost hosted source $HOSTED_SOURCE"
             exit 1
           }
           git fetch --no-tags origin main
@@ -47,49 +41,125 @@ jobs:
           git config user.name EffortlessSteven
           git config user.email 15812269+EffortlessSteven@users.noreply.github.com
           git config merge.conflictstyle diff3
+          git checkout --detach "$HOSTED_SOURCE"
           set +e
           git merge --no-commit --no-ff "$EXPECTED_MAIN"
           merge_status=$?
           set -e
           [ "$merge_status" -ne 0 ] || {
-            echo "::error::merge unexpectedly became conflict-free"
+            echo "::error::expected the reviewed four-file conflict set"
             git merge --abort
             exit 1
           }
 
           python3 - <<'PY'
           from pathlib import Path
-          import os
           import subprocess
 
-          items = [
-              ('.github/actions/pr-candidate-admission/review_disposition.py', '01-review_disposition.py.txt'),
-              ('.github/workflows/routed-rust.yml', '02-routed-rust.yml.txt'),
-              ('tools/repo-policy/tests/review_disposition_admission.rs', '03-review_disposition_admission.rs.txt'),
-              ('xtask/tests/rust_gate_workflow_contract.rs', '04-rust_gate_workflow_contract.rs.txt'),
-          ]
+          choices = {
+              '.github/actions/pr-candidate-admission/review_disposition.py': 'ours',
+              '.github/workflows/routed-rust.yml': 'ours',
+              'tools/repo-policy/tests/review_disposition_admission.rs': 'ours',
+              'xtask/tests/rust_gate_workflow_contract.rs': 'theirs',
+          }
           actual = [line for line in subprocess.check_output(
               ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
           ).splitlines() if line]
-          expected = [item[0] for item in items]
-          if actual != expected:
-              raise SystemExit(f'conflict set changed: expected={expected!r} actual={actual!r}')
-          out = Path(os.environ['OUT_DIR'])
-          out.mkdir(parents=True, exist_ok=True)
-          header = (
-              'schema=hosted-main-conflict-file.v1\n'
-              f'hosted_source={os.environ["HOSTED_SOURCE"]}\n'
-              f'expected_main={os.environ["EXPECTED_MAIN"]}\n\n'
-          )
-          for relative, filename in items:
-              body = Path(relative).read_text(encoding='utf-8')
-              (out / filename).write_text(
-                  header + f'path={relative}\n\n' + body,
-                  encoding='utf-8',
-              )
+          if actual != list(choices):
+              raise SystemExit(f'conflict set changed: expected={list(choices)!r} actual={actual!r}')
+
+          def resolve_diff3(text: str, side: str) -> str:
+              lines = text.splitlines(keepends=True)
+              out: list[str] = []
+              index = 0
+              conflicts = 0
+              while index < len(lines):
+                  if not lines[index].startswith('<<<<<<< '):
+                      out.append(lines[index])
+                      index += 1
+                      continue
+                  conflicts += 1
+                  index += 1
+                  ours: list[str] = []
+                  while index < len(lines) and not lines[index].startswith('||||||| '):
+                      ours.append(lines[index])
+                      index += 1
+                  if index >= len(lines):
+                      raise SystemExit('missing diff3 base marker')
+                  index += 1
+                  while index < len(lines) and not lines[index].startswith('======='):
+                      index += 1
+                  if index >= len(lines):
+                      raise SystemExit('missing conflict separator')
+                  index += 1
+                  theirs: list[str] = []
+                  while index < len(lines) and not lines[index].startswith('>>>>>>> '):
+                      theirs.append(lines[index])
+                      index += 1
+                  if index >= len(lines):
+                      raise SystemExit('missing conflict end marker')
+                  index += 1
+                  out.extend(ours if side == 'ours' else theirs)
+              if conflicts == 0:
+                  raise SystemExit('expected at least one conflict marker')
+              resolved = ''.join(out)
+              if any(marker in resolved for marker in ('<<<<<<< ', '||||||| ', '=======', '>>>>>>> ')):
+                  raise SystemExit('conflict marker remained after resolution')
+              return resolved
+
+          for relative, side in choices.items():
+              path = Path(relative)
+              path.write_text(resolve_diff3(path.read_text(encoding='utf-8'), side), encoding='utf-8')
           PY
 
-          git merge --abort
-          git add "$OUT_DIR"
-          git commit -m 'docs(ci): split hosted queue conflict diagnostics (#14200)'
-          git push origin HEAD:refs/heads/codex/4838-hosted-main-reconcile-20261112
+          git add \
+            .github/actions/pr-candidate-admission/review_disposition.py \
+            .github/workflows/routed-rust.yml \
+            tools/repo-policy/tests/review_disposition_admission.rs \
+            xtask/tests/rust_gate_workflow_contract.rs
+          test -z "$(git diff --name-only --diff-filter=U)"
+
+      - name: Prove the reconciled source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --locked -p repo-policy --all-targets
+          cargo test --locked -p xtask --test rust_gate_workflow_contract --test routed_queue_resolution
+          cargo run --locked -p repo-policy -- check-workflows
+          git diff --check
+          test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
+          test ! -e .ci/staged/4838-current-main-conflicts-c5d50a38.txt
+          test ! -e .ci/staged/4838-conflicts-c5d50a38
+
+      - name: Create tested merge object and publish if permitted
+        shell: bash
+        env:
+          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-c5d50a38
+        run: |
+          set -euo pipefail
+          git add -A
+          git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
+          commit="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          parents="$(git show -s --format=%P HEAD)"
+          echo "RECONCILED_COMMIT=$commit"
+          echo "RECONCILED_TREE=$tree"
+          echo "RECONCILED_PARENTS=$parents"
+          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 c5d50a38ba94799d6da3954fef004839fae5489c" ]
+
+          set +e
+          push_output="$(git push origin "HEAD:$TARGET_REF" 2>&1)"
+          push_status=$?
+          set -e
+          printf '%s\n' "$push_output"
+          if [ "$push_status" -eq 0 ]; then
+            exit 0
+          fi
+          if printf '%s' "$push_output" | grep -q 'refusing to allow a GitHub App to create or update workflow'; then
+            echo "Expected workflow-permission refusal after object upload; retain exact commit identity above."
+            exit 0
+          fi
+          exit "$push_status"
