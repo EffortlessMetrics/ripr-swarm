@@ -75,6 +75,16 @@ fn is_metavar(token: &str) -> bool {
     saw_upper
 }
 
+/// `true` when an option line opens with two or more comma-joined long flags
+/// (`--root, --label, ...`). `--help, -h` is one flag with a short form.
+fn is_flag_reference_list(rest: &str) -> bool {
+    let mut tokens = rest.split_whitespace();
+    let first = tokens.next().unwrap_or_default();
+    first.starts_with("--")
+        && first.ends_with(',')
+        && tokens.next().is_some_and(|next| next.starts_with("--"))
+}
+
 struct ParsedOption {
     name: String,
     takes_value: bool,
@@ -113,6 +123,19 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
                     description: String::new(),
                 });
             }
+            continue;
+        }
+        // `--root, --label, --out` followed by "As for <sibling>" refers to
+        // flags defined on their own lines elsewhere in the body. Reading the
+        // list as a definition would report its first member as a valueless
+        // switch and shadow the real row (#14086).
+        if is_flag_reference_list(rest) {
+            options.push(ParsedOption {
+                name: String::new(),
+                takes_value: false,
+                literal_value: None,
+                description: String::new(),
+            });
             continue;
         }
         let mut tokens = rest.split_whitespace().peekable();
@@ -287,6 +310,57 @@ mod tests {
         }
         if flags.len() != 7 {
             return Err(format!("expected 7 flags, got {}: {flags:?}", flags.len()));
+        }
+        Ok(())
+    }
+
+    /// #14086: a `--a, --b, --c` line refers to flags defined elsewhere in
+    /// the body. It must neither define its first member as a valueless
+    /// switch nor shadow the real definition that follows.
+    #[test]
+    fn a_flag_reference_list_defines_nothing() -> Result<(), String> {
+        let body = "Do a thing.\n\nUsage: ripr thing [--root PATH]\n\nFirst options:\n  --mode MODE      A mode.\n  --root, --label, --out\n                   As for the other one.\n\nSecond options:\n  --root PATH      Workspace root.\n  --label LABEL    Repeatable label.\n  --help, -h       Print this help.\n";
+        let flags = flags_for("thing", body);
+        let root = flag(&flags, "--root")?;
+        if !root.takes_value {
+            return Err(format!("the list shadowed --root PATH: {root:?}"));
+        }
+        let label = flag(&flags, "--label")?;
+        if !label.takes_value || !label.repeatable {
+            return Err(format!("--label keeps its own row: {label:?}"));
+        }
+        if flag(&flags, "--mode")?.repeatable {
+            return Err("the list's description leaked into --mode".to_string());
+        }
+        // `--out` has no defining row, so it is not invented; `--help, -h`
+        // is one flag with a short form, not a list.
+        if flags.iter().any(|flag| flag.name == "--out") {
+            return Err(format!("--out was invented from the list: {flags:?}"));
+        }
+        if flag(&flags, "--help")?.takes_value {
+            return Err("--help is a switch".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_gate_body_reports_value_taking_flags_as_such() -> Result<(), String> {
+        let body = crate::cli::help::help_text_for("gate check").ok_or("gate check has a body")?;
+        let flags = flags_for("gate check", body);
+        for name in [
+            "--base",
+            "--mode",
+            "--root",
+            "--gap-ledger",
+            "--agent-verify",
+            "--out-md",
+        ] {
+            if !flag(&flags, name)?.takes_value {
+                return Err(format!("gate {name} takes a value: {flags:?}"));
+            }
+        }
+        if !flag(&flags, "--label")?.repeatable {
+            return Err("gate --label is repeatable".to_string());
         }
         Ok(())
     }

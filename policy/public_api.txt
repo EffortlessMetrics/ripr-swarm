@@ -306,6 +306,7 @@ pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
 pub use ripr::analysis::LanguageRun
 pub use ripr::analysis::LanguageRunStatus
+pub use ripr::analysis::OverLimitFile
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
