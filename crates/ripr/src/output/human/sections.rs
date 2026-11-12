@@ -572,18 +572,23 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
 /// the flow model did not read on the head's line, is returned unchanged.
 pub(super) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> std::borrow::Cow<'a, str> {
     let head = text.trim();
+    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The sink was read for the probe's own head, so only that head may be
+    // joined to it: a different `before` head would pair an old pattern with
+    // the new arm's result.
     let result = (finding.probe.family == ProbeFamily::MatchArm
         && head.ends_with("=>")
-        && head.matches("=>").count() == 1)
-        .then(|| {
-            finding.flow_sinks.iter().find(|sink| {
-                sink.kind == crate::domain::FlowSinkKind::MatchArm
-                    && sink.line == finding.probe.location.line
-                    && !sink.text.trim().is_empty()
-                    && sink.text.trim() != head
-            })
+        && head.matches("=>").count() == 1
+        && compact(head) == compact(&finding.probe.expression))
+    .then(|| {
+        finding.flow_sinks.iter().find(|sink| {
+            sink.kind == crate::domain::FlowSinkKind::MatchArm
+                && sink.line == finding.probe.location.line
+                && !sink.text.trim().is_empty()
+                && sink.text.trim() != head
         })
-        .flatten();
+    })
+    .flatten();
     match result {
         Some(sink) => std::borrow::Cow::Owned(format!("{head} {}", sink.text.trim())),
         None => std::borrow::Cow::Borrowed(text),

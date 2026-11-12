@@ -2134,6 +2134,17 @@ fn head_only_arm_row_names_the_arm_result() {
     let text = render_finding(&head_sink, root, ctx, false);
     assert!(text.contains("|Size::Medium =>|"), "{text}");
 
+    // The sink was read for the probe's own head, so a different head (an
+    // old `before` arm) is never paired with the new arm's result.
+    assert_eq!(
+        super::sections::with_arm_result(&gap, " Size::Medium =>"),
+        "Size::Medium => 450"
+    );
+    assert_eq!(
+        super::sections::with_arm_result(&gap, "Size::Large =>"),
+        "Size::Large =>"
+    );
+
     let mut predicate = gap;
     predicate.probe.family = ProbeFamily::Predicate;
     let text = render_finding(&predicate, root, ctx, false);

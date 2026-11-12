@@ -645,18 +645,40 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     if compact(&line[..arrow]) != compact(head) {
         return None;
     }
-    // A trailing line comment (`Size::Medium => 450, // new tier`) is cut
-    // when the `//` is outside every string: an even number of plain
-    // quotes before it, and no escape or char literal that would make the
-    // count unreliable.
+    // A trailing line comment (`Size::Medium => 450, // new tier`) is cut at
+    // the first `//` outside every string literal the shared lexical scan
+    // reads (raw strings, escapes and char literals included).
     let tail = &line[arrow + 2..];
-    let quotes_reliable = !tail.contains(['\\', '\'']);
+    let strings = crate::analysis::extract::string_literal_spans(tail);
     let tail = tail
         .match_indices("//")
         .map(|(at, _)| at)
-        .find(|&at| tail[..at].matches('"').count() % 2 == 0)
-        .filter(|_| quotes_reliable)
+        .find(|&at| {
+            !strings
+                .iter()
+                .any(|&(open, close, _)| open < at && at < close)
+        })
         .map_or(tail, |at| &tail[..at]);
+    // An unterminated string continues past this line, so the arm does.
+    let (_, quotes) = crate::analysis::extract::mask_with_string_delimiter_quotes(tail);
+    if quotes % 2 != 0 {
+        return None;
+    }
+    // A comma ends a non-block arm; without one the arm must be the last
+    // before the match's closing brace. Otherwise the result continues on
+    // the next line (`base` then `+ 1,`) and its first line alone would
+    // name a wrong value.
+    if !tail.trim_end().ends_with(',') {
+        let next = owner
+            .body
+            .lines()
+            .skip(probe.location.line.checked_sub(owner.start_line)? + 1)
+            .map(str::trim)
+            .find(|next| !next.is_empty() && !next.starts_with("//"));
+        if !next.is_some_and(|next| next.starts_with('}')) {
+            return None;
+        }
+    }
     let end = arrow + 2 + tail.len();
     let result = tail.trim().trim_end_matches(',').trim_end();
     let masked_result = masked[arrow + 2..end]
@@ -679,9 +701,6 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     };
     let plain = !result.is_empty()
         && result.chars().count() <= ARM_RESULT_BUDGET
-        // After the cut, a `//` left in a reliably quoted result is inside
-        // a string; otherwise it may be a comment.
-        && (quotes_reliable || !result.contains("//"))
         && !result.contains("/*")
         && !result.contains("Err(")
         && !masked_result.contains(['{', '}'])
@@ -3374,6 +3393,23 @@ mod tests {
             .text,
             "Size::Large =>"
         );
+        // A result continued on the next line keeps the head: its first line
+        // alone (`base`, `a ||`, `"x"`) would name a wrong value. A last arm
+        // without a comma reads when the match closes on the next line, and
+        // a comment after a raw string holding a quote is cut.
+        packed = function(
+            "pub fn price(size: Size, base: u32) -> u32 {\n    match size {\n        Size::Small => base\n            + 1,\n        Size::Medium => a ||\n            b,\n        Size::Large => \"x\"\n            .len(),\n        Size::Raw => r#\"a\"b\"#.len(), // c\n        Size::Huge => 900\n        // last arm\n    }\n}\n",
+        );
+        let read = |head: &str, line: usize| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, line), Some(&packed))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read("Size::Small =>", 3), "Size::Small =>");
+        assert_eq!(read("Size::Medium =>", 5), "Size::Medium =>");
+        assert_eq!(read("Size::Large =>", 7), "Size::Large =>");
+        assert_eq!(read("Size::Raw =>", 9), "r#\"a\"b\"#.len()");
+        assert_eq!(read("Size::Huge =>", 10), "900");
         // Without an owner there is no source to read.
         let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
         assert_eq!(sinks[0].text, "Size::Small =>");
