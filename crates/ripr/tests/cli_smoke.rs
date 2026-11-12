@@ -28861,6 +28861,226 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// #14423: on a clean base branch the machine formats keep their empty-range
+/// contract, but they name the same last-commit rerun the human view prints:
+/// the agent `stop=` line names `ripr check --base HEAD~1 --format agent`
+/// (and running it reaches the commit's findings), and the JSON stop carries
+/// `scope_route`. A root commit with no parent and a detached HEAD keep the
+/// generic stop and no route.
+#[test]
+fn check_machine_formats_on_clean_base_branch_name_the_last_commit_rerun() -> Result<(), String> {
+    let root = unique_temp_workspace("last-commit-rerun-machine");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"last-commit-rerun\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|err| format!("write .gitignore: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age > 18 }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    const GENERIC: &str = "stop=nothing was analyzed (no scope); pass --base REV";
+
+    // Root commit: no parent, so no rerun can name a range.
+    let only_root = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&only_root);
+    let only_root_text = String::from_utf8_lossy(&only_root.stdout);
+    if !only_root_text.contains(GENERIC) || only_root_text.contains("HEAD~1") {
+        return Err(format!(
+            "a root commit must keep the generic stop: {only_root_text}"
+        ));
+    }
+
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )
+    .map_err(|err| format!("rewrite lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "boundary"])?;
+
+    let agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&agent);
+    let agent_text = String::from_utf8_lossy(&agent.stdout);
+    let stop = agent_text
+        .lines()
+        .find(|line| line.starts_with("stop="))
+        .ok_or_else(|| format!("agent output must stop: {agent_text}"))?;
+    let command = stop
+        .split("to check the last commit run `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .ok_or_else(|| format!("the stop must name the last-commit rerun: {stop}"))?;
+    if !stop.contains("HEAD is at the comparison base `main`")
+        || !command.starts_with("ripr check --root ")
+        || !command.ends_with(" --base HEAD~1 --format agent")
+    {
+        return Err(format!("unexpected last-commit stop: {stop}"));
+    }
+    // The named rerun reaches the commit's behavior.
+    let rerun = run_ripr(&[
+        "check", "--root", &root_str, "--base", "HEAD~1", "--format", "agent",
+    ]);
+    assert_success(&rerun);
+    let rerun_text = String::from_utf8_lossy(&rerun.stdout);
+    if rerun_text.contains("stop=nothing was analyzed") || rerun_text.contains("findings=0 ") {
+        return Err(format!(
+            "the named rerun must analyze the last commit: {rerun_text}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    let stop_value = &value["canonical_next_action"]["stop"];
+    let scope_route = stop_value["scope_route"].as_str().unwrap_or_default();
+    if stop_value["case"] != "scope_missing"
+        || !scope_route.ends_with(" --base HEAD~1")
+        || !scope_route.starts_with("ripr check --root ")
+        || stop_value.get("repair_route").is_some()
+    {
+        return Err(format!(
+            "JSON stop must carry the scope route only: {stop_value}"
+        ));
+    }
+
+    // A clone resolves the default base to `origin/main` at the same commit
+    // as `main`: the same empty range, so both machine formats name the
+    // same rerun.
+    run_git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    run_git(
+        &root,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    )?;
+    let clone_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&clone_agent);
+    let clone_text = String::from_utf8_lossy(&clone_agent.stdout);
+    if !clone_text.contains("HEAD is at the comparison base `origin/main`")
+        || !clone_text.contains(" --base HEAD~1 --format agent`")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must name the last-commit rerun: {clone_text}"
+        ));
+    }
+    let clone_json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&clone_json);
+    let clone_value: serde_json::Value = serde_json::from_slice(&clone_json.stdout)
+        .map_err(|err| format!("parse origin/main check JSON: {err}"))?;
+    if !clone_value["canonical_next_action"]["stop"]["scope_route"]
+        .as_str()
+        .unwrap_or_default()
+        .ends_with(" --base HEAD~1")
+    {
+        return Err(format!(
+            "an origin/main base at HEAD must carry the scope route: {clone_value}"
+        ));
+    }
+
+    // Ignored source: the last commit cannot reach the ignored file, so
+    // neither machine format names the rerun.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(
+        root.join("src/generated.rs"),
+        "pub fn generated() -> u8 { 2 }\n",
+    )
+    .map_err(|err| format!("write generated.rs: {err}"))?;
+    let ignored_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&ignored_agent);
+    let ignored_text = String::from_utf8_lossy(&ignored_agent.stdout);
+    if ignored_text.contains("to check the last commit run") {
+        return Err(format!(
+            "ignored source must not name the last-commit rerun: {ignored_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &[], "ignored source")?;
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove generated.rs: {err}"))?;
+
+    // Untracked source: the empty range is explained by the untracked file,
+    // so neither machine format names the last-commit rerun.
+    std::fs::write(root.join("src/extra.rs"), "pub fn extra() -> u8 { 1 }\n")
+        .map_err(|err| format!("write extra.rs: {err}"))?;
+    let untracked_agent = run_ripr(&["check", "--root", &root_str, "--format", "agent"]);
+    assert_success(&untracked_agent);
+    let untracked_text = String::from_utf8_lossy(&untracked_agent.stdout);
+    if untracked_text.contains("to check the last commit run") {
+        return Err(format!(
+            "untracked source must not name the last-commit rerun: {untracked_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &[], "untracked source")?;
+    std::fs::remove_file(root.join("src/extra.rs"))
+        .map_err(|err| format!("remove extra.rs: {err}"))?;
+
+    // A feature branch that is not the base: the generic stop stays.
+    run_git(&root, &["checkout", "-q", "-b", "feature"])?;
+    let feature = run_ripr(&[
+        "check", "--root", &root_str, "--format", "agent", "--base", "main",
+    ]);
+    assert_success(&feature);
+    let feature_text = String::from_utf8_lossy(&feature.stdout);
+    if feature_text.contains("to check the last commit run") {
+        return Err(format!(
+            "a non-base branch must not name the last-commit rerun: {feature_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &["--base", "main"], "feature branch")?;
+
+    // Detached HEAD: not on the base branch, so the generic stop stays.
+    run_git(&root, &["checkout", "-q", "--detach", "HEAD"])?;
+    let detached = run_ripr(&[
+        "check", "--root", &root_str, "--format", "agent", "--base", "main",
+    ]);
+    assert_success(&detached);
+    let detached_text = String::from_utf8_lossy(&detached.stdout);
+    if !detached_text.contains("\nstop=nothing was")
+        || detached_text.contains("HEAD~1")
+        || detached_text.contains("comparison base `main`")
+    {
+        return Err(format!(
+            "a detached HEAD must not name the last-commit rerun: {detached_text}"
+        ));
+    }
+    assert_json_stop_has_no_scope_route(&root_str, &["--base", "main"], "detached HEAD")?;
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn assert_json_stop_has_no_scope_route(
+    root: &str,
+    extra: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    let mut args = vec!["check", "--root", root, "--json"];
+    args.extend_from_slice(extra);
+    let output = run_ripr(&args);
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("parse {label} check JSON: {err}"))?;
+    let stop = &value["canonical_next_action"]["stop"];
+    if stop.get("scope_route").is_some() {
+        return Err(format!(
+            "{label}: JSON stop must not carry scope_route: {stop}"
+        ));
+    }
+    Ok(())
+}
+
 /// #14265: a branch that is behind its base (or already merged into it) has
 /// an empty range because the base contains HEAD, not because no file is in
 /// an analyzed language. The headline and the next action say so and never

@@ -104,8 +104,8 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, default_base_unresolved_message,
-    is_shallow_repository, load_diff, load_diff_core,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head_with_parent,
+    default_base_unresolved_message, is_shallow_repository, load_diff, load_diff_core,
     load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,

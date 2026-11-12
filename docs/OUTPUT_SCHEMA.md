@@ -1519,7 +1519,15 @@ findings-array budgeting preserves this primary object and its
 `check_triage` stop for a preview finding whose gap `ripr agent repair` can
 start carries an additive `stop.repair_route` (#13599): the same command as
 `finding_routes[].repair.command`. The class stays `unsupported_or_limited`
-because naming the route does not run it; the field is omitted otherwise. Classification
+because naming the route does not run it; the field is omitted otherwise. A
+`check_triage` stop for `scope_missing` on a clean base branch whose `HEAD~1`
+resolves carries an additive `stop.scope_route` (#14423): the
+`ripr check --root <root> --base HEAD~1` rerun the human `Safe next action`
+and the agent `stop=` line name, from one decision; it is omitted otherwise.
+The base may be the checked-out branch or, in a clone, `origin/<branch>` at
+the same commit; an untracked or ignored source file in the working tree
+omits it, because the last commit cannot reach that file.
+Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
 For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,

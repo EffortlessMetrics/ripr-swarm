@@ -183,6 +183,7 @@ pub(crate) fn decide_repair_start(
         restart_route,
         check_case: None,
         check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
