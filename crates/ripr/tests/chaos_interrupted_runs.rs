@@ -278,12 +278,26 @@ fn terminate_tree_after(
     // The child may already have exited; the owner treats that as settled.
     child.terminate_tree()?;
     let status = child.wait().map_err(|error| error.to_string())?;
-    let survivors = group_survivors(group)?;
+    let survivors = settled_group_survivors(group)?;
     assert!(
         survivors.is_empty(),
         "descendants {survivors:?} of ripr survived the group kill after {delay_micros}us"
     );
     Ok(status)
+}
+
+/// Members of `group` still listed once the exits triggered by a group kill
+/// have had a chance to land. The signal is delivered at once but each member
+/// exits on its own schedule, so one can stay listed briefly after the leader
+/// is reaped; a real survivor stays listed for the whole budget.
+fn settled_group_survivors(group: u32) -> Result<Vec<u32>, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut survivors = group_survivors(group)?;
+    while !survivors.is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+        survivors = group_survivors(group)?;
+    }
+    Ok(survivors)
 }
 
 /// Pids still in process group `group`, read from `/proc`. Only Linux has
@@ -355,7 +369,24 @@ fn group_survivor_check_sees_a_live_descendant_until_the_group_is_terminated() -
 
     child.terminate_tree()?;
     child.wait().map_err(|error| error.to_string())?;
-    assert_eq!(group_survivors(group)?, Vec::<u32>::new());
+    assert_eq!(settled_group_survivors(group)?, Vec::<u32>::new());
+    Ok(())
+}
+
+/// Control for the sweep helper itself: a run that has a live descendant when
+/// `terminate_tree_after` fires must come back with the group empty. A helper
+/// that signalled only the direct child would leave the sleeper behind and
+/// trip the helper's own survivor assertion.
+#[cfg(target_os = "linux")]
+#[test]
+fn sweep_helper_clears_a_descendant_that_is_alive_at_the_kill() -> Result<(), String> {
+    let mut command = owned_test_command(Path::new("/bin/sh"));
+    command
+        .args(["-c", "sleep 30 & wait"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let status = terminate_tree_after(command, 500_000)?;
+    assert!(!status.success(), "the shell should have been terminated");
     Ok(())
 }
 
