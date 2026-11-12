@@ -593,10 +593,22 @@ fn match_arm_sink(
     owner_fn: Option<&FunctionSummary>,
     owner: Option<SymbolId>,
 ) -> FlowSinkFact {
-    let arm_result = probe
-        .expression
-        .split_once("=>")
-        .map(|(_, result)| result.trim().trim_end_matches(',').to_string())
+    // The arm arrow is located on the comment/string-masked text, so a `=>`
+    // inside a string or comment pattern (`"a=>b" =>`) is not mistaken for
+    // it and the probe is read as head-only, as the renderer reads it.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&probe.expression);
+    let arrow = if masked.len() == probe.expression.len() {
+        masked.find("=>")
+    } else {
+        probe.expression.find("=>")
+    };
+    let arm_result = arrow
+        .map(|at| {
+            probe.expression[at + 2..]
+                .trim()
+                .trim_end_matches(',')
+                .to_string()
+        })
         .filter(|text| !text.is_empty());
     let head_only = arm_result.is_none();
     let arm_result = arm_result.unwrap_or_else(|| probe.expression.clone());
@@ -3410,6 +3422,18 @@ mod tests {
         assert_eq!(read("Size::Large =>", 7), "Size::Large =>");
         assert_eq!(read("Size::Raw =>", 9), "r#\"a\"b\"#.len()");
         assert_eq!(read("Size::Huge =>", 10), "900");
+        // A `=>` inside a string or comment pattern is not the arm arrow: the
+        // probe is head-only and the line's real result is read.
+        let literal = function(
+            "pub fn label(s: &str) -> u32 {\n    match s {\n        \"a=>b\" => 450,\n        _ => 0,\n    }\n}\n",
+        );
+        let read_literal = |head: &str| {
+            local_flow_sinks(&probe(ProbeFamily::MatchArm, head, 3), Some(&literal))[0]
+                .text
+                .clone()
+        };
+        assert_eq!(read_literal("\"a=>b\" =>"), "450");
+        assert_eq!(read_literal("\"a=>b\" => 451,"), "451");
         // Without an owner there is no source to read.
         let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
         assert_eq!(sinks[0].text, "Size::Small =>");
