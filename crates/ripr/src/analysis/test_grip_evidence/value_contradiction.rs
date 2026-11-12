@@ -715,6 +715,16 @@ pub(in crate::analysis) fn range_change_visibility(
                     note(CallReading::Unread, false);
                     continue;
                 }
+                // The other side must pin a constant: a helper or binding
+                // (`reference(4)` calling the owner) can move in lockstep
+                // with the owner call and hold on both versions.
+                if operands.iter().any(|operand| {
+                    count_name_tokens(&operand.text, &owner.name) == 0
+                        && !is_pinned_literal(&operand.text)
+                }) {
+                    note(CallReading::Unread, false);
+                    continue;
+                }
                 for operand in operands {
                     if count_name_tokens(&operand.text, &owner.name) > 0
                         && let Some(call) = note(read_call(&operand.text), !asserts_inequality)
@@ -754,6 +764,18 @@ pub(in crate::analysis) fn range_change_visibility(
         }
         _ => RangeChangeVisibility::NotEstablished,
     }
+}
+
+/// An operand that names one constant no owner change can move: an integer
+/// literal expression, `true`/`false`, or a plain string literal.
+fn is_pinned_literal(text: &str) -> bool {
+    let text = text.trim();
+    matches!(text, "true" | "false")
+        || fold_expression(text, &BTreeMap::new()).is_some()
+        || text
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .is_some_and(|inner| !inner.contains(['"', '\\']))
 }
 
 /// The condition of `assert!(cond)` or `debug_assert!(cond)` (an optional

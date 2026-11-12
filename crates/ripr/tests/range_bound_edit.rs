@@ -347,6 +347,63 @@ fn a_self_comparison_does_not_credit_a_range_bound() -> Result<(), String> {
 }
 
 #[test]
+fn a_test_helper_that_calls_the_owner_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `reference(4)` calls `sum_to(4)`, so both sides move together and the
+    // assertion holds on both versions.
+    let test = "use ranges::*;\n\nfn reference(n: u32) -> u32 {\n    sum_to(n)\n}\n\n#[test]\nfn pins() {\n    assert_eq!(sum_to(4), reference(4));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_library_helper_that_calls_the_owner_does_not_supply_a_separating_input() -> Result<(), String>
+{
+    let lib = format!(
+        "{}\n/// Mirror of the sum.\npub fn reference(n: u32) -> u32 {{\n    sum_to(n)\n}}\n",
+        sum_to("(0..=n).sum()")
+    );
+    let findings = findings_on_changed_line(
+        &lib,
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), reference(4));"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_boolean_equality_against_a_helper_does_not_supply_a_separating_input() -> Result<(), String> {
+    let test = "use ranges::*;\n\nfn reference(n: u32) -> u32 {\n    sum_to(n)\n}\n\n#[test]\nfn pins() {\n    assert!(sum_to(4) == reference(4));\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_moved_match_range_start_needs_an_input_between_the_bounds() -> Result<(), String> {
     // `1..5` and `0..5` differ only at 0; `tier(3)` reads 1 on both.
     let between = findings_on_changed_line(
