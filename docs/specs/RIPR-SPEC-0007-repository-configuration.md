@@ -325,6 +325,11 @@ when ripr loads the config,
 then the load fails and the error adds `did you mean `mode`?`, built only from
 the parser's fixed key names; an unrelated key gets no suggestion. The
 source-free summary keeps the hint only when it names a known key.
+The source-free summary also keeps the parser's reason without file content
+(#14441): an unknown key becomes `unknown key, expected one of ...` (the key
+is dropped; the expected list is ripr's schema), and a grammar reason such as
+`unclosed table, expected `]`` keeps its fixed wording only when every
+backticked token is punctuation. Wrong-type and value lines never pass.
 
 Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,

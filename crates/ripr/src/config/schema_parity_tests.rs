@@ -394,3 +394,64 @@ fn shipped_example_config_parses() -> Result<(), String> {
     let example = include_str!("../../../../ripr.toml.example");
     parse_config(example).map(|_| ())
 }
+
+/// #14441: the source-free summary keeps the parser's reason in a form that
+/// carries no file content: an unknown key is dropped but the accepted keys
+/// stay, grammar reasons keep their fixed wording, and a wrong-type value
+/// never passes through.
+#[test]
+fn source_free_summary_keeps_the_reason_without_file_content() {
+    let unknown_table = parse_config("[check]\nmode = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    let summary = config_error_summary(&unknown_table);
+    assert!(
+        summary.contains("; unknown key, expected one of `analysis`"),
+        "{summary}"
+    );
+    assert!(!summary.contains("`check`"), "{summary}");
+
+    let unknown_key = parse_config("[analysis]\nsecret_canary_key = 1\n")
+        .err()
+        .unwrap_or_default();
+    let summary = config_error_summary(&unknown_key);
+    assert!(summary.contains("; unknown key, expected "), "{summary}");
+    assert!(!summary.contains("secret_canary_key"), "{summary}");
+
+    let unclosed = parse_config("[analysis\nmode = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    let summary = config_error_summary(&unclosed);
+    assert!(
+        summary.contains("; unclosed table, expected `]`"),
+        "{summary}"
+    );
+
+    let wrong_type =
+        parse_config("[analysis]\ninclude_unchanged_tests = \"secret_canary_value\"\n")
+            .err()
+            .unwrap_or_default();
+    let summary = config_error_summary(&wrong_type);
+    assert!(!summary.contains("secret_canary_value"), "{summary}");
+
+    // A quoted key can put a raw newline into serde's unknown-field line;
+    // the forged second line must not pass as a reason.
+    let newline_key = parse_config("[analysis]\n\"a\\nexpected secret_canary_word\" = 1\n")
+        .err()
+        .unwrap_or_default();
+    let summary = config_error_summary(&newline_key);
+    assert!(!summary.contains("secret_canary_word"), "{summary}");
+
+    // Lines that merely look like reasons are refused.
+    for forged in [
+        "invalid ripr.toml: bad\nunknown field `x`, expected `secret value`",
+        "invalid ripr.toml: bad\nexpected `secretword`",
+        "invalid ripr.toml: bad\nexpected Secret",
+    ] {
+        assert_eq!(
+            config_error_summary(forged),
+            "invalid ripr.toml: bad",
+            "{forged}"
+        );
+    }
+}

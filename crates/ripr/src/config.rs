@@ -875,10 +875,58 @@ fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
                 .iter()
                 .any(|entry| *line == retired_key_hint_line(entry))
     });
-    match hint {
-        Some(hint) => format!("{first}; {hint}"),
-        None => first.to_string(),
+    // #14441: the parser's reason ("unclosed table", the keys ripr accepts)
+    // is what makes the line/column actionable for a machine reader; keep
+    // it only in a source-free form.
+    let reason = error
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .find_map(machine_safe_reason_line);
+    let mut summary = first.to_string();
+    for part in [reason.as_deref(), hint].into_iter().flatten() {
+        summary.push_str("; ");
+        summary.push_str(part);
     }
+    summary
+}
+
+/// A TOML/serde reason line in a form that carries no file content, or
+/// `None` (#14441). `unknown field `<key>`, expected ...` drops the key (it is
+/// file content; the summary's line and column locate it) and keeps the
+/// expected list, which names ripr's own schema fields. Grammar lines keep
+/// their fixed wording only when every backticked token is punctuation.
+fn machine_safe_reason_line(line: &str) -> Option<String> {
+    if let Some(rest) = line.strip_prefix("unknown field `") {
+        let (_, expected) = rest.split_once("`, expected ")?;
+        let schema_tokens_only = expected.split(", ").all(|item| {
+            let item = item.strip_prefix("one of ").unwrap_or(item);
+            item.strip_prefix('`')
+                .and_then(|token| token.strip_suffix('`'))
+                .is_some_and(|token| {
+                    !token.is_empty()
+                        && token.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                        })
+                })
+        });
+        return schema_tokens_only.then(|| format!("unknown key, expected {expected}"));
+    }
+    let grammar = line.strip_prefix("unclosed table, ").unwrap_or(line);
+    let grammar = grammar.strip_prefix("unclosed array, ").unwrap_or(grammar);
+    if grammar.starts_with("expected ") {
+        let mut in_tick = false;
+        let fixed_wording = grammar.chars().all(|ch| match ch {
+            '`' => {
+                in_tick = !in_tick;
+                true
+            }
+            _ if in_tick => !ch.is_alphanumeric() && !ch.is_whitespace(),
+            _ => ch.is_ascii_lowercase() || matches!(ch, ' ' | ','),
+        });
+        return (fixed_wording && !in_tick).then(|| line.to_string());
+    }
+    None
 }
 
 /// Human doctor lines for a config load error. Compact is the source-free
