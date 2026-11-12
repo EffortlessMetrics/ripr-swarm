@@ -91,6 +91,11 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
     let mut coder = LegendCoder::default();
     if let Some(Value::Array(findings)) = root.get("findings") {
         for finding in findings.iter().filter_map(Value::as_object) {
+            // The full renderer writes `ripr` before the prose arrays, so its
+            // stage summaries are observed first to keep first-appearance order.
+            for text in ripr_stage_summaries(finding) {
+                coder.observe(text);
+            }
             for key in PROSE_ARRAYS {
                 if let Some(Value::Array(entries)) = finding.get(key) {
                     for text in entries.iter().filter_map(Value::as_str) {
@@ -102,9 +107,6 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
                 for text in assertions.values().filter_map(Value::as_str) {
                     coder.observe(text);
                 }
-            }
-            for text in ripr_stage_summaries(finding) {
-                coder.observe(text);
             }
         }
     }
@@ -901,6 +903,35 @@ mod tests {
             Some("Reachable tests can plausibly activate this changed behavior")
         );
         assert_eq!(finding["note"], finding["language"]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_follow_document_order_with_summaries_first() -> Result<(), String> {
+        // The full renderer writes `ripr` before `evidence`, so a repeated
+        // stage summary takes an earlier code than a distinct repeated
+        // evidence sentence in the same finding.
+        let summary = "A stage summary sentence long enough to be worth coding here";
+        let evidence = "A different evidence sentence long enough to be worth coding";
+        let full = serde_json::json!({"findings": [{
+            "id": "probe:a",
+            "ripr": {
+                "reach": {"state": "yes", "confidence": "high", "summary": summary},
+                "infect": {"state": "yes", "confidence": "high", "summary": summary}
+            },
+            "evidence": [evidence, evidence]
+        }]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let finding = &terse["findings"][0];
+        let summary_code = finding["ripr"]["reach"]["summary"]
+            .as_str()
+            .ok_or("reach summary")?;
+        let evidence_code = finding["evidence"][0].as_str().ok_or("evidence")?;
+        assert_ne!(summary_code, summary, "{terse}");
+        assert_ne!(evidence_code, evidence, "{terse}");
+        assert!(summary_code < evidence_code, "{terse}");
         Ok(())
     }
 
