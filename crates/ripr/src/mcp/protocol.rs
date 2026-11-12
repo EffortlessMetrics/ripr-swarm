@@ -65,7 +65,7 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; `ripr_refresh` analyzes the default-branch diff and stores a completed session snapshot. `ripr_list_gaps` lists the bounded working set; read evidence with `ripr_get_gap` or ripr://gap/{canonical_id}; for repair prefer `ripr_get_repair_card` (ripr://repair-card/{canonical_id}). With established producer readiness, `ripr_prepare_repair` creates or replays one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), inspect receipts with `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), and list every durable attempt with `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only MCP session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. By default, like `ripr check`: saved staged and unstaged tracked edits when any exist, else committed input; `requested_source: \"default\"` and `captured_source` say which ran. Pass `source: \"committed\"` or `source: \"worktree\"` to force one; unsaved buffers and untracked files remain outside. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Refresh after edits. `ripr check --committed` reads committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only session never edits source, runs no tests or mutation, and launches no processes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. Input: By default, like `ripr check`, saved staged and unstaged tracked edits when any exist, else committed; `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
@@ -79,9 +79,9 @@ const GET_TOP_LIMITATION_TOOL_DESCRIPTION: &str = "Return the earliest committed
 
 const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When the agent intends to repair an item from ripr_list_gaps and its readiness gates are established, create (or replay, for the same snapshot, item and root) one bounded in-memory repair transaction. A gate that is not established returns isError with repair_packet_ready: false, the reason, a next step and attempt: null; it never guesses a missing field. It never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable.";
 
-const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair attempt by its attempt identity (from ripr_prepare_repair or the durable store) before acting on it: state, snapshot and seam binding, artifact digests, and typed command routes when the retained packet carries valid ones. A display string is never execution authority. Failures: attempt_not_found (also for superseded entries past the 64-entry session bound), attempt_invalid, and the superseded state with the current snapshot identity for a stale binding. It never edits source, launches a process, or executes verification or mutation commands. Same document: ripr://repair-attempt/{attempt_id}.";
+const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair attempt by its attempt identity (from ripr_prepare_repair or the durable store) before acting on it: state, snapshot and seam binding, artifact digests, and typed command routes when the retained packet carries valid ones. A display string is never execution authority. Failures: attempt_not_found (also for superseded entries past the 64-entry session bound), attempt_invalid, and the superseded state with the current snapshot identity for a stale binding. Same document: ripr://repair-attempt/{attempt_id}.";
 
-const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "After external verification, read one attempt's receipt state (receipt ids are attempt-bound): awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid, mapped by the same reading as CLI status. For a session transaction RIPR performs no verification and issues no receipt; receipt presence alone never reports closed. Status binds exact before/after/verify bytes and is re-validated on every read. Static receipt state only, not runtime proof. Failures: attempt_not_found, attempt_invalid, superseded. This read edits nothing and executes nothing. Same document: ripr://receipt/{receipt_id}.";
+const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "After external verification, read one attempt's receipt state (receipt ids are attempt-bound): awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid, mapped by the same reading as CLI status. For a session transaction RIPR performs no verification and issues no receipt; receipt presence alone never reports closed. Status binds exact before/after/verify bytes and is re-validated on every read. Static receipt state only, not runtime proof. Failures: attempt_not_found, attempt_invalid, superseded. Same document: ripr://receipt/{receipt_id}.";
 
 const LIMITATION_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's earliest producer limitation, the same document ripr_get_top_limitation returns: typed kind, stage, reason, recovery, retryable, restart identity, and the prohibited stronger claim. The item must exist in the current completed snapshot (else item_not_found).";
 
@@ -856,7 +856,7 @@ fn refresh_tool_descriptor() -> Value {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256,
-                    "description": "Optional Git revision (branch, tag or commit) to diff against instead of the resolved default branch. Use it when the repository's default branch is not main or master, or when refresh fails with base_unresolvable. Omit it to use the default branch."
+                    "description": "Git revision (branch, tag or commit) to diff against instead of the default branch: for a default branch other than main or master, or after base_unresolvable."
                 },
                 "source": {
                     "type": "string",
@@ -898,7 +898,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "omitted_offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
+                    "description": "Start index within the omitted identities, which page on their own axis; follow continuation.next_omitted_page. Default 0."
                 },
                 "independent_pages": {
                     "type": "boolean",
@@ -908,12 +908,12 @@ fn list_gaps_tool_descriptor() -> Value {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
-                    "description": "Maximum narrowed-item summaries to return in this page (the working-set bound; a larger value is refused as invalid_argument)."
+                    "description": "Maximum item summaries in this page; a larger value is refused as invalid_argument."
                 },
                 "file": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or trailing-matches this path (one leading `./` is ignored on both sides)."
+                    "description": "Narrow to items whose workspace-relative file equals, prefixes, or ends with this path (a leading `./` is ignored)."
                 },
                 "class": {
                     "type": "string",
@@ -931,7 +931,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 },
                 "repair_ready": {
                     "type": "boolean",
-                    "description": "Narrow to repair-ready items (true) or not-ready items (false), using the commit-time readiness projection."
+                    "description": "Narrow to repair-ready (true) or not-ready (false) items."
                 }
             },
             "additionalProperties": false
@@ -2746,7 +2746,9 @@ mod tests {
         // per tool; the receipt terminal mapping lives on the outputSchema
         // status field.
         // Intentional metadata changes need to reconcile this byte count as
-        // well as the ceilings.
+        // well as the ceilings. #14461: the instructions state each
+        // route once and safety boundaries the annotations and instructions
+        // already carry are not repeated per read tool.
         assert_eq!(total, 11172);
         Ok(())
     }
