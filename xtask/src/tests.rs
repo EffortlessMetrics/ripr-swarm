@@ -54033,8 +54033,9 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// The routed Rust lanes must delegate the required gate table to the shared
 /// reusable workflow, not inline a lane-only gate command where it could drift
 /// from `.github/workflows/rust-gates.yml`. The reusable workflow enumerates
-/// each gate as its own named per-producer step; the per-step shape (exact
-/// command, unconditional, ordered, outcome-reported) is owned by
+/// standalone producers; dependency, process and network policy remain required
+/// inside `ci-policy`. The producer shape (exact command, unconditional, ordered,
+/// outcome-reported) and collected leaf ownership are guarded by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
@@ -54058,9 +54059,6 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask check-dependencies",
-        "cargo xtask check-process-policy",
-        "cargo xtask check-network-policy",
         "cargo xtask goldens check",
         "cargo xtask fixtures",
     ] {

@@ -2,6 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0253"
 tests = [
+  "xtask/src/tests.rs::routed_rust_required_lanes_run_full_precommit_table",
   "xtask/tests/policy_all.rs::ci_policy_propagates_each_collected_process_and_network_failure",
   "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_rejects_repeated_collected_policy_commands",
   "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_keeps_collected_policy_owners_required",

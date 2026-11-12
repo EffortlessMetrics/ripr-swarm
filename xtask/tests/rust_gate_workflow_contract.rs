@@ -514,12 +514,12 @@ fn rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes() {
                 .contains(&"precommit: required step must remain unconditional".to_owned())
         );
     }
+    let summary_header = "            printf '| Gate | Outcome |\\n| --- | --- |\\n'";
+    assert_eq!(WORKFLOW.matches(summary_header).count(), 1);
     for id in ["dependencies", "process_policy", "network_policy"] {
         let changed = WORKFLOW.replace(
-            "            echo '| Gate | Outcome |'",
-            &format!(
-                "            echo '| Gate | Outcome |'\n            echo '| {id} | success |'"
-            ),
+            summary_header,
+            &format!("{summary_header}\n            printf '| {id} | success |\\n'"),
         );
         assert_ne!(changed, WORKFLOW);
         assert!(
