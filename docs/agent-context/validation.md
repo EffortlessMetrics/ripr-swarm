@@ -122,6 +122,19 @@ digests are caller-declared, not independently verified. Optional
 `verify-test-shards` receipt mode requires `--native-receipt-context`,
 `--native-producer-result`, and `--native-verifier-attempt` together; it
 always refuses full proof while context and producer provenance are unverified.
+Its strict diagnostic check compares the supplied repository, SHA, run ID and
+attempt with `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_RUN_ID` and
+`GITHUB_RUN_ATTEMPT`, requires `GITHUB_ACTIONS=true`, and requires the selected
+shard-one attempt to be current. It requires one `xtask` binary in that same
+selected artifact and compares that file with the verifier's reopened
+`current_exe()` path by streaming SHA-256 over each file, at most 1 GiB per
+file. These two reads have bounded memory and size but no wall-clock deadline;
+their cost is not measured. The reopened path does not authenticate the running
+image and assumes no concurrent mutation. GitHub environment values and the
+caller-supplied producer result are not authenticated provenance. A verifier-only
+rerun with an older producer is refused until independent job authority exists.
+The current hosted workflow does not provide this same-artifact binary or enable
+this mode. All diagnostic receipts remain ineligible for full proof.
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
