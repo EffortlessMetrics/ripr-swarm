@@ -3,9 +3,11 @@ name: Rust Test Shards
 # The hosted required test phase, split into four nextest partitions (#10507).
 # `rust-gates.yml` runs every gate that needs no test run (policy, Clippy, goldens,
 # fixtures, corpora, doctests, PR evidence) and, called with `test-shards: 4`,
-# leaves `cargo nextest run --workspace --profile ci` to this workflow. Shards
-# start only after those gates pass, so a gate failure still costs no test minutes
-# (#10346). The self-hosted routes keep the one-command step inside rust-gates.yml.
+# leaves `cargo nextest run --workspace --profile ci` to this workflow. The caller
+# starts the shards alongside those gates so the required context fits inside the
+# merge queue's status-check timeout (#4838); a gate failure therefore still spends
+# the shard minutes (#10346 traded for latency), and the caller's result requires
+# both. The self-hosted routes keep the one-command step inside rust-gates.yml.
 #
 # Four `--partition hash:N/4` runs together select exactly the tests the single
 # unsharded command selects. `verify` is the check that makes that true rather
