@@ -1,4 +1,4 @@
-name: Materialize hosted queue reconciliation conflicts
+name: Split hosted queue reconciliation conflicts
 
 on:
   push:
@@ -20,20 +20,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Materialize pinned diff3 conflicts
+      - name: Split pinned diff3 conflicts into line-addressable files
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
           EXPECTED_MAIN: c5d50a38ba94799d6da3954fef004839fae5489c
-          DIAGNOSTIC: .ci/staged/4838-current-main-conflicts-c5d50a38.txt
+          OUT_DIR: .ci/staged/4838-conflicts-c5d50a38
         run: |
           set -euo pipefail
-          if [ -f "$DIAGNOSTIC" ]; then
-            grep -Fq "expected_main=$EXPECTED_MAIN" "$DIAGNOSTIC" || {
-              echo "::error::existing diagnostic is for another main generation"
-              exit 1
-            }
-            echo "Pinned conflict diagnostic already materialized."
+          if [ -f "$OUT_DIR/04-rust_gate_workflow_contract.rs.txt" ]; then
+            echo "Pinned split conflict diagnostics already materialized."
             exit 0
           fi
 
@@ -61,48 +57,39 @@ jobs:
             exit 1
           }
 
-          python3 - <<'PY' > /tmp/4838-conflicts.txt
+          python3 - <<'PY'
           from pathlib import Path
           import os
           import subprocess
 
-          expected = [
-              '.github/actions/pr-candidate-admission/review_disposition.py',
-              '.github/workflows/routed-rust.yml',
-              'tools/repo-policy/tests/review_disposition_admission.rs',
-              'xtask/tests/rust_gate_workflow_contract.rs',
+          items = [
+              ('.github/actions/pr-candidate-admission/review_disposition.py', '01-review_disposition.py.txt'),
+              ('.github/workflows/routed-rust.yml', '02-routed-rust.yml.txt'),
+              ('tools/repo-policy/tests/review_disposition_admission.rs', '03-review_disposition_admission.rs.txt'),
+              ('xtask/tests/rust_gate_workflow_contract.rs', '04-rust_gate_workflow_contract.rs.txt'),
           ]
           actual = [line for line in subprocess.check_output(
               ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
           ).splitlines() if line]
+          expected = [item[0] for item in items]
           if actual != expected:
-              raise SystemExit(
-                  f'conflict set changed: expected={expected!r} actual={actual!r}'
+              raise SystemExit(f'conflict set changed: expected={expected!r} actual={actual!r}')
+          out = Path(os.environ['OUT_DIR'])
+          out.mkdir(parents=True, exist_ok=True)
+          header = (
+              'schema=hosted-main-conflict-file.v1\n'
+              f'hosted_source={os.environ["HOSTED_SOURCE"]}\n'
+              f'expected_main={os.environ["EXPECTED_MAIN"]}\n\n'
+          )
+          for relative, filename in items:
+              body = Path(relative).read_text(encoding='utf-8')
+              (out / filename).write_text(
+                  header + f'path={relative}\n\n' + body,
+                  encoding='utf-8',
               )
-
-          print('schema=hosted-main-conflict-diagnostic.v1')
-          print(f'hosted_source={os.environ["HOSTED_SOURCE"]}')
-          print(f'expected_main={os.environ["EXPECTED_MAIN"]}')
-          print(f'rehearsal_head={subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}')
-          print(f'merge_base={subprocess.check_output(["git", "merge-base", os.environ["HOSTED_SOURCE"], os.environ["EXPECTED_MAIN"]], text=True).strip()}')
-          print('conflict_count=4')
-          print()
-          for relative in expected:
-              text = Path(relative).read_text(encoding='utf-8')
-              print(f'===== BEGIN FILE {relative} =====')
-              print(text, end='' if text.endswith('\n') else '\n')
-              print(f'===== END FILE {relative} =====')
-              print()
-          print('===== BEGIN COMBINED DIFF =====')
-          print(subprocess.check_output(
-              ['git', 'diff', '--cc', '--', *expected], text=True
-          ), end='')
-          print('===== END COMBINED DIFF =====')
           PY
 
           git merge --abort
-          mkdir -p "$(dirname "$DIAGNOSTIC")"
-          cp /tmp/4838-conflicts.txt "$DIAGNOSTIC"
-          git add "$DIAGNOSTIC"
-          git commit -m 'docs(ci): capture hosted queue current-main conflicts (#14200)'
+          git add "$OUT_DIR"
+          git commit -m 'docs(ci): split hosted queue conflict diagnostics (#14200)'
           git push origin HEAD:refs/heads/codex/4838-hosted-main-reconcile-20261112
