@@ -605,11 +605,27 @@ pub(in crate::analysis) enum RangeChangeVisibility {
     NotEstablished,
 }
 
-/// One asserted owner call, read against both versions.
+/// One asserted owner call, read against both versions. A separating call
+/// carries its value on the current version.
 enum CallReading {
-    Separates(String),
+    Separates(String, Value),
     Agrees(String),
     Unread,
+}
+
+impl CallReading {
+    /// An exact assertion separates only when it pins the current value
+    /// (`expected`): a literal neither version returns fails on both, and
+    /// one only the old version returns fails now.
+    fn pinned_to(self, expected: Option<Value>) -> Self {
+        match self {
+            Self::Separates(call, changed) if expected == Some(changed) => {
+                Self::Separates(call, changed)
+            }
+            Self::Separates(..) => Self::Unread,
+            reading => reading,
+        }
+    }
 }
 
 /// [`RangeChangeVisibility`] for the related `tests` of `owner`, whose body
@@ -652,7 +668,7 @@ pub(in crate::analysis) fn range_change_visibility(
             Some(if changed == unchanged {
                 CallReading::Agrees(call)
             } else {
-                CallReading::Separates(call)
+                CallReading::Separates(call, changed)
             })
         };
         read().unwrap_or(CallReading::Unread)
@@ -666,8 +682,10 @@ pub(in crate::analysis) fn range_change_visibility(
             continue;
         }
         // A case table, a shadowing binding or a same-name local fn makes the
-        // written call name something the fold does not evaluate.
+        // written call name something the fold does not evaluate. An
+        // ignored test never runs, so its assertions notice nothing.
         if case_row_bindings(test).is_some()
+            || crate::analysis::classify::is_ignored(test)
             || test
                 .let_bindings
                 .iter()
@@ -681,8 +699,8 @@ pub(in crate::analysis) fn range_change_visibility(
         let mut agreed_mentions = 0usize;
         let mut note = |reading: CallReading, exact: bool| -> Option<String> {
             match reading {
-                CallReading::Separates(call) if exact => return Some(call),
-                CallReading::Separates(call) => {
+                CallReading::Separates(call, _) if exact => return Some(call),
+                CallReading::Separates(call, _) => {
                     inexact.get_or_insert(call);
                     every_mention_agrees = false;
                 }
@@ -717,18 +735,36 @@ pub(in crate::analysis) fn range_change_visibility(
                 }
                 // The other side must pin a constant: a helper or binding
                 // (`reference(4)` calling the owner) can move in lockstep
-                // with the owner call and hold on both versions.
+                // with the owner call and hold on both versions. A `let`
+                // operand counts only when its name appears nowhere but the
+                // binding and this assertion (`expected |= owner(4)` or a
+                // destructuring assignment would rewrite it).
                 if operands.iter().any(|operand| {
-                    count_name_tokens(&operand.text, &owner.name) == 0
-                        && !is_pinned_literal(&operand.text)
+                    (count_name_tokens(&operand.text, &owner.name) == 0
+                        && !is_pinned_literal(&operand.text))
+                        || operand
+                            .binding
+                            .as_ref()
+                            .is_some_and(|name| count_name_tokens(test.body.as_str(), name) != 2)
                 }) {
                     note(CallReading::Unread, false);
                     continue;
                 }
+                let expected = operands
+                    .iter()
+                    .filter(|operand| count_name_tokens(&operand.text, &owner.name) == 0)
+                    .find_map(|operand| literal_value(&operand.text));
                 for operand in operands {
-                    if count_name_tokens(&operand.text, &owner.name) > 0
-                        && let Some(call) = note(read_call(&operand.text), !asserts_inequality)
-                    {
+                    if count_name_tokens(&operand.text, &owner.name) == 0 {
+                        continue;
+                    }
+                    let reading = read_call(&operand.text);
+                    let reading = if asserts_inequality {
+                        reading
+                    } else {
+                        reading.pinned_to(expected)
+                    };
+                    if let Some(call) = note(reading, !asserts_inequality) {
                         return RangeChangeVisibility::ExactInputSeparates(call);
                     }
                 }
@@ -736,9 +772,12 @@ pub(in crate::analysis) fn range_change_visibility(
             }
             // `assert!(owner(..))` or `assert!(!owner(..))` pins a boolean
             // result exactly.
-            if let Some(condition) = boolean_assertion_call(&oracle.text)
+            if let Some((condition, negated)) = boolean_assertion_call(&oracle.text)
                 && count_name_tokens(&condition, &owner.name) > 0
-                && let Some(call) = note(read_call(&condition), true)
+                && let Some(call) = note(
+                    read_call(&condition).pinned_to(Some(Value::Bool(!negated))),
+                    true,
+                )
             {
                 return RangeChangeVisibility::ExactInputSeparates(call);
             }
@@ -778,9 +817,20 @@ fn is_pinned_literal(text: &str) -> bool {
             .is_some_and(|inner| !inner.contains(['"', '\\']))
 }
 
+/// The folded value of a pinned literal operand; `None` for a string
+/// literal, which the integer fold never produces.
+fn literal_value(text: &str) -> Option<Value> {
+    match text.trim() {
+        "true" => Some(Value::Bool(true)),
+        "false" => Some(Value::Bool(false)),
+        text => fold_expression(text, &BTreeMap::new()).map(Value::Int),
+    }
+}
+
 /// The condition of `assert!(cond)` or `debug_assert!(cond)` (an optional
-/// message aside) with one leading `!` removed; `None` for any other macro.
-fn boolean_assertion_call(oracle_text: &str) -> Option<String> {
+/// message aside) with one leading `!` removed, and whether it was removed;
+/// `None` for any other macro.
+fn boolean_assertion_call(oracle_text: &str) -> Option<(String, bool)> {
     let trimmed = oracle_text.trim_start();
     let body = trimmed
         .strip_prefix("assert!")
@@ -789,13 +839,10 @@ fn boolean_assertion_call(oracle_text: &str) -> Option<String> {
     let inside = super::delimited_contents_at(body, body.find(['(', '['])?)?;
     let condition = super::split_top_level_commas(&inside).into_iter().next()?;
     let condition = condition.trim();
-    Some(
-        condition
-            .strip_prefix('!')
-            .unwrap_or(condition)
-            .trim()
-            .to_string(),
-    )
+    Some(match condition.strip_prefix('!') {
+        Some(inner) => (inner.trim().to_string(), true),
+        None => (condition.to_string(), false),
+    })
 }
 
 /// An `assert!(left OP right)` whose comparison is `<`, `<=`, `>` , `>=` or

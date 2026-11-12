@@ -404,6 +404,89 @@ fn a_boolean_equality_against_a_helper_does_not_supply_a_separating_input() -> R
 }
 
 #[test]
+fn a_compound_assigned_expected_binding_does_not_supply_a_separating_input() -> Result<(), String> {
+    // `expected |= sum_to(4)` tracks the owner, so the assertion holds on both versions.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let mut expected = 0;\n    expected |= sum_to(4);\n    assert_eq!(sum_to(4), expected);",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_literal_neither_version_returns_does_not_supply_a_separating_input() -> Result<(), String> {
+    // 6 and 10 both differ from 99: the assertion fails on both versions.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), 99);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_literal_only_the_old_range_returns_does_not_supply_a_separating_input() -> Result<(), String> {
+    // 6 is the old `0..4` sum; the test fails on the current `0..=4` code.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(4), 6);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_ignored_test_does_not_supply_a_separating_input() -> Result<(), String> {
+    // An ignored test never runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        "use ranges::*;\n\n#[test]\n#[ignore]\nfn pins() {\n    assert_eq!(sum_to(4), 10);\n}\n",
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_single_use_expected_binding_keeps_a_separating_input() -> Result<(), String> {
+    // Control: `let expected = 10;` read once is the literal 10.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("let expected = 10;\n    assert_eq!(sum_to(4), expected);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
 fn a_moved_match_range_start_needs_an_input_between_the_bounds() -> Result<(), String> {
     // `1..5` and `0..5` differ only at 0; `tier(3)` reads 1 on both.
     let between = findings_on_changed_line(

@@ -102,8 +102,9 @@ set such as `sum`, `contains`, `find` or `take`, a `for` header, or a match rang
 pattern) reads infection `yes` only when an `assert_eq!`-family or bare boolean
 `assert!` holds a bare literal call of the owner (or its `.await`) whose folded
 result differs between the old and new range (#14419), compared against a
-literal; a helper or binding on the other side could move in lockstep with the
-owner, so it earns no credit. A relational or
+literal equal to the current result. A helper, or a binding that is reassigned or
+read elsewhere, could move in lockstep with the owner, and an `#[ignore]` test
+never runs, so neither earns credit. A relational or
 `assert_ne!` check at such an input, or every asserted call agreeing on both
 versions, reads infection `weak`. The second case is not claimed for an
 equivalent rewrite or when the owner has other callers. Any other gated change,
