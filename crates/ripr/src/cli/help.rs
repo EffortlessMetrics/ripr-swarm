@@ -875,6 +875,14 @@ mod tests {
                     .to_string(),
             );
         }
+        // The header describes the route; the refusal remedy for extra
+        // arguments belongs only in the refusal itself.
+        if header.contains("drop the extra arguments") {
+            return Err(
+                "the help --all header should not carry the extra-arguments refusal remedy"
+                    .to_string(),
+            );
+        }
         if !header.contains("except on ripr help --json") {
             return Err(
                 "the help --all global-flags paragraph should except the machine catalog route"
