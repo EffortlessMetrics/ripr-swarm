@@ -907,41 +907,42 @@ mod tests {
         }
     }
 
-    fn line_of(source: &str, needle: &str) -> usize {
+    fn line_of(source: &str, needle: &str) -> Option<usize> {
         source
             .lines()
             .position(|line| line.contains(needle))
             .map(|index| index + 1)
-            .expect("needle must be in the fixture")
     }
 
     fn witness(source: &str, needle: &str, before: Option<&str>) -> Option<DerivedWitness> {
         let root = parsed(source)?;
         let function = named_function(&root, "join")?;
-        let line = line_of(source, needle);
+        let line = line_of(source, needle)?;
         let after = needle.trim_end_matches(',');
         derived_witness(source, &function, &probe_at(line, before, after))
     }
 
     #[test]
-    fn the_changed_arm_of_the_derived_tuple_match_yields_its_input_and_unique_result() {
+    fn the_changed_arm_of_the_derived_tuple_match_yields_its_input_and_unique_result()
+    -> Result<(), String> {
         let selected = witness(OWNER, "(true, false) => \"request\",", None)
-            .expect("the fixture owner is the supported shape");
+            .ok_or("the fixture owner is the supported shape")?;
         assert_eq!(selected.input, [true, false]);
         assert_eq!(selected.result, "request");
         assert!(!selected.terminal);
-        let other = witness(OWNER, "(false, true) => \"task\",", None).expect("task arm");
+        let other = witness(OWNER, "(false, true) => \"task\",", None).ok_or("task arm")?;
         assert_eq!(other.input, [false, true]);
         assert_eq!(other.result, "task");
         // The `(false, false)` arm is the `None` exit, never a changed witness.
         assert!(witness(OWNER, "(false, false) => return None,", None).is_none());
+        Ok(())
     }
 
     #[test]
-    fn a_changed_line_that_is_not_an_arm_start_selects_nothing() {
-        let root = parsed(OWNER).expect("fixture parses");
-        let function = named_function(&root, "join").expect("fixture owner");
-        let line = line_of(OWNER, "(true, false) =>");
+    fn a_changed_line_that_is_not_an_arm_start_selects_nothing() -> Result<(), String> {
+        let root = parsed(OWNER).ok_or("fixture parses")?;
+        let function = named_function(&root, "join").ok_or("fixture owner")?;
+        let line = line_of(OWNER, "(true, false) =>").ok_or("arm line")?;
         let probe = |line: usize, after: &str| {
             derived_witness(OWNER, &function, &probe_at(line, None, after))
         };
@@ -950,6 +951,7 @@ mod tests {
         assert!(probe(line + 1, "(true, false) => \"request\",").is_none());
         assert!(probe(line, "(true, false) => \"other\",").is_none());
         assert!(probe(1, "(true, false) => \"request\",").is_none());
+        Ok(())
     }
 
     #[test]
@@ -1063,16 +1065,17 @@ mod tests {
     }
 
     #[test]
-    fn each_derived_match_in_one_owner_selects_only_the_arm_on_the_changed_line() {
+    fn each_derived_match_in_one_owner_selects_only_the_arm_on_the_changed_line()
+    -> Result<(), String> {
         let doubled = OWNER.replace(
             "    }).collect()\n}",
             "    }).chain(receipts.iter().filter_map(|receipt| {\n        let in_request = requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)));\n        let same_task = receipt.id == task_id;\n        let relation = match (in_request, same_task) {\n            (false, false) => return None,\n            (true, true) => \"both2\",\n            (true, false) => \"request2\",\n            (false, true) => \"task2\",\n        };\n        Some((receipt, relation))\n    })).collect()\n}",
         );
         assert_ne!(doubled, OWNER, "control must apply");
-        let root = parsed(&doubled).expect("doubled fixture parses");
-        let function = named_function(&root, "join").expect("owner");
+        let root = parsed(&doubled).ok_or("doubled fixture parses")?;
+        let function = named_function(&root, "join").ok_or("owner")?;
         let select = |needle: &str| {
-            let line = line_of(&doubled, needle);
+            let line = line_of(&doubled, needle)?;
             derived_witness(&doubled, &function, &probe_at(line, None, needle))
                 .map(|selected| (selected.input, selected.result))
         };
@@ -1085,20 +1088,22 @@ mod tests {
             Some(([true, false], "request2".to_string()))
         );
         // The first match's text on the second match's line selects nothing.
-        let line = line_of(&doubled, "\"request2\"");
+        let line = line_of(&doubled, "\"request2\"").ok_or("second match line")?;
         let wrong = probe_at(line, None, "(true, false) => \"request\",");
         assert!(derived_witness(&doubled, &function, &wrong).is_none());
+        Ok(())
     }
 
     #[test]
-    fn a_function_name_must_be_defined_exactly_once() {
-        let once = parsed("fn a() {} fn b() {}").expect("parses");
+    fn a_function_name_must_be_defined_exactly_once() -> Result<(), String> {
+        let once = parsed("fn a() {} fn b() {}").ok_or("parses")?;
         assert!(named_function(&once, "a").is_some());
         assert!(named_function(&once, "missing").is_none());
-        let twice = parsed("fn a() {} fn a() {}").expect("parses");
+        let twice = parsed("fn a() {} fn a() {}").ok_or("parses")?;
         assert!(named_function(&twice, "a").is_none());
         // Only top-level functions count.
-        let nested = parsed("mod m { fn a() {} }").expect("parses");
+        let nested = parsed("mod m { fn a() {} }").ok_or("parses")?;
         assert!(named_function(&nested, "a").is_none());
+        Ok(())
     }
 }
