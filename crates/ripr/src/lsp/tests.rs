@@ -9139,6 +9139,108 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     Ok(())
 }
 
+/// #5354: the seam "open best related test" action never opens a test linked
+/// only by proximity, even a strong one, over a test that calls the owner;
+/// with only proximity-linked tests it opens nothing, while the targeted-test
+/// brief stays offered from the same related tests.
+#[test]
+fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason,
+    };
+
+    let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "same_file_strong_neighbour".to_string(),
+        file: PathBuf::from("tests/neighbour.rs"),
+        line: 4,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::SameTestFile,
+        relation_confidence: RelationConfidence::High,
+    });
+    let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "token_substring_strong".to_string(),
+        file: PathBuf::from("tests/token.rs"),
+        line: 6,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::WeakTokenSubstring,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+
+    let commands_for = |related: Vec<std::sync::Arc<RelatedTestGrip>>| {
+        let mut seam = sample_classified_seam();
+        seam.evidence.related_tests = related;
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut snapshot = sample_analysis_snapshot(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic.clone()],
+            Vec::new(),
+        );
+        snapshot.classified_seams = vec![seam];
+        let actions = code_action_response(
+            &code_action_params(vec![diagnostic])?,
+            Some(&snapshot),
+            &vscode_client_features()?,
+        );
+        code_action_commands(&actions)
+    };
+
+    let commands = commands_for(vec![
+        same_file_strong.clone(),
+        token_strong.clone(),
+        calling_weak,
+    ])?;
+    let Some((_, command, args)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {commands:?}"
+        ));
+    };
+    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
+    assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+
+    let has_brief = |commands: &[(String, String, Vec<serde_json::Value>)]| {
+        commands
+            .iter()
+            .any(|(_, command, _)| command == COPY_TARGETED_TEST_BRIEF_COMMAND)
+    };
+    let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
+    assert!(
+        !proximity_only
+            .iter()
+            .any(|(title, _, _)| title == "Write targeted test: open best related test"),
+        "a proximity-only related test must not be opened: {proximity_only:?}"
+    );
+    assert_eq!(
+        has_brief(&proximity_only),
+        has_brief(&commands),
+        "the targeted-test brief still reads proximity-only related tests: {proximity_only:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn seam_code_actions_omit_assertion_and_related_test_when_evidence_is_missing() -> Result<(), String>
 {

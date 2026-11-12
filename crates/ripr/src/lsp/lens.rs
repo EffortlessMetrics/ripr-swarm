@@ -1,7 +1,11 @@
 /// Advisory LSP codeLens for changed symbols.
 ///
 /// RIPR-SPEC-0100: emits one advisory `CodeLens` per distinct line and title
-/// among the `Finding`s whose probe location maps to the requested document URI. The title cites the finding's
+/// among the `Finding`s whose probe location maps to the requested document
+/// URI; identical lenses of one owner share its topmost row (#14362). The
+/// click target is the witness-selected related test, which never names a
+/// proximity-only test (#5354), so it can name fewer tests than the count.
+/// The title cites the finding's
 /// `related_tests.len()` from the cached `AnalysisSnapshot` — the same source
 /// that feeds `finding.class` — so the count is never fabricated.
 ///

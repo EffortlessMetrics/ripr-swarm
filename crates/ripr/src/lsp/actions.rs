@@ -722,8 +722,9 @@ fn push_seam_actions(
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
-    // availability (a concrete assertion template or related test), not a
-    // readiness predicate.
+    // availability (a concrete assertion template or any related test), not a
+    // readiness predicate. It reads every related test, proximity-only ones
+    // included: #5354 narrows only which test the editor opens.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
@@ -742,7 +743,7 @@ fn push_seam_actions(
             actions.push(action);
         }
     } else if repair_packet_eligibility(context.seam).eligible()
-        && (suggested_assertion.is_some() || related_test.is_some())
+        && (suggested_assertion.is_some() || !context.seam.evidence.related_tests.is_empty())
     {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
