@@ -24,6 +24,17 @@ pub(super) fn analyze(
     added: &[usize],
     removed: Vec<crate::analysis::diff::ChangedLine>,
 ) -> Result<Vec<Finding>, String> {
+    analyze_with(label, &[], source, added, removed)
+}
+
+/// `analyze` with extra workspace files beside the fixture.
+fn analyze_with(
+    label: &str,
+    extra_files: &[(&str, &str)],
+    source: &str,
+    added: &[usize],
+    removed: Vec<crate::analysis::diff::ChangedLine>,
+) -> Result<Vec<Finding>, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| format!("system time: {err}"))?
@@ -35,7 +46,10 @@ pub(super) fn analyze(
     for (path, contents) in [
         ("src/pricing.py", source),
         ("tests/test_pricing.py", PRICING_TEST_PY),
-    ] {
+    ]
+    .into_iter()
+    .chain(extra_files.iter().copied())
+    {
         let file = root.join(path);
         if let Some(parent) = file.parent() {
             std::fs::create_dir_all(parent)
@@ -158,6 +172,56 @@ fn line_deleted_from_a_type_checking_block_is_not_probed() -> Result<(), String>
     Ok(())
 }
 
+/// Devin on #14455: runtime code moved into the block in the same added
+/// run as a changed runtime line. The moved line replaced a line that ran,
+/// so it keeps its probe beside the runtime edit.
+#[test]
+fn runtime_code_moved_into_a_block_beside_a_runtime_edit_keeps_probe() -> Result<(), String> {
+    let findings = analyze(
+        "moved-beside-runtime",
+        PRICING_PY,
+        &[10, 11, 12, 13, 14],
+        vec![
+            line(10, "DISCOUNT = compute_discount()"),
+            line(14, "    return sum(prices[item] for item in basket) + 1"),
+        ],
+    )?;
+    assert!(probed_lines(&findings).contains(&10), "{findings:?}");
+    Ok(())
+}
+
+/// Devin on #14455: a workspace `typing.py` can make `TYPE_CHECKING` true,
+/// so no block is read and the edited alias keeps its probe.
+#[test]
+fn workspace_typing_module_keeps_block_probes() -> Result<(), String> {
+    let findings = analyze_with(
+        "shadowed-typing",
+        &[("typing.py", "TYPE_CHECKING = True\n")],
+        PRICING_PY,
+        &[10],
+        vec![line(10, "    Basket: TypeAlias = list[str]")],
+    )?;
+    assert_eq!(probed_lines(&findings), vec![10], "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn workspace_typing_shadow_paths() {
+    use super::type_checking_block::workspace_may_shadow_typing;
+    for (paths, expected) in [
+        (vec!["typing.py"], true),
+        (vec!["src/typing.py"], true),
+        (vec!["typing_extensions/__init__.py"], true),
+        (vec!["src/typing_extensions.pyi"], true),
+        (vec!["src/pricing.py", "tests/test_pricing.py"], false),
+        (vec!["src/shop/typing.py"], false),
+        (vec!["shop/_typing.py"], false),
+    ] {
+        let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        assert_eq!(workspace_may_shadow_typing(&paths), expected, "{paths:?}");
+    }
+}
+
 #[test]
 fn type_checking_block_shapes() {
     for (why, source, expected) in [
@@ -253,6 +317,14 @@ fn type_checking_block_shapes() {
         (
             "star import may bind the flag",
             "from typing import TYPE_CHECKING\nfrom settings import *\nif TYPE_CHECKING:\n    import a\n",
+        ),
+        (
+            "typing attribute patched on",
+            "import typing\ntyping.TYPE_CHECKING = True\nif typing.TYPE_CHECKING:\n    import a\n",
+        ),
+        (
+            "flag deleted",
+            "from typing import TYPE_CHECKING\ndel TYPE_CHECKING\nif TYPE_CHECKING:\n    import a\n",
         ),
         (
             "does not parse",

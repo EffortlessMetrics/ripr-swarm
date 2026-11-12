@@ -90,6 +90,11 @@ impl Bindings {
                 }
             }
             Expr::Starred(starred) => self.bind_target(&starred.value, false),
+            // `typing.TYPE_CHECKING = True` turns every `typing.TYPE_CHECKING`
+            // guard on; any write to an attribute of that name is unread.
+            Expr::Attribute(attribute) if attribute.attr.as_str() == FLAG => {
+                self.unreadable = true;
+            }
             _ => {}
         }
     }
@@ -156,6 +161,11 @@ impl Bindings {
                 }
             }
             Stmt::AugAssign(assign) => self.bind_target(&assign.target, false),
+            Stmt::Delete(delete) => {
+                for target in &delete.targets {
+                    self.bind_target(target, false);
+                }
+            }
             Stmt::FunctionDef(function) => {
                 self.bind_name(function.name.as_str());
                 self.read_arguments(&function.args);
@@ -364,4 +374,28 @@ fn collect(
             _ => {}
         }
     }
+}
+
+/// Whether the workspace holds its own top-level `typing` or
+/// `typing_extensions` module (at the root or under `src/`), which an
+/// absolute import could resolve to instead of the standard one. The
+/// flag's value is then unknown, so no block is read (#14156). A module of
+/// that name inside a package does not shadow an absolute import.
+pub(super) fn workspace_may_shadow_typing<'a>(
+    paths: impl IntoIterator<Item = &'a std::path::PathBuf>,
+) -> bool {
+    paths.into_iter().any(|path| {
+        let mut components = path.iter().map(|component| component.to_string_lossy());
+        let mut top = components.next();
+        if top.as_deref() == Some("src") {
+            top = components.next();
+        }
+        top.is_some_and(|component| {
+            let stem = component
+                .strip_suffix(".pyi")
+                .or_else(|| component.strip_suffix(".py"))
+                .unwrap_or(&component);
+            TYPING_MODULES.contains(&stem)
+        })
+    })
 }
