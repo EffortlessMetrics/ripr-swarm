@@ -683,9 +683,12 @@ pub(in crate::analysis) fn range_change_visibility(
         }
         // A case table, a shadowing binding or a same-name local fn makes the
         // written call name something the fold does not evaluate. An
-        // ignored test never runs, so its assertions notice nothing.
+        // ignored test never runs, so its assertions notice nothing; a
+        // `should_panic` test can pass on the old version by panicking
+        // later, so a pinned assertion does not decide its outcome.
         if case_row_bindings(test).is_some()
             || crate::analysis::classify::is_ignored(test)
+            || super::is_should_panic(test)
             || test
                 .let_bindings
                 .iter()

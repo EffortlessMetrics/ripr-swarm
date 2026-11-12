@@ -474,6 +474,65 @@ fn an_ignored_test_does_not_supply_a_separating_input() -> Result<(), String> {
 }
 
 #[test]
+fn a_for_pattern_shadowing_the_expected_binding_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    // The loop's `expected` is `sum_to(4)`, not the outer 10.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let expected = 10;\n    for expected in [sum_to(4)] {\n        assert_eq!(sum_to(4), expected);\n    }",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_destructuring_let_shadowing_the_expected_binding_does_not_supply_a_separating_input()
+-> Result<(), String> {
+    // The tuple pattern rebinds `expected` to `sum_to(4)`.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "let expected = 10;\n    let (expected,) = (sum_to(4),);\n    assert_eq!(sum_to(4), expected);",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_should_panic_test_does_not_supply_a_separating_input() -> Result<(), String> {
+    // The old version fails the assertion and the new one panics after it:
+    // the test passes on both.
+    let test = "use ranges::*;\n\n#[test]\n#[should_panic]\nfn pins() {\n    assert_eq!(sum_to(4), 10);\n    panic!(\"done\");\n}\n";
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        test,
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_single_use_expected_binding_keeps_a_separating_input() -> Result<(), String> {
     // Control: `let expected = 10;` read once is the literal 10.
     let findings = findings_on_changed_line(
