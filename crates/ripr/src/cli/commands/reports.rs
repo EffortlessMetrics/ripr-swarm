@@ -146,14 +146,12 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
         // A saved `blocked` ledger keeps `run_limitations[]` routes, but a
         // refusal disclosed only in `analysis_scope` is saved marker-only, so
         // only name a route the source actually records.
-        let repair = match report.source_refusal_repair_route() {
-            Some(route) => format!(
-                "Follow its repair_route `{route}`, re-run the producing check, then rebuild this ledger"
-            ),
-            None => "It records no repair_route: re-run the check that produced it (with a narrower diff or scope budget if it was refused as oversized), then rebuild this ledger from that fresh output".to_string(),
+        let route_hint = match report.source_refusal_repair_route() {
+            Some(route) => format!(" after following its repair_route `{route}`"),
+            None => " (it records no repair_route; narrow the diff or scope budget if it was refused as oversized)".to_string(),
         };
         return Err(format!(
-            "reports gap-ledger {} {} is {refusal}: nothing was analyzed, so the ledger was written as `blocked` with no records. {repair}",
+            "reports gap-ledger {} {} is {refusal}: nothing was analyzed, so the ledger was written as `blocked` with no records. Re-run the check that produced it{route_hint}, then rebuild this ledger from that fresh output",
             source_flag(&options.source),
             output::path::human_path(options.source.path()),
         ));
@@ -968,7 +966,7 @@ mod tests {
             err.contains("reports gap-ledger --check-output ")
                 && err.contains("is a producer refusal (run_status: diff_scope_oversized)")
                 && err.contains("the ledger was written as `blocked`")
-                && err.contains("Follow its repair_route `analysis/diff-scope-budget`"),
+                && err.contains("Re-run the check that produced it after following its repair_route `analysis/diff-scope-budget`"),
             "{err}"
         );
         assert_eq!(read_json_file(&out)?["status"], "blocked");
@@ -982,8 +980,8 @@ mod tests {
         };
         assert!(
             err.contains("reports gap-ledger --records ")
-                && err.contains("It records no repair_route: re-run the check that produced it")
-                && !err.contains("Follow its repair_route"),
+                && err.contains("Re-run the check that produced it (it records no repair_route;")
+                && !err.contains("following its repair_route"),
             "{err}"
         );
 
@@ -1009,7 +1007,7 @@ mod tests {
         };
         assert!(
             err.contains("reports gap-ledger --records ")
-                && err.contains("Follow its repair_route `analysis/diff-scope-budget`"),
+                && err.contains("Re-run the check that produced it after following its repair_route `analysis/diff-scope-budget`"),
             "{err}"
         );
 
