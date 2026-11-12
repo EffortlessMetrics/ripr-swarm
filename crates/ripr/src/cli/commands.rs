@@ -5987,7 +5987,11 @@ language = "rust"
 
         // Every mode the CLI accepts is listed, derived from the help line
         // rather than from a second list kept here.
+        // `gate check` documents `--mode MODE` too, by reference to this
+        // list, so read the evaluate section that spells the modes out.
         let mode_line = gate_help
+            .split_once("Evaluate options:")
+            .map_or(gate_help, |(_, evaluate)| evaluate)
             .lines()
             .find(|line| line.trim_start().starts_with("--mode MODE"))
             .ok_or_else(|| format!("gate help does not document --mode:\n{gate_help}"))?;
