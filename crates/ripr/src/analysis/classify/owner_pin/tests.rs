@@ -9299,6 +9299,26 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
     // that the workspace scan does not already report at its own site (#14031).
     for (source, local) in [
         ("mod global;\npub use global::*;\n", true),
+        // #14116: a prefix reads the module name without binding it again.
+        (
+            "mod global;\nuse global::*;\npub(crate) use global::{A, B};\n",
+            true,
+        ),
+        (
+            "mod global;\nuse global::*;\nuse global::A as Other;\n",
+            true,
+        ),
+        ("mod global;\nuse global::*;\nuse dep::global as _;\n", true),
+        ("mod global;\nuse global::*;\nuse ::dep::Other;\n", true),
+        ("mod global;\nuse global::*;\nuse ::global::A;\n", false),
+        (
+            "mod global;\nuse global::*;\nuse global /* prefix */ :: {A, B};\n",
+            true,
+        ),
+        (
+            "mod r#global;\nuse r#global::*;\nuse r#global::{A, B};\n",
+            true,
+        ),
         // An inline module's own imports are scoped to it, so a `pub use` inside
         // would reach the root through the glob unseen.
         ("mod global {}\nuse global::*;\n", false),
@@ -9335,6 +9355,22 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         ),
         (
             "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self as g2, x};\npub use global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nuse dep::{other as r#global};\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep /* prefix */ :: global;\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse ::dep::global::{self};\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse ::dep /* prefix */ :: r#global::{self};\nuse global::*;\n",
             false,
         ),
         (
