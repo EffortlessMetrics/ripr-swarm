@@ -747,6 +747,10 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `a_manual_let_else_rewrite_pairs_its_diverging_statement`
 - `manual_let_else_pairing_is_fail_closed`
+- `a_reversed_let_else_pattern_never_pairs`
+- `a_neighbouring_functions_arm_never_pairs`
+- `a_scrutinee_with_an_equals_sign_still_pairs`
+- `a_pattern_with_an_equals_sign_never_pairs`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`

@@ -305,11 +305,15 @@ impl ChangedFile {
     /// the text differs only by the `None =>` arm head and the trailing
     /// `,`/`;`. The pairing holds only when the scrutinee is the same on both
     /// sides, so a changed scrutinee keeps both probes. Fail-closed: the
-    /// removed arm must be a single-line `None => return ...` arm, the added
-    /// line a bare `return ...;` statement, the added statement must be the
-    /// first added line after its `let ... else` opener, and each text must
-    /// occur exactly once in the window, so a repeated or edited statement
-    /// never pairs by guess.
+    /// added pattern must be the `Some(...)` success pattern (a `let None =
+    /// ... else` rewrite diverges on the opposite variant, so it never
+    /// pairs), the removed arm must be a single-line `None => return ...`
+    /// arm, the added line a bare `return ...;` statement, the added
+    /// statement must be the first added line after its `let ... else`
+    /// opener, the removed `match` opener must sit on the same replaced line
+    /// as the added opener (so a neighbouring function's arm never pairs),
+    /// and each text must occur exactly once in the window, so a repeated or
+    /// edited statement never pairs by guess.
     pub(crate) fn let_else_diverging_pairs(&self) -> Vec<(usize, usize)> {
         /// How far above an added `return` its `let ... else` opener and the
         /// removed `match` opener may sit. A `manual_let_else` rewrite keeps
@@ -338,11 +342,21 @@ impl ChangedFile {
             let Some(scrutinee) = let_else_scrutinee(&opener.text) else {
                 continue;
             };
+            // The refutable pattern must be the `Some(...)` success pattern:
+            // `let None = e else` diverges on `Some`, the opposite variant
+            // from the removed `None => return` arm, so pairing it would
+            // silence a real behaviour change.
+            let Some(pattern) = let_else_pattern(&opener.text) else {
+                continue;
+            };
+            if !(pattern.starts_with("Some(") && pattern.ends_with(')')) {
+                continue;
+            }
             let Some(match_opener) = self
                 .removed_lines
                 .iter()
                 .filter(|line| {
-                    line.new_side_line <= added.new_side_line
+                    line.new_side_line == opener.new_side_line
                         && added.new_side_line - line.new_side_line <= WINDOW
                 })
                 .filter(|line| match_scrutinee(&line.text).is_some_and(|s| s == scrutinee))
@@ -493,12 +507,25 @@ impl ChangedFile {
     }
 }
 
+/// The pattern of a `let <pattern> = <scrutinee> else {` opener.
+fn let_else_pattern(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let rest = text.strip_prefix("let ")?;
+    let body = rest.strip_suffix(" else {")?;
+    let (pattern, _) = body.split_once(" = ")?;
+    let pattern = pattern.trim();
+    (!pattern.is_empty()).then_some(pattern)
+}
+
 /// The scrutinee of a `let <pattern> = <scrutinee> else {` opener.
 fn let_else_scrutinee(text: &str) -> Option<String> {
     let text = text.trim();
     let rest = text.strip_prefix("let ")?;
     let body = rest.strip_suffix(" else {")?;
-    let (_, scrutinee) = body.rsplit_once(" = ")?;
+    // A Rust pattern never contains ` = `, so the first one separates the
+    // pattern from the scrutinee. Splitting on the last one would break a
+    // scrutinee that holds ` = ` inside a string literal.
+    let (_, scrutinee) = body.split_once(" = ")?;
     let scrutinee = scrutinee.trim();
     (!scrutinee.is_empty()).then(|| scrutinee.to_string())
 }
