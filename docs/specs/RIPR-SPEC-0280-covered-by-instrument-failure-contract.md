@@ -197,9 +197,17 @@ Opt-in `verify-test-shards` receipt mode reads only the selected shard-one
 attempt, compares declared run/context and independently resolved source tree,
 ledger and lock to the receipt, and refuses missing, ambiguous, stale, failed,
 wrong-attempt or unverified proof. Caller-supplied producer and verifier attempt
-values do not independently establish job or binary provenance. Declared tool and
-context identity, receipt row completeness and packet observations are not independently authenticated. In particular,
-this diagnostic mode has no full-success path and is not wired into hosted CI.
+values do not independently establish job or binary provenance. The diagnostic
+requires the selected shard-one artifact to be from the current Actions attempt,
+and compares its unique `xtask` member against bytes read from the running
+verifier's reopened executable path. Verifier-only reruns are refused until an
+independent job-result authority exists. The existing hosted workflow uploads
+its verifier separately and does not use this mode. Actions environment and
+producer-result values are not authenticated; the executable path comparison
+assumes it is not replaced while running. Binary reads have a 1 GiB per-file
+size limit but no hard wall deadline. Declared tool and context identity, receipt
+row completeness and packet observations are not independently authenticated.
+This diagnostic mode has no full-success path and is not wired into hosted CI.
 Receipt and context inputs refuse symlinks in any path component, including
 symlinked system roots; callers must use canonical trusted paths. Artifact
 traversal has node and depth limits and refuses symlinks and special files.
