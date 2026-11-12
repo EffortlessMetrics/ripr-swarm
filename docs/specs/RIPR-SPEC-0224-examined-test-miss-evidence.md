@@ -461,9 +461,10 @@ written and must not copy these gaps.
   before; `assertion_not_observing` rows take only the slots left free, so no
   window, fix site, exact-oracle alignment or repair readiness changes.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
-- On an `Err`-to-`Err` variant swap (the probe's base and head text each
-  construct one literal `Err(..)` variant and they differ; unknown base text
-  fails closed), a row the annotation pass marked `missing_exact_assertion`
+- On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
+  probe whose paired base line and head line each hold exactly one `Err`
+  construction, with differing literal variants, and are otherwise identical
+  up to whitespace; unknown base text fails closed), a row the annotation pass marked `missing_exact_assertion`
   whose oracle is a plain `assert_eq!` pinning only the `Ok` arm (an
   `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
   naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
@@ -476,7 +477,11 @@ written and must not copy these gaps.
   exact-oracle next step never runs for a literal `Err` variant probe. The
   `tK=` row and the fix site prefer a row that can observe the change (see
   Current Rust conformance gaps). A changed struct field, an `assert_ne!`
-  and an `Err`-naming side keep `missing_exact_assertion`.
+  and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
+  line comes from line pairing in the replacement block, so a guard rewritten
+  on an earlier line of the same block is not seen by this check (that guard
+  gets its own predicate finding), and a `#[should_panic(expected = ..)]` test
+  whose body unwraps is read as an `Ok` pin.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap

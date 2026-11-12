@@ -537,14 +537,43 @@ fn annotate_related_test_misses(
     }
 }
 
-/// Whether the probe replaces one `Err` variant with a different one, both
-/// sides a literal `Err(..)` construction (#14454). Unknown base text fails
+/// Whether the probe's line only replaces one `Err` variant with a different
+/// one (#14454): an `error_path` or `return_value` probe whose base and head
+/// lines each hold exactly one `Err` construction, with differing literal
+/// variants, and are otherwise identical up to whitespace. A guard, pattern
+/// or second return changed on the same line, or unknown base text, fails
 /// closed.
 fn swaps_one_error_variant_for_another(probe: &Probe) -> bool {
-    let Some(before) = probe.before.as_deref().and_then(exact_error_variant) else {
+    if !matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+    ) {
+        return false;
+    }
+    let Some(before_line) = probe.before.as_deref() else {
         return false;
     };
-    exact_error_variant(&probe.expression).is_some_and(|after| after != before)
+    let one_err = |text: &str| text.matches("Err(").count() + text.matches("Err::<").count() == 1;
+    if !one_err(before_line) || !one_err(&probe.expression) {
+        return false;
+    }
+    let (Some(before), Some(after)) = (
+        exact_error_variant(before_line),
+        exact_error_variant(&probe.expression),
+    ) else {
+        return false;
+    };
+    // Whitespace and a trailing `;` or `,` are spelling, not behavior: the
+    // probe expression is stored without the statement terminator.
+    let squeeze = |text: &str| {
+        text.split_whitespace()
+            .collect::<String>()
+            .trim_end_matches([';', ','])
+            .to_string()
+    };
+    before != after
+        && before_line.matches(before.as_str()).count() == 1
+        && squeeze(&before_line.replacen(before.as_str(), &after, 1)) == squeeze(&probe.expression)
 }
 
 /// #14454: on an `Err`-to-`Err` variant swap, a row the annotation pass
@@ -1345,8 +1374,9 @@ mod tests {
     /// `assert_ne!`, an operand naming `Err`, and `.err().unwrap()` keep
     /// `missing_exact_assertion`; a weak `is_err()` row stays
     /// `weak_assertion`; a guard flip (an `Ok` pin can fail on the new code),
-    /// an `Ok`-to-`Err` change, an unknown base and a struct-field sink
-    /// change nothing.
+    /// on its own or on the variant's line, an `Ok`-to-`Err` change, two
+    /// returns on one line, a new guarded branch, a match-arm probe, an
+    /// unknown base and a struct-field sink change nothing.
     #[test]
     fn an_ok_only_pin_does_not_observe_a_changed_error_variant() {
         use crate::domain::{
@@ -1433,8 +1463,8 @@ mod tests {
         };
         let swap = changed(
             ProbeFamily::ErrorPath,
-            Some("return Err(NameError::Empty);"),
-            "return Err(NameError::TooLong);",
+            Some("        return Err(NameError::Empty);"),
+            "return Err(NameError::TooLong)",
         );
         let not_observing = Some(RelatedTestMiss::AssertionNotObserving);
         let exact = Some(RelatedTestMiss::MissingExactAssertion);
@@ -1474,6 +1504,35 @@ mod tests {
             "return Err(NameError::TooLong);",
         );
         assert_eq!(run(FlowSinkKind::ErrorVariant, &ok_to_err), unchanged);
+        // A guard flipped on the same line as the variant: not a swap.
+        let same_line_guard = changed(
+            ProbeFamily::ErrorPath,
+            Some("if a.is_empty() { return Err(NameError::Empty); }"),
+            "if !a.is_empty() { return Err(NameError::TooLong); }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &same_line_guard), unchanged);
+        // Two returns on one line, the first turned into `Ok`: not a swap.
+        let two_returns = changed(
+            ProbeFamily::ReturnValue,
+            Some("if a { Err(NameError::Empty) } else { Err(NameError::TooLong) }"),
+            "if a { Ok(1) } else { Err(NameError::TooLong) }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &two_returns), unchanged);
+        // A new guarded branch next to an unrelated removed `Err` line.
+        let new_branch = changed(
+            ProbeFamily::ErrorPath,
+            Some("return Err(NameError::Empty);"),
+            "if y { return Err(NameError::TooLong); }",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &new_branch), unchanged);
+        // Match-arm probes are out of scope: the arm's pattern is part of
+        // what changed.
+        let arm = changed(
+            ProbeFamily::MatchArm,
+            Some("Kind::A => Err(NameError::Empty),"),
+            "Kind::A => Err(NameError::TooLong),",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &arm), unchanged);
         // Unknown base text fails closed.
         let no_base = changed(
             ProbeFamily::ErrorPath,
