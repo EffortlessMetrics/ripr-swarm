@@ -15,7 +15,7 @@ analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
 after writing its report. `ripr gate check --base REV` runs `review-comments`
 and then the same evaluation, with the same exit codes. If `review-comments`
-cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
+cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?

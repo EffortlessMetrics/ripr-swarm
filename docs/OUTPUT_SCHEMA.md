@@ -11773,7 +11773,12 @@ Field contract:
   line, omitted when empty, #9734). A non-empty or malformed
   `parser_declined_files` also adds one entry to the gate decision's
   `warnings` naming the files, so the top-level `status` is never `pass` for
-  a decision whose changed files were not all parsed (#14082). The same holds
+  a decision whose changed files were not all parsed (#14082). In
+  `calibrated-gate` mode the same condition also makes the top-level `status`
+  `blocked` (exit `3`) with an extra warning saying so, because the mode exists
+  to stop a merge and nothing was judged for that file (#14485); the other
+  modes keep the advisory outcome unless a candidate decision already sets a
+  higher status. The same warning-only rule holds
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
