@@ -1239,9 +1239,8 @@ cannot be `off`.
 
 ### `[severity.seams]`
 
-Seam severities apply wherever ripr reports seams: LSP seam diagnostics, SARIF
-seam results, the seam `severity` field in `review-comments` output, and
-agent results: agent-brief seam selection and its `severity` field, `ripr agent
+Seam severities apply to LSP seam diagnostics, SARIF seam results, the seam
+`severity` field in `review-comments` output, and agent results: agent-brief seam selection and its `severity` field, `ripr agent
 start` and `ripr agent card`. Valid values are `off`, `info`, `warning`, and
 `note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
 left out of agent results with the omission reason named (agent start and agent
@@ -1279,7 +1278,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count seams and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 
