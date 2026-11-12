@@ -10,9 +10,10 @@ use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
-pub(crate) use super::suppressions_core::*;
+pub use super::suppressions_core::*;
 
-const CONFINEMENT_REFUSAL: &str = "`suppressions.path` must resolve to a regular file inside the repository; replace the link or choose an in-repository regular file";
+const CONFINEMENT_REFUSAL: &str =
+    "`suppressions.path` must resolve to a regular file inside the repository; replace the link or choose an in-repository regular file";
 
 /// Loads the repository-controlled implicit suppression policy after proving
 /// that its resolved target remains inside `root`.
@@ -164,7 +165,7 @@ mod tests {
             let errors = load_suppressions_for_root_at(&root, relative)
                 .err()
                 .ok_or("unsafe path must fail closed")?;
-            assert_eq!(errors, [CONFINEMENT_REFUSAL]);
+            assert_eq!(errors, vec![CONFINEMENT_REFUSAL.to_string()]);
         }
         std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
         Ok(())
