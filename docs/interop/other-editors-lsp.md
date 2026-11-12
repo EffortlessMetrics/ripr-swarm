@@ -102,8 +102,8 @@ from a scripted client):
 
 A first-open diagnostic of `ripr-diagnostic-analysis-pending` means no
 analysis has finished yet. While one is running it says so and findings
-replace it when the run ends; if it asks you to save or run `ripr.refresh`,
-no run is under way.
+replace it when the run ends. If it asks you to save or run `ripr.refresh`,
+no run was under way when it was published.
 
 Neovim needs `vim.lsp.config` and `vim.lsp.enable` (Neovim 0.11 or newer)
 for the snippet below. Older versions can use `vim.lsp.start` with the same

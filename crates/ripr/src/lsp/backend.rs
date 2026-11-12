@@ -551,12 +551,14 @@ impl Backend {
                 let request = *request;
                 self.mark_attempt_queued(&request);
                 self.publish_analysis_status().await;
+                self.refresh_pending_marker_surfaces().await;
                 request
             }
             RefreshDecision::Queued { generation, .. } => {
                 if let Some(request) = self.refresh_scheduler.pending_request(generation) {
                     self.mark_pending_attempt(&request);
                     self.publish_analysis_status().await;
+                    self.refresh_pending_marker_surfaces().await;
                 }
                 self.log_refresh_queued(generation).await;
                 // #8733: answer once the scheduler has accepted (and
@@ -590,7 +592,7 @@ impl Backend {
             self.publish_analysis_status().await;
             // #14447: an attempt that ended without a snapshot leaves the
             // marker naming the route that starts analysis again.
-            self.publish_analysis_pending_push_markers(false).await;
+            self.refresh_pending_marker_surfaces().await;
             self.end_progress_for_attempt(&request, outcome).await;
             self.log_refresh_attempt_outcome(outcome, attempt_duration)
                 .await;
@@ -609,7 +611,7 @@ impl Backend {
                 .await;
             self.mark_attempt_running(&request);
             self.publish_analysis_status().await;
-            self.publish_analysis_pending_push_markers(true).await;
+            self.refresh_pending_marker_surfaces().await;
         }
     }
 
@@ -1607,6 +1609,31 @@ impl Backend {
     /// the caller sampled the state owns the client surface, and a late
     /// marker must not overwrite completed diagnostics or resurrect
     /// cleared ones (#8732 review).
+    /// Re-serve the pre-snapshot marker after an attempt-state transition
+    /// (#14447): push clients get a republish when the route changed, and a
+    /// pull client that cached the previous pending result id is asked to
+    /// pull again. A committed snapshot owns both surfaces, so nothing is
+    /// sent once one exists without a latched failure.
+    async fn refresh_pending_marker_surfaces(&self) {
+        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+            return;
+        }
+        self.publish_analysis_pending_push_markers(false).await;
+        if self.pull_diagnostics_enabled()
+            && self.diagnostic_refresh_support_enabled()
+            && let Err(error) = self
+                .bounded_client_request(self.client.workspace_diagnostic_refresh())
+                .await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("pull diagnostic refresh request failed: {error}"),
+                )
+                .await;
+        }
+    }
+
     async fn publish_analysis_pending_push_markers(&self, analysis_starting: bool) {
         if self.pull_diagnostics_enabled() {
             return;
