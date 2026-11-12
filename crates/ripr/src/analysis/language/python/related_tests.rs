@@ -522,8 +522,8 @@ fn helper_candidates_from_callers<'a>(
 /// A test protocol-invocation path to a dunder that calls a module-level
 /// helper. The import identifies the caller's module, and an asserted operator
 /// operand must be a bound instance of that class or a uniquely named
-/// same-package factory whose bare-call facts and imports identify it. The resulting
-/// `helper_owner_call` relation never carries an oracle:
+/// same-package factory whose imports and single direct class return identify
+/// it. The resulting `helper_owner_call` relation never carries an oracle:
 /// `duration1 + duration2` can reach `Duration.__add__`, and through its bare
 /// call graph `fquotmod`, without promoting it to `exposed`.
 fn dunder_protocol_helper_call(
@@ -558,7 +558,11 @@ fn dunder_protocol_helper_call(
                 && factory.class_path.is_empty()
                 && factory.owner_kind == Some(OwnerKind::Function)
                 && factory.qualified_name == factory.name
-                && factory.module_callees.contains(&top_class.to_string())
+                && factory
+                    .module_callees
+                    .iter()
+                    .any(|callee| callee == top_class)
+                && factory.class_facts.direct_class_return.as_deref() == Some(top_class)
                 && (factory.file == caller.file
                     || factory.imports.iter().any(|import| {
                         import.imported == top_class
@@ -575,7 +579,31 @@ fn dunder_protocol_helper_call(
                     .count()
                     == 1
         })
-        .map(|factory| factory.name.clone())
+        .collect::<Vec<_>>();
+    let factories = factories
+        .iter()
+        .flat_map(|factory| {
+            let mut callees = module_callees_named(test, factory, &factory.name, true);
+            // Preserve a unique discovered test-global factory convention,
+            // but never let it override a foreign import, local assignment or
+            // parameter of the same name. An explicit import or module call
+            // may disambiguate same-named factories by its own module.
+            if callees.is_empty()
+                && factories
+                    .iter()
+                    .filter(|other| other.name == factory.name)
+                    .count()
+                    == 1
+                && !test_binds_local(test, &factory.name)
+                && !test
+                    .imports
+                    .iter()
+                    .any(|import| import.alias == factory.name)
+            {
+                callees.push(factory.name.clone());
+            }
+            callees
+        })
         .collect::<Vec<_>>();
     protocol_entry_in_body_with_factories(test, caller, &factories)
 }

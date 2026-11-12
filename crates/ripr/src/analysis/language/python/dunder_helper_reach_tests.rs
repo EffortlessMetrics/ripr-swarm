@@ -286,14 +286,42 @@ fn given_two_reaching_dunders_when_test_uses_the_second_then_evidence_names_it()
     Ok(())
 }
 
+fn factory_helper_link_count(
+    factory_sources: &[(&str, &str)],
+    tests_source: &str,
+) -> Result<usize, String> {
+    let source = ISODATE_HELPER_PY
+        .split("\n\ndef parse_duration")
+        .next()
+        .ok_or("fixture must contain the class")?;
+    let mut owners = extract_owners(Path::new("src/isodate/duration.py"), source);
+    for (path, source) in factory_sources {
+        owners.extend(extract_owners(Path::new(path), source));
+    }
+    apply_class_facts(&mut owners);
+    let tests = extract_tests(Path::new("tests/test_duration.py"), tests_source);
+    assert_eq!(tests.len(), 1, "fixture must collect exactly one test");
+    let helper = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "fquotmod")
+        .ok_or("fixture must contain fquotmod")?;
+    Ok(related_tests::helper_owner_call_candidates(helper, &owners, &tests).len())
+}
+
+const IMPORTED_FACTORY: &str = "from isodate.duration import Duration\n\ndef parse_duration(value):\n    return Duration(value)\n";
+
 #[test]
 fn given_cross_module_factory_when_dunder_reaches_helper_then_weak_link_exists()
 -> Result<(), String> {
     let source = ISODATE_HELPER_PY.replace(
-        "    def __add__",
-        "    __radd__ = __add__\n\n    def __add__",
+        "        return fquotmod(newmonth, 1, 13)\n",
+        "        return fquotmod(newmonth, 1, 13)\n\n    __radd__ = __add__\n",
     );
-    let mut owners = extract_owners(Path::new("src/isodate/duration.py"), &source);
+    let source = source
+        .split("\n\ndef parse_duration")
+        .next()
+        .ok_or("fixture must contain the class")?;
+    let mut owners = extract_owners(Path::new("src/isodate/duration.py"), source);
     owners.extend(extract_owners(
         Path::new("src/isodate/isoduration.py"),
         "from isodate.duration import Duration\n\ndef parse_duration(value):\n    return Duration(1)\n",
@@ -332,6 +360,104 @@ fn given_cross_module_factory_when_dunder_reaches_helper_then_weak_link_exists()
         dunder,
         std::slice::from_ref(&factory.name),
     ));
+    Ok(())
+}
+
+#[test]
+fn given_foreign_or_shadowed_factory_when_dunder_reaches_helper_then_no_link_exists()
+-> Result<(), String> {
+    let cases = [
+        (
+            "foreign import",
+            "from isodate import Duration\nfrom other.parsers import parse_duration\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n",
+        ),
+        (
+            "test assignment",
+            "from isodate import Duration\n\ndef test_add():\n    parse_duration = lambda value: value\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n",
+        ),
+        (
+            "test parameter",
+            "from isodate import Duration\n\ndef test_add(parse_duration):\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n",
+        ),
+    ];
+    for (label, test) in cases {
+        assert_eq!(
+            factory_helper_link_count(&[("src/isodate/isoduration.py", IMPORTED_FACTORY)], test,)?,
+            0,
+            "{label} must not establish the owner's factory"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_conflicting_package_factories_when_implicit_name_is_used_then_no_link_exists()
+-> Result<(), String> {
+    let test = "from isodate import Duration\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n";
+    assert_eq!(
+        factory_helper_link_count(
+            &[
+                ("src/isodate/isoduration.py", IMPORTED_FACTORY),
+                ("src/isodate/other.py", IMPORTED_FACTORY),
+            ],
+            test,
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn given_duplicate_factory_definition_when_dunder_reaches_helper_then_no_link_exists()
+-> Result<(), String> {
+    let factory = "from isodate.duration import Duration\n\ndef parse_duration(value):\n    return Duration(value)\n\ndef parse_duration(value):\n    return Duration(value)\n";
+    let test = "from isodate import Duration\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n";
+    assert_eq!(
+        factory_helper_link_count(&[("src/isodate/isoduration.py", factory)], test)?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn given_valid_factory_import_spellings_when_dunder_reaches_helper_then_weak_links_exist()
+-> Result<(), String> {
+    let cases = [
+        "from isodate import Duration\nfrom isodate.isoduration import parse_duration as make_duration\n\ndef test_add():\n    left = make_duration(1)\n    right = make_duration(2)\n    assert left + right == make_duration(3)\n",
+        "from isodate import Duration\nimport isodate.isoduration as factory\n\ndef test_add():\n    left = factory.parse_duration(1)\n    right = factory.parse_duration(2)\n    assert left + right == factory.parse_duration(3)\n",
+    ];
+    for test in cases {
+        assert_eq!(
+            factory_helper_link_count(&[("src/isodate/isoduration.py", IMPORTED_FACTORY)], test)?,
+            1,
+            "a proven import identity should retain weak reach: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_factory_without_direct_class_return_when_dunder_reaches_helper_then_no_link_exists()
+-> Result<(), String> {
+    let returns = [
+        "return 1",
+        "return Duration(value).days",
+        "return [Duration(value)]",
+        "return (Duration(value),)",
+        "Duration(value)\n    return None",
+        "return Duration(value)\n    return 1",
+    ];
+    for returned in returns {
+        let factory = format!(
+            "from isodate.duration import Duration\n\ndef parse_duration(value):\n    {returned}\n"
+        );
+        let test = "from isodate import Duration\nfrom isodate.isoduration import parse_duration\n\ndef test_add():\n    left = parse_duration(1)\n    right = parse_duration(2)\n    assert left + right == 3\n";
+        assert_eq!(
+            factory_helper_link_count(&[("src/isodate/isoduration.py", &factory)], test,)?,
+            0,
+            "return shape must fail closed: {returned}"
+        );
+    }
     Ok(())
 }
 

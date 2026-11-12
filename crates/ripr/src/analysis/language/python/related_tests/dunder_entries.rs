@@ -50,6 +50,11 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// Trimmed text of the single-line expression statements written directly
     /// in this method's body (not nested under a guard). Set at extraction.
     pub(in crate::analysis::language::python) direct_statements: Vec<String>,
+    /// For a function whose body is only an optional docstring and one return:
+    /// the bare class name constructed by that return expression. `None` for
+    /// every other return shape, which keeps factory discovery fail-closed.
+    #[serde(default)]
+    pub(in crate::analysis::language::python) direct_class_return: Option<String>,
     /// For a module-level function owner: the module-scope names bound once to
     /// a call result and never rebound, objects the function can mutate
     /// through an attribute write. Filled after extraction; empty when unknown.
@@ -250,9 +255,10 @@ fn bound_instances(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<S
 }
 
 /// Instances bound once to a call of one of `callables`. `callables` may be
-/// the owner class itself or a same-package factory whose bare-call facts and
-/// imports identify that class. Every other binding and scope guard is shared with ordinary
-/// direct constructions, so factory names do not weaken receiver identity.
+/// the owner class itself or a same-package factory whose imports and direct
+/// class return identify that class. Every other binding and scope guard is
+/// shared with ordinary direct constructions, so factory names do not weaken
+/// receiver identity.
 /// `factory_conversion` distinguishes a fixture's input value from an object
 /// produced by a validated factory (`dur1` string to `Duration` via
 /// `parse_duration`). It never relaxes the class, import, construction, or
