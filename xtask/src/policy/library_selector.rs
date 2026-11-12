@@ -433,7 +433,7 @@ mod tests {
         let other_attribute = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n    #[tokio::test]\n    async fn other() {}\n}\n";
         // Inner attributes of the selected inline module: the build decides.
         let inner_feature = "#[cfg(test)]\nmod tests {\n    #![cfg(feature = \"x\")]\n    #[test]\n    fn always() {}\n}\n";
-        let inner_cfg_attr = "#[cfg(test)]\nmod tests {\n    #![cfg_attr(unix, allow(dead_code))]\n    #[test]\n    fn always() {}\n}\n";
+        let inner_cfg_attr = "#[cfg(test)]\nmod tests {\n    #![cfg_attr(unix, must_use)]\n    #[test]\n    fn always() {}\n}\n";
         // An inner attribute at the top of the module file itself.
         let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An attribute macro can remove or rename the test it sits on, or
