@@ -384,8 +384,11 @@ pub(super) fn render_refusal(
         notice.repair_route,
         super::terminal_safe(message)
     );
-    if let Some(command) =
-        retry.or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+    // A command spanning lines (a root or diff path holding a line break) is
+    // not one runnable line and could forge record lines, so it is withheld.
+    if let Some(command) = retry
+        .or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+        .filter(|command| !command.contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']))
     {
         out.push_str(&format!(
             "next={}\n",
