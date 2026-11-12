@@ -1,7 +1,6 @@
 //! Deterministic wire-order controls for the external-delete lifecycle test.
 use super::await_publish_and_response;
 use serde_json::{Value, json};
-use std::path::Path;
 
 fn publication(uri: &str, diagnostics: Value) -> Value {
     json!({"method": "textDocument/publishDiagnostics", "params": {
@@ -17,7 +16,7 @@ fn observe(messages: Vec<Value>, pending: Option<u64>, nonempty: bool) -> Result
                 .next()
                 .ok_or_else(|| "end of controlled stream".to_owned())
         },
-        Path::new("src/lib.rs"),
+        "file:///repo/src/lib.rs",
         pending,
         |count| (count > 0) == nonempty,
     )?;
@@ -74,6 +73,7 @@ fn deletion_requires_real_empty_diagnostics_for_the_same_file() -> Result<(), St
     for message in [
         publication("file:///repo/src/lib.rs", json!([{}])),
         publication("file:///repo/src/other.rs", json!([])),
+        publication("file:///unrelated/src/lib.rs", json!([])),
         publication("file:///repo/src/lib.rs", Value::Null),
         json!({"id": 2, "result": null}),
     ] {
