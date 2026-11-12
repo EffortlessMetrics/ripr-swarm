@@ -122,6 +122,13 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         let value = iter
             .next()
             .ok_or_else(|| format!("verify-test-shards: {flag} needs a value"))?;
+        if matches!(
+            name,
+            "native-receipt-context" | "native-producer-result" | "native-verifier-attempt"
+        ) && values.contains_key(name)
+        {
+            return Err(format!("verify-test-shards: duplicate option `{flag}`"));
+        }
         values.insert(name, value.clone());
     }
     let take = |name: &str| {
@@ -1331,6 +1338,204 @@ mod tests {
         let native = all.native_receipt.ok_or("native mode missing")?;
         assert_eq!(native.verifier_attempt, 2);
         assert_eq!(native.producer_result, "success");
+        Ok(())
+    }
+
+    #[test]
+    fn native_receipt_options_reject_duplicate_values_without_changing_legacy_options()
+    -> Result<(), String> {
+        let base = [
+            "--dir",
+            "in",
+            "--artifact",
+            "art",
+            "--attempt",
+            "2",
+            "--repository",
+            "o/r",
+            "--sha",
+            "a",
+            "--run-id",
+            "7",
+            "--shards",
+            "2",
+            "--out",
+            "out",
+        ];
+        let native = [
+            "--native-receipt-context",
+            "context.json",
+            "--native-producer-result",
+            "success",
+            "--native-verifier-attempt",
+            "2",
+        ];
+        for (flag, same, conflict) in [
+            ("--native-receipt-context", "context.json", "other.json"),
+            ("--native-producer-result", "success", "failure"),
+            ("--native-verifier-attempt", "2", "1"),
+        ] {
+            for duplicate in [same, conflict] {
+                for prefix in [true, false] {
+                    let mut args = base.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+                    if prefix {
+                        args.extend([flag.to_string(), duplicate.to_string()]);
+                    }
+                    args.extend(native.iter().map(|s| (*s).to_string()));
+                    if !prefix {
+                        args.extend([flag.to_string(), duplicate.to_string()]);
+                    }
+                    let error = parse_options(&args)
+                        .err()
+                        .ok_or("duplicate native option accepted")?;
+                    assert!(
+                        error.contains(&format!("duplicate option `{flag}`")),
+                        "{error}"
+                    );
+                }
+            }
+        }
+        let args = base
+            .iter()
+            .copied()
+            .chain(["--out", "later"])
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(parse_options(&args)?.out, PathBuf::from("later"));
+        Ok(())
+    }
+
+    #[test]
+    fn native_binary_digest_refuses_empty_oversized_and_nonregular_inputs() -> Result<(), String> {
+        let root = crate::tests::temp_dir("native-verifier-binary-bounds");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let regular = root.join("regular");
+        fs::write(&regular, b"abc").map_err(|e| e.to_string())?;
+        assert_eq!(
+            native_binary_digest(&regular)?,
+            format!("{:x}", Sha256::digest(b"abc"))
+        );
+        let empty = root.join("empty");
+        fs::write(&empty, b"").map_err(|e| e.to_string())?;
+        let empty_error = native_binary_digest(&empty)
+            .err()
+            .ok_or("empty binary accepted")?;
+        assert!(
+            empty_error.contains("nonempty regular file"),
+            "{empty_error}"
+        );
+        let sparse = root.join("sparse");
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sparse)
+            .map_err(|e| e.to_string())?;
+        file.set_len(1024 * 1024 * 1024 + 1)
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        let large_error = native_binary_digest(&sparse)
+            .err()
+            .ok_or("oversized binary accepted")?;
+        assert!(large_error.contains("size limit"), "{large_error}");
+        let directory_error = native_binary_digest(&root)
+            .err()
+            .ok_or("directory accepted")?;
+        assert!(
+            directory_error.contains("regular file"),
+            "{directory_error}"
+        );
+        let missing = native_binary_digest(&root.join("missing"))
+            .err()
+            .ok_or("missing binary accepted")?;
+        assert!(
+            missing.contains("cannot inspect verifier binary"),
+            "{missing}"
+        );
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&regular, &link).map_err(|e| e.to_string())?;
+            let link_error = native_binary_digest(&link)
+                .err()
+                .ok_or("symlink binary accepted")?;
+            assert!(link_error.contains("regular file"), "{link_error}");
+        }
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_binary_digest_refuses_fifo_without_opening() -> Result<(), String> {
+        if std::env::var("RIPR_VERIFIER_FIFO_CHILD").ok().as_deref() == Some("1") {
+            let path = std::env::var("RIPR_VERIFIER_FIFO_PATH").map_err(|e| e.to_string())?;
+            let error = native_binary_digest(Path::new(&path))
+                .err()
+                .ok_or("FIFO binary accepted")?;
+            assert!(error.contains("regular file"), "{error}");
+            println!("native verifier FIFO refused before open");
+            return Ok(());
+        }
+        let root = crate::tests::temp_dir("native-verifier-fifo");
+        let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+        let fifo = root.join("fifo");
+        let fifo_text = fifo.to_str().ok_or("non-UTF-8 FIFO path")?;
+        let setup = crate::run::capture_bytes_in_dir_with_budget(
+            Path::new("mkfifo"),
+            &[fifo_text.to_string()],
+            (Path::new("."), None),
+            &[],
+            crate::run::ByteCaptureBudget {
+                timeout: std::time::Duration::from_secs(2),
+                stdout_bytes: 64 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            "native verifier FIFO setup",
+        )?;
+        assert!(
+            !setup.timed_out && setup.status.is_some_and(|s| s.success()),
+            "FIFO setup failed"
+        );
+        use std::os::unix::fs::FileTypeExt;
+        assert!(
+            fs::symlink_metadata(&fifo)
+                .map_err(|e| e.to_string())?
+                .file_type()
+                .is_fifo()
+        );
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let args = [
+            "--exact".to_string(),
+            "verify_test_shards::tests::native_binary_digest_refuses_fifo_without_opening"
+                .to_string(),
+            "--nocapture".to_string(),
+        ];
+        let env = [
+            ("RIPR_VERIFIER_FIFO_CHILD", "1"),
+            ("RIPR_VERIFIER_FIFO_PATH", fifo_text),
+        ];
+        let result = crate::run::capture_bytes_in_dir_with_env_budget(
+            &exe,
+            &args,
+            Path::new("."),
+            (&env, &[]),
+            crate::run::ByteCaptureBudget {
+                timeout: std::time::Duration::from_secs(5),
+                stdout_bytes: 64 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            "native verifier FIFO reader control",
+        )?;
+        assert!(
+            !result.timed_out && result.status.is_some_and(|s| s.success()),
+            "FIFO reader did not complete"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stdout)
+                .contains("native verifier FIFO refused before open")
+        );
+        fs::remove_file(&fifo).map_err(|e| e.to_string())?;
+        fs::remove_dir(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 
