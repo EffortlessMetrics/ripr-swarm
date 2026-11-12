@@ -1030,10 +1030,16 @@ fn macro_binding_sites_in_tree(
         // every file, so a standard-root glob elsewhere cannot be trusted.
         // `extern crate self as std;` names this crate, whose exported macros
         // the workspace scan already reports, so it imports nothing foreign.
+        // `extern crate core as std;` (the common `no_std` shim) aliases one
+        // standard crate to another, so every standard macro it can bring is
+        // still the standard one, unless the manifest renames that crate.
         if let Some(krate) = ast::ExternCrate::cast(node.clone())
-            && krate
-                .name_ref()
-                .is_some_and(|name| name.text().trim_start_matches("r#") != "self")
+            && krate.name_ref().is_some_and(|name| {
+                let name = name.text();
+                let name = name.trim_start_matches("r#");
+                name != "self"
+                    && !(matches!(name, "std" | "core" | "alloc") && drop_in_verified(name))
+            })
             && let Some(rename) = krate.rename()
             && rename.name().is_some_and(|name| {
                 matches!(

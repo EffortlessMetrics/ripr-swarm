@@ -105,6 +105,12 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
+In a container with about 15 GB of memory and 4 cores, run it as
+`CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo xtask precommit`. Measured on
+2026-11-11 for a change that selects whole-workspace Clippy: exit 0 in about
+19 minutes with a 12.8 GB peak. With the default job count the same run was
+stopped by the memory limit during Clippy (#13705).
+
 ### Local mirror of the required hosted gate
 
 Hosted CI is requested late (merge-ready), so the coding session carries the
@@ -116,7 +122,7 @@ PR-native continuation record's `Validation:` line (see
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
-| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). Hosted `ci-policy` and `cargo xtask check-file-policy` always list. |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). When it does build, a library unit-test selector (`cargo test -p <package> --lib <module path>`) is checked against source instead of building the library test target, and its row says `not_listed`. Hosted `ci-policy` and `cargo xtask check-file-policy` always build and list. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
 | Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |

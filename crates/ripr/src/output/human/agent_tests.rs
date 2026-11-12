@@ -4,10 +4,10 @@ use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-    RelatedTestMiss, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-    StageEvidence, StageState, StaticLimitKind,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, DraftedBoundaryAssertion,
+    ExposureClass, Finding, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence,
+    RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind,
 };
 use std::path::PathBuf;
 
@@ -990,6 +990,129 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
         1,
         "one shared test row: {text}"
     );
+}
+
+/// #14338: an `error_path` and a `return_value` probe on one changed line
+/// with the same class, expression, missing value, test and stages print as
+/// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any
+/// printed difference keeps both rows (fail closed), and the folded finding
+/// is never re-listed under `limits=` nor dropped from `verify=`.
+#[test]
+fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
+    let mut error_path = weak_gap("probe:error_path:a", 12);
+    error_path.probe.family = ProbeFamily::ErrorPath;
+    let mut return_value = weak_gap("probe:return_value:b", 12);
+    return_value.probe.family = ProbeFamily::ReturnValue;
+    // As on a real `return Err(..)` line, the families word the explanatory
+    // prose differently for the same missing value.
+    error_path.missing = vec!["No exact error variant discriminator was detected".to_string()];
+    return_value.missing = vec!["No strong discriminator was detected".to_string()];
+    let text = rendered(&output(vec![error_path.clone(), return_value.clone()]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        1,
+        "identical rows fold: {text}"
+    );
+    assert!(
+        text.contains(" findings=2 gaps=1 folded_gaps=1 "),
+        "header counts the row and the folded finding: {text}"
+    );
+    assert!(
+        text.contains("|id=probe:error_path:a\n"),
+        "the first finding in triage order keeps the row: {text}"
+    );
+    assert!(
+        !text.contains("limits="),
+        "a folded gap is still a gap, not a limit: {text}"
+    );
+    assert!(
+        text.contains("verify=refused|outcome=") && text.contains("|findings=2|exposed=0|"),
+        "verification still counts every finding: {text}"
+    );
+
+    // Same line, but a different missing value: two tests to write.
+    let mut other_missing = return_value.clone();
+    other_missing.activation.missing_discriminators[0].value = "pct == 49".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+    assert!(text.contains(" gaps=2 "), "{text}");
+    assert!(!text.contains("folded_gaps="), "{text}");
+
+    // Two long expressions that print the same clipped text still differ.
+    let long = "x".repeat(120);
+    let mut long_a = error_path.clone();
+    long_a.probe.expression = format!("{long}a");
+    let mut long_b = return_value.clone();
+    long_b.probe.expression = format!("{long}b");
+    let text = rendered(&output(vec![long_a, long_b]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        2,
+        "the fold compares unclipped text: {text}"
+    );
+
+    // A second missing value the row does not print still keeps both rows.
+    let mut second_missing = return_value.clone();
+    let mut extra = second_missing.activation.missing_discriminators[0].clone();
+    extra.value = "pct == 51".to_string();
+    second_missing.activation.missing_discriminators.push(extra);
+    let text = rendered(&output(vec![error_path.clone(), second_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value with a different discriminator shape is a different test.
+    let mut other_shape = return_value.clone();
+    other_shape.activation.missing_discriminators[0].shape = DiscriminatorShape::Other;
+    let text = rendered(&output(vec![error_path.clone(), other_shape]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value flowing to a different sink is a different test.
+    let mut other_sink = return_value.clone();
+    other_sink.activation.missing_discriminators[0].flow_sink = Some(FlowSinkFact {
+        kind: FlowSinkKind::ErrorVariant,
+        text: "Err(DiscountError::Range)".to_string(),
+        line: 12,
+        owner: None,
+    });
+    let text = rendered(&output(vec![error_path.clone(), other_sink]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value drafted against a different boundary call is a different
+    // test.
+    let mut other_draft = return_value.clone();
+    other_draft.activation.missing_discriminators[0].drafted_boundary =
+        Some(DraftedBoundaryAssertion {
+            arguments: vec!["50".to_string(), "100".to_string()],
+            expected: None,
+        });
+    let text = rendered(&output(vec![error_path.clone(), other_draft]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // A different strongest related test keeps both rows.
+    let mut other_test = return_value.clone();
+    other_test.related_tests[0].name = "discount_other".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_test]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Without discriminator facts, the printed `missing=` is the prose, so
+    // different prose keeps both rows.
+    let mut prose_a = error_path.clone();
+    prose_a.activation.missing_discriminators.clear();
+    let mut prose_b = return_value.clone();
+    prose_b.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![prose_a, prose_b]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Same row text on another line is a different edit.
+    let mut other_line = return_value.clone();
+    other_line.probe.location = SourceLocation::new("src/lib.rs", 13, 1);
+    let text = rendered(&output(vec![error_path.clone(), other_line]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Same row, different stage evidence: the stages row differs.
+    let mut other_stage = return_value;
+    other_stage.ripr.propagate = StageEvidence::new(StageState::Unknown, Confidence::Low, "p");
+    let text = rendered(&output(vec![error_path, other_stage]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
 }
 
 #[test]
