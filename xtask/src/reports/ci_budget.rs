@@ -19,6 +19,9 @@
 //! `--input <path>`, a JSON file the caller produces (for example
 //! `gh run list --workflow "Routed Rust Small" --json ... > runs.json`).
 
+#[path = "ci_budget/occupancy.rs"]
+mod occupancy;
+
 use crate::run::{run_output_optional, run_output_owned};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -134,6 +137,7 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RawJob {
+    database_id: Option<u64>,
     name: String,
     conclusion: String,
     status: String,
@@ -154,6 +158,9 @@ struct RawRun {
     updated_at: String,
     attempt: u64,
     jobs: Vec<RawJob>,
+    inventory_present: bool,
+    native_attempt: Option<u64>,
+    attempt_bound: bool,
     /// Failed-step log text for failed runs (used to classify the failure and
     /// to surface the GB-free figure when the disk guard tripped). Empty for
     /// non-failed runs or when the log could not be fetched.
@@ -181,9 +188,14 @@ fn collect_runs_live(workflow: &str, limit: usize) -> Result<Vec<RawRun>, String
         let id = run.database_id.to_string();
         let jobs_json =
             run_output_optional("gh", &["run", "view", &id, "--json", "jobs"]).unwrap_or_default();
-        if !jobs_json.trim().is_empty() {
-            run.jobs = parse_jobs(&jobs_json);
-        }
+        // The list and latest-job reads are separate snapshots. A rerun can
+        // intervene; do not claim their attempt identities are bound.
+        run.attempt_bound = false;
+        run.inventory_present = serde_json::from_str::<Value>(&jobs_json)
+            .ok()
+            .and_then(|v| v.get("jobs").and_then(Value::as_array).map(|_| ()))
+            .is_some();
+        run.jobs = parse_jobs(&jobs_json);
         if run.conclusion.eq_ignore_ascii_case("failure") {
             run.failed_log = run_output_optional("gh", &["run", "view", &id, "--log-failed"])
                 .unwrap_or_default();
@@ -239,6 +251,12 @@ fn raw_run_from_value(item: &Value) -> Result<RawRun, String> {
         updated_at: json_str(item, "updatedAt"),
         attempt,
         jobs,
+        inventory_present: item.get("jobs").and_then(Value::as_array).is_some(),
+        native_attempt: item
+            .get("attempt")
+            .and_then(Value::as_u64)
+            .filter(|a| *a > 0),
+        attempt_bound: true, // Offline input explicitly associates jobs with this snapshot.
         failed_log: json_str(item, "failed_log"),
     })
 }
@@ -256,6 +274,7 @@ fn parse_jobs(text: &str) -> Vec<RawJob> {
 
 fn raw_job_from_value(value: &Value) -> RawJob {
     RawJob {
+        database_id: value.get("databaseId").and_then(Value::as_u64),
         name: json_str(value, "name"),
         conclusion: json_str(value, "conclusion"),
         status: json_str(value, "status"),
@@ -530,6 +549,8 @@ struct CiBudgetReport {
     durations: Vec<DurationStat>,
     disk_guard_events: Vec<DiskGuardEvent>,
     queue_wait: Option<(u64, u64, u64)>,
+    occupancy: occupancy::Occupancy,
+    occupancy_snapshots: Vec<occupancy::Snapshot>,
 }
 
 fn build_report(workflow: &str, limit: usize, runs: &[RawRun]) -> CiBudgetReport {
@@ -624,8 +645,31 @@ fn build_report(workflow: &str, limit: usize, runs: &[RawRun]) -> CiBudgetReport
         })
         .collect();
 
+    let occupancy_snapshots = runs
+        .iter()
+        .map(|run| occupancy::Snapshot {
+            run_id: run.database_id,
+            attempt: run.native_attempt,
+            inventory_present: run.inventory_present,
+            attempt_bound: run.attempt_bound,
+            completed: run.status == "completed",
+            jobs: run
+                .jobs
+                .iter()
+                .map(|job| occupancy::Job {
+                    id: job.database_id,
+                    status: job.status.clone(),
+                    conclusion: job.conclusion.clone(),
+                    started_at: job.started_at.clone(),
+                    completed_at: job.completed_at.clone(),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
     let failure_total = failure_classes.values().sum();
     CiBudgetReport {
+        occupancy: occupancy::calculate(&occupancy_snapshots),
+        occupancy_snapshots,
         workflow: workflow.to_string(),
         limit,
         total_runs: runs.len(),
@@ -709,6 +753,11 @@ fn report_json(report: &CiBudgetReport) -> Value {
         "report_state": CI_BUDGET_STATE,
         "workflow": report.workflow,
         "limit": report.limit,
+        "legacy_diagnostics_basis": {
+            "run_counts": "input_snapshots_not_distinct_native_runs",
+            "attempt_counts": "sum_of_attempt_ordinals_not_observed_attempt_count",
+            "deduplicated": false,
+        },
         "total_runs": report.total_runs,
         "by_conclusion": by_conclusion,
         "by_lane": by_lane,
@@ -728,6 +777,26 @@ fn report_json(report: &CiBudgetReport) -> Value {
         "durations_by_lane": durations,
         "disk_guard_events": disk_guard_events,
         "queue_wait": queue_wait,
+        "runner_occupancy": {
+            "scope": "captured_job_snapshots_only",
+            "unit": "raw_runner_seconds",
+            "observed_subtotal_seconds": report.occupancy.observed_runner_seconds,
+            "counted_jobs": report.occupancy.counted_jobs,
+            "duplicate_observations": report.occupancy.duplicate_observations,
+            "captured_attempt_accounting_complete": report.occupancy.complete,
+            "incomplete_reasons": report.occupancy.reasons,
+            "portfolio_complete": false,
+            "snapshots": report.occupancy_snapshots.iter().map(|snapshot| json!({
+                "run_id": snapshot.run_id, "attempt": snapshot.attempt,
+                "attempt_bound": snapshot.attempt_bound,
+                "inventory_present": snapshot.inventory_present,
+                "run_completed": snapshot.completed,
+                "jobs": snapshot.jobs.iter().map(|job| json!({
+                    "job_id": job.id, "status": job.status, "conclusion": job.conclusion,
+                    "started_at": job.started_at, "completed_at": job.completed_at,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        },
     })
 }
 
@@ -744,7 +813,7 @@ fn report_markdown(report: &CiBudgetReport) -> String {
     body.push_str(&format!("Report state: {CI_BUDGET_STATE}\n"));
     body.push_str(&format!("Workflow: `{}`\n", report.workflow));
     body.push_str(&format!(
-        "Runs scanned: {} (limit {})\n\n",
+        "Input run snapshots scanned: {} (limit {})\n\n",
         report.total_runs, report.limit
     ));
     body.push_str(
@@ -754,7 +823,19 @@ fn report_markdown(report: &CiBudgetReport) -> String {
          exit 75) are separated from real product (test/gate/build) failures.\n\n",
     );
 
-    body.push_str("## Runs by conclusion\n\n");
+    body.push_str("## Raw runner occupancy\n\n");
+    body.push_str(&format!(
+        "Observed subtotal: {} raw runner-seconds; {} counted jobs; {} duplicate observations.\n\nCaptured-attempt accounting complete: {}.\n\n",
+        report.occupancy.observed_runner_seconds.map_or_else(|| "unknown (overflow)".to_string(), |n| n.to_string()),
+        report.occupancy.counted_jobs, report.occupancy.duplicate_observations, report.occupancy.complete
+    ));
+    for reason in &report.occupancy.reasons {
+        body.push_str(&format!("- {reason}\n"));
+    }
+    body.push_str("\nScope: captured job snapshots only, including coordinators and failed/cancelled work. Live collection reads latest-attempt jobs, not all attempts, and cannot bind separate list/job reads atomically. This subtotal is not active elapsed, queue wait, a complete qualification portfolio, a stack cost, or a billed/monthly total. Missing or conflicting work is excluded, not estimated.\n\n");
+
+    body.push_str("Legacy diagnostics below count input snapshots, including duplicates, rather than distinct native runs or observed attempts. Attempt totals sum supplied ordinals; lane durations and queue-wait statistics are likewise snapshot observations. Use the separate deduplicated occupancy calculation above for observed work.\n\n");
+    body.push_str("## Input snapshots by conclusion\n\n");
     if report.by_conclusion.is_empty() {
         body.push_str("(no runs)\n\n");
     } else {
@@ -770,11 +851,11 @@ fn report_markdown(report: &CiBudgetReport) -> String {
         body.push('\n');
     }
 
-    body.push_str("## Runs by routed lane\n\n");
+    body.push_str("## Input snapshots by routed lane\n\n");
     if report.by_lane.is_empty() {
         body.push_str("(no runs)\n\n");
     } else {
-        body.push_str("| Lane | Runs | Success | Failure | Cancelled | Other |\n");
+        body.push_str("| Lane | Snapshots | Success | Failure | Cancelled | Other |\n");
         body.push_str("| --- | --- | --- | --- | --- | --- |\n");
         for lane in &report.by_lane {
             body.push_str(&format!(
@@ -786,8 +867,11 @@ fn report_markdown(report: &CiBudgetReport) -> String {
     }
 
     body.push_str("## Failure classification\n\n");
-    body.push_str(&format!("Total failed runs: {}\n\n", report.failure_total));
-    body.push_str("| Class | Runs |\n| --- | --- |\n");
+    body.push_str(&format!(
+        "Total failed input snapshots: {}\n\n",
+        report.failure_total
+    ));
+    body.push_str("| Class | Snapshots |\n| --- | --- |\n");
     body.push_str(&format!(
         "| `infra_disk_guard` | {} |\n",
         report.infra_disk_guard
@@ -797,27 +881,27 @@ fn report_markdown(report: &CiBudgetReport) -> String {
     body.push_str(&format!("| `unknown` | {} |\n\n", report.unknown_failures));
     if report.infra_disk_guard > 0 {
         body.push_str(&format!(
-            "Disk-guard tempfail tax: {} of {} failed run(s) were runner-scratch \
+            "Disk-guard tempfail tax: {} of {} failed input snapshot(s) indicate runner-scratch \
              infrastructure failures (issue #1058), not product failures.\n\n",
             report.infra_disk_guard, report.failure_total
         ));
     }
 
-    body.push_str("## Reruns and tempfail-retry tax\n\n");
+    body.push_str("## Attempt-ordinal diagnostics (not distinct attempts)\n\n");
     body.push_str(&format!(
-        "- Total attempts across scanned runs: {}\n",
+        "- Sum of attempt ordinals across input snapshots: {}\n",
         report.total_attempts
     ));
     body.push_str(&format!(
-        "- Runs that needed a rerun (attempt > 1): {}\n",
+        "- Input snapshots with attempt ordinal > 1: {}\n",
         report.runs_with_reruns
     ));
     body.push_str(&format!(
-        "- Fail-then-succeeded sequences (tempfail-retry tax estimate): {}\n",
+        "- Successful input snapshots with attempt ordinal > 1 (legacy retry proxy): {}\n",
         report.tempfail_retry_count
     ));
     body.push_str(&format!(
-        "- Extra attempts beyond the first: {}\n\n",
+        "- Sum of attempt ordinal minus one across input snapshots: {}\n\n",
         report.extra_attempts
     ));
 
@@ -964,8 +1048,90 @@ mod tests {
         ]"#
     }
 
+    #[test]
+    fn occupancy_renders_nonlegacy_jobs_and_incompleteness() -> Result<(), String> {
+        let runs = parse_runs_value(&json!([{
+            "databaseId": 10, "attempt": 2, "status": "completed", "conclusion": "failure",
+            "jobs": [
+                {"databaseId": 20, "name": "controller", "status": "completed", "conclusion": "failure", "startedAt": "2026-11-12T00:00:00Z", "completedAt": "2026-11-12T00:01:00Z"},
+                {"databaseId": 21, "name": "new hosted lane", "status": "completed", "conclusion": "cancelled", "startedAt": "2026-11-12T00:00:00Z", "completedAt": "2026-11-12T00:02:00Z"}
+            ]
+        }]))?;
+        let report = build_report("example", 40, &runs);
+        let value = report_json(&report);
+        assert_eq!(value["runner_occupancy"]["observed_subtotal_seconds"], 180);
+        assert_eq!(
+            value["runner_occupancy"]["captured_attempt_accounting_complete"],
+            false
+        );
+        assert_eq!(
+            value["runner_occupancy"]["snapshots"][0]["jobs"][0]["job_id"],
+            20
+        );
+        let md = report_markdown(&report);
+        assert!(md.contains("Observed subtotal: 180 raw runner-seconds"));
+        assert!(md.contains("missing_prior_attempts"));
+        assert!(md.contains("Captured-attempt accounting complete: false"));
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_attempt_snapshots_label_legacy_ordinals_and_deduped_work() -> Result<(), String> {
+        let first = json!({"databaseId": 10, "attempt": 1, "status": "completed", "conclusion": "success",
+            "jobs": [{"databaseId": 20, "status": "completed", "conclusion": "success", "startedAt": "2026-11-12T00:00:00Z", "completedAt": "2026-11-12T00:01:00Z"}]});
+        let mut second = first.clone();
+        second["attempt"] = json!(2);
+        second["jobs"][0]["databaseId"] = json!(21);
+        let runs = parse_runs_value(&json!([first, second.clone(), second]))?;
+        let report = build_report("example", 40, &runs);
+        let value = report_json(&report);
+        assert_eq!(value["total_runs"], 3);
+        assert_eq!(value["reruns"]["total_attempts"], 5);
+        assert_eq!(
+            value["legacy_diagnostics_basis"]["run_counts"],
+            "input_snapshots_not_distinct_native_runs"
+        );
+        assert_eq!(
+            value["legacy_diagnostics_basis"]["attempt_counts"],
+            "sum_of_attempt_ordinals_not_observed_attempt_count"
+        );
+        assert_eq!(value["runner_occupancy"]["observed_subtotal_seconds"], 120);
+        assert_eq!(value["runner_occupancy"]["duplicate_observations"], 1);
+        assert_eq!(
+            value["runner_occupancy"]["captured_attempt_accounting_complete"],
+            true
+        );
+        let md = report_markdown(&report);
+        assert!(md.contains("Input run snapshots scanned: 3"));
+        assert!(md.contains("Sum of attempt ordinals across input snapshots: 5"));
+        assert!(md.contains("Observed subtotal: 120 raw runner-seconds"));
+        assert!(!md.contains("Total attempts across scanned runs"));
+        Ok(())
+    }
+
+    #[test]
+    fn absent_inventory_and_attempt_are_not_inferred_complete() -> Result<(), String> {
+        let runs = parse_runs_value(&json!([{"databaseId": 1, "status": "completed"}]))?;
+        let r = build_report("example", 40, &runs);
+        assert!(!r.occupancy.complete);
+        assert!(
+            r.occupancy
+                .reasons
+                .iter()
+                .any(|r| r.contains("missing_attempt_identity"))
+        );
+        assert!(
+            r.occupancy
+                .reasons
+                .iter()
+                .any(|r| r.contains("missing_or_empty_job_inventory"))
+        );
+        Ok(())
+    }
+
     fn jobs_cx43(prepare_failed: bool) -> RawJob {
         RawJob {
+            database_id: None,
             name: "Ripr Rust Small on CX43".to_string(),
             conclusion: if prepare_failed {
                 "failure".to_string()
@@ -992,6 +1158,7 @@ mod tests {
                 }
                 102 => {
                     run.jobs = vec![RawJob {
+                        database_id: None,
                         name: "Ripr Rust Small on CPX42".to_string(),
                         conclusion: "failure".to_string(),
                         status: "completed".to_string(),
