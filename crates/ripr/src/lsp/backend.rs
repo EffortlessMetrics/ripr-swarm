@@ -587,14 +587,21 @@ impl Backend {
         // #14447: re-serve the marker only once the cancellation guard is
         // armed, so a handler dropped while the pull client answers the
         // refresh request still finishes the scheduler's active request. The
-        // re-serve runs alongside the attempt, so a pull client slow to answer
-        // `workspace/diagnostic/refresh` never delays analysis.
+        // re-serve runs alongside the attempt and is dropped once the attempt
+        // ends, so a pull client slow to answer `workspace/diagnostic/refresh`
+        // delays neither analysis nor the attempt's outcome handling.
         loop {
             let attempt_started = Instant::now();
-            let (outcome, ()) = tokio::join!(
-                self.run_refresh_request(&request),
-                self.refresh_pending_marker_surfaces()
-            );
+            let outcome = {
+                let attempt = self.run_refresh_request(&request);
+                let marker = self.refresh_pending_marker_surfaces();
+                tokio::pin!(attempt, marker);
+                tokio::select! {
+                    biased;
+                    outcome = &mut attempt => outcome,
+                    () = &mut marker => attempt.await,
+                }
+            };
             let attempt_duration = attempt_started.elapsed();
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
