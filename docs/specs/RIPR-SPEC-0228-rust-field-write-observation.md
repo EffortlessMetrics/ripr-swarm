@@ -782,6 +782,16 @@ changes `self.count += 2` to `self.count += 1`.
   branch, an empty loop or a `#[should_panic]` test still credits; and a
   non-default pre-call value equal to the asserted one
   (`self.count = self.count.max(1)` with `count` already 5) still credits.
+  #14407 narrows that limit: the exact read refuses when the test's latest
+  `let` struct literal for the receiver gives the field the expected value
+  (or a shorthand or `..base` value it cannot read), or a plain
+  `recv.f = <expected>;` precedes the read. A value set by a constructor
+  (`Counter::new()`) or a helper is still not read and still credits. The
+  same read also refuses when a test outside the owner's file declares or
+  aliases a type named like the owner's impl type anywhere in that file. A
+  crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
+  its latest `let` and refused when the test holds a second `let` of that
+  binding name, whose block scope the text reading cannot place.
 
 ## Metrics
 

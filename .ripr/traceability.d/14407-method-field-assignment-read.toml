@@ -12,4 +12,6 @@ tests = [
   "crates/ripr/tests/method_field_assignment_read.rs::in_crate_unit_test_short_field_read_is_exposed",
   "crates/ripr/tests/method_field_assignment_read.rs::weaker_reads_keep_the_field_write_gap_open",
   "crates/ripr/tests/method_field_assignment_read.rs::local_module_shadowing_the_crate_name_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_namesake_counter_in_the_test_file_gets_no_credit",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::a_read_restating_the_seeded_field_value_is_refused",
 ]

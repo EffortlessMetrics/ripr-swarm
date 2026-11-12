@@ -11194,6 +11194,14 @@ fn declares_type(text: &str, name: &str) -> bool {
     })
 }
 
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` anywhere,
+/// or aliases a type to that name, by a text scan of its comment- and
+/// string-masked code. Any scope counts, so a hit is only ever used to
+/// withhold credit (#14407).
+pub(in crate::analysis) fn source_declares_or_aliases_type(source: &str, name: &str) -> bool {
+    declares_type(&mask_comments_and_strings(source), name) || file_aliases_type(source, name)
+}
+
 /// Whether masked text declares a `trait` named `name`.
 fn declares_trait(masked: &str, name: &str) -> bool {
     whole_word_offsets(masked, "trait")

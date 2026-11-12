@@ -1403,7 +1403,10 @@ fn owner_call_binding_init_names_impl_type(body: &str, binding: &str, impl_type:
 }
 
 /// The initializer expression of the latest `let [mut] binding = ..` in `body`.
-fn owner_call_binding_let_initializer<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+pub(in crate::analysis) fn owner_call_binding_let_initializer<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
     if binding.is_empty() {
         return None;
     }
@@ -2922,7 +2925,15 @@ fn analyze_related_assertions(
             // through the shared RIPR-SPEC-0228 read rule, whatever the field's
             // name length. The rule already refuses an owner that may leave
             // before the write and a default-like expected value.
+            // Like the out-parameter and recording-double reads, it needs a
+            // direct owner call that no import, cross-package namesake or
+            // body-level shadow can redirect.
             let assigned_field_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
                 && !test_is_should_panic(test)
                 && (return_admission.assigned_field_observed)(test, assertion);
             let field_collection_read =

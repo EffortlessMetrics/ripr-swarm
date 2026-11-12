@@ -171,6 +171,24 @@ fn weaker_reads_keep_the_field_write_gap_open() -> Result<(), String> {
             "builds a foreign crate's namesake",
             "    let mut c = other::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
         ),
+        // #14407 review: the field already held the expected value before the
+        // call, so a deleted or changed write still passes.
+        (
+            "seeds the expected value in the literal",
+            "    let mut c = probe::Counter { n: 1, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "seeds the expected value by assignment",
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.n = 1;\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "seeds an unread shorthand value",
+            "    let n = 1;\n    let mut c = probe::Counter { n, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+        (
+            "declares a second binding of the name in a block",
+            "    let mut c = other::Gauge { n: 5 };\n    {\n        let mut c = probe::Counter { n: 5, m: 0 };\n        c.m = 2;\n    }\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
     ] {
         let found = finding(&test_body(lines))?;
         assert_ne!(
@@ -192,5 +210,29 @@ fn local_module_shadowing_the_crate_name_gets_no_credit() -> Result<(), String> 
         "a local `mod probe` is not the owner's crate: {found:#?}"
     );
     assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+/// #14407 review: a test file that declares or imports its own `Counter`
+/// builds its receiver from that namesake, whose `reset` is not the owner.
+#[test]
+fn a_namesake_counter_in_the_test_file_gets_no_credit() -> Result<(), String> {
+    for (case, test) in [
+        (
+            "local namesake type with its own reset",
+            "struct Counter {\n    n: u32,\n}\nimpl Counter {\n    fn reset(&mut self) {\n        self.n = 1;\n    }\n}\n#[test]\nfn reference() {\n    let mut c = Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);\n}\n",
+        ),
+        (
+            "namesake imported from another crate",
+            "use foreign::Counter;\n#[test]\nfn reference() {\n    let mut c = Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);\n}\n",
+        ),
+    ] {
+        let found = finding(test)?;
+        assert_ne!(
+            found.class,
+            ExposureClass::Exposed,
+            "{case} must not expose the write: {found:#?}"
+        );
+    }
     Ok(())
 }

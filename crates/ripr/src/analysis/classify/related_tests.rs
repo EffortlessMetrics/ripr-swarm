@@ -4462,12 +4462,28 @@ pub(in crate::analysis) fn let_binding_is_crate_qualified_literal(
     krate: &str,
     type_name: &str,
 ) -> bool {
-    last_let_statement(body, binding).is_some_and(|stmt| {
-        stmt.find('=').is_some_and(|eq| {
-            !stmt[..eq].contains(':')
-                && initializer_is_crate_qualified_literal(&stmt[eq + 1..], krate, type_name)
+    // A latest-`let` text read cannot tell block scopes apart, so a second
+    // `let` of the same name anywhere before the use refuses (#14407).
+    let_statement_count(body, binding) == 1
+        && last_let_statement(body, binding).is_some_and(|stmt| {
+            stmt.find('=').is_some_and(|eq| {
+                !stmt[..eq].contains(':')
+                    && initializer_is_crate_qualified_literal(&stmt[eq + 1..], krate, type_name)
+            })
         })
-    })
+}
+
+/// How many `let [mut] binding` statements `body` holds, by the same text
+/// reading as [`last_let_statement`].
+fn let_statement_count(body: &str, binding: &str) -> usize {
+    let mut count = 0;
+    let mut rest = body;
+    while let Some(stmt) = last_let_statement(rest, binding) {
+        count += 1;
+        let at = stmt.as_ptr() as usize - rest.as_ptr() as usize;
+        rest = &rest[..at];
+    }
+    count
 }
 
 /// Whether `init` is one struct literal whose head is exactly
@@ -8230,32 +8246,24 @@ mod tests {
     fn a_latest_let_names_the_crate_qualified_literal_exactly() {
         let reads =
             |body: &str| let_binding_is_crate_qualified_literal(body, "c", "probe", "Counter");
-        assert!(reads(
-            "let mut c = probe::Counter { n: 5 };
-"
-        ));
-        assert!(reads(
-            "let c = probe::Counter { n: 5 };
-"
-        ));
+        assert!(reads("let mut c = probe::Counter { n: 5 };\n"));
+        assert!(reads("let c = probe::Counter { n: 5 };\n"));
         for refused in [
             // Another crate, another type, or a one-segment spelling.
-            "let mut c = other::Counter { n: 5 };
-",
-            "let mut c = probe::Other { n: 5 };
-",
-            "let mut c = Counter { n: 5 };
-",
+            "let mut c = other::Counter { n: 5 };\n",
+            "let mut c = probe::Other { n: 5 };\n",
+            "let mut c = Counter { n: 5 };\n",
             // Not one head expression: the chained value may have another type.
-            "let mut c = probe::Counter { n: 5 }.into();
-",
+            "let mut c = probe::Counter { n: 5 }.into();\n",
             // An annotation is read by the existing typed rule, not this one.
-            "let mut c: Wrapper = probe::Counter { n: 5 };
-",
+            "let mut c: Wrapper = probe::Counter { n: 5 };\n",
             // Another binding, or none.
-            "let mut d = probe::Counter { n: 5 };
-",
+            "let mut d = probe::Counter { n: 5 };\n",
             "",
+            // A second `let` of the name, whose block scope a text read
+            // cannot place (#14407 review).
+            "let mut c = other::Gauge { n: 5 };\n{ let mut c = probe::Counter { n: 1 }; }\n",
+            "let mut c = probe::Counter { n: 5 };\nlet mut c = probe::Counter { n: 1 };\n",
         ] {
             assert!(!reads(refused), "{refused:?}");
         }

@@ -4546,7 +4546,147 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 ) -> bool {
     owner_borrows_receiver(&owner.body)
         && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+        && !test_file_declares_owner_type_namesake(owner, test, index)
+        && !assertion_restates_seeded_field(test, path, assertion)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+}
+
+/// #14407: a test outside the owner's file that declares (or aliases) a type
+/// named like the owner's impl type, at any scope, may build its receiver from
+/// that namesake and run the namesake's same-named method. The relation's
+/// shadow check exempts a test file's own root, so this read rule refuses the
+/// whole file by a text scan instead. An owner without an impl type, or a
+/// test in the owner's own file, is unaffected.
+fn test_file_declares_owner_type_namesake(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if test.file == owner.file {
+        return false;
+    }
+    let Some(impl_type) = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type())
+    else {
+        return false;
+    };
+    match index.files().get(&test.file) {
+        Some(facts) => super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type),
+        // An unindexed test file cannot be shown free of a namesake.
+        None => true,
+    }
+}
+
+/// #14407: whether the field the assertion reads already held the expected
+/// value before the owner ran, so deleting or changing the write may leave the
+/// assertion passing. Before the read line, the binding's latest `let` struct
+/// literal gives `path` that expected value (or shorthand, or `..base`, whose
+/// value this scan cannot read), or a plain `binding.path = <expected>;`
+/// assignment seeds it. An expected operand that cannot be told apart from
+/// the read refuses too. A receiver built by a constructor (`Counter::new()`)
+/// is not read: its field values stay a known limit.
+fn assertion_restates_seeded_field(test: &TestSummary, path: &str, assertion: &OracleFact) -> bool {
+    let Some(operands) = macro_arguments(&assertion.text) else {
+        return true;
+    };
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
+        .iter()
+        .any(|read| {
+            let prefix = format!("{}.", read.binding);
+            let expected = operands
+                .iter()
+                .take(2)
+                .map(|operand| compact(operand))
+                .find(|operand| !operand.trim_start_matches(['&', '*']).starts_with(&prefix));
+            let Some(expected) = expected else {
+                return true;
+            };
+            binding_seeds_field(test, &read.binding, path, &expected, assertion.line)
+        })
+}
+
+/// Whether `test`'s body, before file line `read_line`, seeds `binding.path`
+/// with `expected` (compact text) or with a value it cannot read; see
+/// [`assertion_restates_seeded_field`].
+fn binding_seeds_field(
+    test: &TestSummary,
+    binding: &str,
+    path: &str,
+    expected: &str,
+    read_line: usize,
+) -> bool {
+    let body = test.body.as_str();
+    let end = body
+        .split_inclusive('\n')
+        .take(read_line.saturating_sub(test.start_line))
+        .map(str::len)
+        .sum::<usize>()
+        .min(body.len());
+    let Some(raw) = body.get(..end) else {
+        return true;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(raw);
+    let compact = |text: &str| text.split_whitespace().collect::<String>();
+    let same = |value: &str| {
+        let value = compact(value);
+        super::builder_override::literals_equal(&value, expected).unwrap_or(value == expected)
+    };
+    // The latest `let` initializer, located in masked code and read raw (the
+    // masking keeps byte offsets), when it is a struct literal.
+    let seeded_by_literal = super::reveal::owner_call_binding_let_initializer(&masked, binding)
+        .and_then(|init| {
+            let start = init.as_ptr() as usize - masked.as_ptr() as usize;
+            let open = start + init.find('{')?;
+            let close = start + init.rfind('}')?;
+            (close > open).then(|| raw.get(open + 1..close)).flatten()
+        })
+        .is_some_and(|fields| {
+            let first = path.split('.').next().unwrap_or(path);
+            if first != path {
+                // A nested path's seed sits inside a nested literal: refuse
+                // when the expected value appears there at all.
+                return compact(fields).contains(expected);
+            }
+            let fields = split_top_level_args(fields);
+            let named = fields.iter().any(|field| {
+                field
+                    .split_once(':')
+                    .map_or(field.trim(), |(name, _)| name.trim())
+                    == path
+            });
+            fields.iter().any(|field| {
+                let field = field.trim();
+                if field.starts_with("..") {
+                    return !named;
+                }
+                match field.split_once(':') {
+                    Some((name, value)) => name.trim() == path && same(value),
+                    None => field == path,
+                }
+            })
+        });
+    if seeded_by_literal {
+        return true;
+    }
+    // A plain assignment `binding.path = <value>;` before the read.
+    let place = format!("{binding}.{path}");
+    masked.match_indices(&place).any(|(at, _)| {
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+        let after = &masked[at + place.len()..];
+        let rest = after.trim_start();
+        let rhs_at = at + place.len() + (after.len() - rest.len()) + 1;
+        before_ok
+            && rest.starts_with('=')
+            && !rest.starts_with("==")
+            && masked[rhs_at..]
+                .find(';')
+                .and_then(|stop| raw.get(rhs_at..rhs_at + stop))
+                .is_some_and(same)
+    })
 }
 
 /// #11870: the one start policy for a changed field write that a related test
@@ -12308,6 +12448,95 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
+        }
+    }
+
+    /// #14407: a field the test seeded with the expected value before the
+    /// owner call cannot tell a deleted or changed write from a kept one.
+    #[test]
+    fn a_read_restating_the_seeded_field_value_is_refused() {
+        // The body's first line is file line 10; the assertion is on the
+        // last line, line 10 + (lines - 1).
+        let restates = |lines: &[&str]| {
+            let body = lines.join("\n");
+            let assertion = lines.last().copied().unwrap_or_default().trim();
+            let test = TestSummary {
+                start_line: 10,
+                end_line: 10 + lines.len(),
+                body: body.as_str().into(),
+                ..test_with_assertion("reference", assertion, OracleKind::ExactValue)
+            };
+            let fact = OracleFact {
+                line: 10 + lines.len() - 1,
+                ..oracle_fact(assertion, OracleKind::ExactValue)
+            };
+            assertion_restates_seeded_field(&test, "n", &fact)
+        };
+        // A different seed, or a constructor this scan does not read, keeps
+        // the credit.
+        for kept in [
+            &[
+                "let mut c = probe::Counter { n: 5 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { m: 1, n: 5 };",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
+            ],
+            &[
+                "let mut c = Counter::new();",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.n = 7;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(!restates(kept), "{kept:?}");
+        }
+        for refused in [
+            // The literal seeds the expected value, under any spelling.
+            &[
+                "let mut c = probe::Counter { n: 1 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ][..],
+            &[
+                "let mut c = Counter { n: 1u32 };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { m: 0, n : 1 };",
+                "c.reset();",
+                "assert_eq!(1, c.n);",
+            ],
+            // Shorthand and a functional update hide the seeded value.
+            &[
+                "let n = 1;",
+                "let mut c = Counter { n };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            &[
+                "let mut c = Counter { ..base };",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+            // A plain assignment seeds it before the call.
+            &[
+                "let mut c = Counter { n: 5 };",
+                "c.n = 1;",
+                "c.reset();",
+                "assert_eq!(c.n, 1);",
+            ],
+        ] {
+            assert!(restates(refused), "{refused:?}");
         }
     }
 
