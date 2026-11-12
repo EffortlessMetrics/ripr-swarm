@@ -64,9 +64,14 @@ fn assert_pending_marker_with_recovery(
     let message = marker["message"]
         .as_str()
         .ok_or_else(|| format!("marker message missing: {marker}"))?;
-    if !message.contains("not analyzed") {
+    let names_state = if recovery == "analysis_running" {
+        message.contains("analysis is in progress")
+    } else {
+        message.contains("not analyzed")
+    };
+    if !names_state {
         return Err(format!(
-            "marker must name the never-analyzed state: {message}"
+            "marker must name the pre-snapshot state: {message}"
         ));
     }
     if !message.contains("not evidence of a clean workspace") {
@@ -98,6 +103,40 @@ fn analysis_pending_document_pull_serves_typed_marker_instead_of_empty_report() 
     let harness = drained_parity_backend()?;
     select_root(&harness);
     let uri = parity_uri("pending.rs")?;
+    let report = document_report(&harness, &uri, None)?;
+    assert_eq!(result_id(&report)?, ANALYSIS_PENDING_RESULT_ID);
+    assert_pending_marker(&report["items"])
+}
+
+/// #14447: while an analysis attempt is queued or running the marker says
+/// so and does not ask the user to start one; once the attempt ends without
+/// a snapshot, the start route returns under its own result id.
+#[test]
+fn analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one()
+-> Result<(), String> {
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("pending.rs")?;
+    for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Running] {
+        harness
+            .service
+            .inner()
+            .set_analysis_attempt_state_for_test(state);
+        let report = document_report(&harness, &uri, None)?;
+        assert_eq!(
+            result_id(&report)?,
+            "ripr:analysis-pending:analysis_running"
+        );
+        assert_pending_marker_with_recovery(
+            &report["items"],
+            "analysis_running",
+            "when it finishes",
+        )?;
+    }
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Failed);
     let report = document_report(&harness, &uri, None)?;
     assert_eq!(result_id(&report)?, ANALYSIS_PENDING_RESULT_ID);
     assert_pending_marker(&report["items"])

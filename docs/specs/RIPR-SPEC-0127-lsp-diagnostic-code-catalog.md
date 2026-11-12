@@ -216,8 +216,17 @@ asks for an action that is already underway (#11253):
 - With no committed snapshot and no queued or running attempt, the existing
   "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
 
-The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
-shape are unchanged. These are advisory hover words using static vocabulary;
+The `ripr-diagnostic-analysis-pending` marker follows the same rule (#14447).
+While no snapshot exists and an attempt is queued or running, or an unblocked
+refresh is about to start one, the marker says "ripr analysis is in progress"
+and that findings appear when it finishes, under recovery
+`analysis_running`. It does not request `ripr.refresh`. When the attempt ends
+without a snapshot, the marker returns to recovery `save_or_refresh` and its
+"has not analyzed this workspace yet" wording. Blocked states keep their own
+recovery routes. This holds on push and on both pull paths.
+
+The marker's code, data kind and state are unchanged; #14447 adds only the
+`analysis_running` recovery and its result id. These are advisory hover words using static vocabulary;
 they make no runtime-outcome or test-sufficiency claim.
 
 ## Required Evidence
@@ -284,6 +293,12 @@ they make no runtime-outcome or test-sufficiency claim.
   covers production constructors for pending, overflow, and unsupported
   markers: they keep their existing wire recovery ids and resolve to the
   catalog metadata for those families.
+- `analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one`
+  pins the pull marker's `analysis_running` route while an attempt is queued
+  or running and the return to `save_or_refresh` after a failed attempt;
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
+  pins the push marker on an unblocked didOpen and its retraction on commit
+  (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives
