@@ -36081,6 +36081,58 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
     Ok(())
 }
 
+/// #14222: `reports ci-packet` and `feedback export` used to create a mistyped
+/// `--root` as a new directory tree and exit 0, and `feedback record` shared
+/// the same unvalidated root. A missing path and a file path must both be
+/// refused by the shared root validator, and nothing may be created.
+#[test]
+fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
+    let scratch = unique_temp_workspace("mistyped-root");
+    std::fs::create_dir_all(&scratch)?;
+    let missing = scratch.join("nope").join("deep");
+    let file = scratch.join("a-file");
+    std::fs::write(&file, "not a directory\n")?;
+    let commands: [(&str, &[&str]); 3] = [
+        ("reports ci-packet", &["reports", "ci-packet"]),
+        ("feedback export", &["feedback", "export"]),
+        (
+            "feedback record",
+            &[
+                "feedback",
+                "record",
+                "--snapshot",
+                "snap",
+                "--reason",
+                "useful_actionable",
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, argv) in commands {
+        for root in [&missing, &file] {
+            let root_text = root.display().to_string();
+            let mut args = argv.to_vec();
+            args.extend(["--root", root_text.as_str()]);
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let expected = format!("{name} root {root_text} is not a directory");
+            if output.status.code() != Some(2) || !stderr.contains(&expected) {
+                failures.push(format!(
+                    "{name} --root {root_text}: exit {:?}, stderr: {stderr}",
+                    output.status.code()
+                ));
+            }
+        }
+    }
+    let created = scratch.join("nope").exists();
+    let file_kept = std::fs::read_to_string(&file)?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(!created, "the mistyped --root was created");
+    assert_eq!(file_kept, "not a directory\n");
+    Ok(())
+}
+
 /// The artifact flags below read their file with an unbounded
 /// `std::fs::read`/`read_to_string`: pointed at an endless device, each grew
 /// until the kernel ended the process (about six seconds on a 16 GB host)

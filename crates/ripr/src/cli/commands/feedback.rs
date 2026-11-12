@@ -4,6 +4,7 @@ use crate::app::feedback::{
     ExportFeedbackOptions, RecordFeedbackOptions, RecordStatus, export_feedback_join,
     record_feedback, record_result_json,
 };
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
 use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
@@ -38,6 +39,9 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(&options.root, "feedback record")?;
     // Feedback records land under `target/ripr/feedback`, never the cache, so
     // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
@@ -64,6 +68,9 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(&options.root, "feedback export")?;
     // Feedback records land under `target/ripr/feedback`, never the cache, so
     // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
