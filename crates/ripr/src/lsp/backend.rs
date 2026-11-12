@@ -12580,6 +12580,35 @@ mod delivery_selection_parity_tests {
     }
 
     #[test]
+    fn workspace_status_discloses_withheld_owner_opt_out_findings() -> Result<(), String> {
+        // #14136: the committed snapshot's withheld count reaches the
+        // `ripr/workspaceStatus` payload with the shared reason token, and a
+        // snapshot with nothing withheld reports a null reason.
+        for (withheld, reason) in [
+            (2usize, serde_json::json!("owner_mutants_skip")),
+            (0usize, serde_json::Value::Null),
+        ] {
+            let harness = parity_backend()?;
+            let backend = harness.service.inner();
+            let mut diagnostics = parity_workspace_diagnostics(Vec::new());
+            diagnostics.snapshot.owner_opt_out_findings = withheld;
+            commit(backend, diagnostics)?;
+            let status = backend
+                .collect_workspace_status()
+                .ok_or_else(|| "expected workspace status".to_string())?;
+            let section = &status["diagnostics"];
+            if section["owner_opt_out_findings"] != serde_json::json!(withheld)
+                || section["owner_opt_out_reason"] != reason
+            {
+                return Err(format!(
+                    "workspace status diverged from the committed snapshot for {withheld} withheld: {section}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn pull_after_budget_limits_discloses_the_push_overflow_state_and_route() -> Result<(), String>
     {
         let harness = parity_backend()?;
