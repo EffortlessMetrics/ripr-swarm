@@ -66,7 +66,7 @@ part of this handoff.
 
 ## Executable proof and limits
 
-`cargo test -p repo-policy --test printed_command_admission` is the dedicated
+`cargo test -p repo-policy-contracts --test workflow_contracts printed_command_admission` is the dedicated
 cheap contract suite. It can also be compiled directly with Rust 1.95.0 to avoid
 an unrelated product build. It compares the full original matrix and payload
 against a retained fixture and mutates command presence, required shell rows,
