@@ -770,6 +770,18 @@ Fixture coverage:
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
 
+A private, plain `extern crate name;` line seeds no probe: like a private `use`
+import it only links a crate and holds no behavior a test could notice
+(#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports the
+crate under the module's path, like a visible `use`, and keeps its probe; so do
+the renaming form (`extern crate core as std;`, `extern crate self as name;`)
+and a line with any trailing code. The rule reads one line on either diff side, so a removed
+`#[macro_use]` + `extern crate foo;` pair also seeds no probe, matching the
+existing `#[macro_use] mod name;` behavior; a macro that pair brought into scope
+is a known limitation, not a reported change.
+- `plain_extern_crate_is_ignored_but_a_rename_is_not`
+- `diff_producer_ignores_plain_extern_crate_but_probes_a_rename`
+
 The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
 argument list) are attribute text, like the single-line form, and seed no probe
 on either diff side (#10089). The closing line counts only when nothing follows
