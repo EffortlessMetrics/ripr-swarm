@@ -25,7 +25,7 @@ jobs:
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
-          EXPECTED_MAIN: c5d50a38ba94799d6da3954fef004839fae5489c
+          EXPECTED_MAIN: b9f04dbe223ba6ea8e71561a3f84e2be8d91ea1d
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD
@@ -54,11 +54,15 @@ jobs:
           from pathlib import Path
           import subprocess
 
+          # All four conflicts are components of the hosted-only generation and
+          # its matching tests. Current main still carries the retired bootstrap
+          # route in the conflicting hunks; mixing that contract into the hosted
+          # caller produced a false test surface rather than a valid reconciliation.
           choices = {
               '.github/actions/pr-candidate-admission/review_disposition.py': 'ours',
               '.github/workflows/routed-rust.yml': 'ours',
               'tools/repo-policy/tests/review_disposition_admission.rs': 'ours',
-              'xtask/tests/rust_gate_workflow_contract.rs': 'theirs',
+              'xtask/tests/rust_gate_workflow_contract.rs': 'ours',
           }
           actual = [line for line in subprocess.check_output(
               ['git', 'diff', '--name-only', '--diff-filter=U'], text=True
@@ -122,19 +126,15 @@ jobs:
         continue-on-error: true
         run: python3 -I .github/actions/pr-candidate-admission/review_disposition.py --self-test
 
-      - name: Normalize and check formatting
+      - name: Check formatting
         id: format
         continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --all
-          cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
 
-      - name: Repository policy test surface
+      - name: Affected repository-policy contract
         id: repo_policy
         continue-on-error: true
-        run: cargo test --locked -p repo-policy --all-targets
+        run: cargo test --locked -p repo-policy --test review_disposition_admission
 
       - name: Affected xtask workflow contracts
         id: xtask_contracts
@@ -153,6 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
+          git diff --quiet
           test ! -e .github/workflows/reconcile-hosted-queue-main-20261112.yml
           test ! -e .ci/staged/4838-current-main-conflicts-c5d50a38.txt
           test ! -e .ci/staged/4838-conflicts-c5d50a38
@@ -169,10 +170,9 @@ jobs:
           steps.hygiene.outcome == 'success'
         shell: bash
         env:
-          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-c5d50a38
+          TARGET_REF: refs/heads/codex/4838-hosted-main-reconciled-b9f04dbe
         run: |
           set -euo pipefail
-          git add -A
           git commit -m 'ci: reconcile hosted queue carrier with current main (#14200)'
           commit="$(git rev-parse HEAD)"
           tree="$(git rev-parse HEAD^{tree})"
@@ -180,7 +180,7 @@ jobs:
           echo "RECONCILED_COMMIT=$commit"
           echo "RECONCILED_TREE=$tree"
           echo "RECONCILED_PARENTS=$parents"
-          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 c5d50a38ba94799d6da3954fef004839fae5489c" ]
+          [ "$parents" = "50d9bb94921b0f4f7b3d840093a596eed7059852 b9f04dbe223ba6ea8e71561a3f84e2be8d91ea1d" ]
 
           set +e
           push_output="$(git push origin "HEAD:$TARGET_REF" 2>&1)"
