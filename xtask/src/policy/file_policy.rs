@@ -1011,7 +1011,9 @@ mod tests {
         ));
         std::fs::write(&file, "[[allow]\n").map_err(|error| error.to_string())?;
         let path = file.to_str().ok_or("non-UTF-8 fixture path")?;
-        assert!(super::validate_source_declarations(path).is_err());
+        super::validate_source_declarations(path)
+            .err()
+            .ok_or("malformed TOML passed")?;
         let entry = "[[allow]]\nglob = \"examples/**\"\nkind = \"fixture\"\nowner = \"test\"\nsurface = \"fixture\"\nclassification = \"fixture\"\nreason = \"test\"\ncovered_by = [\"cargo test -p\"]\n";
         std::fs::write(&file, entry).map_err(|error| error.to_string())?;
         let error = super::validate_source_declarations(path)
