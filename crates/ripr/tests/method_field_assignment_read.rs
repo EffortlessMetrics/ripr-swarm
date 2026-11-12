@@ -24,6 +24,17 @@ const OWNER: &str = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\n
 /// The `field_construction` finding of the changed `self.n = 1` (base
 /// `self.n = 0`) with `test` written at `test_path`.
 fn finding_at(owner_source: &str, test_path: &str, test: &str) -> Result<Finding, String> {
+    finding_with_files(owner_source, test_path, test, &[])
+}
+
+/// [`finding_at`] with `extra` files written last (so one may replace the
+/// default `Cargo.toml`).
+fn finding_with_files(
+    owner_source: &str,
+    test_path: &str,
+    test: &str,
+    extra: &[(&str, &str)],
+) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -45,6 +56,12 @@ fn finding_at(owner_source: &str, test_path: &str, test: &str) -> Result<Finding
     write("src/lib.rs", owner_source)?;
     if test_path != "src/lib.rs" {
         write(test_path, test)?;
+    }
+    for (path, text) in extra {
+        if let Some(parent) = root.join(path).parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("dir {path}: {error}"))?;
+        }
+        write(path, text)?;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
     let changed_line = lines
@@ -270,6 +287,50 @@ fn a_namesake_counter_in_the_test_file_gets_no_credit() -> Result<(), String> {
             "{case} must not expose the write: {found:#?}"
         );
     }
+    Ok(())
+}
+
+/// #14407 review: another workspace member's `Counter`, imported with a plain
+/// `use`, has its own `reset`; its read is not the root owner's.
+#[test]
+fn a_workspace_member_namesake_gets_no_credit() -> Result<(), String> {
+    let sibling = "pub struct Counter {\n    pub n: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n}\n";
+    let found = finding_with_files(
+        OWNER,
+        "tests/t.rs",
+        &format!(
+            "use sibling::Counter;\n{}",
+            test_body("    let mut c = Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);")
+        ),
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dev-dependencies]\nsibling = { path = \"sibling\" }\n\n[workspace]\nmembers = [\"sibling\"]\n",
+            ),
+            (
+                "sibling/Cargo.toml",
+                "[package]\nname = \"sibling\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+            ),
+            ("sibling/src/lib.rs", sibling),
+        ],
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+/// #14407 review: an earlier write in the owner already leaves the asserted
+/// value, so deleting the changed write still passes the assertion.
+#[test]
+fn an_earlier_owner_write_of_the_field_gets_no_credit() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1 + 0;\n        self.n = 1;\n    }\n}\n";
+    let found = finding_at(
+        owner,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
     Ok(())
 }
 

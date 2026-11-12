@@ -796,14 +796,17 @@ changes `self.count += 2` to `self.count += 1`.
   only in its `let` and as the receiver of bare `recv.<owner>(..);`
   statements; a setter, reassignment, `&mut recv` alias, `mem::replace` or
   earlier assertion refuses, and an owner call inside a branch never counts
-  as the call that precedes the read. Activation and the repository seam keep
+  as the call that precedes the read. The owner must touch its receiver
+  only through plain field accesses and name the written field once (the
+  changed write): an earlier write of that field, a `self` method call or a
+  bare `self` refuses, since it may already leave the asserted value. Activation and the repository seam keep
   reading constructor-built receivers and do not read the constructor's
   field values. The
   same read also refuses when a test outside the owner's file declares or
   aliases a type named like the owner's impl type anywhere in that file, or
-  when a test in the owner's own file runs in a workspace whose
-  declarations, `type` aliases and `use .. as` renames of that name do not
-  total exactly one. A
+  when the indexed workspace's declarations, `type` aliases and `use .. as`
+  renames of that name do not total exactly one (another workspace member's
+  same-named type, imported with a plain `use`, would otherwise pass). A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.

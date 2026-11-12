@@ -1387,7 +1387,10 @@ impl ClassifiedProbeEvidence {
                                 // from the expected literal and no other
                                 // pre-call use, has a pre-call field value
                                 // reveal can tell apart (#14407).
-                                crate::analysis::classify::assigned_field_seed_is_visible(
+                                crate::analysis::classify::owner_writes_field_only_at_probe(
+                                    &owner.body,
+                                    path,
+                                ) && crate::analysis::classify::assigned_field_seed_is_visible(
                                     test,
                                     &owner.name,
                                     path,

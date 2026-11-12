@@ -4555,8 +4555,8 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// named like the owner's impl type, at any scope, may build its receiver from
 /// that namesake and run the namesake's same-named method. The relation's
 /// shadow check exempts a test file's own root, so this read rule refuses the
-/// whole file by a text scan instead. A test in the owner's own file refuses
-/// unless the indexed workspace declares the name exactly once, unaliased.
+/// whole file by a text scan instead. Any test also refuses unless the
+/// indexed workspace declares the name exactly once, unaliased and unrenamed.
 /// An owner without an impl type is unaffected.
 fn test_file_declares_owner_type_namesake(
     owner: &FunctionSummary,
@@ -4568,25 +4568,26 @@ fn test_file_declares_owner_type_namesake(
     else {
         return false;
     };
-    match index.files().get(&test.file) {
-        // In the owner's own file the owner's type must be the only
-        // declaration of its name across the indexed workspace: a second one
-        // (an inline `mod tests` namesake, even when the owner's type lives
-        // in another file) or an alias refuses.
-        Some(_) if test.file == owner.file => {
-            index
-                .files()
-                .values()
-                .map(|facts| {
-                    super::owner_pin::source_type_declaration_count(&facts.source, impl_type)
-                })
-                .sum::<usize>()
-                != 1
-        }
-        Some(facts) => super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type),
+    let Some(facts) = index.files().get(&test.file) else {
         // An unindexed test file cannot be shown free of a namesake.
-        None => true,
+        return true;
+    };
+    // A test outside the owner's file must not declare or alias the name.
+    if test.file != owner.file
+        && super::owner_pin::source_declares_or_aliases_type(&facts.source, impl_type)
+    {
+        return true;
     }
+    // The owner's type must be the only declaration of its name across the
+    // indexed workspace: a second one (an inline `mod tests` namesake, or
+    // another workspace member's type a test imports with a plain `use`), an
+    // alias or a `use .. as` rename refuses.
+    index
+        .files()
+        .values()
+        .map(|facts| super::owner_pin::source_type_declaration_count(&facts.source, impl_type))
+        .sum::<usize>()
+        != 1
 }
 
 /// #14407: whether the field the assertion reads already held the expected
@@ -4698,6 +4699,43 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
                         )
                     })
         })
+}
+
+/// #14407: whether the owner's body touches the receiver only through plain
+/// field accesses and names the written field `path` exactly once (the
+/// changed write). An earlier write of the same field (`self.n = 1;` before
+/// the changed one), a `self` method call that may write it, or a bare `self`
+/// that may alias it could already leave the asserted value when the changed
+/// write is deleted, so reveal's assigned-field credit refuses those owners.
+pub(in crate::analysis) fn owner_writes_field_only_at_probe(body: &str, path: &str) -> bool {
+    if path.is_empty() || path.contains('.') {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return false;
+    };
+    let block = &masked[open..];
+    let mut field_mentions = 0usize;
+    let plain = super::owner_pin::whole_word_offsets(block, "self")
+        .into_iter()
+        .all(|offset| {
+            let Some(rest) = block[offset + "self".len()..].strip_prefix('.') else {
+                return false;
+            };
+            let field_len = rest
+                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .unwrap_or(rest.len());
+            let (field, after) = rest.split_at(field_len);
+            if field.is_empty() || after.trim_start().starts_with(['(', ':', '!']) {
+                return false;
+            }
+            if field == path {
+                field_mentions += 1;
+            }
+            true
+        });
+    plain && field_mentions == 1
 }
 
 /// #14407: whether every whole-word mention of `binding` in masked `text` is
@@ -12586,6 +12624,32 @@ assert_eq!(input.amount, 100);"#
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
+    }
+
+    /// #14407: reveal's short-field credit needs an owner whose only touch of
+    /// the field is the changed write.
+    #[test]
+    fn only_a_single_plain_field_write_admits_the_owner() {
+        for kept in [
+            "pub fn reset(&mut self) {\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.m = 0;\n    self.n += 2;\n}",
+        ] {
+            assert!(owner_writes_field_only_at_probe(kept, "n"), "{kept}");
+        }
+        for refused in [
+            "pub fn reset(&mut self) {\n    self.n = 1 + 0;\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.n = self.n + 1;\n}",
+            "pub fn reset(&mut self) {\n    self.seed();\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    let s = &mut *self;\n    s.n = 1;\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    Self::seed(self);\n    self.n = 1;\n}",
+            "pub fn reset(&mut self) {\n    self.m = 0;\n}",
+        ] {
+            assert!(!owner_writes_field_only_at_probe(refused, "n"), "{refused}");
+        }
+        assert!(!owner_writes_field_only_at_probe(
+            "pub fn reset(&mut self) {\n    self.inner.n = 1;\n}",
+            "inner.n"
+        ));
     }
 
     /// #14407: reveal's short-field credit needs a receiver built by one
