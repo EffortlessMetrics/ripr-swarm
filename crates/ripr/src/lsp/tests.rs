@@ -29570,6 +29570,90 @@ fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), Strin
 // degraded optional component must surface typed on every status surface.
 // ---------------------------------------------------------------------------
 
+/// Blanks `//` and `/* */` comments, keeping every string and raw string
+/// verbatim so a `//` inside a URL or a brace inside a message survives.
+/// Newlines inside block comments are kept so line structure stays readable.
+fn without_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'r' || (bytes[i] == b'b' && bytes.get(i + 1) == Some(&b'r')) {
+            let mut j = i;
+            if bytes[j] == b'b' {
+                j += 1;
+            }
+            let mut k = j + 1;
+            let mut hashes = 0;
+            while bytes.get(k) == Some(&b'#') {
+                hashes += 1;
+                k += 1;
+            }
+            if bytes.get(k) == Some(&b'"') {
+                let terminator = format!("\"{}", "#".repeat(hashes));
+                let start = k + 1;
+                let end = source[start..]
+                    .find(&terminator)
+                    .map_or(bytes.len(), |found| start + found + terminator.len());
+                out.push_str(&source[i..end]);
+                i = end;
+                continue;
+            }
+        }
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+            let mut depth = 0_usize;
+            while i < bytes.len() {
+                if bytes[i] == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    depth += 1;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                if bytes[i] == b'\n' {
+                    out.push('\n');
+                }
+                i += 1;
+            }
+            continue;
+        }
+        let ch = source[i..].chars().next().unwrap_or(' ');
+        if ch == '"' {
+            out.push('"');
+            i += 1;
+            while i < bytes.len() {
+                let inner = source[i..].chars().next().unwrap_or(' ');
+                out.push(inner);
+                i += inner.len_utf8();
+                if inner == '\\' {
+                    if let Some(escaped) = source[i..].chars().next() {
+                        out.push(escaped);
+                        i += escaped.len_utf8();
+                    }
+                } else if inner == '"' {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 /// The production portion of one LSP source file: the file with every item
 /// gated behind `#[cfg(test)]` removed. Test modules print skip notices, so a
 /// whole-file scan would fail on them; the exclusion must stop at each gated
@@ -29579,7 +29663,12 @@ fn framed_lsp_trace_initialize_trace_param_enables_tracing() -> Result<(), Strin
 /// The guard covers `eprintln!`/`eprint!` only: a raw
 /// `writeln!(std::io::stderr(), ...)` is deliberately out of scope because
 /// #14219/#14476 needs a stderr line at session end.
+///
+/// Comments are blinded before the scan: prose that *names* `eprintln!` (the
+/// doc comment on #14476's `write_session_notice` does) must not read as a
+/// call, or the widened scan would be red for a comment alone.
 fn production_source(source: &str) -> String {
+    let source = &without_comments(source);
     let mut production = String::with_capacity(source.len());
     let mut lines = source.lines().peekable();
     while let Some(line) = lines.next() {
@@ -29733,6 +29822,37 @@ fn production_source_excludes_a_gated_block_containing_a_raw_string() {
     assert!(production.contains("fn after()"), "{production}");
     assert!(!production.contains("eprintln"), "{production}");
     assert!(!production.contains("ledger"), "{production}");
+}
+
+#[test]
+fn production_source_blinds_comment_prose_that_names_eprintln() {
+    // #14476's `write_session_notice` doc comment names `eprintln!` in prose;
+    // the widened scan must not read that as a call.
+    let source = "fn notice() {\n    /// `eprintln!` panics when stderr is closed\n    let _ = writeln!(out, \"x\");\n}\n";
+    let production = production_source(source);
+    assert!(production.contains("fn notice()"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
+    assert!(production.contains("writeln!"), "{production}");
+}
+
+#[test]
+fn production_source_still_sees_a_real_call_after_a_comment_or_url() {
+    let source = "fn f() {\n    // not `eprintln!` here\n    let url = \"https://example.test/a\";\n    eprintln!(\"{url}\");\n}\n";
+    let production = production_source(source);
+    assert!(
+        production.contains("https://example.test/a"),
+        "{production}"
+    );
+    assert!(production.contains("eprintln!"), "{production}");
+}
+
+#[test]
+fn production_source_blinds_a_multi_line_block_comment() {
+    let source =
+        "fn f() {\n    /*\n       eprintln!(\"only prose\");\n    */\n    let ok = 1;\n}\n";
+    let production = production_source(source);
+    assert!(production.contains("let ok = 1"), "{production}");
+    assert!(!production.contains("eprintln"), "{production}");
 }
 
 #[test]
