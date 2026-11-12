@@ -155,8 +155,8 @@ Top-level `status` is one of:
 - `config_error` - supplied inputs or requested options are malformed or
   internally inconsistent.
 
-A supplied input that cannot be used (missing, unreadable, not a JSON object,
-an empty object, a `kind` naming another report for a kinded input, or a gate
+A supplied input that cannot be used (missing, unreadable, not valid JSON, not
+a JSON object, an empty object, a `kind` naming another report for a kinded input, or a gate
 decision without string `status` and object `summary`) still writes the
 `config_error` report to `--out`, so a stale passing report is replaced, and
 then the command exits `2` naming each unusable input (#14311). Pinned by
