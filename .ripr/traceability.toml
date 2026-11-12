@@ -494,6 +494,8 @@ tests = [
   "crates/ripr/src/app/context.rs::tests::context_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
   "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
+  "crates/ripr/src/app/selector.rs::tests::location_miss_hint_names_lines_files_and_the_column_form",
+  "crates/ripr/tests/cli_smoke.rs::location_miss_names_where_findings_are_on_fresh_and_artifact_routes",
   "crates/ripr/tests/cli_smoke/selector_language_recovery.rs::disabled_preview_misses_disclose_scope_and_replay_exact_listing",
   "crates/ripr/tests/cli_smoke/selector_language_recovery.rs::enabled_preview_hits_and_ordinary_misses_do_not_claim_unanalyzed_scope",
   "crates/ripr/tests/cli_smoke/selector_language_recovery.rs::unrelated_disabled_language_keeps_rust_hit_and_selector_specific_recoveries",
