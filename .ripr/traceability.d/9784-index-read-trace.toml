@@ -1,6 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0001"
 tests = [
+  "crates/ripr/src/analysis/probe_read_trace/tests/producer.rs::snapshot_memo_reads_remain_visible_across_probes",
   "crates/ripr/src/analysis/probe_read_trace/tests.rs::scope_is_per_invocation_and_disabled_or_outside_reads_emit_nothing",
   "crates/ripr/src/analysis/probe_read_trace/tests.rs::nested_scope_restores_parent_and_interruption_never_becomes_completion",
   "crates/ripr/src/analysis/probe_read_trace/tests.rs::scopes_do_not_cross_worker_threads",

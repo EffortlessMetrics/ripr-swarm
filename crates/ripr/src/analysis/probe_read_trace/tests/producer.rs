@@ -220,3 +220,123 @@ fn actual_classification_preserves_findings_and_value_origins_with_shared_memos(
         && !row.reusable));
     Ok(())
 }
+
+#[test]
+fn snapshot_memo_reads_remain_visible_across_probes() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    std::fs::write(
+        fixture.0.join("src/lib.rs"),
+        "use insta::assert_snapshot;\n#[test] fn record() { assert_snapshot!(42); }\n",
+    )?;
+    let index = fixture.index()?;
+    let tests = index.tests();
+    assert_eq!(tests.len(), 1);
+    let test = tests.at(0);
+    let oracle = test.assertions.first().ok_or("snapshot oracle missing")?;
+    let read = || {
+        crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(&index, &test, oracle)
+    };
+    let (answers, rows) = capture(true, || {
+        let mut answers = Vec::new();
+        for id in ["cold", "warm", "warm-again"] {
+            let scope = Scope::begin(&probe(id));
+            answers.push(read());
+            scope.finish();
+        }
+        answers
+    })?;
+    assert_eq!(
+        answers,
+        [true, true, true],
+        "empty listing is a negative dependency"
+    );
+    assert_eq!(rows.len(), 3);
+    for row in &rows {
+        for subject in ["files", "snapshot_listing"] {
+            assert!(
+                row.reads
+                    .iter()
+                    .any(|entry| entry.read.kind == Kind::Universe
+                        && entry.read.subject == subject
+                        && Path::new(entry.read.site.file).ends_with("rust_snapshot_files.rs")),
+                "{} omitted {subject}",
+                row.probe_id.as_deref().unwrap_or("unknown")
+            );
+        }
+        assert_eq!(row.coverage, "unknown");
+        assert!(!row.reusable);
+    }
+    let (disabled, disabled_rows) = capture(false, || {
+        let scope = Scope::begin(&probe("disabled"));
+        let answer = read();
+        scope.finish();
+        answer
+    })?;
+    assert!(disabled);
+    assert!(disabled_rows.is_empty());
+
+    // Fresh sources must see a formerly absent snapshot, not the prior memo.
+    std::fs::create_dir(fixture.0.join("snapshots"))?;
+    std::fs::write(fixture.0.join("snapshots/trace_fixture__record.snap"), "42")?;
+    let current = fixture.index()?;
+    let current_tests = current.tests();
+    let current_test = current_tests.at(0);
+    let current_oracle = current_test
+        .assertions
+        .first()
+        .ok_or("current oracle missing")?;
+    assert!(
+        !crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(
+            &current,
+            &current_test,
+            current_oracle,
+        )
+    );
+
+    // An independently indexed macro definition turns the formerly negative
+    // name query positive. Both cold and warm queries retain the file universe.
+    std::fs::write(
+        fixture.0.join("src/macros.rs"),
+        "macro_rules! assert_snapshot { ($value:expr) => {}; }\n",
+    )?;
+    let shadowed = rust_index::build_index(
+        &fixture.0,
+        &[PathBuf::from("src/lib.rs"), PathBuf::from("src/macros.rs")],
+    )?;
+    let shadowed_tests = shadowed.tests();
+    let shadowed_test = shadowed_tests.at(0);
+    let shadowed_oracle = shadowed_test
+        .assertions
+        .first()
+        .ok_or("shadowed oracle missing")?;
+    let (_, shadow_rows) = capture(true, || {
+        for id in ["shadow-cold", "shadow-warm"] {
+            let scope = Scope::begin(&probe(id));
+            assert!(
+                !crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(
+                    &shadowed,
+                    &shadowed_test,
+                    shadowed_oracle,
+                )
+            );
+            scope.finish();
+        }
+    })?;
+    assert_eq!(shadow_rows.len(), 2);
+    for row in shadow_rows {
+        assert!(
+            row.reads
+                .iter()
+                .any(|entry| entry.read.kind == Kind::Universe
+                    && entry.read.subject == "files"
+                    && Path::new(entry.read.site.file).ends_with("rust_snapshot_files.rs"))
+        );
+        assert!(
+            !row.reads
+                .iter()
+                .any(|entry| entry.read.subject == "snapshot_listing"),
+            "shadowing refuses before reading disk-backed listing"
+        );
+    }
+    Ok(())
+}

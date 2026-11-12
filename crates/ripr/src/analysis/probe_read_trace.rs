@@ -42,6 +42,7 @@ pub(in crate::analysis) enum Universe {
     Files,
     Functions,
     Tests,
+    SnapshotListing,
 }
 
 impl Universe {
@@ -50,6 +51,7 @@ impl Universe {
             Self::Files => "files",
             Self::Functions => "functions",
             Self::Tests => "tests",
+            Self::SnapshotListing => "snapshot_listing",
         }
     }
 }
