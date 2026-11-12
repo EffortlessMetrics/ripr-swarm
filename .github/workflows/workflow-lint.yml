@@ -1,16 +1,13 @@
 name: Workflow Lint
 
 on:
-  pull_request:
-    paths:
-      - '.github/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# This cheap metadata check may cancel an obsolete PR lint run. Its group is
-# separate from qualification/release jobs; each manual run has its own group.
+# Development lint runs in the owning session. Each explicit manual proof has
+# its own group; the legacy PR cancellation expression is dormant.
 concurrency:
   group: workflow-lint-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
