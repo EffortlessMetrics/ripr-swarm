@@ -4729,12 +4729,26 @@ fn lsp_message(finding: &Finding) -> String {
         .as_ref()
         .is_some_and(|status| status.as_str() == "preview")
     {
+        // The Problems panel row is often the only text shown, so say
+        // "preview" once: the producer's own step usually opens with
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
+        // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
-            .as_ref()
-            .map(|language| language.as_str())
-            .unwrap_or("preview-language");
-        let mut message = format!("{language} preview evidence (syntax-first, advisory): {base}");
+            .map(|language| language.display_name())
+            .unwrap_or("Preview-language");
+        let step = [
+            format!("{language} preview advisory: "),
+            format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
+        ]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix.as_str()))
+        .unwrap_or(&base);
+        let mut message = format!("{language} preview (advisory): {step}");
         if let Some(static_limit_kind) = &finding.static_limit_kind {
             message.push_str(&format!(" Static limit: {}.", static_limit_kind.as_str()));
         }

@@ -2913,6 +2913,13 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("PricingError::Boundary"));
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
+    // #14464: the fix instruction is its own paragraph, not a lazy
+    // continuation of the last witness bullet.
+    assert!(
+        markup.value.contains("\n\n**Fix instruction:** "),
+        "fix instruction must follow a blank line: {}",
+        markup.value
+    );
 
     let context_packet = crate::output::json::render_context_packet(
         &finding,
@@ -9162,6 +9169,142 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
     assert_eq!(args[0]["uri"], "file:///workspace/tests/high.rs");
     assert_eq!(args[0]["test_name"], "high_confidence_weak_assertion");
+    Ok(())
+}
+
+/// #5354: the seam "open best related test" action never opens a test linked
+/// only by proximity, even a strong one, over a test that calls the owner;
+/// with only proximity-linked tests it opens nothing.
+#[test]
+fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason,
+    };
+
+    let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "same_file_strong_neighbour".to_string(),
+        file: PathBuf::from("tests/neighbour.rs"),
+        line: 4,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::SameTestFile,
+        relation_confidence: RelationConfidence::High,
+    });
+    let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "token_substring_strong".to_string(),
+        file: PathBuf::from("tests/token.rs"),
+        line: 6,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::WeakTokenSubstring,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+
+    let commands_for = |related: Vec<std::sync::Arc<RelatedTestGrip>>| {
+        let mut seam = sample_classified_seam();
+        seam.evidence.related_tests = related;
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut snapshot = sample_analysis_snapshot(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic.clone()],
+            Vec::new(),
+        );
+        snapshot.classified_seams = vec![seam];
+        let actions = code_action_response(
+            &code_action_params(vec![diagnostic])?,
+            Some(&snapshot),
+            &vscode_client_features()?,
+        );
+        code_action_commands(&actions)
+    };
+
+    let commands = commands_for(vec![
+        same_file_strong.clone(),
+        token_strong.clone(),
+        calling_weak,
+    ])?;
+    let Some((_, command, args)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {commands:?}"
+        ));
+    };
+    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
+    assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+
+    // A strong test that only carries the owner's name ranks after the weak
+    // test that calls the owner.
+    let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "owner_named_strong".to_string(),
+        file: PathBuf::from("tests/named.rs"),
+        line: 2,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::OwnerNamedTest,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+    let named_first = commands_for(vec![name_strong.clone(), calling])?;
+    let Some((_, _, args)) = named_first
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {named_first:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+    let named_only = commands_for(vec![name_strong])?;
+    let Some((_, _, args)) = named_only
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "a name-matched test stays a fallback target, got {named_only:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "owner_named_strong");
+
+    let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
+    assert!(
+        !proximity_only
+            .iter()
+            .any(|(title, _, _)| title == "Write targeted test: open best related test"),
+        "a proximity-only related test must not be opened: {proximity_only:?}"
+    );
     Ok(())
 }
 
@@ -17476,6 +17619,33 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }
 }
 
+/// The TypeScript producer also serves JavaScript findings, so their step
+/// opens with "TypeScript preview advisory:"; the Problems row still says
+/// "preview" once, under the finding's own language (#14353).
+#[test]
+fn javascript_preview_diagnostic_strips_the_typescript_producer_prefix() {
+    let mut finding = sample_finding();
+    finding.language = Some(LanguageId::JavaScript);
+    finding.language_status = Some(LanguageStatus::Preview);
+    finding.recommended_next_step =
+        Some("TypeScript preview advisory: add or strengthen a focused assertion.".to_string());
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert!(
+        diagnostic
+            .message
+            .starts_with("JavaScript preview (advisory): add or strengthen"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
+    );
+}
+
 #[test]
 fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String> {
     let mut finding = sample_finding();
@@ -17485,10 +17655,19 @@ fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String
     finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
 
+    // "preview" is said once, with product casing (#14353).
     assert!(
         diagnostic
             .message
-            .contains("python preview evidence (syntax-first, advisory)")
+            .starts_with("Python preview (advisory): "),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
     );
     assert!(
         diagnostic
@@ -18018,18 +18197,28 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
             for needle in [
                 "Language: typescript",
                 "Status: preview",
-                "Repair instructions for an AI agent: not ready",
-                "State: unknown",
-                "Category: missing_context",
-                "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
-                "Repair route: add strict TypeScript repair-packet actionability proof",
-                "Missing fields: verify_command, receipt_command, must_not_change",
-                "Evidence needed: complete repair packet with verify and receipt commands",
-                "Authority: preview advisory only",
+                "Action: advisory only",
+                "Repair instructions for an AI agent: not ready \u{2014} verify command and receipt command are not inferred for TypeScript preview",
             ] {
                 assert!(
                     markup.value.contains(needle),
                     "missing {needle:?} in:\n{}",
+                    markup.value
+                );
+            }
+            // A not-ready packet's contract fields stay in diagnostic data,
+            // not in the hover a person reads.
+            for absent in [
+                "State: unknown",
+                "Category: missing_context",
+                "Repair route:",
+                "Missing fields:",
+                "Evidence needed:",
+                "Authority: preview advisory only",
+            ] {
+                assert!(
+                    !markup.value.contains(absent),
+                    "unexpected {absent:?} in:\n{}",
                     markup.value
                 );
             }

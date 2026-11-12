@@ -722,8 +722,9 @@ fn push_seam_actions(
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
-    // availability (a concrete assertion template or related test), not a
-    // readiness predicate.
+    // availability (a concrete assertion template or any related test), not a
+    // readiness predicate. It reads every related test, proximity-only ones
+    // included: #5354 narrows only which test the editor opens.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
@@ -742,7 +743,7 @@ fn push_seam_actions(
             actions.push(action);
         }
     } else if repair_packet_eligibility(context.seam).eligible()
-        && (suggested_assertion.is_some() || related_test.is_some())
+        && (suggested_assertion.is_some() || !context.seam.evidence.related_tests.is_empty())
     {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
@@ -2628,18 +2629,31 @@ fn copy_seam_packet_target(
     target
 }
 
+/// The related test the editor opens for a seam. A test linked only by
+/// proximity (same file, same module, a token substring) never runs the
+/// seam, so its oracle belongs to other code, and it is never offered: with
+/// no other related test there is no navigation, matching the witness fix
+/// site (#5354). Tests whose relation runs the owner
+/// (`RelationReason::establishes_reach`) are tried before name, import or
+/// fixture affinities, so a strong name-matched test never wins over a test
+/// that calls the change; within each group a strong oracle comes first, then
+/// the lowest relation-confidence rank.
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
-    seam.evidence
-        .related_tests
-        .iter()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            seam.evidence
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })
-        .map(Arc::as_ref)
+    let tests = &seam.evidence.related_tests;
+    let pick = |reaches: bool| {
+        let group = || {
+            tests.iter().filter(move |test| {
+                !test.relation_reason.is_proximity_only()
+                    && test.relation_reason.establishes_reach(true) == reaches
+            })
+        };
+        group()
+            .find(|test| test.oracle_strength == OracleStrength::Strong)
+            .or_else(|| {
+                group().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            })
+    };
+    pick(true).or_else(|| pick(false)).map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
