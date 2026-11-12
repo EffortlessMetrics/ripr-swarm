@@ -1311,7 +1311,17 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
+    // #14266: the two alternates are the best-ranked omitted findings under
+    // the shared render priority (`findings_priority::priority_order`, the
+    // same order the `Hidden:` window uses), not the first two in report
+    // order, so an `exposed` row early in the file list never displaces a
+    // gap. Equal keys keep report order.
+    let ranked_alternates = crate::output::json::findings_priority::priority_order(&triage.omitted)
+        .into_iter()
+        .filter_map(|index| triage.omitted.get(index))
+        .take(2)
+        .filter(|_| !routes_withheld);
+    for omitted in ranked_alternates {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -3009,6 +3019,54 @@ mod tests {
                 }
             }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #14266: the considered-finding alternates are chosen by the shared
+    /// render priority, not report order. Report order puts two `exposed`
+    /// findings first; the gap after them must lead the alternates, and the
+    /// control with every row `exposed` keeps report order.
+    #[test]
+    fn check_adapter_alternates_follow_the_shared_priority_not_report_order() -> Result<(), String>
+    {
+        let top = test_finding("finding:top");
+        let mut noticed_a = test_finding("finding:noticed-a");
+        noticed_a.class = ExposureClass::Exposed;
+        let mut noticed_b = test_finding("finding:noticed-b");
+        noticed_b.class = ExposureClass::Exposed;
+        let mut gap = test_finding("finding:gap");
+        gap.class = ExposureClass::ReachableUnrevealed;
+        let output = test_output(vec![top.clone()]);
+        let alternate_ids = |omitted: Vec<&Finding>| -> Result<Vec<String>, String> {
+            let triage = HumanTriage {
+                state: HumanTriageState::TopGap,
+                selected: Some(&top),
+                omitted,
+            };
+            let action = canonical_next_action_for_triage(
+                &triage,
+                &output,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            )?;
+            Ok(action
+                .alternatives()
+                .iter()
+                .map(|alternative| alternative.route.clone())
+                .collect())
+        };
+        let ranked = alternate_ids(vec![&noticed_a, &noticed_b, &gap])?;
+        if ranked != ["finding:gap", "finding:noticed-a"] {
+            return Err(format!("alternates must lead with the gap, got {ranked:?}"));
+        }
+        let mut late = test_finding("finding:late");
+        late.class = ExposureClass::Exposed;
+        let control = alternate_ids(vec![&noticed_a, &noticed_b, &late])?;
+        if control != ["finding:noticed-a", "finding:noticed-b"] {
+            return Err(format!(
+                "equal priority must keep report order, got {control:?}"
+            ));
         }
         Ok(())
     }

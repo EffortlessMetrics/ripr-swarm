@@ -214,6 +214,11 @@ class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
 is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
 findings every one is listed and the output is unchanged (#14233).
 
+The canonical next action's two `considered finding` alternates are chosen by
+the same priority order from the findings `Start here` did not select, so a
+gap is offered before an already-noticed finding that sorts earlier in the
+report; findings of equal priority keep report order (#14266).
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -1167,6 +1172,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position`
+- `crates/ripr/src/output/human/triage.rs::tests::check_adapter_alternates_follow_the_shared_priority_not_report_order`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
