@@ -4309,7 +4309,7 @@ mod tests {
             "HEAD",
             1000,
             &[],
-            Some(Duration::from_millis(1000)),
+            Some(Duration::from_secs(1)),
         );
         let started = Instant::now();
         // Strictly under the budget: no error.
@@ -4343,7 +4343,7 @@ mod tests {
                 &mut receipt,
                 &receipt_path,
                 started,
-                started + Duration::from_millis(1000),
+                started + Duration::from_secs(1),
                 1000,
                 "static_rendering",
             ),
