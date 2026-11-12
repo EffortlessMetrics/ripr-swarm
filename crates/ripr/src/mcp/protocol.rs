@@ -2749,7 +2749,7 @@ mod tests {
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
         // already carry are not repeated per read tool.
-        assert_eq!(total, 11172);
+        assert_eq!(total, 10674);
         Ok(())
     }
 
