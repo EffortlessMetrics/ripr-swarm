@@ -22497,6 +22497,78 @@ fn a_test_local_shadow_of_the_default_method_trait_is_not_a_direct_owner_call() 
     Ok(())
 }
 
+/// #14074: the seam-side relation refuses a test whose only call passes a
+/// value written as a sibling impl's trait argument, as the finding-level
+/// relation does. `Cents::from(2u32)` runs `impl From<u32> for Cents`, never
+/// `impl From<&str> for Cents`; the control calls the `&str` impl, so the
+/// argument's written type is the only difference.
+#[test]
+fn a_call_typed_as_a_sibling_generic_impl_argument_is_not_a_direct_owner_call() -> Result<(), String>
+{
+    let sibling_call = "#[derive(Debug, PartialEq)]\npub struct Cents(pub u64);\n\
+        impl From<u32> for Cents {\n    fn from(v: u32) -> Self {\n        Cents(v as u64 * 100)\n    }\n}\n\
+        impl From<&str> for Cents {\n    fn from(v: &str) -> Self {\n        Cents(v.len() as u64 + 3)\n    }\n}\n\n\
+        #[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn converts() {\n        assert_eq!(Cents::from(2u32), Cents(200));\n    }\n}\n";
+    let owner_call = sibling_call.replace(
+        "assert_eq!(Cents::from(2u32), Cents(200));",
+        "assert_eq!(Cents::from(\"abc\"), Cents(6));",
+    );
+    assert!(
+        owner_call.contains("Cents::from(\"abc\")") && !owner_call.contains("Cents::from(2u32)"),
+        "the control must call the `&str` impl"
+    );
+    // (direct credits for the `&str` impl, direct credits for the `u32` impl)
+    let mut direct_by_source = Vec::new();
+    for source in [sibling_call, owner_call.as_str()] {
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        assert_eq!(index.tests().len(), 1, "one real subject");
+        let seams = inventory_seams_from_index(&[path], &index);
+        let context = CompactGripContext::new(&index);
+        let direct_for = |owner_suffix: &str| -> Result<usize, String> {
+            let owned: Vec<_> = seams
+                .iter()
+                .filter(|seam| seam.owner().ends_with(owner_suffix))
+                .collect();
+            if owned.is_empty() {
+                return Err(format!("`{owner_suffix}` has seams"));
+            }
+            Ok(owned
+                .iter()
+                .map(|seam| {
+                    find_related_tests_with_context(seam, &context)
+                        .iter()
+                        .filter(|(test, reason)| {
+                            test.test.name == "converts"
+                                && *reason == RelationReason::DirectOwnerCall
+                        })
+                        .count()
+                })
+                .sum())
+        };
+        direct_by_source.push((
+            direct_for("impl From<&str> for Cents::from")?,
+            direct_for("impl From<u32> for Cents::from")?,
+        ));
+    }
+    let (str_impl, u32_impl) = direct_by_source[0];
+    assert_eq!(
+        str_impl, 0,
+        "a `u32` argument must not be a direct call of the `&str` impl"
+    );
+    assert!(u32_impl > 0, "the `u32` impl keeps its own direct credit");
+    let (str_impl, u32_impl) = direct_by_source[1];
+    assert!(
+        str_impl > 0,
+        "the control keeps direct credit for the `&str` impl: {direct_by_source:?}"
+    );
+    assert_eq!(
+        u32_impl, 0,
+        "a string literal must not be a direct call of the `u32` impl"
+    );
+    Ok(())
+}
+
 fn return_seam_containing(source: &str, needle: &str) -> Result<RepoSeam, String> {
     let prod = PathBuf::from("src/lib.rs");
     let index = index_from_files(&[(prod.clone(), source)])?;

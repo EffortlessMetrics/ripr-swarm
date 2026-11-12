@@ -210,8 +210,9 @@ pub(in crate::analysis) use related_tests::{
     declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    method_call_resolves_to_impl, module_stem, owner_call_is_direct,
+    owner_call_selects_generic_sibling, owner_call_text, owner_dispatch_trait,
+    owner_impl_identity_shadowed, owner_trait_name, package_prefix,
     requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]

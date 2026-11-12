@@ -31,6 +31,7 @@ use std::path::Path;
 
 mod drop_dispatch;
 mod equality_dispatch;
+mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
@@ -5024,6 +5025,31 @@ fn qualified_self_type_matches(
         && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
 }
 
+/// Byte range of the first argument of the call whose name ends at
+/// `after_name`: from just past the `(` to the first top-level `,` or the
+/// closing `)`. `None` when no `(` follows the name or the list never closes.
+fn first_argument_span(text: &str, after_name: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return Some((open + 1, index)),
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => return Some((open + 1, index)),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether the first argument of the call whose name ends at `after_name`
 /// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
 /// typed as `impl_type`, or a struct, tuple-struct or variant literal
@@ -5037,35 +5063,10 @@ fn first_argument_has_type(
     scope_body: &str,
     call_at: usize,
 ) -> bool {
-    let bytes = text.as_bytes();
-    let mut open = after_name;
-    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
-        open += 1;
-    }
-    if bytes.get(open) != Some(&b'(') {
-        return false;
-    }
-    let mut depth = 0usize;
-    let mut end = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            b')' | b']' | b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            _ => {}
-        }
-    }
-    let Some(end) = end else {
+    let Some((start, end)) = first_argument_span(text, after_name) else {
         return false;
     };
-    let arg = text[open + 1..end].trim();
+    let arg = text[start..end].trim();
     let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
     let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
     let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
@@ -7266,6 +7267,19 @@ pub(in crate::analysis) fn owner_impl_identity_shadowed(
     impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
+/// Whether every call of `owner`'s name in `test` provably selects a sibling
+/// impl of the same generic trait on the same type (#14074), so the test
+/// cannot run `owner`. The seam-side relation applies the same refusal the
+/// finding-level relation applies to a direct owner call. Fails open: any
+/// part that is not established keeps the credit.
+pub(in crate::analysis) fn owner_call_selects_generic_sibling(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+}
+
 /// Whether a same-named `trait` declared in the test's own module scope (or at
 /// the root of an out-of-line parent module) shadows a trait-declaration
 /// default-method owner (#7123, #7087). The trait name comes from the
@@ -7424,6 +7438,15 @@ fn owner_call_relation_reason_gated(
     // rebinds the receiver too (#7067), in either spelling, exactly as it
     // refuses the owner pin.
     if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
+        return RelationReason::WeakTokenSubstring;
+    }
+    // #14074: one type implementing a generic trait twice (`From<u32>` and
+    // `From<&str>`) shares a self type and a method name across both impls,
+    // so nothing below tells them apart. A test whose every call passes a
+    // value written as a sibling's trait argument cannot run this owner.
+    if indexed_same_name_count > 1
+        && generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+    {
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
