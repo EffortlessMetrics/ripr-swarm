@@ -27,6 +27,8 @@ const CONTROLS: &[&str] = &[
     "workflow_contracts::inventory_contract::missing_native_case_is_refused",
     "workflow_contracts::inventory_contract::changed_ignore_state_is_refused",
     "workflow_contracts::inventory_contract::failure_tail_is_bounded_and_utf8_safe",
+    // Added on main after the frozen baseline; conserve it alongside the controls.
+    "workflow_contracts::review_disposition_admission::issue_14355_negated_change_phrase_is_not_a_blocker",
 ];
 
 fn mapping() -> Result<Mapping, String> {
