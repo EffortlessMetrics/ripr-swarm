@@ -216,6 +216,7 @@ pub(in crate::analysis) use related_tests::{
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
+pub(in crate::analysis) use reveal::assertion_comparison_operands;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

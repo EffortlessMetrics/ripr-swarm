@@ -1,4 +1,6 @@
-use super::{ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest};
+use super::{
+    ExposureClass, Finding, LanguageId, MissingDiscriminatorFact, RelatedTest, RelatedTestMiss,
+};
 
 /// The bounded, producer-backed witness projected by passive editor diagnostics.
 ///
@@ -295,10 +297,17 @@ fn suggested_related_test(finding: &Finding) -> Option<&RelatedTest> {
 fn best_related_test<'a>(
     related_tests: impl Iterator<Item = &'a RelatedTest>,
 ) -> Option<&'a RelatedTest> {
+    // #14454: a row whose assertion cannot observe the change is never the
+    // fix site while another row can, however strong its oracle.
+    let observes = |test: &RelatedTest| test.miss != Some(RelatedTestMiss::AssertionNotObserving);
     related_tests.max_by(|left, right| {
-        left.oracle_strength
-            .rank()
-            .cmp(&right.oracle_strength.rank())
+        observes(left)
+            .cmp(&observes(right))
+            .then_with(|| {
+                left.oracle_strength
+                    .rank()
+                    .cmp(&right.oracle_strength.rank())
+            })
             .then_with(|| {
                 right
                     .relation_confidence
@@ -434,6 +443,48 @@ mod tests {
     /// `test_discount_far_above_threshold` while the context witness named the
     /// first strong related test. The suggested repair test is the fix site
     /// when it is one of the related tests; otherwise the ranking decides.
+    /// #14454: a strong row that cannot observe the change (an `Ok`-only pin
+    /// on a changed error variant) is never the fix site over a weaker row
+    /// that does; without that miss, oracle strength still leads.
+    #[test]
+    fn fix_site_skips_a_strong_row_that_cannot_observe_the_change() {
+        let related = |name: &str, strength: OracleStrength, miss: RelatedTestMiss| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/existing.rs"),
+            line: 4,
+            oracle: Some(format!("{name}_assertion")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests = vec![
+            related(
+                "accepts_short_names",
+                OracleStrength::Strong,
+                RelatedTestMiss::AssertionNotObserving,
+            ),
+            related(
+                "rejects_long_names",
+                OracleStrength::Weak,
+                RelatedTestMiss::WeakAssertion,
+            ),
+        ];
+        let fix_test = |finding: &Finding| {
+            DiagnosticWitness::from_finding(finding)
+                .and_then(|witness| witness.fix_site)
+                .map(|site| site.test_name)
+        };
+        assert_eq!(fix_test(&finding).as_deref(), Some("rejects_long_names"));
+        finding.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
+        assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
+    }
+
     #[test]
     fn fix_site_follows_the_suggested_repair_test() {
         let related = |name: &str, line: usize| RelatedTest {

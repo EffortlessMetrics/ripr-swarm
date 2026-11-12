@@ -504,6 +504,16 @@ fn annotate_related_test_misses(
                 } else if boundary {
                     test.miss_support = boundary_fact.map(RelatedTestMissSupport::from_fact);
                     Some(RelatedTestMiss::MissingInput)
+                } else if exact
+                    && exact_fact.is_some_and(names_error_variant_sink)
+                    && test.oracle.as_deref().is_some_and(pins_only_the_ok_arm)
+                {
+                    // #14454: an exact pin of the `Ok` arm cannot tell one
+                    // `Err` variant from another. If its input reaches the
+                    // changed branch the pin fails on old and new code
+                    // alike, and if it does not, the change is never seen.
+                    // The row does not observe this change at all.
+                    Some(RelatedTestMiss::AssertionNotObserving)
                 } else if exact {
                     test.miss_support = exact_fact.map(RelatedTestMissSupport::from_fact);
                     Some(RelatedTestMiss::MissingExactAssertion)
@@ -532,6 +542,32 @@ fn annotate_related_test_misses(
             }
         };
     }
+}
+
+/// Whether the missing exact fact names a changed `Err` variant (#14454).
+fn names_error_variant_sink(fact: &MissingDiscriminatorFact) -> bool {
+    fact.flow_sink
+        .as_ref()
+        .is_some_and(|sink| sink.kind == FlowSinkKind::ErrorVariant)
+}
+
+/// Whether an oracle is a plain `assert_eq!` whose one side is an `Ok(..)`
+/// value or an `.unwrap()` / `.expect(..)` of the call, so it only ever
+/// passes on the success arm (#14454). `assert_ne!` and any side that
+/// names `Err` are excluded: those can observe an error.
+fn pins_only_the_ok_arm(oracle: &str) -> bool {
+    let oracle = oracle.trim_start();
+    if !oracle.starts_with("assert_eq!") || oracle.contains("Err") {
+        return false;
+    }
+    crate::analysis::classify::assertion_comparison_operands(oracle).is_some_and(|operands| {
+        operands.iter().any(|side| {
+            let side = side.trim();
+            side.starts_with("Ok(")
+                || side.ends_with(".unwrap()")
+                || (side.contains(".expect(") && side.ends_with(')'))
+        })
+    })
 }
 
 /// Strongest first.
@@ -1278,6 +1314,106 @@ mod tests {
             Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
             "only no_static_path rewrites a recorded miss"
         );
+    }
+
+    /// #14454: on a changed `Err` variant, a strong row whose only pin is the
+    /// `Ok` arm (`assert_eq!(f(..), Ok(..))`, `.unwrap()`) cannot observe the
+    /// change, so it is `assertion_not_observing`, not
+    /// `missing_exact_assertion`. Controls: the same pin on a non-error sink
+    /// (a changed struct field), an `assert_ne!`, and an operand naming
+    /// `Err` keep `missing_exact_assertion`; a weak `is_err()` row stays
+    /// `weak_assertion`.
+    #[test]
+    fn an_ok_only_pin_does_not_observe_a_changed_error_variant() {
+        use crate::domain::{
+            DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+            RelatedTestMiss,
+        };
+        let fact = |kind: FlowSinkKind| MissingDiscriminatorFact {
+            value: "NameError::TooLong".to_string(),
+            reason: "No exact error variant assertion for NameError::TooLong".to_string(),
+            flow_sink: Some(FlowSinkFact {
+                kind,
+                text: "Result::Err(NameError::TooLong)".to_string(),
+                line: 12,
+                owner: None,
+            }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
+        };
+        let row = |name: &str, strength: OracleStrength, oracle: &str| RelatedTest {
+            oracle: Some(oracle.to_string()),
+            ..matched_row(name, strength)
+        };
+        let run = |kind: FlowSinkKind, family: ProbeFamily| {
+            let mut rows = vec![
+                row(
+                    "accepts_short_names",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"ada\"), Ok(\"ada\".to_string()));",
+                ),
+                row(
+                    "unwraps_short_names",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"ada\").unwrap(), \"ada\");",
+                ),
+                row(
+                    "rejects_long_names",
+                    OracleStrength::Weak,
+                    "assert!(parse_name(\"abcdefghij\").is_err());",
+                ),
+                row(
+                    "not_an_ok",
+                    OracleStrength::Strong,
+                    "assert_ne!(parse_name(\"ada\"), Ok(String::new()));",
+                ),
+                row(
+                    "names_err",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(\"abcdefghij\"), Err(NameError::Empty));",
+                ),
+            ];
+            let activation = ActivationEvidence {
+                missing_discriminators: vec![fact(kind)],
+                ..ActivationEvidence::default()
+            };
+            annotate_related_test_misses(
+                &mut rows,
+                &crate::domain::ExposureClass::WeaklyExposed,
+                true,
+                &family,
+                &activation,
+                Unconfirmed::Confirmed,
+                &Default::default(),
+            );
+            rows.into_iter()
+                .map(|row| (row.name, row.miss))
+                .collect::<Vec<_>>()
+        };
+        let not_observing = Some(RelatedTestMiss::AssertionNotObserving);
+        let exact = Some(RelatedTestMiss::MissingExactAssertion);
+        let weak = Some(RelatedTestMiss::WeakAssertion);
+        assert_eq!(
+            run(FlowSinkKind::ErrorVariant, ProbeFamily::ErrorPath),
+            vec![
+                ("accepts_short_names".to_string(), not_observing),
+                ("unwraps_short_names".to_string(), not_observing),
+                ("rejects_long_names".to_string(), weak),
+                ("not_an_ok".to_string(), exact),
+                ("names_err".to_string(), exact),
+            ]
+        );
+        // The return_value probe on the same `return Err(..)` line carries
+        // the same error-variant fact and gets the same rows.
+        assert_eq!(
+            run(FlowSinkKind::ErrorVariant, ProbeFamily::ReturnValue),
+            run(FlowSinkKind::ErrorVariant, ProbeFamily::ErrorPath)
+        );
+        // Struct-field control: a strong pin of another field of the same
+        // value reaches the change; it stays `missing_exact_assertion`.
+        let field = run(FlowSinkKind::StructField, ProbeFamily::FieldConstruction);
+        assert_eq!(field[0].1, exact, "{field:?}");
+        assert_eq!(field[1].1, exact, "{field:?}");
     }
 
     /// #5564: Rust assigns `missing_input` / `missing_exact_assertion` to

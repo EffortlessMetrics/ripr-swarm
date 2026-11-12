@@ -399,7 +399,10 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   and are tracked separately: `exact_oracle_gap_next_step` on
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
-  and its next step.
+  and its next step. Two ranking reads (#14454) order rows, never admit or
+  drop them: the agent `tK=` row (`strongest_test`) and the fix site
+  (`DiagnosticWitness::best_related_test`) place a row whose miss is
+  `assertion_not_observing` after every row that can observe the change.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or
@@ -458,6 +461,17 @@ written and must not copy these gaps.
   before; `assertion_not_observing` rows take only the slots left free, so no
   window, fix site, exact-oracle alignment or repair readiness changes.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
+- On a changed error variant (an exact fact whose flow sink is
+  `error_variant`), a strong or medium row whose oracle is a plain
+  `assert_eq!` pinning only the `Ok` arm (an `Ok(..)` side, or an
+  `.unwrap()` / `.expect(..)` side, and no side naming `Err`) gets
+  `assertion_not_observing`, not `missing_exact_assertion` (#14454). Such a
+  pin cannot separate one `Err` variant from another: if its input reaches
+  the changed branch it fails on old and new code alike, and if not it never
+  sees the change. The row keeps its role and oracle, so no class or gate
+  changes, but the `tK=` row and the fix site prefer a row that can observe
+  the change (see Current Rust conformance gaps). A changed struct field, an
+  `assert_ne!` and an `Err`-naming side keep `missing_exact_assertion`.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap

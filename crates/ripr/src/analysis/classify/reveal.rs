@@ -4300,7 +4300,7 @@ pub(super) fn matching_parenthesis(text: &str, opening: usize) -> Option<usize> 
     None
 }
 
-pub(super) fn assertion_comparison_operands(text: &str) -> Option<[&str; 2]> {
+pub(in crate::analysis) fn assertion_comparison_operands(text: &str) -> Option<[&str; 2]> {
     let spans = string_span_ranges(text);
     for macro_name in ["assert_eq!", "assert_ne!"] {
         let mut search_from = 0usize;
