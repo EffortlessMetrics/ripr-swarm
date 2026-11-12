@@ -580,6 +580,15 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
                     "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
                 })
             })
+            // #14099: one change-and-delete watcher for analyzed sources
+            // rides the same root-anchored registration.
+            .chain(std::iter::once(serde_json::json!({
+                "globPattern": {
+                    "baseUri": root_uri.as_str(),
+                    "pattern": "**/*.{rs,py,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                },
+                "kind": 6,
+            })))
             .collect::<Vec<_>>();
         if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
             return Err(format!(
@@ -24502,6 +24511,8 @@ fn partition_partial_scope() -> crate::analysis::PartialDiffScope {
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
         partition_identity: "sha256:partition".to_string(),
     }
 }
@@ -25178,6 +25189,8 @@ async fn workspace_status_keeps_outside_partition_reason_when_both_apply() -> Re
         stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
         partition_identity: "sha256:partition".to_string(),
     };
     backend

@@ -796,13 +796,28 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             // #10691: the preview-language note below names the real recovery
             // (the `ripr.toml` block to add), so the default view drops the
             // stage/kind-flavoured Limitation line and keeps one plain pointer.
-            match limitation.affected_items {
-                Some(count) => out.push_str(&format!(
-                    "  Not analyzed: {count} changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
-                )),
-                None => out.push_str(
-                    "  Not analyzed: changed files in a language ripr is not set up to analyze (see the note below).\n",
-                ),
+            // #14152: that pointer is only true when such a note follows. No
+            // note is written without a preview advisory, and none covers
+            // Rust switched off in `[languages]`, so those print the
+            // producer's own recovery instead of pointing at nothing.
+            let note_follows = !output.preview_language_advisories.is_empty()
+                && !limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(crate::analysis::is_rust_excluded_by_config_detail);
+            let subject = match limitation.affected_items {
+                Some(count) => format!("{count} changed file(s)"),
+                None => "changed files".to_string(),
+            };
+            if note_follows {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze (see the note below).\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  Not analyzed: {subject} in a language ripr is not set up to analyze.\n  Fix: {}\n",
+                    limitation.recovery.detail
+                ));
             }
             continue;
         }
@@ -982,6 +997,12 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
             "the line budget of {budget} changed line(s) ({budget_env}={budget}); \
              the first selected file alone exceeded it and was analyzed whole"
         ),
+        crate::analysis::PartialDiffStopReason::FileExceedsAnalysisLimit => format!(
+            "the changed-line limit ({}); every enabled-language file that fits was selected \
+             and {} file(s) that each exceed their language's limit on their own were left out",
+            scope.over_limit_envs().join(", "),
+            scope.over_limit_files.len()
+        ),
     };
     out.push_str(&format!(
         "Partial scope: run state {} — analysis stopped at {stopped_at}; \
@@ -1011,6 +1032,15 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         // The raw path stays on the scope record for identities/JSON; only
         // the terminal-facing display is escaped (#2142 review).
         out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
+    }
+    for file in &scope.over_limit_files {
+        out.push_str(&format!(
+            "  over limit (not analyzed): {} ({} changed lines over {}={})\n",
+            escape_terminal_display(&file.path),
+            file.changed_lines,
+            file.limit_env,
+            file.limit
+        ));
     }
     for disclosure in &scope.budget_disclosures {
         out.push_str(&format!("  budget: {disclosure}\n"));
@@ -2637,9 +2667,10 @@ mod tests {
     }
 
     /// #10691: a changed language with no analyzer renders one plain
-    /// `Not analyzed:` pointer on the bounded surface (the preview-language
-    /// note carries the `ripr.toml` recovery); the full surface keeps the
-    /// glossed kind/stage/recovery tokens.
+    /// `Not analyzed:` line on the bounded surface, without the kind/stage
+    /// tokens; the full surface keeps the glossed kind/stage/recovery tokens.
+    /// #14152: this output has no preview advisory, so no note follows and
+    /// the line carries the producer's recovery instead of pointing at one.
     #[test]
     fn bounded_adapter_unavailable_limitation_is_one_plain_pointer() -> Result<(), String> {
         use crate::analysis_outcome::{
@@ -2668,10 +2699,11 @@ mod tests {
         let rendered = render(&output);
         assert!(
             rendered.contains(
-                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n"
+                "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze.\n  Fix: Enable the python preview adapter and re-run the analysis.\n"
             ),
             "{rendered}"
         );
+        assert!(!rendered.contains("see the note below"), "{rendered}");
         for leaked in [
             "Limitation:",
             "language_adapter_unavailable",
@@ -6715,6 +6747,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6774,6 +6808,7 @@ mod tests {
             PartialDiffStopReason::FileBudget => (1, 30, Some(30)),
             PartialDiffStopReason::LineBudget => (7, 35, Some(30)),
             PartialDiffStopReason::LineBudgetExceededOnFirstFile => (7, 60, None),
+            PartialDiffStopReason::FileExceedsAnalysisLimit => (7, 35, None),
         };
         CheckOutput {
             value_origins: Default::default(),
@@ -6809,6 +6844,8 @@ mod tests {
                 stop_reason,
                 next_file_changed_lines,
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
@@ -6924,6 +6961,8 @@ mod tests {
                 stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
                 next_file_changed_lines: Some(60),
                 whole_diff_budgets: None,
+                over_limit_files: Vec::new(),
+                line_budget_limits: Vec::new(),
                 partition_identity: "c".repeat(64),
             }),
             file_fact_cache: None,
