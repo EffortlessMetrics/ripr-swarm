@@ -4629,7 +4629,7 @@ pub(in crate::analysis) fn test_binds_owner_type(
     if !super::related_tests::owner_impl_is_top_level_item(index, owner) {
         return false;
     }
-    let module = super::related_tests::library_module_path(&owner.file);
+    let module = super::related_tests::indexed_library_module_path(index, &owner.file);
     let Some(test_facts) = index.files().get(&test.file) else {
         return false;
     };
@@ -4757,6 +4757,7 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
     test: &TestSummary,
     owner_name: &str,
     path: &str,
+    written: Option<&str>,
     assertion: &OracleFact,
 ) -> bool {
     let reads =
@@ -4825,9 +4826,49 @@ pub(in crate::analysis) fn assigned_field_seed_is_visible(
                                 && !float_like(expected)
                                 && super::builder_override::literals_equal(seed, expected.trim())
                                     == Some(false)
+                                // An expected literal that differs from the
+                                // literal the owner writes fails with or
+                                // without the write.
+                                && written.is_none_or(|written| {
+                                    super::builder_override::literals_equal(
+                                        written,
+                                        expected.trim(),
+                                    ) != Some(false)
+                                })
                     )
                 })
         })
+}
+
+/// #14407: the right-hand side of the owner's plain assignment
+/// `self.<path> = <value>;`, when its body holds exactly one such statement
+/// (a compound `+=` write, or none, gives `None`).
+pub(in crate::analysis) fn owner_plain_written_value(body: &str, path: &str) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let mut values = super::owner_pin::whole_word_offsets(&masked, "self")
+        .into_iter()
+        .filter_map(|offset| {
+            let after_self = offset + "self".len();
+            let rest = masked.get(after_self..)?.strip_prefix('.')?;
+            let raw_prefix = usize::from(rest.starts_with("r#")) * 2;
+            let rest = &rest[raw_prefix..];
+            let field = rest.strip_prefix(path)?;
+            if field.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_') {
+                return None;
+            }
+            let assign = field.trim_start();
+            if !assign.starts_with('=') || assign.starts_with("==") {
+                return None;
+            }
+            let value_start = masked.len() - assign.len() + 1;
+            let value_end = value_start + masked.get(value_start..)?.find(';')?;
+            body.get(value_start..value_end)
+                .map(|value| value.trim().to_string())
+        });
+    match (values.next(), values.next()) {
+        (Some(value), None) => Some(value),
+        _ => None,
+    }
 }
 
 /// #14407: whether the owner's body touches the receiver only through plain
@@ -4852,6 +4893,8 @@ pub(in crate::analysis) fn owner_writes_field_only_at_probe(body: &str, path: &s
             let Some(rest) = block[offset + "self".len()..].strip_prefix('.') else {
                 return false;
             };
+            // `self.r#n` is the field `n`.
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
             let field_len = rest
                 .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
                 .unwrap_or(rest.len());
@@ -12772,6 +12815,7 @@ assert_eq!(input.amount, 100);"#
             "pub fn reset(&mut self) {\n    let s = &mut *self;\n    s.n = 1;\n    self.n = 1;\n}",
             "pub fn reset(&mut self) {\n    Self::seed(self);\n    self.n = 1;\n}",
             "pub fn reset(&mut self) {\n    self.m = 0;\n}",
+            "pub fn reset(&mut self) {\n    self.r#n = 1;\n    self.n = 1;\n}",
         ] {
             assert!(!owner_writes_field_only_at_probe(refused, "n"), "{refused}");
         }
@@ -12779,6 +12823,33 @@ assert_eq!(input.amount, 100);"#
             "pub fn reset(&mut self) {\n    self.inner.n = 1;\n}",
             "inner.n"
         ));
+    }
+
+    /// #14407: only one plain `self.<field> = <value>;` names the value the
+    /// owner writes; a compound write or a second write names none.
+    #[test]
+    fn only_a_single_plain_literal_write_names_the_written_value() {
+        assert_eq!(
+            owner_plain_written_value("pub fn reset(&mut self) {\n    self.n = 1;\n}", "n")
+                .as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            owner_plain_written_value(
+                "pub fn reset(&mut self) {\n    self.name = \"a; b\";\n}",
+                "name"
+            )
+            .as_deref(),
+            Some("\"a; b\"")
+        );
+        for none in [
+            "pub fn reset(&mut self) {\n    self.n += 1;\n}",
+            "pub fn reset(&mut self) {\n    self.n = 1;\n    self.n = 2;\n}",
+            "pub fn reset(&mut self) {\n    self.nn = 1;\n}",
+            "pub fn reset(&mut self) {\n    if self.n == 1 {}\n}",
+        ] {
+            assert_eq!(owner_plain_written_value(none, "n"), None, "{none}");
+        }
     }
 
     /// #14407: reveal's short-field credit needs a receiver built by one
@@ -12798,7 +12869,7 @@ assert_eq!(input.amount, 100);"#
                 line: 10 + lines.len() - 1,
                 ..oracle_fact(assertion, OracleKind::ExactValue)
             };
-            assigned_field_seed_is_visible(&test, "reset", "n", &fact)
+            assigned_field_seed_is_visible(&test, "reset", "n", Some("1"), &fact)
         };
         for kept in [
             &[

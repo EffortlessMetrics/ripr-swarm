@@ -2364,6 +2364,27 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
         && owner_impl_is_root_item_of(index, owner, &owner.file)
 }
 
+/// #14407: [`library_module_path`] of `file`, or `None` when any indexed
+/// file may remap a module to another file with a `#[path = ..]` attribute,
+/// since the file path then need not name the module.
+pub(in crate::analysis) fn indexed_library_module_path(
+    index: &RustIndex,
+    file: &Path,
+) -> Option<Vec<String>> {
+    let remaps = index.files().iter().any(|(_, facts)| {
+        facts.source.contains("path")
+            && crate::analysis::extract::mask_comments_and_strings(&facts.source)
+                .split("#[")
+                .skip(1)
+                .any(|attribute| attribute.trim_start().starts_with("path"))
+    });
+    if remaps {
+        None
+    } else {
+        library_module_path(file)
+    }
+}
+
 /// The module path of a root-library file under `src/` (#14407): `src/lib.rs`
 /// is the crate root (empty), `src/a.rs` and `src/a/mod.rs` are `a`, and
 /// `src/a/b.rs` is `a::b`. Any other file gives `None`.
@@ -2423,7 +2444,9 @@ pub(in crate::analysis) fn root_library_names_owner_type(
     if owner.file == Path::new("src/lib.rs") {
         return root_count == 1;
     }
-    let Some(module) = library_module_path(&owner.file).filter(|module| !module.is_empty()) else {
+    let Some(module) =
+        indexed_library_module_path(index, &owner.file).filter(|module| !module.is_empty())
+    else {
         return false;
     };
     let Some(owner_facts) = index.files().get(&owner.file) else {

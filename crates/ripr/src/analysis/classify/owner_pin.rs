@@ -11185,12 +11185,21 @@ fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
     })
 }
 
+/// Whether `text` starts with the identifier `name`, spelled bare or raw
+/// (`r#name` is the same identifier).
+fn starts_with_ident(text: &str, name: &str) -> bool {
+    starts_with_word(text, name)
+        || text
+            .strip_prefix("r#")
+            .is_some_and(|rest| starts_with_word(rest, name))
+}
+
 /// Whether masked `text` declares a struct, enum or union named `name`.
 fn declares_type(text: &str, name: &str) -> bool {
     ["struct", "enum", "union"].iter().any(|keyword| {
         whole_word_offsets(text, keyword)
             .into_iter()
-            .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
+            .any(|offset| starts_with_ident(text[offset + keyword.len()..].trim_start(), name))
     })
 }
 
@@ -11217,7 +11226,7 @@ pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &st
             whole_word_offsets(&masked, keyword)
                 .into_iter()
                 .filter(|offset| {
-                    starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
+                    starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
                 })
                 .count()
         })
@@ -11226,7 +11235,7 @@ pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &st
     // name, like an alias.
     let renames = whole_word_offsets(&masked, "as")
         .into_iter()
-        .filter(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+        .filter(|offset| starts_with_ident(masked[offset + "as".len()..].trim_start(), name))
         .count();
     declarations + renames + usize::from(file_aliases_type(source, name))
 }
@@ -11244,7 +11253,7 @@ pub(in crate::analysis) fn source_declares_type_before_line(
         whole_word_offsets(&masked, keyword)
             .into_iter()
             .any(|offset| {
-                starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
+                starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
                     && masked[..offset].matches('\n').count() + 1 < line
             })
     })

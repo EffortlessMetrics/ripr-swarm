@@ -71,9 +71,9 @@ pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
     assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
     call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
-    literal_operand_value, local_boundary, macro_names_rebound, owner_receiver_borrow,
-    owner_writes_field_only_at_probe, pushed_collection_compared_whole, pushed_literal_path,
-    signature_parameters, sort_value_facts, test_binds_owner_type,
+    literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
+    owner_receiver_borrow, owner_writes_field_only_at_probe, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -111,7 +111,7 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_element_field,
-    returned_array_construction_plain,
+    returned_array_construction_plain, workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,

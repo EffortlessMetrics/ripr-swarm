@@ -345,6 +345,98 @@ fn an_earlier_owner_write_of_the_field_gets_no_credit() -> Result<(), String> {
     Ok(())
 }
 
+/// #14407 CodeRabbit review: Rust reads `r#n` and `n` as one identifier, so
+/// an earlier raw-spelled write of the field is still an earlier write, and a
+/// raw-spelled `struct r#Counter` is still a namesake.
+#[test]
+fn raw_identifier_spellings_get_no_credit() -> Result<(), String> {
+    let owner = "pub struct Counter {\n    pub n: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.r#n = 1;\n        self.n = 1;\n    }\n}\n";
+    let found = finding_at(
+        owner,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let namesake = format!(
+        "{OWNER}#[cfg(test)]\nmod tests {{\n    struct r#Counter {{\n        n: u32,\n    }}\n    impl r#Counter {{\n        fn reset(&mut self) {{\n            self.n = 1;\n        }}\n    }}\n    #[test]\n    fn reference() {{\n        let mut c = Counter {{ n: 5 }};\n        c.reset();\n        assert_eq!(c.n, 1);\n    }}\n}}\n"
+    );
+    let found = finding_at(&namesake, "src/lib.rs", "")?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+/// #14407 CodeRabbit review: a `#[path]` attribute can map the owner's file to
+/// another module, so the file path no longer names the module a root
+/// re-export reaches.
+#[test]
+fn a_path_remapped_module_gets_no_reexport_credit() -> Result<(), String> {
+    let test = test_body(
+        "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+    );
+    let other = "pub struct Counter {\n    pub n: u32,\n    pub m: u32,\n}\nimpl Counter {\n    pub fn reset(&mut self) {\n        self.n = 1;\n    }\n}\n";
+    let remapped = finding_in(
+        "src/owner.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[
+            (
+                "src/lib.rs",
+                "#[path = \"owner.rs\"]\nmod internal;\n#[path = \"counter.rs\"]\npub mod owner;\npub use owner::Counter;\n",
+            ),
+            ("src/counter.rs", other),
+        ],
+    )?;
+    assert_ne!(remapped.class, ExposureClass::Exposed, "{remapped:#?}");
+    let control = finding_in(
+        "src/owner.rs",
+        OWNER,
+        "tests/t.rs",
+        &test,
+        &[("src/lib.rs", "pub mod owner;\npub use owner::Counter;\n")],
+    )?;
+    assert_eq!(control.class, ExposureClass::Exposed, "{control:#?}");
+    Ok(())
+}
+
+/// #14407 CodeRabbit review: an expected literal other than the one the owner
+/// writes fails with or without the write, and a receiver whose `Drop` may
+/// end the process during unwinding can turn the failing assertion into a
+/// pass.
+#[test]
+fn an_unwritten_expected_value_or_a_custom_drop_gets_no_credit() -> Result<(), String> {
+    let found = finding_at(
+        OWNER,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 3);",
+        ),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let dropping = format!(
+        "{OWNER}impl Drop for Counter {{\n    fn drop(&mut self) {{\n        if self.n != 1 {{\n            std::process::exit(0);\n        }}\n    }}\n}}\n"
+    );
+    let found = finding_at(
+        &dropping,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    let control = finding_at(
+        OWNER,
+        "tests/t.rs",
+        &test_body(
+            "    let mut c = probe::Counter { n: 5, m: 0 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+        ),
+    )?;
+    assert_eq!(control.class, ExposureClass::Exposed, "{control:#?}");
+    Ok(())
+}
+
 /// #14407 second review: an inline `mod tests` in the owner's own file that
 /// declares its own `Counter` builds its receiver from that namesake.
 #[test]

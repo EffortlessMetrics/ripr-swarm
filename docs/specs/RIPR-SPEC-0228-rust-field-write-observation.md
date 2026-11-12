@@ -818,7 +818,16 @@ changes `self.count += 2` to `self.count += 1`.
   re-export (`pub use dep::*;`) another type of the name; a test in another
   file that imports neither the name nor a glob spells the name only
   path-qualified (a bare name there may be a macro-made type); and
-  `krate::Name { .. }` is spelled only when the root names the owner's type. A same-named type elsewhere in
+  `krate::Name { .. }` is spelled only when the root names the owner's type.
+  A raw spelling (`r#n`, `r#Counter`) is the same identifier for every one of
+  these scans. The owner's module is read from its file path, so any
+  `#[path = ..]` attribute in the indexed sources withdraws the module-path
+  routes. When the owner writes a plain literal (`self.n = 1;`), the expected
+  literal must not differ from it, since such an assertion fails with or
+  without the write. A workspace with a visible non-empty `Drop` impl, or a
+  source that does not parse cleanly, gets no such credit, since a `Drop` that
+  ends the process during unwinding can turn the failing assertion into a
+  pass; a macro-generated `Drop` impl is not read. A same-named type elsewhere in
   the workspace that the test does not bind does not withdraw the credit. A
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that

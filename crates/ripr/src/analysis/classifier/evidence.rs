@@ -1398,12 +1398,19 @@ impl ClassifiedProbeEvidence {
                                     test,
                                     &owner.name,
                                     path,
+                                    crate::analysis::classify::owner_plain_written_value(
+                                        &owner.body,
+                                        path,
+                                    )
+                                    .as_deref(),
                                     assertion,
                                 ) && crate::analysis::classify::assigned_field_read_confirms(
                                     owner,
                                     path,
                                     test,
                                     assertion,
+                                    context.index,
+                                ) && !crate::analysis::classify::workspace_has_visible_non_plain_drop(
                                     context.index,
                                 )
                             })
