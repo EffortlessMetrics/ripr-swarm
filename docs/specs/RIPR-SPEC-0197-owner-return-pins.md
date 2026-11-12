@@ -291,7 +291,14 @@ wrong credits.
    the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
    and `#[actix_web::test]` on the same terms (#14073): the exact
    crate-qualified path, the crate not rebound in the test's module, and no
-   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
+   arguments (`system = ..` swaps the runtime). `#[test_log::test]` (#14211)
+   runs the unchanged body after installing a logger: it is admitted bare on a
+   sync `fn`, or as exactly `#[test_log::test(tokio::test)]` on an `async fn`,
+   with neither `test_log` nor `tokio` rebound in the test's module.
+   `#[tracing_test::traced_test]` (#14213) installs a subscriber and enters a
+   span before the unchanged body: it is admitted by its crate-qualified path,
+   or by the bare name bound by one unrenamed `use tracing_test::traced_test`,
+   with no arguments and the crate not rebound. An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
