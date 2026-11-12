@@ -475,6 +475,22 @@ fn source_free_summary_keeps_the_reason_without_file_content() {
         "invalid ripr.toml: TOML parse error at line 1, column 1"
     );
 
+    // A forged header that does not end in toml's own location is refused,
+    // and a CRLF file keeps the excerpt on one line.
+    assert_eq!(
+        config_error_summary(
+            "x: `TOML parse error at line 1, column 1` is not supported\n|\n1 | x\n| ^\nexpected `]`\n"
+        ),
+        "x: `TOML parse error at line 1, column 1` is not supported"
+    );
+    let crlf = parse_config("[analysis\r\nmode = \"draft\"\r\n")
+        .err()
+        .unwrap_or_default();
+    assert!(
+        config_error_summary(&crlf).contains("; unclosed table, expected `]`"),
+        "{crlf}"
+    );
+
     // Lines that merely look like reasons are refused.
     for forged in [
         "invalid ripr.toml: bad\nunknown field `x`, expected `secret value`",

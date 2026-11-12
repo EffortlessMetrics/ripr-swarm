@@ -904,8 +904,13 @@ fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
 /// keeps the location alone. Without the location header (no span) there is
 /// no fixed layout to rely on, so nothing is read.
 fn parser_message_line(error: &str, is_hint_line: impl Fn(&str) -> bool) -> Option<&str> {
+    // The header must END in toml's own `TOML parse error at line N, column M`,
+    // so a semantic diagnostic that echoes a value cannot pose as one.
     let first = error.lines().next()?;
-    if !first.contains("TOML parse error at line ") {
+    let (_, position) = first.rsplit_once("TOML parse error at line ")?;
+    let (line, column) = position.split_once(", column ")?;
+    let is_number = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    if !(is_number(line) && is_number(column)) {
         return None;
     }
     let mut message = error
