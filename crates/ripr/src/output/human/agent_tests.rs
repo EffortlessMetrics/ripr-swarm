@@ -2118,9 +2118,12 @@ fn refusal_notice(message: &str) -> crate::core_error::RefusalNotice {
 /// unconditional and has no placeholder, and a `verify=refused` line.
 #[test]
 fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
-    let runnable = super::agent::render_refusal(&refusal_notice(
-        "no base found.\nRun `ripr pilot --root .` for whole-repository exploration.",
-    ));
+    let runnable = super::agent::render_refusal(
+        &refusal_notice(
+            "no base found.\nRun `ripr pilot --root .` for whole-repository exploration.",
+        ),
+        None,
+    );
     assert_eq!(
         runnable,
         "#ripr agent static-advisory refused run_status=base_unresolvable \
@@ -2130,18 +2133,22 @@ fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
          verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable\n"
     );
 
-    let placeholder = super::agent::render_refusal(&refusal_notice(
-        "the base does not resolve; pass `ripr check --base <ref>` for a ref this repository has.",
-    ));
+    let placeholder = super::agent::render_refusal(
+        &refusal_notice(
+            "the base does not resolve; pass `ripr check --base <ref>` for a ref this repository has.",
+        ),
+        None,
+    );
     assert!(
         placeholder.contains("stop=the base does not resolve"),
         "{placeholder}"
     );
     assert!(!placeholder.contains("next="), "{placeholder}");
 
-    let conditional = super::agent::render_refusal(&refusal_notice(
-        "git timed out; if it persists, run `ripr doctor --root .`.",
-    ));
+    let conditional = super::agent::render_refusal(
+        &refusal_notice("git timed out; if it persists, run `ripr doctor --root .`."),
+        None,
+    );
     assert!(!conditional.contains("next="), "{conditional}");
 
     let notice = refusal_notice(
@@ -2153,11 +2160,23 @@ fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
         Some("ripr check --root .")
     );
     assert!(notice.remedy.prose_has_more, "{:?}", notice.remedy);
-    let needs_more = super::agent::render_refusal(&notice);
+    let needs_more = super::agent::render_refusal(&notice, None);
     assert!(
         needs_more.contains("stop=the workspace is not trusted"),
         "{needs_more}"
     );
     assert!(!needs_more.contains("next="), "{needs_more}");
     assert_eq!(conditional.lines().count(), 3, "{conditional}");
+
+    // A timed run's bounded retry takes the next= slot even when the prose
+    // remedy is conditional, and it stays one line.
+    let timed = super::agent::render_refusal(
+        &refusal_notice("git timed out; if it persists, run `ripr doctor --root .`."),
+        Some("ripr check --root . --base HEAD --format agent --timeout 2"),
+    );
+    assert!(
+        timed.contains("\nnext=ripr check --root . --base HEAD --format agent --timeout 2\n"),
+        "{timed}"
+    );
+    assert_eq!(timed.matches("next=").count(), 1, "{timed}");
 }

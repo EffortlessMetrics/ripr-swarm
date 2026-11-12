@@ -6254,6 +6254,40 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
         ));
     }
+
+    // #14452: the agent record carries the same bounded retry on `next=`,
+    // and stderr keeps the requested echo and retry the human format gets.
+    let agent = run(&["--format", "agent", "--mode", "draft"])?;
+    let agent_stdout = String::from_utf8_lossy(&agent.stdout);
+    let agent_stderr = String::from_utf8_lossy(&agent.stderr);
+    let next = agent_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or_else(|| format!("agent timeout record must carry next=: {agent_stdout}"))?;
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--format agent",
+        "--timeout 2",
+    ] {
+        if !next.contains(needle) {
+            return Err(format!("agent next= must contain `{needle}`: {next}"));
+        }
+    }
+    if agent.status.code() != Some(2)
+        || !agent_stdout
+            .starts_with("#ripr agent static-advisory refused run_status=analysis_timeout ")
+        || !agent_stdout.contains("verify=refused|")
+        || !agent_stderr.contains("bounded retry: ripr check")
+        || !agent_stderr.contains("requested input:")
+    {
+        return Err(format!(
+            "agent timeout record and stderr recovery, exit 2:\n{agent_stdout}\n{agent_stderr}"
+        ));
+    }
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&shim_dir);
     Ok(())

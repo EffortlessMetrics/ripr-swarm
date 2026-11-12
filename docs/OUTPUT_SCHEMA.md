@@ -1766,6 +1766,10 @@ format and each carrying the same typed identity and repair route:
   (the same rule as the JSON refusal's `next`: unconditional, no placeholder,
   no flags or environment named outside it), then
   `verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>`.
+  An `analysis_timeout` refusal puts its bounded retry (the JSON envelope's
+  `input_context.recovery.command`) on `next=` instead, and stderr keeps the
+  requested-input echo and retry the human format prints; a stdin diff has
+  no replayable retry, so `next=` is absent there.
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,

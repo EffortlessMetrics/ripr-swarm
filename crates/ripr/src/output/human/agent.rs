@@ -363,10 +363,16 @@ fn preview_leaves_test_side_open(finding: &Finding) -> bool {
 /// `stop=` / `next=` / `verify=` vocabulary instead of zero bytes. `next=`
 /// appears only when the remedy states one command that runs as-is
 /// (`output::refusal::runnable_command`): a conditional remedy, placeholders,
-/// or flags or env named outside the command stay prose on `stop=`.
+/// or flags or env named outside the command stay prose on `stop=`. A timed
+/// run's bounded retry (`retry`, from the stashed timeout projection) is the
+/// replayable command and takes that slot, so the recovery the JSON envelope
+/// and human stderr offer reaches the agent record too.
 ///
 /// [`RefusalNotice`]: crate::core_error::RefusalNotice
-pub(super) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> String {
+pub(super) fn render_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
     let message = notice
         .message
         .split_whitespace()
@@ -378,7 +384,9 @@ pub(super) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> Strin
         notice.repair_route,
         super::terminal_safe(message)
     );
-    if let Some(command) = crate::output::refusal::runnable_command(&notice.remedy) {
+    if let Some(command) =
+        retry.or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+    {
         out.push_str(&format!(
             "next={}\n",
             super::terminal_safe(command.to_string())
