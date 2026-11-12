@@ -25138,15 +25138,41 @@ fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Resu
         &artifact,
     ]);
     assert_success(&check);
-    let routes: [Vec<&str>; 3] = [
-        vec![
-            "explain",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "src/lib.rs:9999",
-        ],
+    // Fresh route: the #14077 cause already names the file's other finding
+    // lines, so the #14384 hint does not repeat them; for a file with no
+    // finding it adds where this scope's findings are.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("No finding is at line 9999")
+        || stderr.contains("Findings in src/lib.rs are on line")
+    {
+        return Err(format!(
+            "fresh same-file miss must name lines once: {stderr}"
+        ));
+    }
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/nofile.rs:3",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2) || !stderr.contains("findings are in src/lib.rs") {
+        return Err(format!(
+            "fresh other-file miss must name finding files: {stderr}"
+        ));
+    }
+    let routes: [Vec<&str>; 2] = [
         vec![
             "explain",
             "--root",

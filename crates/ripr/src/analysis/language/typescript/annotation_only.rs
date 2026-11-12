@@ -399,3 +399,107 @@ pub(crate) fn is_new_owner_opening_line(
     });
     opens_owner_with_added_body && is_signature_opening_line(file, line_text)
 }
+
+/// Most signature lines one header is read across. A longer header keeps its
+/// probes.
+const MAX_WRAPPED_HEADER_LINES: usize = 64;
+
+/// New-side lines that belong to the WRAPPED signature of a new function,
+/// method, or arrow owner (#14097): the multi-line counterpart of
+/// [`is_new_owner_opening_line`].
+///
+/// ```text
+/// export function discounted(
+///   price: number,
+///   amount: number,
+/// ): number {
+/// ```
+///
+/// None of those four lines holds behavior of its own; the body lines carry
+/// the probes. A formatter wraps a signature by width alone, so the one-line
+/// and the wrapped spelling must read the same. The header is the run from
+/// the owner's first line to the first line that ends in `{` outside the
+/// parameter list, and it counts only when the joined text passes
+/// [`is_signature_opening_line`], so a default value, a
+/// destructuring default, a parameter property, a computed key or a decorator
+/// anywhere in it keeps every line probed. Fails closed as well when a header
+/// line is not an added line (`is_added_line`), when the body holds no added
+/// probe line, when a removed line names the owner (a changed signature), for
+/// a constructor or module initializer, and past
+/// [`MAX_WRAPPED_HEADER_LINES`]. A one-line header is left to
+/// [`is_new_owner_opening_line`].
+pub(crate) fn new_owner_wrapped_header_lines(
+    file: &Path,
+    changed_file_normalized: &str,
+    source_lines: &[&str],
+    owners: &[TypeScriptOwner],
+    removed_texts: &[&str],
+    is_added_line: impl Fn(usize) -> bool,
+    has_added_probe_line: impl Fn(usize) -> bool,
+) -> std::collections::BTreeSet<usize> {
+    let mut header_lines = std::collections::BTreeSet::new();
+    for owner in owners {
+        // Cheapest tests first: this runs over every workspace owner once
+        // per changed file.
+        if owner.end_line <= owner.start_line
+            || owner.start_line == 0
+            || !is_added_line(owner.start_line)
+            || matches!(owner.owner_kind, OwnerKind::ModuleFunction)
+            || owner.method_kind == TypeScriptMethodKind::Constructor
+            || !normalized_path_eq(&owner.file, changed_file_normalized)
+            || removed_texts
+                .iter()
+                .any(|removed| mentions_identifier(removed, &owner.name))
+        {
+            continue;
+        }
+        let last_candidate = owner
+            .end_line
+            .min(owner.start_line + MAX_WRAPPED_HEADER_LINES - 1)
+            .min(source_lines.len());
+        let mut joined = String::new();
+        // Round-bracket depth of the header read so far. It only chooses
+        // where to try the parse; the parse decides. A miscount (a bracket
+        // inside a string or a comment) therefore costs a missed header,
+        // never a wrong one.
+        let mut depth = 0usize;
+        for line in owner.start_line..=last_candidate {
+            if !is_added_line(line) {
+                break;
+            }
+            let Some(text) = source_lines.get(line - 1) else {
+                break;
+            };
+            if text.contains('@') {
+                break;
+            }
+            if !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined.push_str(text);
+            for ch in text.chars() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            // A `{` inside the parameter list opens a destructuring pattern
+            // or an object type, not the body.
+            if depth > 0 || !text.trim_end().ends_with('{') {
+                continue;
+            }
+            // The first `{` outside the parameter list closes the header. On
+            // the owner's first line that is a one-line header, which
+            // `is_new_owner_opening_line` reads.
+            if line > owner.start_line
+                && is_signature_opening_line(file, &joined)
+                && (line + 1..=owner.end_line).any(&has_added_probe_line)
+            {
+                header_lines.extend(owner.start_line..=line);
+            }
+            break;
+        }
+    }
+    header_lines
+}

@@ -65,7 +65,9 @@ root-relative, counting other files the path also matches, with a suggested
 pointer to probe ids when every listed line holds several); otherwise up to
 five files that hold findings; otherwise that the scope has none. A
 `file:line:column` selector is told to drop the column. Id selectors keep
-their existing miss text, and the typed selector never enters a command.
+their existing miss text, and the typed selector never enters a command. On a
+fresh run whose miss-cause clause (#14077) already names the same file's
+other finding lines, that sentence is not repeated.
 
 The packet should include:
 
