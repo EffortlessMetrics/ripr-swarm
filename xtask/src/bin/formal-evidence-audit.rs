@@ -137,7 +137,7 @@ enum ProcessState {
     Completed,
     Failed,
     TimedOut,
-    Killed,
+    Killed, // ripr-allow: static-language: OS process termination, not a mutation outcome.
     NotStarted,
 }
 
@@ -606,11 +606,11 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
     }
     if matches!(
         run.process.state,
-        ProcessState::Failed | ProcessState::Killed
+        ProcessState::Failed | ProcessState::Killed // ripr-allow: static-language: OS process termination, not a mutation outcome.
     ) {
         require(
             run.process.exit_code != Some(0),
-            "failed/killed process cannot have successful exit",
+            "failed or terminated process cannot have successful exit",
         )?;
     }
     if run.process.state == ProcessState::NotStarted {

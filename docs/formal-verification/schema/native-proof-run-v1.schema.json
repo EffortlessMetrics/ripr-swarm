@@ -105,7 +105,7 @@
       "additionalProperties": false,
       "required": ["state", "exit_code", "timed_out", "raw_output_digest", "cleanup_state"],
       "properties": {
-        "state": {"enum": ["completed", "failed", "timed_out", "killed", "not_started"]},
+        "state": {"enum": ["completed", "failed", "timed_out", "killed", "not_started"], "$comment": "ripr-allow: static-language: OS process termination, not a mutation outcome."},
         "exit_code": {"type": ["integer", "null"]},
         "timed_out": {"type": "boolean"},
         "raw_output_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
@@ -122,7 +122,7 @@
           "else": {"properties": {"timed_out": {"const": false}}}
         },
         {
-          "if": {"properties": {"state": {"enum": ["failed", "killed"]}}, "required": ["state"]},
+          "if": {"properties": {"state": {"enum": ["failed", "killed"], "$comment": "ripr-allow: static-language: OS process termination, not a mutation outcome."}}, "required": ["state"]},
           "then": {"properties": {"exit_code": {"not": {"const": 0}}}}
         },
         {
