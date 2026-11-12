@@ -392,14 +392,20 @@ pub(crate) fn no_finding_matched_fresh_run(
     message
 }
 
-/// Whether a fresh run left part of its scope unanalyzed: a language run
-/// that did not complete, or preview-language files no adapter analyzed.
-/// The same conditions `append_fresh_run_language_limits` reports (#14406).
+/// Whether a fresh run left part of its scope unanalyzed: an incomplete
+/// producer outcome (`partial_with_limitations`, `unsupported_input`,
+/// `analysis_failed`, for example an oversized or malformed diff), a
+/// language run that did not complete, or preview-language files no adapter
+/// analyzed (#14406).
 fn fresh_run_incomplete(output: &CheckOutput) -> bool {
     output
-        .language_runs
-        .iter()
-        .any(|run| run.status != crate::analysis::LanguageRunStatus::Ok)
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| !outcome.kind.is_complete())
+        || output
+            .language_runs
+            .iter()
+            .any(|run| run.status != crate::analysis::LanguageRunStatus::Ok)
         || output
             .preview_language_advisories
             .iter()
@@ -656,6 +662,52 @@ mod tests {
                 "Next: ripr context --root {root} --diff {diff} --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:a776c683"
             )
         ));
+        Ok(())
+    }
+
+    fn outcome_of_kind(
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        crate::analysis_outcome::AnalysisOutcome::new(
+            kind,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+            limitations,
+        )
+    }
+
+    #[test]
+    fn fresh_run_incomplete_reads_an_incomplete_producer_outcome() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeKind, AnalysisRecovery,
+            AnalysisRecoveryKind, AnalysisStage,
+        };
+        // #14406: an oversized or malformed diff leaves no language-run or
+        // preview record, only the producer outcome; the location-miss hint
+        // must still read that run as incomplete.
+        let mut output = crate::app::check_workspace(sample_diff_input())?;
+        output.language_runs.clear();
+        output.preview_language_advisories.clear();
+        // The sample has no Cargo.toml, so its own outcome is partial (the
+        // path-dependency graph is unavailable) and already reads incomplete.
+        assert!(fresh_run_incomplete(&output));
+        let Some(outcome) = output.analysis_outcome.as_mut() else {
+            return Err("the sample run carries a producer outcome".to_string());
+        };
+        outcome.kind = AnalysisOutcomeKind::CompleteWithFindings;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = None;
+        assert!(!fresh_run_incomplete(&output));
+        output.analysis_outcome = Some(outcome_of_kind(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::DiffScopeOversized,
+                AnalysisStage::DiffLoad,
+                AnalysisRecovery::new(AnalysisRecoveryKind::NarrowDiff, "Narrow the diff.")?,
+            )],
+        )?);
+        assert!(fresh_run_incomplete(&output));
         Ok(())
     }
 
