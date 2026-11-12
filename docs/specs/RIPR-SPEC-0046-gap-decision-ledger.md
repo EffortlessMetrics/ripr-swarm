@@ -511,8 +511,11 @@ A source that parses but is a producer refusal (`downstream_consumable:
 false` in `analysis_scope` or `run_limitations[]`, nothing analyzed) also
 writes the `blocked` ledger and then exits `2`, naming the flag, path and
 refusal (#14434). The error names the source's recorded `repair_route` when it
-has one; a saved `blocked` ledger fed back as `--records` keeps the marker but
-not the route, so its error says to re-run the producing check instead.
+has one (`analysis_scope`, else a non-consumable `run_limitations[]` entry). A
+saved `blocked` ledger keeps `run_limitations[]`, so fed back as `--records` it
+still names that route; a refusal disclosed only in `analysis_scope` is saved
+with a marker-only entry, so its error says to re-run the producing check
+instead.
 Findings-bounded, partial-scope and incomplete-outcome sources keep their own
 typed handling and exit `0`. Pinned by
 `crates/ripr/src/cli/commands/reports.rs::tests::reports_gap_ledger_refuses_a_producer_refusal_source_after_writing_blocked`,

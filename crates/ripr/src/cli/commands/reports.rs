@@ -143,9 +143,9 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     // false`) means nothing was analyzed, so the ledger cannot be built from
     // it either: same exit 2 after the `blocked` write (#14434).
     if let Some(refusal) = report.source_refusal() {
-        // A saved `blocked` ledger fed back as `--records` keeps the refusal
-        // marker but not the producer's route, so only name a route the
-        // source actually records.
+        // A saved `blocked` ledger keeps `run_limitations[]` routes, but a
+        // refusal disclosed only in `analysis_scope` is saved marker-only, so
+        // only name a route the source actually records.
         let repair = match report.source_refusal_repair_route() {
             Some(route) => format!(
                 "Follow its repair_route `{route}`, re-run the producing check, then rebuild this ledger"
@@ -973,9 +973,10 @@ mod tests {
         );
         assert_eq!(read_json_file(&out)?["status"], "blocked");
 
-        // The saved `blocked` ledger keeps the refusal marker but not the
-        // producer's route: fed back as `--records` it is refused too, and
-        // the error must not point at a repair_route the ledger lacks.
+        // This refusal is disclosed only in `analysis_scope`, so its saved
+        // `blocked` ledger keeps a marker-only entry and no route: fed back as
+        // `--records` it is refused too, and the error must not point at a
+        // repair_route the ledger lacks.
         let Err(err) = gap_ledger_from(&root, "--records", &out, &dir.join("refed.json")) else {
             return Err("a saved refusal ledger must be refused, not exit 0".to_string());
         };
@@ -983,6 +984,32 @@ mod tests {
             err.contains("reports gap-ledger --records ")
                 && err.contains("It records no repair_route: re-run the check that produced it")
                 && !err.contains("Follow its repair_route"),
+            "{err}"
+        );
+
+        // The check producer's real envelope also discloses the refusal (and
+        // its route) in `run_limitations[]`, which the saved ledger keeps:
+        // re-fed as `--records`, the error names that route.
+        let mut enveloped = refusal.clone();
+        enveloped["run_limitations"] = serde_json::json!([{
+            "category": "diff_scope_oversized",
+            "run_status": "diff_scope_oversized",
+            "downstream_consumable": false,
+            "repair_route": "analysis/diff-scope-budget"
+        }]);
+        let input = dir.join("enveloped.json");
+        std::fs::write(&input, enveloped.to_string())
+            .map_err(|err| format!("write input: {err}"))?;
+        let saved = dir.join("enveloped-ledger.json");
+        if gap_ledger_from(&root, "--check-output", &input, &saved).is_ok() {
+            return Err("an enveloped producer refusal must be refused".to_string());
+        }
+        let Err(err) = gap_ledger_from(&root, "--records", &saved, &dir.join("refed2.json")) else {
+            return Err("a saved enveloped refusal ledger must be refused".to_string());
+        };
+        assert!(
+            err.contains("reports gap-ledger --records ")
+                && err.contains("Follow its repair_route `analysis/diff-scope-budget`"),
             "{err}"
         );
 

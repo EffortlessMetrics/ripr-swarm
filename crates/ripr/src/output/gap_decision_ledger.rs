@@ -93,8 +93,10 @@ pub(crate) struct GapDecisionLedgerReport {
     source_refusal: Option<String>,
     /// The `repair_route` the refusing source records, when it records one
     /// (`analysis_scope` or a non-consumable `run_limitations[]` entry). A
-    /// saved `blocked` ledger fed back as `--records` keeps the marker but
-    /// not the route, so this is `None` there (#14434).
+    /// saved `blocked` ledger keeps `run_limitations[]` (and any route in
+    /// it), but a refusal disclosed only in `analysis_scope` is saved with a
+    /// marker-only entry, so this is `None` when that ledger is fed back
+    /// (#14434).
     source_refusal_repair_route: Option<String>,
 }
 
