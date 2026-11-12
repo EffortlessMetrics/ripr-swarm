@@ -24,7 +24,7 @@ jobs:
         shell: bash
         env:
           HOSTED_SOURCE: 50d9bb94921b0f4f7b3d840093a596eed7059852
-          EXPECTED_MAIN: 17076506afc35dfc91b0329e9de8b9391dd02cdb
+          EXPECTED_MAIN: c5d50a38ba94799d6da3954fef004839fae5489c
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$HOSTED_SOURCE" HEAD || {
