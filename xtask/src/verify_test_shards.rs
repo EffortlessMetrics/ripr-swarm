@@ -1133,6 +1133,47 @@ mod tests {
     }
 
     #[test]
+    fn native_receipt_options_must_be_supplied_together() -> Result<(), String> {
+        let base = [
+            "--dir",
+            "in",
+            "--artifact",
+            "art",
+            "--attempt",
+            "2",
+            "--repository",
+            "o/r",
+            "--sha",
+            "a",
+            "--run-id",
+            "7",
+            "--shards",
+            "2",
+            "--out",
+            "out",
+        ];
+        let args = |extra: &[&str]| {
+            base.iter()
+                .chain(extra.iter())
+                .map(|s| (*s).to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(parse_options(&args(&["--native-receipt-context", "context.json"])).is_err());
+        let all = parse_options(&args(&[
+            "--native-receipt-context",
+            "context.json",
+            "--native-producer-result",
+            "success",
+            "--native-verifier-attempt",
+            "2",
+        ]))?;
+        let native = all.native_receipt.ok_or("native mode missing")?;
+        assert_eq!(native.verifier_attempt, 2);
+        assert_eq!(native.producer_result, "success");
+        Ok(())
+    }
+
+    #[test]
     fn native_artifact_traversal_refuses_depth_and_node_exhaustion() -> Result<(), String> {
         let root = crate::tests::temp_dir("native-artifact-limits");
         let root = fs::canonicalize(&root).map_err(|e| e.to_string())?;

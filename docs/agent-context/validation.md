@@ -114,6 +114,15 @@ selects, in this order, and record each command and native exit status in the
 PR-native continuation record's `Validation:` line (see
 [PR automation](../PR_AUTOMATION.md#pr-native-continuation-record)):
 
+The native policy receipt prototype's `--context` JSON requires `repository`,
+`checkout_sha` (40 hex characters), `run_id` (digits), `attempt` (positive
+integer), `target`, `cargo_profile`, `configuration_sha256`, and
+`features_sha256` (64 hex characters each). The configuration and feature
+digests are caller-declared, not independently verified. Optional
+`verify-test-shards` receipt mode requires `--native-receipt-context`,
+`--native-producer-result`, and `--native-verifier-attempt` together; it
+always refuses full proof while context and producer provenance are unverified.
+
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
 | fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). Hosted `ci-policy` and `cargo xtask check-file-policy` always list. |

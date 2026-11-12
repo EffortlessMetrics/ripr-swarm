@@ -147,18 +147,43 @@ fn hash(bytes: &[u8]) -> String {
 const INPUT_LIMIT: u64 = 8 * 1024 * 1024;
 /// Refuses symlinks and special files before opening. This check and the later
 /// open are not atomic against a concurrent hostile filesystem mutation.
-fn validate_components(path: &Path, final_file: bool) -> Result<(), String> {
+/// Build each path to inspect, never probing a Windows drive/UNC prefix
+/// without its root. Drive-relative and root-without-drive paths are refused.
+fn inspection_paths(path: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    #[cfg(windows)]
+    if path.has_root() && !path.is_absolute() {
+        return Err("rooted path without drive is unsupported".into());
+    }
     let mut current = std::path::PathBuf::new();
     let mut parts = path.components().peekable();
-    if parts.peek().is_none() {
-        return Err("native input path is empty".into());
-    }
+    let mut paths = Vec::new();
     while let Some(part) = parts.next() {
         if matches!(part, std::path::Component::ParentDir) {
-            return Err("native input path contains parent traversal".into());
+            return Err("path contains parent traversal".into());
         }
-        current.push(part.as_os_str());
-        let metadata = fs::symlink_metadata(&current)
+        if matches!(part, std::path::Component::Prefix(_)) {
+            current.push(part.as_os_str());
+            match parts.next() {
+                Some(std::path::Component::RootDir) => {
+                    current.push(std::path::Component::RootDir.as_os_str())
+                }
+                _ => return Err("drive-relative path is unsupported".into()),
+            }
+        } else {
+            current.push(part.as_os_str());
+        }
+        paths.push(current.clone());
+    }
+    if paths.is_empty() {
+        return Err("native input path is empty".into());
+    }
+    Ok(paths)
+}
+
+fn validate_components(path: &Path, final_file: bool) -> Result<(), String> {
+    let paths = inspection_paths(path)?;
+    for (index, current) in paths.iter().enumerate() {
+        let metadata = fs::symlink_metadata(current)
             .map_err(|e| format!("cannot inspect {}: {e}", current.display()))?;
         let kind = metadata.file_type();
         if kind.is_symlink() {
@@ -167,7 +192,7 @@ fn validate_components(path: &Path, final_file: bool) -> Result<(), String> {
                 current.display()
             ));
         }
-        let last = parts.peek().is_none();
+        let last = index + 1 == paths.len();
         if (last && final_file && !kind.is_file()) || ((!last || !final_file) && !kind.is_dir()) {
             return Err(format!(
                 "native input path is not an expected regular file/directory: {}",
@@ -237,7 +262,21 @@ fn context_is_well_formed(c: &DeclaredContext) -> bool {
 fn rows(coverage: Vec<TestCoverageObservation>) -> Result<Vec<Row>, String> {
     let mut any = false;
     let mut rows = Vec::new();
+    let mut declarations = BTreeSet::new();
     for observation in coverage {
+        let host = observation
+            .selector
+            .host
+            .map_or("all", crate::FilePolicyHost::name)
+            .to_string();
+        let identity = (
+            observation.selector.line,
+            observation.selector.command.clone(),
+            host.clone(),
+        );
+        if !declarations.insert(identity) {
+            return Err("native receipt repeats a selector declaration identity".into());
+        }
         if let Some(selected) = &observation.selected {
             if selected.is_empty() {
                 return Err("native receipt has an empty applicable selection".into());
@@ -251,11 +290,7 @@ fn rows(coverage: Vec<TestCoverageObservation>) -> Result<Vec<Row>, String> {
         rows.push(Row {
             line: observation.selector.line,
             command: observation.selector.command,
-            declared_host: observation
-                .selector
-                .host
-                .map_or("all", crate::FilePolicyHost::name)
-                .to_string(),
+            declared_host: host,
             selected: observation.selected,
         });
     }
@@ -302,12 +337,10 @@ pub(crate) fn produce(args: &[String]) -> Result<(), String> {
 /// removal, directory creation, or publication against concurrent mutation.
 fn validate_output_parent(output: &Path) -> Result<(), String> {
     let parent = output.parent().ok_or("receipt has no parent")?;
-    let mut current = std::path::PathBuf::new();
-    for component in parent.components() {
-        if matches!(component, std::path::Component::ParentDir) {
-            return Err("receipt output parent contains parent traversal".into());
-        }
-        current.push(component.as_os_str());
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    for current in inspection_paths(parent)? {
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(format!(
@@ -482,7 +515,11 @@ pub(crate) fn validate_binding(
     if receipt.rows.is_empty() || receipt.rows.iter().all(|row| row.selected.is_none()) {
         return Err("native receipt has no subjects".into());
     }
+    let mut declarations = BTreeSet::new();
     for row in &receipt.rows {
+        if !declarations.insert((row.line, row.command.as_str(), row.declared_host.as_str())) {
+            return Err("native receipt repeats a selector declaration identity".into());
+        }
         if row.line == 0
             || !crate::is_cargo_test_command(&row.command)
             || !matches!(row.declared_host.as_str(), "all" | "unix" | "windows")
@@ -695,6 +732,21 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_prefixes_are_rooted_before_inspection() -> Result<(), String> {
+        let drive = inspection_paths(Path::new(r"C:\alpha\beta"))?;
+        assert_eq!(drive.first(), Some(&std::path::PathBuf::from(r"C:\")));
+        let unc = inspection_paths(Path::new(r"\\server\share\folder"))?;
+        assert_eq!(
+            unc.first(),
+            Some(&std::path::PathBuf::from(r"\\server\share\"))
+        );
+        assert!(inspection_paths(Path::new(r"C:relative\file")).is_err());
+        assert!(inspection_paths(Path::new(r"\relative\file")).is_err());
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn fifo_without_writer_is_refused_before_open() -> Result<(), String> {
@@ -869,6 +921,33 @@ mod tests {
         assert!(
             validate_binding(&text(&duplicate)?, &context(), &source(), 2, "success", 2).is_err()
         );
+        let mut duplicate_row = receipt();
+        duplicate_row.rows.push(Row {
+            line: 1,
+            command: "cargo test -p probe exact".into(),
+            declared_host: "all".into(),
+            selected: Some(vec!["tests::other".into()]),
+        });
+        assert!(
+            validate_binding(
+                &text(&duplicate_row)?,
+                &context(),
+                &source(),
+                2,
+                "success",
+                2
+            )
+            .is_err()
+        );
+        duplicate_row.rows[1].line = 2;
+        validate_binding(
+            &text(&duplicate_row)?,
+            &context(),
+            &source(),
+            2,
+            "success",
+            2,
+        )?;
         let mut empty = receipt();
         empty.rows[0].selected = Some(vec![]);
         assert!(validate_binding(&text(&empty)?, &context(), &source(), 2, "success", 2).is_err());
@@ -890,6 +969,7 @@ mod tests {
             selected: Some(selected.into_iter().map(str::to_string).collect()),
         };
         assert!(rows(vec![observation(1, vec!["a", "a"])]).is_err());
+        assert!(rows(vec![observation(1, vec!["a"]), observation(1, vec!["a"])]).is_err());
         assert_eq!(
             rows(vec![observation(1, vec!["a"]), observation(2, vec!["a"])])?.len(),
             2

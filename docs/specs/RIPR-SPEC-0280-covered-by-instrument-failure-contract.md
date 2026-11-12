@@ -181,7 +181,8 @@ future acceptance must independently bind a successful producer. It refuses an
 observed dirty checkout or a difference between its before and after snapshots;
 ignored inputs and intermediate changes restored before the second snapshot are
 not observed. One writer and no concurrent source/context mutation are required.
-Duplicate names within one selector are refused because binary identities are unavailable. A successful
+Duplicate declaration identities and duplicate names within one selector are
+refused; distinct declaration lines remain distinct. Binary identities are unavailable. A successful
 receipt is versioned and marked `native_valid_context_unverified`; its declared
 context and hashed observations are not evidence that effective Cargo features,
 configuration, environment, wrappers or ignored inputs were independently verified.
@@ -203,7 +204,9 @@ traversal has node and depth limits and refuses symlinks and special files.
 Output parent checks refuse static symlink and nondirectory ancestors before
 removal and publication, while allowing missing directories to be created.
 Metadata checks and later opens are not atomic against hostile concurrent
-filesystem mutation. Native Windows drive-prefix behavior is not established.
+filesystem mutation. Windows drive and UNC prefixes are combined with their root before inspection;
+drive-relative and root-without-drive paths are refused. Native Windows runtime
+behavior is not established.
 The fixed output assumes one producer per worktree; concurrent producer safety
 is not established and must be enforced or proven before hosted use. The exact
 native selector enumerator retains its existing per-command and lock-wait
