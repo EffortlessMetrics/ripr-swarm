@@ -279,6 +279,7 @@ terse document rewrites repeated content. Exactly what differs:
 | Document head | no rendering marker | `"rendering": "terse"` names the profile |
 | `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
+| `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -287,9 +288,10 @@ terse document rewrites repeated content. Exactly what differs:
 Guarantees and limits, stated precisely:
 
 - No finding is dropped; no verdict changes. Finding `id`,
-  `classification`, `severity`, `confidence`, `probe` and `ripr` blocks
-  move verbatim, and identity/verdict fields are exempt from alias removal
-  even when values coincide.
+  `classification`, `severity`, `confidence` and `probe` move verbatim, as
+  does every `ripr` stage `state` and `confidence`; a `ripr` stage `summary`
+  may be a legend code. Identity/verdict fields are exempt from alias
+  removal even when values coincide.
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
   the terse document alone. Restore an omitted `suggested_next_action` from
@@ -306,10 +308,12 @@ Guarantees and limits, stated precisely:
   property tests, not the schema, hold that guarantee. Tying their omission
   to the alias declaration in the schema needs a narrowing change and a
   schema version bump, which is deferred.
-- What terse does *not* code: `ripr` stage summaries, related-test oracle
-  lines, flow-sink text and repair cards stay inline. Those are the
-  remaining cross-finding duplication; coding them is follow-up work if
-  measurements justify it.
+- What terse does *not* code: related-test oracle lines, flow-sink text and
+  repair cards stay inline. Those are the remaining cross-finding
+  duplication; coding them is follow-up work if measurements justify it.
+  (`ripr` stage summaries joined the coded surfaces in #13673: on a
+  four-finding `dtolnay/semver` diff each long stage summary appeared in
+  `ripr` and again in `evidence`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
