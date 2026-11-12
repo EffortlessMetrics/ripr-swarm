@@ -124,6 +124,12 @@ run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .r
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
 
+A `RIPR_GATE_MODE` value that is not a gate mode (`visible_only`, say) also
+fails the job: the workflow treats any value other than empty or
+`visible-only` as blocking, and the gate refuses the value. In all three
+cases the failing `Run RIPR` step's error annotation and the first block of
+the job summary state the cause and, for a setup problem, the way out.
+
 ## GitLab merge requests
 
 Steps 2 to 4 above are GitHub-only: they use the GitHub workflow's `RIPR_GATE_MODE`

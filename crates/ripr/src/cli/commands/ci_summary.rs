@@ -33,6 +33,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         upload_sarif: options.upload_sarif == "true",
         gate_baseline: !options.gate_baseline.is_empty(),
         gate_configured: gate_configured(&settings.gate_mode),
+        gate_mode: settings.gate_mode.clone(),
         comment_mode: options.comment_mode,
     };
     let summary = render_ci_summary(&input);

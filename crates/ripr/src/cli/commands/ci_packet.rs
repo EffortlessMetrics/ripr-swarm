@@ -38,6 +38,7 @@ use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
 use crate::output::ci_summary::effective_comment_mode;
+use crate::output::ci_summary::gate_verdict::GateVerdict;
 use crate::output::first_pr::base_fetch_refspec;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
@@ -1482,6 +1483,11 @@ impl PacketRun {
     }
 
     fn evaluate_gate(&mut self) -> StageResult {
+        // #14081: the gate's own refusal of an unknown mode, as the step's
+        // error, instead of a child command line and an exit code.
+        if let Some(verdict) = GateVerdict::from_mode(&self.settings.gate_mode) {
+            return Err(verdict.annotation());
+        }
         self.mkdir(REPORTS)?;
         let mut argv = args(&[
             "gate",
@@ -1512,7 +1518,13 @@ impl PacketRun {
         if !self.settings.gate_baseline.is_empty() {
             argv.extend(args(&["--baseline", &self.settings.gate_baseline]));
         }
-        self.ripr(&argv)
+        let code = self.spawn_code(&argv, Stdio::inherit(), &[])?;
+        gate_stage_result(
+            code,
+            &argv,
+            &self.settings.gate_mode,
+            fs::read(self.path(GATE_DECISION)).ok().as_deref(),
+        )
     }
 
     fn pr_evidence_ledger(&mut self) -> StageResult {
@@ -1804,6 +1816,40 @@ struct DiffReceipt<'a> {
     head_sha: &'a str,
     byte_count: usize,
     sha256: &'a str,
+}
+
+/// The gate step's result for the child's exit `code` (#14081). A failing
+/// exit is worded from the decision the child just wrote, so the step's
+/// `::error` annotation states the verdict. The decision is used only when
+/// it belongs to this run: it must be readable, name this run's mode, and
+/// state the status that exit code means (3 blocked, 2 config_error per
+/// docs/EXIT_CODES.md). Anything else keeps the command line and exit code.
+fn gate_stage_result(
+    code: Option<i32>,
+    argv: &[String],
+    gate_mode: &str,
+    decision: Option<&[u8]>,
+) -> StageResult {
+    let shown = format!("`ripr {}`", argv.join(" "));
+    let code = match code {
+        Some(0) => return Ok(()),
+        Some(code) => code,
+        None => return Err(format!("{shown} was terminated by a signal")),
+    };
+    let verdict = decision
+        .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+        .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
+        .and_then(|decision| GateVerdict::from_decision(&decision))
+        .filter(|verdict| {
+            matches!(
+                (code, verdict),
+                (3, GateVerdict::Blocked { .. }) | (2, GateVerdict::ConfigError { .. })
+            )
+        });
+    Err(match verdict {
+        Some(verdict) => verdict.annotation(),
+        None => format!("{shown} exited {code}"),
+    })
 }
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -2200,6 +2246,72 @@ mod tests {
             "ripr agent review-summary --root . > target/ripr/workflow/agent-review-summary.md",
         ];
         assert_eq!(packet.lines().collect::<Vec<_>>(), expected);
+        Ok(())
+    }
+
+    /// #14081: a failing gate exit is worded from the decision the child
+    /// wrote, so the step's `::error` annotation states the verdict.
+    #[test]
+    fn a_failing_gate_step_states_the_decision_it_wrote() {
+        let argv = args(&["gate", "evaluate", "--mode", "acknowledgeable"]);
+        let fallback = |code: i32| {
+            Err(format!(
+                "`ripr gate evaluate --mode acknowledgeable` exited {code}"
+            ))
+        };
+        let blocked = br#"{"status":"blocked","mode":"acknowledgeable","summary":{"blocking":1},"decisions":[{"decision":"blocking","gate_reason":"no label","placement":{"path":"src/a.rs","line":4}}]}"#;
+        let config = br#"{"status":"config_error","mode":"acknowledgeable","config_errors":["labels are unreadable"]}"#;
+        let result = |code, decision: Option<&[u8]>| {
+            gate_stage_result(code, &argv, "acknowledgeable", decision)
+        };
+
+        assert_eq!(result(Some(0), Some(blocked)), Ok(()));
+        assert_eq!(
+            result(Some(3), Some(blocked)),
+            Err("RIPR gate blocked this pull request under acknowledgeable mode: 1 blocking gap; first: no label [src/a.rs:4]. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact.".to_string())
+        );
+        assert_eq!(
+            result(Some(2), Some(config)),
+            Err("RIPR gate could not evaluate this pull request under acknowledgeable mode (configuration error, not a finding about the code): labels are unreadable".to_string())
+        );
+
+        // A decision that is not this run's keeps the command line and exit
+        // code: the status the exit code means must be the one written, the
+        // mode must be this run's, and the document must be readable.
+        assert_eq!(result(Some(2), Some(blocked)), fallback(2));
+        assert_eq!(result(Some(3), Some(config)), fallback(3));
+        assert_eq!(result(Some(1), Some(blocked)), fallback(1));
+        assert_eq!(result(Some(3), None), fallback(3));
+        assert_eq!(result(Some(3), Some(b"{not json")), fallback(3));
+        assert_eq!(
+            gate_stage_result(Some(3), &argv, "calibrated-gate", Some(blocked)),
+            fallback(3)
+        );
+        assert_eq!(
+            result(None, Some(blocked)),
+            Err(
+                "`ripr gate evaluate --mode acknowledgeable` was terminated by a signal"
+                    .to_string()
+            )
+        );
+    }
+
+    /// #14081: an unknown `RIPR_GATE_MODE` fails the gate step with the
+    /// gate's own refusal and runs no gate command; the rest of the packet
+    /// still runs.
+    #[test]
+    fn an_unknown_gate_mode_fails_the_gate_step_without_running_it() -> Result<(), String> {
+        let (packet, failed) = recorded_packet_with(CiSettings {
+            gate_mode: "visible_only".to_string(),
+            ..full_packet_settings()
+        })?;
+        assert_eq!(failed, ["Evaluate RIPR gate decision"]);
+        assert!(!packet.contains("ripr gate evaluate"), "{packet}");
+        assert!(packet.contains("ripr pr-ledger record "), "{packet}");
+
+        let (packet, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(packet.contains("ripr gate evaluate "), "{packet}");
         Ok(())
     }
 

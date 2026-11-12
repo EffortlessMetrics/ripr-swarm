@@ -5264,3 +5264,143 @@ fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), 
     let _ = fs::remove_dir_all(&root);
     result
 }
+
+/// #14081: when the gate fails the job, the real `reports ci-packet` gate step
+/// states the verdict in its `::error` annotation and the real
+/// `reports ci-summary` states it before the findings. Checked for a blocking
+/// decision, a configuration error and an unknown `RIPR_GATE_MODE`, against a
+/// `visible-only` run of the same input that adds neither.
+#[test]
+fn a_failing_gate_is_stated_in_the_annotation_and_at_the_top_of_the_summary()
+-> Result<(), Box<dyn Error>> {
+    let guidance = fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json"),
+    )?;
+    let run = |mode: &str| -> Result<(Option<i32>, String, String), Box<dyn Error>> {
+        let root = replay::unique_temp_dir("gate-verdict")?;
+        fs::create_dir_all(root.join("target/ripr/review"))?;
+        fs::write(root.join("target/ripr/review/comments.json"), &guidance)?;
+        let removed = [
+            "GITHUB_BASE_REF",
+            "GITHUB_EVENT_NAME",
+            "GITHUB_EVENT_PATH",
+            "RIPR_UPLOAD_SARIF",
+            "RIPR_COMMENT_MODE",
+            "RIPR_GATE_BASELINE",
+            "RIPR_GATE_MODE",
+            "RIPR_PILOT_TIMEOUT_MS",
+        ];
+        let packet = replay::ripr_with_env(
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Evaluate RIPR gate decision",
+            ],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        );
+        let summary = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-summary", "--root", "."],
+            &removed,
+            &[("RIPR_GATE_MODE", mode)],
+        );
+        let _ = fs::remove_dir_all(&root);
+        let (packet, summary) = (packet?, summary?);
+        if !summary.status.success() {
+            return Err(format!(
+                "ci-summary failed under {mode}: {}",
+                String::from_utf8_lossy(&summary.stderr)
+            )
+            .into());
+        }
+        Ok((
+            packet.status.code(),
+            String::from_utf8(packet.stdout)?,
+            String::from_utf8(summary.stdout)?,
+        ))
+    };
+    let errors = |stdout: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("::error "))
+            .map(str::to_string)
+            .collect()
+    };
+    let leads = |summary: &str, heading: &str| -> bool {
+        match (
+            summary.find(heading),
+            summary.find("### What RIPR found in this pull request"),
+        ) {
+            (Some(verdict), Some(findings)) => verdict < findings,
+            _ => false,
+        }
+    };
+
+    // The fixture input must be the one that blocks, or the rest proves
+    // nothing about a blocking decision.
+    let (code, stdout, summary) = run("acknowledgeable")?;
+    assert_eq!(code, Some(2), "{stdout}");
+    assert_eq!(
+        errors(&stdout),
+        [
+            "::error title=Evaluate RIPR gate decision::RIPR gate blocked this pull request under acknowledgeable mode: 1 blocking gap; first: policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `ripr-waive`) [src/pricing.rs:88]. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact."
+        ],
+        "{stdout}"
+    );
+    assert!(leads(&summary, "### RIPR gate: blocked\n"), "{summary}");
+    assert!(
+        summary.contains("**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 1 blocking gap.\n- First blocking reason: ``policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `ripr-waive`)`` at `src/pricing.rs:88`\n"),
+        "{summary}"
+    );
+
+    let (code, stdout, summary) = run("baseline-check")?;
+    assert_eq!(code, Some(2), "{stdout}");
+    let annotations = errors(&stdout);
+    assert_eq!(annotations.len(), 1, "{stdout}");
+    assert!(
+        annotations[0].starts_with("::error title=Evaluate RIPR gate decision::RIPR gate could not evaluate this pull request under baseline-check mode (configuration error, not a finding about the code): baseline-check mode requires an explicit --baseline artifact"),
+        "{stdout}"
+    );
+    assert!(
+        leads(&summary, "### RIPR gate: configuration error\n"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains(
+            "\n- Config error: ``baseline-check mode requires an explicit --baseline artifact"
+        ),
+        "{summary}"
+    );
+
+    let (code, stdout, summary) = run("visible_only")?;
+    assert_eq!(code, Some(2), "{stdout}");
+    assert_eq!(
+        errors(&stdout),
+        [
+            "::error title=Evaluate RIPR gate decision::RIPR gate did not run: unknown gate mode \"visible_only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate. Fix the RIPR_GATE_MODE repository variable (Settings > Secrets and variables > Actions > Variables), or unset it to stay advisory, then re-run the job."
+        ],
+        "{stdout}"
+    );
+    assert!(
+        leads(&summary, "### RIPR gate: unknown `RIPR_GATE_MODE`\n"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("\nGate decision was not run: `RIPR_GATE_MODE` is set to `visible_only`, which is not a gate mode."),
+        "{summary}"
+    );
+    assert!(!summary.contains("to opt in"), "{summary}");
+
+    let (code, stdout, summary) = run("visible-only")?;
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(errors(&stdout).is_empty(), "{stdout}");
+    assert!(!summary.contains("### RIPR gate"), "{summary}");
+    assert!(summary.contains("\n- Status: `advisory`\n"), "{summary}");
+    Ok(())
+}

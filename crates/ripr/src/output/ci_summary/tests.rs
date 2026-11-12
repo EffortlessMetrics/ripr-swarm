@@ -132,6 +132,7 @@ impl Fixture {
             upload_sarif: upload_sarif == "true",
             gate_baseline: !gate_baseline.is_empty(),
             gate_configured: false,
+            gate_mode: String::new(),
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
@@ -1316,12 +1317,20 @@ fn render_gate(
     fixture: &Fixture,
     gate_configured: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    render_gate_mode(fixture, if gate_configured { "visible-only" } else { "" })
+}
+
+fn render_gate_mode(
+    fixture: &Fixture,
+    gate_mode: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let input = CiSummaryInput {
         root: fixture.root.clone(),
         base_ref: "trunk".to_string(),
         upload_sarif: true,
         gate_baseline: false,
-        gate_configured,
+        gate_configured: !gate_mode.is_empty(),
+        gate_mode: gate_mode.to_string(),
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
@@ -1700,5 +1709,167 @@ fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
         !start.contains("Open `target/ripr/reports/start-here.md`"),
         "{start}"
     );
+    Ok(())
+}
+
+/// #14081: a blocked gate is why the job is red, so it is stated before the
+/// findings, with the mode, the count and the first reason.
+#[test]
+fn a_blocked_gate_leads_the_summary() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-blocked")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 2},
+            "decisions": [
+                {"decision": "blocking", "gate_reason": "no `ripr-waive` label", "placement": {"path": "src/a.rs", "line": 4}},
+                {"decision": "blocking", "gate_reason": "second"},
+            ],
+        }),
+    )?;
+    let summary = render_gate_mode(&fixture, "acknowledgeable")?;
+    let verdict = block(&summary, "### RIPR gate: blocked");
+    assert_eq!(
+        verdict,
+        "**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 2 blocking gaps.\n\
+         - First blocking reason: ``no `ripr-waive` label`` at `src/a.rs:4`\n\
+         - Detail: the `Gate decision` section below, and `gate-decision.md` in the `ripr-reports` artifact.\n"
+    );
+    let at = |heading: &str| summary.find(heading).ok_or(format!("no {heading}"));
+    assert!(at("## RIPR advisory summary")? < at("### RIPR gate: blocked")?);
+    assert!(at("### RIPR gate: blocked")? < at("### What RIPR found in this pull request")?);
+    assert_eq!(summary.matches("### RIPR gate").count(), 1, "{summary}");
+    // The detailed section still follows, unchanged.
+    assert!(block(&summary, "### Gate decision").contains("- Status: `blocked`"));
+    Ok(())
+}
+
+#[test]
+fn a_gate_config_error_leads_the_summary_with_its_message() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-config")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "config_error",
+            "mode": "baseline-check",
+            "config_errors": ["baseline-check mode requires an explicit --baseline artifact"],
+        }),
+    )?;
+    let summary = render_gate_mode(&fixture, "baseline-check")?;
+    assert_eq!(
+        block(&summary, "### RIPR gate: configuration error"),
+        "**The RIPR gate could not evaluate this pull request** under `baseline-check` mode. This is a setup problem, not a finding about the code.\n\
+         - Config error: `baseline-check mode requires an explicit --baseline artifact`\n"
+    );
+    assert!(
+        summary.find("### RIPR gate: configuration error")
+            < summary.find("### What RIPR found in this pull request")
+    );
+    Ok(())
+}
+
+/// A set `RIPR_GATE_MODE` the gate refuses writes no decision. The summary
+/// names the value as the cause, at the top and in the gate section, instead
+/// of telling the reader to opt in.
+#[test]
+fn an_unknown_gate_mode_is_named_as_the_cause() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-mode")?;
+    fs::remove_file(fixture.root.join("target/ripr/reports/gate-decision.json"))?;
+    fs::remove_file(fixture.root.join("target/ripr/reports/gate-decision.md"))?;
+    let summary = render_gate_mode(&fixture, "visible_only")?;
+    let verdict = block(&summary, "### RIPR gate: unknown `RIPR_GATE_MODE`");
+    assert!(
+        verdict.contains("- Gate message: ``unknown gate mode \"visible_only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.``\n"),
+        "{verdict}"
+    );
+    assert!(
+        summary.find("### RIPR gate: unknown `RIPR_GATE_MODE`")
+            < summary.find("### What RIPR found in this pull request")
+    );
+    let gate = block(&summary, "### Gate decision");
+    assert_eq!(
+        gate,
+        "Gate decision was not run: `RIPR_GATE_MODE` is set to `visible_only`, which is not a gate mode. Set it to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`, or unset it to stay advisory.\n"
+    );
+
+    // An accepted mode without a decision is not an unknown mode, and an
+    // unset mode keeps the opt-in line.
+    let accepted = render_gate_mode(&fixture, "acknowledgeable")?;
+    assert!(!accepted.contains("### RIPR gate"), "{accepted}");
+    assert!(
+        block(&accepted, "### Gate decision").starts_with(
+            "Gate decision was not written although `RIPR_GATE_MODE` is `acknowledgeable`: "
+        ),
+        "{accepted}"
+    );
+    let unset = render_gate_mode(&fixture, "")?;
+    assert!(!unset.contains("### RIPR gate"), "{unset}");
+    assert!(
+        block(&unset, "### Gate decision")
+            .starts_with("Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`"),
+        "{unset}"
+    );
+    Ok(())
+}
+
+/// Only a failing verdict adds the block. A decision that passes, is
+/// advisory, is acknowledged, carries a status this renderer does not word,
+/// or is unreadable renders the same bytes whatever accepted mode is set.
+#[test]
+fn a_gate_that_does_not_fail_adds_nothing() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-quiet")?;
+    let baseline = render_gate_mode(&fixture, "visible-only")?;
+    assert!(!baseline.contains("### RIPR gate"), "{baseline}");
+    for status in ["pass", "advisory", "acknowledged"] {
+        fixture.json(
+            "target/ripr/reports/gate-decision.json",
+            &json!({"status": status, "mode": "acknowledgeable", "summary": {"blocking": 0}}),
+        )?;
+        let quiet = render_gate_mode(&fixture, "acknowledgeable")?;
+        assert!(!quiet.contains("### RIPR gate"), "{status}: {quiet}");
+        assert_eq!(
+            quiet,
+            render_gate_mode(&fixture, "calibrated-gate")?,
+            "{status}"
+        );
+    }
+    fixture.write("target/ripr/reports/gate-decision.json", "{not json")?;
+    let unreadable = render_gate_mode(&fixture, "acknowledgeable")?;
+    assert!(!unreadable.contains("### RIPR gate"), "{unreadable}");
+    Ok(())
+}
+
+/// A decision report left by an earlier run is not this run's verdict. The
+/// verdict needs the report to name the mode this run is set to, and a mode
+/// the gate refuses is named first, because the gate did not run under it.
+#[test]
+fn a_decision_from_another_mode_is_not_this_runs_verdict() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-leftover")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 1},
+            "decisions": [{"decision": "blocking", "gate_reason": "no label"}],
+        }),
+    )?;
+    assert!(
+        render_gate_mode(&fixture, "acknowledgeable")?.contains("### RIPR gate: blocked\n"),
+        "the fixture must be a verdict under its own mode"
+    );
+    for mode in ["calibrated-gate", "visible-only", ""] {
+        let summary = render_gate_mode(&fixture, mode)?;
+        assert!(!summary.contains("### RIPR gate"), "{mode:?}: {summary}");
+    }
+    let refused = render_gate_mode(&fixture, "visible_only")?;
+    assert!(
+        refused.contains("### RIPR gate: unknown `RIPR_GATE_MODE`\n"),
+        "{refused}"
+    );
+    assert!(!refused.contains("### RIPR gate: blocked"), "{refused}");
+    assert_eq!(refused.matches("### RIPR gate").count(), 1, "{refused}");
     Ok(())
 }
