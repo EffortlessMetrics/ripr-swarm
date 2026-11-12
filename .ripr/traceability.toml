@@ -21091,6 +21091,8 @@ id = "RIPR-SPEC-0287"
 name = "Agent stub names the repair journey it feeds"
 spec = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
 tests = [
+  "crates/ripr/tests/proposal_only_repair_start.rs::printed_kind_stub_stays_inside_the_retained_repair_cage",
+  "crates/ripr/tests/agent_stub_compiles.rs::written_integration_stub_compiles_under_cargo_test_and_stops_at_its_own_todo",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",

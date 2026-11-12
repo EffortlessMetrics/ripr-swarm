@@ -647,8 +647,10 @@ generation time instead of refusing later at the repair before phase's
 dirty-premise gate. The block is present only when the classified seam
 establishes the repair route (the same fail-closed flip the pilot's offered
 repair start uses); otherwise the key stays absent rather than inventing a
-route — notably for `--at --kind` file-parse selections, which carry no
-classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
+route. `--at --kind` first selects a shape, then reuses its exact classified
+gap entry when available for the same placement and divergence guard as
+`--seam-id`. An unavailable entry cannot establish a repair route. The `0.2`
+field set is unchanged; refused envelopes keep it.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
 Ready stub documents add `already_present`; the new refusal-kind spelling
@@ -660,7 +662,8 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
 - `grip_class` — the inventory seam grip class when classification named
   this seam (`strongly_gripped`, `weakly_gripped`, `ungripped`, …), else
   `null`. `--at --kind` still selects from a file parse without using
-  classification to pick the seam; the field is a lookup after selection.
+  classification to pick the seam; the selected entry is looked up afterward
+  for placement, guard behavior and disclosure.
 - `classification` — the check-side exposure counterpart of `grip_class`
   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
