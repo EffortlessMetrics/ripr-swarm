@@ -439,10 +439,6 @@ mod tests {
         Ok(())
     }
 
-    /// RC walk (py-pricing): `check` and the repair card named
-    /// `test_discount_far_above_threshold` while the context witness named the
-    /// first strong related test. The suggested repair test is the fix site
-    /// when it is one of the related tests; otherwise the ranking decides.
     /// #14454: a strong row that cannot observe the change (an `Ok`-only pin
     /// on a changed error variant) is never the fix site over a weaker row
     /// that does; without that miss, oracle strength still leads.
@@ -485,6 +481,10 @@ mod tests {
         assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
     }
 
+    /// RC walk (py-pricing): `check` and the repair card named
+    /// `test_discount_far_above_threshold` while the context witness named the
+    /// first strong related test. The suggested repair test is the fix site
+    /// when it is one of the related tests; otherwise the ranking decides.
     #[test]
     fn fix_site_follows_the_suggested_repair_test() {
         let related = |name: &str, line: usize| RelatedTest {

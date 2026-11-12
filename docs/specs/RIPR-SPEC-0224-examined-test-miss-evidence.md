@@ -461,17 +461,22 @@ written and must not copy these gaps.
   before; `assertion_not_observing` rows take only the slots left free, so no
   window, fix site, exact-oracle alignment or repair readiness changes.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
-- On a changed error variant (an exact fact whose flow sink is
-  `error_variant`), a strong or medium row whose oracle is a plain
-  `assert_eq!` pinning only the `Ok` arm (an `Ok(..)` side, or an
-  `.unwrap()` / `.expect(..)` side, and no side naming `Err`) gets
-  `assertion_not_observing`, not `missing_exact_assertion` (#14454). Such a
-  pin cannot separate one `Err` variant from another: if its input reaches
-  the changed branch it fails on old and new code alike, and if not it never
-  sees the change. The row keeps its role and oracle, so no class or gate
-  changes, but the `tK=` row and the fix site prefer a row that can observe
-  the change (see Current Rust conformance gaps). A changed struct field, an
-  `assert_ne!` and an `Err`-naming side keep `missing_exact_assertion`.
+- On an `Err`-to-`Err` variant swap (the probe's base and head text each
+  construct one literal `Err(..)` variant and they differ; unknown base text
+  fails closed), a row the annotation pass marked `missing_exact_assertion`
+  whose oracle is a plain `assert_eq!` pinning only the `Ok` arm (an
+  `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
+  naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
+  `.map_err(..)`) becomes `assertion_not_observing` with no `miss_support`
+  (#14454). Such a pin cannot separate one `Err` variant from another: if its
+  input reaches the changed branch it fails on old and new code alike, and if
+  not it never sees the change. A guard flip or an `Ok`-to-`Err` change is
+  not a swap, because an `Ok` pin can fail on the new code there. The row
+  keeps its role and oracle, so no class or gate changes, and the
+  exact-oracle next step never runs for a literal `Err` variant probe. The
+  `tK=` row and the fix site prefer a row that can observe the change (see
+  Current Rust conformance gaps). A changed struct field, an `assert_ne!`
+  and an `Err`-naming side keep `missing_exact_assertion`.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
