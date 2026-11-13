@@ -36,8 +36,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: No test is seen calling cmp; a trait method can run through formatting, operators or generic code
-    - infection unknown: No reachable tests were found, so infection cannot be established
-    - 4 more detail line(s) in --format human-full
+    - propagation yes: Complete propagation witness reaches returned value: let Some(rhs) = rhs.next() else {
+    - 3 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -59,7 +59,6 @@ Hidden:
     - ./src/eval.rs:143 (no path, base-side); kind: match_arm; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:143 (no path, lower-priority candidate); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:143 (no path, base-side); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
-    - ./src/eval.rs:143 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
     - ./src/eval.rs:144 (no path, lower-priority candidate); kind: predicate; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:145 (no path, lower-priority candidate); kind: predicate; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:145 (no path, lower-priority candidate); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
@@ -67,10 +66,12 @@ Hidden:
     - ./src/eval.rs:147 (no path, lower-priority candidate); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:149 (no path, base-side); kind: match_arm; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
     - ./src/eval.rs:149 (no path, base-side); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
+    - ./src/impls.rs:118 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: No reachable tests were found, so infection cannot be established
   Hidden classes:
     no path = no test path was found
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
-    - … and 6 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.
+    - … and 6 more omitted finding(s): 3 unknown: infection unclear, 3 unknown: static analysis limited; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -35,3 +35,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (4)
+
+Reason:
+RIPR-SPEC-0001: formatting-only re-bless; the evidence detail-window selection changed (#14554) and one hidden finding class label moved from unknown: static analysis limited to unknown: infection unclear; no stage state moved (PR #14484 head e036cf6c94)
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`
