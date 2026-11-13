@@ -528,7 +528,7 @@ fn gather(
         let name = entry
             .file_name()
             .into_string()
-            .map_err(|_| "native source path is not UTF-8")?;
+            .map_err(|error| format!("native source path is not UTF-8: {error:?}"))?;
         let path = format!("{directory}/{name}");
         if entry
             .file_type()
