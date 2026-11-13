@@ -4245,6 +4245,7 @@ mod tests {
                 ("src/lib.rs", "pub fn f() {}\n"),
             ],
         )?;
+        crate::testing::fixture_git::fixture_git_ok(&root, &["init", "-q"])?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
         let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {

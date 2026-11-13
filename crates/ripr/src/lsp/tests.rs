@@ -23564,6 +23564,26 @@ fn quarantine_fixture(name: &str) -> Result<QuarantineFixture, String> {
     })
 }
 
+/// These refresh controls need an independent committed workspace, rather
+/// than borrowing the checkout that happens to contain the temp directory.
+fn commit_quarantine_git(fixture: &QuarantineFixture) -> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+    fixture_git_ok(&fixture.root, &["init", "-q"])?;
+    fixture_git_ok(&fixture.root, &["add", "src"])?;
+    fixture_git_ok(
+        &fixture.root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    )
+}
+
 fn quarantine_finding(id: &str, file: &str) -> Finding {
     let mut finding = sample_finding();
     finding.id = id.to_string();
@@ -24113,6 +24133,7 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
     // it as saved content and schedule analysis. A buffer that is merely ahead
     // of disk (typing) must still wait for a real save.
     let fixture = quarantine_fixture("external-rewrite")?;
+    commit_quarantine_git(&fixture)?;
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
     drop(socket);
     let backend = service.inner();
@@ -24236,6 +24257,7 @@ async fn unanalyzed_hover_text(
     commit_snapshot: bool,
 ) -> Result<String, String> {
     let fixture = quarantine_fixture(name)?;
+    commit_quarantine_git(&fixture)?;
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
     drop(socket);
     let backend = service.inner();
@@ -24267,6 +24289,12 @@ async fn unanalyzed_hover_text(
     }
     if !settled {
         return Err("the opening refresh did not settle".to_string());
+    }
+    if !matches!(
+        backend.analysis_attempt_state_for_test(),
+        AnalysisAttemptState::Succeeded
+    ) {
+        return Err("the opening refresh did not succeed in the committed fixture".to_string());
     }
     // `c.rs` is on disk but no analysis read it.
     let path_c = fixture.root.join("src").join("c.rs");

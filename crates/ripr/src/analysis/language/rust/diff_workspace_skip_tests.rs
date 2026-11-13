@@ -238,6 +238,20 @@ fn generated_only_instant_skips_walk_and_still_counts_the_skip() -> Result<(), S
 #[test]
 fn rust_edit_and_deep_docs_still_walk() -> Result<(), String> {
     let fixture = crate_fixture("must-walk")?;
+    crate::testing::fixture_git::fixture_git_ok(&fixture.0, &["init", "-q"])?;
+    crate::testing::fixture_git::fixture_git_ok(&fixture.0, &["add", "Cargo.toml", "src/lib.rs"])?;
+    crate::testing::fixture_git::fixture_git_ok(
+        &fixture.0,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    )?;
     let (rust_result, rust_walks) = crate::analysis::workspace::discover_probe::observe(|| {
         analyze(&fixture.0, AnalysisMode::Instant, &rust_diff())
     });
