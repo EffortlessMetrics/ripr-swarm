@@ -25503,6 +25503,26 @@ fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Resu
             ));
         }
     }
+    // #14440: a replayed artifact records findings, not whether its run was
+    // complete, so a file with no recorded finding is never an all-clear.
+    for command in ["explain", "context"] {
+        let mut args = vec![command, "--root", &root, "--from", &artifact];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push("src/nofile.rs:3");
+        let output = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(2)
+            || !stderr.contains("No finding was reported in \"src/nofile.rs\"")
+            || !stderr.contains("does not record whether its run was complete")
+            || stderr.contains("No finding in this scope is in")
+        {
+            return Err(format!(
+                "{args:?} artifact miss must not read as an all-clear: {stderr}"
+            ));
+        }
+    }
     Ok(())
 }
 
