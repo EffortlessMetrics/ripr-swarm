@@ -18,7 +18,11 @@
 //! subprocess surface. For offline or sandboxed use it also accepts
 //! `--input <path>`, a JSON file the caller produces (for example
 //! `gh run list --workflow "Routed Rust Small" --json ... > runs.json`).
+//! Opt-in `--all-attempts` uses bounded native REST attempt/job observations
+//! instead of the latest-only collector; it does not collect failure logs.
 
+#[path = "ci_budget/native.rs"]
+mod native;
 #[path = "ci_budget/occupancy.rs"]
 mod occupancy;
 
@@ -32,8 +36,7 @@ const CI_BUDGET_SCHEMA_VERSION: &str = "0.1";
 const CI_BUDGET_STATE: &str = "advisory-report-only";
 const CI_BUDGET_JSON: &str = "ci-budget.json";
 const CI_BUDGET_MD: &str = "ci-budget.md";
-const CI_BUDGET_USAGE: &str =
-    "usage: cargo xtask ci-budget [--workflow <name>] [--limit <n>] [--input <path>]";
+const CI_BUDGET_USAGE: &str = "usage: cargo xtask ci-budget [--workflow <name>] [--limit <n>] [--input <path>] [--all-attempts]";
 
 /// The impl lanes a routed run can land on, parsed from job names. The route
 /// and result coordinator jobs are tracked separately and are never counted
@@ -55,9 +58,14 @@ pub(crate) fn ci_budget(args: &[String]) -> Result<(), String> {
                     format!("failed to parse ci-budget input {path} as JSON: {err}")
                 })?)?
             }
+            None if options.all_attempts => {
+                native::collect(&options.workflow, options.limit, |args| {
+                    run_output_owned("gh", args)
+                })?
+            }
             None => collect_runs_live(&options.workflow, options.limit)?,
         };
-    let report = build_report(&options.workflow, options.limit, &runs);
+    let report = build_collected_report(&options, &runs);
 
     let json_value = report_json(&report);
     let json_text = serde_json::to_string_pretty(&json_value)
@@ -74,6 +82,7 @@ struct CiBudgetOptions {
     workflow: String,
     limit: usize,
     input: Option<String>,
+    all_attempts: bool,
 }
 
 impl Default for CiBudgetOptions {
@@ -82,6 +91,7 @@ impl Default for CiBudgetOptions {
             workflow: DEFAULT_WORKFLOW.to_string(),
             limit: DEFAULT_LIMIT,
             input: None,
+            all_attempts: false,
         }
     }
 }
@@ -91,6 +101,7 @@ fn parse_options(args: &[String]) -> Result<CiBudgetOptions, String> {
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
+            "--all-attempts" => options.all_attempts = true,
             "--workflow" => {
                 index += 1;
                 options.workflow = non_empty_arg(args, index, "--workflow")?.to_string();
@@ -117,6 +128,9 @@ fn parse_options(args: &[String]) -> Result<CiBudgetOptions, String> {
             }
         }
         index += 1;
+    }
+    if options.all_attempts && options.input.is_some() {
+        return Err("--all-attempts requires live native collection, not --input".into());
     }
     Ok(options)
 }
@@ -165,6 +179,8 @@ struct RawRun {
     /// to surface the GB-free figure when the disk guard tripped). Empty for
     /// non-failed runs or when the log could not be fetched.
     failed_log: String,
+    collection_reasons: Vec<String>,
+    native_subject: Option<Value>,
 }
 
 fn collect_runs_live(workflow: &str, limit: usize) -> Result<Vec<RawRun>, String> {
@@ -258,6 +274,8 @@ fn raw_run_from_value(item: &Value) -> Result<RawRun, String> {
             .filter(|a| *a > 0),
         attempt_bound: true, // Offline input explicitly associates jobs with this snapshot.
         failed_log: json_str(item, "failed_log"),
+        collection_reasons: Vec::new(),
+        native_subject: None,
     })
 }
 
@@ -532,6 +550,7 @@ struct DurationStat {
 
 #[derive(Clone, Debug, PartialEq)]
 struct CiBudgetReport {
+    collection_mode: &'static str,
     workflow: String,
     limit: usize,
     total_runs: usize,
@@ -550,7 +569,20 @@ struct CiBudgetReport {
     disk_guard_events: Vec<DiskGuardEvent>,
     queue_wait: Option<(u64, u64, u64)>,
     occupancy: occupancy::Occupancy,
+    native_observations: Vec<Value>,
     occupancy_snapshots: Vec<occupancy::Snapshot>,
+}
+
+fn build_collected_report(options: &CiBudgetOptions, runs: &[RawRun]) -> CiBudgetReport {
+    let mut report = build_report(&options.workflow, options.limit, runs);
+    report.collection_mode = if options.input.is_some() {
+        "offline_input"
+    } else if options.all_attempts {
+        "native_all_attempts"
+    } else {
+        "legacy_latest_attempt"
+    };
+    report
 }
 
 fn build_report(workflow: &str, limit: usize, runs: &[RawRun]) -> CiBudgetReport {
@@ -666,9 +698,22 @@ fn build_report(workflow: &str, limit: usize, runs: &[RawRun]) -> CiBudgetReport
                 .collect(),
         })
         .collect::<Vec<_>>();
+    let mut occupancy = occupancy::calculate(&occupancy_snapshots);
+    for run in runs {
+        occupancy.reasons.extend(
+            run.collection_reasons
+                .iter()
+                .map(|reason| format!("run {}: {reason}", run.database_id)),
+        );
+    }
+    occupancy.reasons.sort();
+    occupancy.reasons.dedup();
+    occupancy.complete = occupancy.reasons.is_empty();
     let failure_total = failure_classes.values().sum();
     CiBudgetReport {
-        occupancy: occupancy::calculate(&occupancy_snapshots),
+        collection_mode: "supplied_snapshots",
+        occupancy,
+        native_observations: runs.iter().filter_map(|r| r.native_subject.as_ref().map(|subject| json!({"run_id": r.database_id, "attempt": r.native_attempt, "subject": subject, "collection_reasons": r.collection_reasons}))).collect(),
         occupancy_snapshots,
         workflow: workflow.to_string(),
         limit,
@@ -778,6 +823,7 @@ fn report_json(report: &CiBudgetReport) -> Value {
         "disk_guard_events": disk_guard_events,
         "queue_wait": queue_wait,
         "runner_occupancy": {
+            "collection_mode": report.collection_mode,
             "scope": "captured_job_snapshots_only",
             "unit": "raw_runner_seconds",
             "observed_subtotal_seconds": report.occupancy.observed_runner_seconds,
@@ -786,6 +832,7 @@ fn report_json(report: &CiBudgetReport) -> Value {
             "captured_attempt_accounting_complete": report.occupancy.complete,
             "incomplete_reasons": report.occupancy.reasons,
             "portfolio_complete": false,
+            "native_observations": report.native_observations,
             "snapshots": report.occupancy_snapshots.iter().map(|snapshot| json!({
                 "run_id": snapshot.run_id, "attempt": snapshot.attempt,
                 "attempt_bound": snapshot.attempt_bound,
@@ -832,7 +879,17 @@ fn report_markdown(report: &CiBudgetReport) -> String {
     for reason in &report.occupancy.reasons {
         body.push_str(&format!("- {reason}\n"));
     }
-    body.push_str("\nScope: captured job snapshots only, including coordinators and failed/cancelled work. Live collection reads latest-attempt jobs, not all attempts, and cannot bind separate list/job reads atomically. This subtotal is not active elapsed, queue wait, a complete qualification portfolio, a stack cost, or a billed/monthly total. Missing or conflicting work is excluded, not estimated.\n\n");
+    body.push_str(&format!(
+        "\nCollection mode: `{}`. ",
+        report.collection_mode
+    ));
+    body.push_str(match report.collection_mode {
+        "native_all_attempts" => "The bounded native collector reads numbered attempts with complete job pages and closing currentness observations. These reads are not atomic. ",
+        "legacy_latest_attempt" => "Default live collection reads latest-attempt jobs only and does not independently bind their attempt. ",
+        "offline_input" => "Offline input supplies snapshots; their native provenance is not independently verified. ",
+        _ => "Supplied snapshots are not independently verified native collection. ",
+    });
+    body.push_str("Scope: captured job snapshots only, including coordinators and failed/cancelled work. This subtotal is not active elapsed, queue wait, a complete qualification portfolio, a stack cost, or a billed/monthly total. Missing or conflicting work is excluded, not estimated.\n\n");
 
     body.push_str("Legacy diagnostics below count input snapshots, including duplicates, rather than distinct native runs or observed attempts. Attempt totals sum supplied ordinals; lane durations and queue-wait statistics are likewise snapshot observations. Use the separate deduplicated occupancy calculation above for observed work.\n\n");
     body.push_str("## Input snapshots by conclusion\n\n");
@@ -1326,6 +1383,44 @@ mod tests {
         assert!(markdown.contains("Disk-guard tempfail tax"));
         assert!(markdown.contains("issue #1058"));
         assert!(markdown.contains("infra_disk_guard"));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod all_attempt_option_tests {
+    #[test]
+    fn explicit_all_attempt_collection_is_accepted() {
+        assert!(super::parse_options(&["--all-attempts".into()]).is_ok());
+    }
+    #[test]
+    fn empty_collection_retains_selected_mode_in_both_outputs() -> Result<(), String> {
+        for (args, mode, text) in [
+            (
+                vec!["--all-attempts".into()],
+                "native_all_attempts",
+                "reads numbered attempts",
+            ),
+            (
+                vec![],
+                "legacy_latest_attempt",
+                "reads latest-attempt jobs only",
+            ),
+            (
+                vec!["--input".into(), "input.json".into()],
+                "offline_input",
+                "native provenance is not independently verified",
+            ),
+        ] {
+            let options = super::parse_options(&args)?;
+            let report = super::build_collected_report(&options, &[]);
+            let json = super::report_json(&report);
+            let markdown = super::report_markdown(&report);
+            assert_eq!(json["runner_occupancy"]["collection_mode"], mode);
+            assert!(markdown.contains(mode));
+            assert!(markdown.contains(text));
+            assert!(!report.occupancy.complete);
+        }
         Ok(())
     }
 }

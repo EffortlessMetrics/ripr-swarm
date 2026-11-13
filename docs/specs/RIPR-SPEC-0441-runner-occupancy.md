@@ -30,14 +30,38 @@ overflow prevent complete captured-attempt accounting. Empty samples are not
 complete zero-cost qualifications. Timestamps accept whole-second UTC only;
 offsets and fractional timestamps remain explicitly unsupported, not truncated.
 
-Live collection still reads only latest-attempt jobs. Separate list/job reads
+Default live collection still reads only latest-attempt jobs. Separate list/job reads
 are not an atomic attempt binding, so live accounting explicitly remains
 incomplete. Offline embedded jobs belong to the supplied run/attempt snapshot;
 multiple snapshots can retain earlier attempts. Their identities and raw job
 timestamps appear in JSON. This is input evidence, not independently verified
 GitHub provenance. Legacy arithmetic is unchanged: JSON basis metadata and Markdown labels identify
 input-snapshot counts and sums of attempt ordinals, not distinct native runs or
-observed attempts. These are not an all-attempt or deduplicated cohort report.
+observed attempts. These legacy diagnostics are not a deduplicated cohort report.
+
+Opt-in `--all-attempts` resolves the repository through native `gh api` repository placeholders, validates
+its native REST numeric ID/name, fixes the API hostname to `github.com` and
+the run-list repository to `github.com/owner/name`, samples run IDs with the existing selected
+workflow, then reads each current run and every numbered attempt. Job pages
+must retain the complete positive `total_count`, unique IDs, exact run/attempt
+and head SHA. Attempt reads bracket job collection; a closing current-run read
+must retain subject, workflow, event, attempt and state. Native subject bindings
+are retained in `runner_occupancy.native_observations`. This is observation,
+not an atomic snapshot or qualification authority.
+
+Bounds are 100 sampled runs, 20 attempts per run, 20 pages of 100 jobs per
+attempt, 2,000 total transport reads and 4 MiB per parsed response. The existing
+process owner governs subprocess execution. Initial repository/list failure
+returns an error, not a complete report. Per-run unavailable, inconsistent or
+over-bound observations preserve validated partial work and explicit incomplete
+reasons. An unavailable earlier attempt does not discard valid later-attempt work.
+The selected collection mode is explicit in both outputs, including empty samples.
+Empty inventories never mean complete zero cost. Duplicate page IDs
+refuse complete collection; contradictory job observations exclude that job.
+No retry, arbitrary API path, mutation or job-log collection is introduced.
+Failures in this mode therefore retain unknown failure classification rather
+than borrowing latest-attempt logs. Default failure classification is unchanged.
+`--all-attempts` cannot be combined with offline `--input`.
 
 JSON and Markdown share the same calculation. Missing or conflicting work is
 excluded from the observed subtotal, never estimated by multiplying duration
@@ -55,7 +79,7 @@ captured-attempt accounting from whole-portfolio completeness.
 
 ## Non-Goals
 
-- No all-attempt native collector or authenticated provenance for offline input.
+- No authenticated provenance for offline input or atomic cross-read guarantee.
 - No inference of queue membership, critical path, billed cost or monthly cost.
 - No qualification authority, workflow routing change or CI performance claim.
 
@@ -83,11 +107,20 @@ captured-attempt accounting from whole-portfolio completeness.
 - `xtask/src/reports/ci_budget.rs::tests::multiple_attempt_snapshots_label_legacy_ordinals_and_deduped_work`
 - `xtask/src/reports/ci_budget.rs::tests::occupancy_renders_nonlegacy_jobs_and_incompleteness`
 
+- `xtask/src/reports/ci_budget/native.rs::tests::native_two_attempts_sum_actual_work`
+- `xtask/src/reports/ci_budget/native.rs::tests::native_identity_and_inventory_fail_closed`
+- `xtask/src/reports/ci_budget/native.rs::tests::paginated_jobs_are_complete_and_duplicates_refuse`
+- `xtask/src/reports/ci_budget/native.rs::tests::unavailable_early_attempt_retains_later_observed_work`
+- `xtask/src/reports/ci_budget.rs::all_attempt_option_tests::empty_collection_retains_selected_mode_in_both_outputs`
+- `xtask/src/command.rs::tests::ci_budget_help_advertises_all_attempt_observation`
+
 ## Implementation Mapping
 
 - `xtask/src/reports/ci_budget/occupancy.rs`: pure raw occupancy calculation.
 - `xtask/src/reports/ci_budget.rs`: existing collector, input DTO, aggregation,
-  and JSON/Markdown output. Live collection remains latest-only and unbound.
+  and JSON/Markdown output. Default collection remains latest-only and unbound.
+- `xtask/src/reports/ci_budget/native.rs`: opt-in bounded native attempt collection.
+- `xtask/src/command.rs`: command routing and rendered help/catalog.
 - `.ripr/traceability.d/14525-runner-occupancy.toml`: behavior mapping.
 
 ## Metrics
