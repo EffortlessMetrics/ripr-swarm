@@ -876,4 +876,234 @@ mod tests {
         // An owner outside any `src` directory has no package to anchor to.
         assert!(!standalone("scripts/inner.rs", "tests/derived.rs"));
     }
+
+    const OWNER: &str = "fn join(receipts: &[Receipt], requests: &[String], task_id: &str) -> Vec<(Receipt, &'static str)> {
+    receipts.iter().filter_map(|receipt| {
+        let in_request = requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)));
+        let same_task = receipt.id == task_id;
+        let relation = match (in_request, same_task) {
+            (false, false) => return None,
+            (true, true) => \"both\",
+            (true, false) => \"request\",
+            (false, true) => \"task\",
+        };
+        Some((receipt, relation))
+    }).collect()
+}
+";
+
+    fn probe_at(line: usize, before: Option<&str>, after: &str) -> Probe {
+        Probe {
+            id: crate::domain::ProbeId("probe:test".to_string()),
+            location: crate::domain::SourceLocation::new("src/lib.rs", line, 1),
+            owner: None,
+            family: ProbeFamily::MatchArm,
+            delta: crate::domain::DeltaKind::Value,
+            before: before.map(str::to_string),
+            after: Some(after.to_string()),
+            expression: after.to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    fn line_of(source: &str, needle: &str) -> Option<usize> {
+        source
+            .lines()
+            .position(|line| line.contains(needle))
+            .map(|index| index + 1)
+    }
+
+    fn witness(source: &str, needle: &str, before: Option<&str>) -> Option<DerivedWitness> {
+        let root = parsed(source)?;
+        let function = named_function(&root, "join")?;
+        let line = line_of(source, needle)?;
+        let after = needle.trim_end_matches(',');
+        derived_witness(source, &function, &probe_at(line, before, after))
+    }
+
+    #[test]
+    fn the_changed_arm_of_the_derived_tuple_match_yields_its_input_and_unique_result()
+    -> Result<(), String> {
+        let selected = witness(OWNER, "(true, false) => \"request\",", None)
+            .ok_or("the fixture owner is the supported shape")?;
+        assert_eq!(selected.input, [true, false]);
+        assert_eq!(selected.result, "request");
+        assert!(!selected.terminal);
+        let other = witness(OWNER, "(false, true) => \"task\",", None).ok_or("task arm")?;
+        assert_eq!(other.input, [false, true]);
+        assert_eq!(other.result, "task");
+        // The `(false, false)` arm is the `None` exit, never a changed witness.
+        assert!(witness(OWNER, "(false, false) => return None,", None).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_line_that_is_not_an_arm_start_selects_nothing() -> Result<(), String> {
+        let root = parsed(OWNER).ok_or("fixture parses")?;
+        let function = named_function(&root, "join").ok_or("fixture owner")?;
+        let line = line_of(OWNER, "(true, false) =>").ok_or("arm line")?;
+        let probe = |line: usize, after: &str| {
+            derived_witness(OWNER, &function, &probe_at(line, None, after))
+        };
+        assert!(probe(line, "(true, false) => \"request\",").is_some());
+        // Wrong line for the claimed arm text, or arm text of another arm.
+        assert!(probe(line + 1, "(true, false) => \"request\",").is_none());
+        assert!(probe(line, "(true, false) => \"other\",").is_none());
+        assert!(probe(1, "(true, false) => \"request\",").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_old_arm_must_keep_the_pattern_and_change_the_result() {
+        let needle = "(true, false) => \"request\",";
+        let with_before = |before: &str| witness(OWNER, needle, Some(before));
+        assert!(with_before("(true, false) => \"old\",").is_some());
+        // Same result: nothing changed.
+        assert!(with_before("(true, false) => \"request\",").is_none());
+        // A different pattern is a different arm, not this edit.
+        assert!(with_before("(false, true) => \"old\",").is_none());
+        // An unreadable, guarded or multi-arm old text refuses.
+        assert!(with_before("(true, false) if flag => \"old\",").is_none());
+        assert!(with_before("(true, false) => compute(),").is_none());
+        assert!(with_before("(true, false) => \"a\", (true, true) => \"b\",").is_none());
+        assert!(with_before("not an arm").is_none());
+    }
+
+    fn mutated(from: &str, to: &str) -> String {
+        assert!(OWNER.contains(from), "control must apply: {from}");
+        OWNER.replacen(from, to, 1)
+    }
+
+    #[test]
+    fn an_owner_outside_the_exact_four_arm_shape_is_refused() {
+        let needle = "(true, false) => \"request\",";
+        assert!(witness(OWNER, needle, None).is_some(), "control");
+        for (name, source) in [
+            (
+                "duplicate result literal",
+                mutated("(true, true) => \"both\"", "(true, true) => \"request\""),
+            ),
+            (
+                "guarded arm",
+                mutated("(true, true) =>", "(true, true) if flag =>"),
+            ),
+            (
+                "attribute on an arm",
+                mutated("(true, true) =>", "#[allow(unused)] (true, true) =>"),
+            ),
+            (
+                "missing arm",
+                mutated("            (false, true) => \"task\",\n", ""),
+            ),
+            (
+                "repeated pattern",
+                mutated("(false, true) => \"task\"", "(true, true) => \"task\""),
+            ),
+            (
+                "none arm returns a value",
+                mutated("return None", "return Some(1)"),
+            ),
+            (
+                "none arm is a bare expression",
+                mutated("return None", "None"),
+            ),
+            (
+                "wildcard pattern",
+                mutated("(false, true) => \"task\"", "(false, _) => \"task\""),
+            ),
+            (
+                "escaped result literal",
+                mutated("\"task\"", "\"ta\\\\sk\""),
+            ),
+            (
+                "same name in both tuple slots",
+                mutated(
+                    "match (in_request, same_task)",
+                    "match (in_request, in_request)",
+                ),
+            ),
+            (
+                "closure returns the wrong pair",
+                mutated("Some((receipt, relation))", "Some((relation, receipt))"),
+            ),
+            (
+                "task identity uses an inequality",
+                mutated("receipt.id == task_id", "receipt.id != task_id"),
+            ),
+            (
+                "request membership is negated",
+                mutated("= requests.iter()", "= !requests.iter()"),
+            ),
+            (
+                "closure body has an extra statement",
+                mutated(
+                    "        Some((receipt, relation))",
+                    "        let extra = 1;\n        Some((receipt, relation))",
+                ),
+            ),
+            ("owner is async", mutated("fn join", "async fn join")),
+            (
+                "owner carries an attribute",
+                mutated("fn join", "#[inline]\nfn join"),
+            ),
+            (
+                "owner is not a filter_map collect",
+                mutated(".collect()\n}", ".count()\n}"),
+            ),
+            (
+                "owner has a leading statement",
+                mutated("    receipts.iter()", "    let n = 1;\n    receipts.iter()"),
+            ),
+        ] {
+            // The attribute and async mutations shift lines; relocate the arm.
+            assert!(
+                witness(&source, needle, None).is_none(),
+                "{name} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn each_derived_match_in_one_owner_selects_only_the_arm_on_the_changed_line()
+    -> Result<(), String> {
+        let doubled = OWNER.replace(
+            "    }).collect()\n}",
+            "    }).chain(receipts.iter().filter_map(|receipt| {\n        let in_request = requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)));\n        let same_task = receipt.id == task_id;\n        let relation = match (in_request, same_task) {\n            (false, false) => return None,\n            (true, true) => \"both2\",\n            (true, false) => \"request2\",\n            (false, true) => \"task2\",\n        };\n        Some((receipt, relation))\n    })).collect()\n}",
+        );
+        assert_ne!(doubled, OWNER, "control must apply");
+        let root = parsed(&doubled).ok_or("doubled fixture parses")?;
+        let function = named_function(&root, "join").ok_or("owner")?;
+        let select = |needle: &str| {
+            let line = line_of(&doubled, needle)?;
+            derived_witness(&doubled, &function, &probe_at(line, None, needle))
+                .map(|selected| (selected.input, selected.result))
+        };
+        assert_eq!(
+            select("(true, false) => \"request\","),
+            Some(([true, false], "request".to_string()))
+        );
+        assert_eq!(
+            select("(true, false) => \"request2\","),
+            Some(([true, false], "request2".to_string()))
+        );
+        // The first match's text on the second match's line selects nothing.
+        let line = line_of(&doubled, "\"request2\"").ok_or("second match line")?;
+        let wrong = probe_at(line, None, "(true, false) => \"request\",");
+        assert!(derived_witness(&doubled, &function, &wrong).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_function_name_must_be_defined_exactly_once() -> Result<(), String> {
+        let once = parsed("fn a() {} fn b() {}").ok_or("parses")?;
+        assert!(named_function(&once, "a").is_some());
+        assert!(named_function(&once, "missing").is_none());
+        let twice = parsed("fn a() {} fn a() {}").ok_or("parses")?;
+        assert!(named_function(&twice, "a").is_none());
+        // Only top-level functions count.
+        let nested = parsed("mod m { fn a() {} }").ok_or("parses")?;
+        assert!(named_function(&nested, "a").is_none());
+        Ok(())
+    }
 }
