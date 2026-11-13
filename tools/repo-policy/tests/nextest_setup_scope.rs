@@ -28,6 +28,7 @@ fn installer_guard_is_complete_and_fail_closed() {
 
 // A deliberately small evaluator for the pinned, typed workflow_call condition.
 // Reject unfamiliar syntax rather than claiming general Actions compatibility.
+// Number fixtures are finite; exact ordering retains Actions equality (no epsilon).
 fn install_selected(scratch: bool, shards: f64) -> bool {
     let install = step(GATES, "Install CI tools");
     let guards = field(install, "        if: ");
@@ -36,13 +37,13 @@ fn install_selected(scratch: bool, shards: f64) -> bool {
     for clause in guards[0].split(" || ") {
         selected |= match clause {
             "inputs.use-scratch" => scratch,
-            "inputs.test-shards != 4" => shards != 4.0,
+            "inputs.test-shards != 4" => shards.total_cmp(&4.0) != std::cmp::Ordering::Equal,
             unexpected => {
                 assert_eq!(
                     unexpected, "inputs.test-shards != 4",
                     "unsupported predicate"
                 );
-                shards != 4.0
+                shards.total_cmp(&4.0) != std::cmp::Ordering::Equal
             }
         };
     }
