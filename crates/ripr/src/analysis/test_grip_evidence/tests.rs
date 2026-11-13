@@ -12400,6 +12400,54 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
 }
 
 #[test]
+fn given_same_leaf_name_in_another_module_or_crate_when_grip_associates_then_only_the_companion_is_same_test_file()
+-> Result<(), String> {
+    // #7527: `tests_by_file_stem` keys on the leaf module name, so the
+    // root crate's `src/pricing.rs` paired with `src/billing/pricing.rs`
+    // and with a member crate's `crates/b/tests/pricing.rs`. The test
+    // bodies stay free of owner/discriminator identifiers so SameTestFile
+    // is the only relation the leaf name could produce.
+    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                        { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/pricing.rs"), prod_src),
+        (
+            PathBuf::from("src/billing/pricing.rs"),
+            "#[test] fn other_module_case() { assert_eq!(1, 1); }\n",
+        ),
+        (
+            PathBuf::from("crates/b/tests/pricing.rs"),
+            "#[test] fn member_case() { assert_eq!(1, 1); }\n",
+        ),
+        (
+            PathBuf::from("tests/pricing_test.rs"),
+            "#[test] fn companion_case() { assert_eq!(1, 1); }\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    assert_eq!(index.tests().len(), 3, "fixture must index all three tests");
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    assert_eq!(
+        same_file,
+        ["companion_case"],
+        "{:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
 fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_matches()
 -> Result<(), String> {
     // #3469: a path carrying the other platform's separator (facts

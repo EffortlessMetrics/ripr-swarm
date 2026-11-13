@@ -13,6 +13,7 @@ home = { version = "=0.5.12", optional = true }
 num-bigint = { version = "0.4", optional = true }
 repo-policy = { path = "../tools/repo-policy", optional = true }
 ripr = { path = "../crates/ripr", optional = true }
+ripr-contract = { path = "../crates/ripr-contract", default-features = false, optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -26,14 +27,13 @@ roxmltree = { version = "0.21", optional = true }
 
 [dev-dependencies]
 proptest = "1"
-# Maintained, safe-Rust YAML field extraction for guards and concurrency.
-yaml-rust2 = { version = "=0.10.4", default-features = false }
 
 [features]
 # Ordinary xtask commands and workspace tests retain their complete graph.
 # The UB receipt reporter can disable it without changing its source or tests.
 default = ["automation"]
 automation = [
+    "formal-runner",
     "dep:bigdecimal",
     "dep:home",
     "dep:num-bigint",
@@ -65,6 +65,10 @@ formal-claim-plan = ["dep:serde", "dep:sha2"]
 formal-source-inputs = ["formal-evidence-audit", "dep:ra_ap_syntax"]
 # Passive native preparation consumes the canonical registry and source owner.
 formal-native-bindings = ["formal-claim-registry", "formal-source-inputs"]
+# Linux source-module controls execute the real owner and lane API without
+# code-generating the unrelated analyzer facade or xtask dispatcher.
+formal-runner = ["formal-evidence-audit", "dep:ripr-contract", "dep:rustix"]
+
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.
@@ -96,6 +100,16 @@ required-features = ["automation"]
 
 [[example]]
 name = "mandatory_partitions"
+required-features = ["automation"]
+
+[[test]]
+name = "formal_runner"
+path = "tests/formal_runner.rs"
+required-features = ["formal-runner"]
+
+[[test]]
+name = "kani_version_probe"
+path = "tests/kani_version_probe.rs"
 required-features = ["automation"]
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -23,6 +23,7 @@ pub(crate) use crate::formal_evidence::kani_output::{
 use crate::run;
 use serde::{Deserialize, Serialize};
 
+#[path = "kani_lane/machine.rs"]
 mod machine;
 
 const HARNESS_PACKAGES: [(&str, &str); 2] = [
@@ -32,6 +33,9 @@ const HARNESS_PACKAGES: [(&str, &str); 2] = [
 const REPORT_DIR: &str = "target/ripr/reports";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+/// An independent upper bound on the pre-run cargo-kani availability probe.
+/// The caller's smaller requested run timeout also caps this preliminary step.
+const MAX_KANI_VERSION_PROBE_SECS: u64 = 10;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
 /// `NOT-ESTABLISHED` for itself and the rest of the lane still reports. The
 /// slowest verified harness runs about four minutes; this leaves headroom
@@ -122,53 +126,136 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
     Ok(())
 }
 
-fn tool_available(report: &mut machine::Report) -> bool {
+/// One bounded version invocation for both legacy observation and canonical
+/// capture. A subsecond remaining budget is preserved without rounding up.
+fn capture_kani_version(
+    root: &Path,
+    budget: Duration,
+) -> Result<run::ObservedByteCapture, run::TimedCaptureError> {
+    run::capture_bytes_in_dir_with_env_budget_observed(
+        Path::new("cargo"),
+        &["kani".to_string(), "--version".to_string()],
+        root,
+        (&[("CARGO_TERM_COLOR", "never")], &[]),
+        run::ByteCaptureBudget {
+            timeout: budget.min(Duration::from_secs(MAX_KANI_VERSION_PROBE_SECS)),
+            stdout_bytes: 4 * 1024 * 1024,
+            stderr_bytes: 4 * 1024 * 1024,
+        },
+        "cargo kani --version",
+    )
+}
+
+/// The legacy document deliberately drops the local capture capability and
+/// retains its existing text projection. No second version process is started.
+fn tool_available(
+    timeout_secs: u64,
+    report: &mut machine::Report,
+) -> Result<run::TimedOutput, String> {
+    let budget =
+        Duration::from_secs(timeout_secs).min(Duration::from_secs(MAX_KANI_VERSION_PROBE_SECS));
     let started = Instant::now();
-    let argv = vec!["kani".to_string(), "--version".to_string()];
-    // Keep the existing preflight executor. #12581 owns its bounded successor;
-    // timeout_ms=null explicitly discloses this precursor's missing deadline.
-    match run::capture_output("cargo", &["kani", "--version"], "cargo kani --version") {
-        Ok(captured) => {
-            let available = captured.status.success();
-            report.capture(
-                machine::InvocationContext {
-                    package: "@preflight",
-                    argv: &argv,
-                    budget: None,
-                    elapsed: started.elapsed(),
-                    harnesses: &[],
-                },
-                machine::CaptureOutcome {
-                    exit_code: captured.status.code(),
-                    exit_success: Some(available),
-                    timed_out: false,
-                    stdout: Some(&captured.stdout),
-                    stderr: Some(&captured.stderr),
-                    error: None,
-                },
-            );
-            available
+    let argv = ["kani".to_string(), "--version".to_string()];
+    let captured = capture_kani_version(Path::new("."), budget)
+        .map_err(|error| probe_capture_failure_reason(error.kind).to_string())
+        .and_then(|observed| {
+            observed.consume(|_, output, _, _, _| {
+                let stdout = std::str::from_utf8(&output.stdout)
+                    .map_err(|error| format!("cargo kani --version stdout is not UTF-8: {error}"))?
+                    .to_string();
+                let stderr = std::str::from_utf8(&output.stderr)
+                    .map_err(|error| format!("cargo kani --version stderr is not UTF-8: {error}"))?
+                    .to_string();
+                Ok(run::TimedOutput {
+                    status: output.status,
+                    stdout,
+                    stderr,
+                    duration: output.duration,
+                    timed_out: output.timed_out,
+                })
+            })
+        });
+    let outcome = match &captured {
+        Ok(output) => machine::CaptureOutcome {
+            exit_code: output.status.as_ref().and_then(|status| status.code()),
+            exit_success: output.status.as_ref().map(|status| status.success()),
+            timed_out: output.timed_out,
+            stdout: Some(&output.stdout),
+            stderr: Some(&output.stderr),
+            error: None,
+        },
+        Err(error) => machine::CaptureOutcome {
+            exit_code: None,
+            exit_success: None,
+            timed_out: false,
+            stdout: None,
+            stderr: None,
+            error: Some(error),
+        },
+    };
+    report.capture(
+        machine::InvocationContext {
+            package: "@preflight",
+            argv: &argv,
+            budget: Some(budget),
+            elapsed: started.elapsed(),
+            harnesses: &[],
+        },
+        outcome,
+    );
+    let output = captured?;
+    admit_probe_output(output, budget)
+}
+
+fn admit_probe_output(
+    output: run::TimedOutput,
+    budget: Duration,
+) -> Result<run::TimedOutput, String> {
+    if output.timed_out {
+        let units = if budget.as_secs() == 1 {
+            "second"
+        } else {
+            "seconds"
+        };
+        return Err(format!(
+            "cargo kani --version timed out after {} {units}",
+            budget.as_secs()
+        ));
+    }
+    // Do not echo untrusted version stdout/stderr into the Markdown report.
+    match output.status {
+        Some(status) if status.success() => Ok(output),
+        Some(status)
+            if status.code() == Some(101)
+                && output
+                    .stderr
+                    .lines()
+                    .any(|line| line.trim() == "error: no such command: `kani`") =>
+        {
+            Err("cargo is installed but the kani subcommand is unavailable".to_string())
         }
-        Err(error) => {
-            report.capture(
-                machine::InvocationContext {
-                    package: "@preflight",
-                    argv: &argv,
-                    budget: None,
-                    elapsed: started.elapsed(),
-                    harnesses: &[],
-                },
-                machine::CaptureOutcome {
-                    exit_code: None,
-                    exit_success: None,
-                    timed_out: false,
-                    stdout: None,
-                    stderr: None,
-                    error: Some(&error),
-                },
-            );
-            false
+        Some(status) => Err(format!("cargo kani --version failed with {status}")),
+        None => Err("cargo kani --version returned without a process exit status".to_string()),
+    }
+}
+
+fn probe_capture_failure_reason(kind: run::TimedCaptureErrorKind) -> &'static str {
+    use run::TimedCaptureErrorKind;
+    match kind {
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::NotFound) => {
+            "cargo could not be launched: executable or interpreter not found"
         }
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::PermissionDenied) => {
+            "cargo could not be launched: permission denied"
+        }
+        TimedCaptureErrorKind::Launch(_) => "cargo could not be launched: other launch failure",
+        TimedCaptureErrorKind::ProcessControl => {
+            "cargo kani --version process observation or termination failed"
+        }
+        TimedCaptureErrorKind::Capture => {
+            "cargo kani --version output capture failed or was incomplete"
+        }
+        TimedCaptureErrorKind::Cleanup => "cargo kani --version descendant cleanup failed",
     }
 }
 
@@ -357,7 +444,8 @@ fn run_lane_observed(
     }
     journal.publish(report)?;
     let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
-    let available = tool_available(report);
+    let availability = tool_available(args.timeout_secs, report);
+    let available = availability.is_ok();
     report.availability(available);
     journal.publish(report)?;
     let run = if available && count > 0 {
@@ -395,17 +483,22 @@ fn run_lane_observed(
         }
     } else {
         let mut results = Vec::new();
+        let reason = availability
+            .as_ref()
+            .err()
+            .map(String::as_str)
+            .unwrap_or("tool unavailable; verification did not start");
         for (package, harnesses) in &packages {
-            let rows =
-                all_not_established(harnesses, "tool unavailable; verification did not start");
+            let rows = all_not_established(harnesses, reason);
             report.rows(package, &rows);
             results.extend(rows);
         }
         KaniRun {
             results,
-            process_problem: None,
+            process_problem: availability.err(),
         }
     };
+
     complete_lane_verdict(
         &run.results,
         available,

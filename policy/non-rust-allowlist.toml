@@ -380,6 +380,15 @@ classification = "config"
 reason = "Codecov configuration for coverage status checks and reporting."
 covered_by = []
 
+[[allow]]
+glob = ".pre-commit-hooks.yaml"
+kind = "pre_commit_hook_manifest"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Hook manifest the pre-commit framework reads from this repository root so consumers can reference the advisory ripr check by id."
+covered_by = []
+
 # ---------------------------------------------------------------------------
 # Repo metadata
 # ---------------------------------------------------------------------------
@@ -830,6 +839,15 @@ reason = "Packaged sample workspace and diff are analyzed inputs."
 covered_by = ["cargo xtask check-fixture-contracts"]
 
 [[allow]]
+glob = "examples/**"
+kind = "starter_example"
+owner = "docs"
+surface = "docs"
+classification = "fixture"
+reason = "Starter example projects (Rust, Python, TypeScript) a new user runs ripr on; each carries analyzed source, a diff and a strengthened test file (#14151)."
+covered_by = ["cargo test -p ripr --test starter_examples"]
+
+[[allow]]
 glob = "fixtures/**"
 kind = "fixture_input"
 owner = "analysis-fixtures"
@@ -900,6 +918,15 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-surface benchmark suites and receipt."
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/agent_eval/baseline.json"
+kind = "benchmark_receipt"
+owner = "agent-eval"
+surface = "repo"
+classification = "metadata"
+reason = "Committed baseline of the answer-keyed agent eval (#14298): per-scenario, per-route estimated tokens to the answer and loop checks, compared by cargo xtask agent-eval --compare."
+covered_by = ["cargo xtask agent-eval --compare benchmarks/agent_eval/baseline.json", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "benchmarks/agent-discrimination/**"

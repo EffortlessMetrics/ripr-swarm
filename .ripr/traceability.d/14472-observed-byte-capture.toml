@@ -1,0 +1,26 @@
+# Local execution observation is not protected origin or formal assurance.
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/run.rs",
+  "xtask/src/run/byte_capture.rs",
+  "crates/ripr/src/process_owner.rs",
+]
+tests = [
+  "xtask/src/run/byte_capture/tests.rs::actual_request_preserves_arguments_cwd_and_effective_explicit_environment",
+  "xtask/src/run/byte_capture/tests.rs::actual_nonzero_exit_keeps_original_non_utf8_bytes_and_native_status",
+  "xtask/src/run/byte_capture/tests.rs::primary_exit_settles_pipe_descendant_without_touching_unrelated_sibling",
+  "xtask/src/run/byte_capture/tests.rs::enforced_timeout_retains_status_and_settles_contained_descendant",
+  "xtask/src/run/byte_capture/tests.rs::escaped_pipe_cannot_turn_zero_primary_exit_into_complete_observation",
+  "xtask/src/run/byte_capture/tests.rs::stream_overflow_withholds_observation_even_after_zero_exit",
+  "xtask/src/run/byte_capture/tests.rs::invalid_deadline_refuses_before_spawn_and_missing_program_retains_launch_kind",
+  "xtask/src/run.rs::tests::confirm_process_group_gone_never_signals_a_live_observation_target",
+  "xtask/src/run.rs::tests::members_from_group_scan_requires_complete_read_only_observation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0031"
+code = ["xtask/src/run.rs"]
+tests = [
+  "xtask/src/run/byte_capture/tests.rs::escaped_file_capture_refuses_publication_and_preserves_prior_artifact",
+]

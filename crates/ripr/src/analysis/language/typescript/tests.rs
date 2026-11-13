@@ -7457,7 +7457,14 @@ fn classify_change_uses_call_effect_wording_for_console_log_without_literal() ->
 fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<(), String> {
     let finding = classify_weak_direct_line("    const total = applyDiscount(amount, threshold);")?;
 
-    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    // #14381: analysis keeps the ambiguous fallback; only the presented
+    // family and delta read as a value for a plain value declaration.
+    assert!(
+        !classify_probe_shape_detail("    const total = applyDiscount(amount, threshold);")
+            .specific
+    );
+    assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+    assert_eq!(finding.probe.delta, DeltaKind::Value);
     assert!(finding.probe.expected_sinks.is_empty());
     assert!(finding.probe.required_oracles.is_empty());
     assert!(finding.flow_sinks.is_empty());
@@ -7469,6 +7476,114 @@ fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<
             .any(|entry| entry == "probe_fact: ambiguous_fallback")
     );
     Ok(())
+}
+
+/// #14381: an unrecognised declaration whose initializer tests a condition
+/// keeps the conservative predicate presentation.
+#[test]
+fn classify_change_keeps_predicate_for_ambiguous_conditional_declaration() -> Result<(), String> {
+    let line = "    const ready = !pending;";
+    assert!(!classify_probe_shape_detail(line).specific);
+    let finding = classify_weak_direct_line(line)?;
+
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    assert_eq!(finding.probe.delta, DeltaKind::Control);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry == "probe_fact: ambiguous_fallback")
+    );
+    Ok(())
+}
+
+/// #14381: the closed recognizer for a plain single-name value declaration.
+#[test]
+fn plain_value_declaration_recognizer_is_closed() {
+    for line in [
+        "    const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  let total: number = base - bonus;",
+        "var label = `name: ok`;",
+        "  const cache: Map<string, number> = new Map();",
+        "  const first = items[0]?.name;",
+        "  const text = \"a > b\";",
+        "  const $el = query('#root');",
+        "  const quoted = 'it\\'s > x';",
+        "  const spaced =\tbase\t-\tbonus;",
+        "  export const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  const total = sum(items.map(price));",
+    ] {
+        assert!(
+            is_typescript_plain_value_declaration(line),
+            "`{line}` is a plain value declaration"
+        );
+    }
+    for line in [
+        "  const ok = a > b;",
+        "  const same = a === b;",
+        "  const ready = !pending;",
+        "  const pick = flag ? a : b;",
+        "  const both = a && b;",
+        "  const either = a || b;",
+        "  const fallback = value ?? 0;",
+        "  const f = (x) => x + 1;",
+        "  const v = await load();",
+        "  const has = key in obj;",
+        "  const isDate = value instanceof Date;",
+        "  const kind = typeof value;",
+        "  const { a, b } = obj;",
+        "  const [head] = list;",
+        "  const shape = {",
+        "  const value = compute(a,",
+        "  const x = 1; const y = 2;",
+        "  total = base - bonus;",
+        "  if (x) {",
+        "  const handler = function () {};",
+        "  const g = a = b;",
+        "  const message = isError",
+        "  const $el = query('#root')",
+        "  const x = compute(a); // a > b",
+        "  const re = /'/;",
+        "  const label = `${ready ? 'yes' : 'no'}`;",
+        "  const shown = `${count} items`;",
+        "  const present = key\tin\tobj;",
+        "  const kind = typeof\tvalue;",
+        "  const sum = a /* note */ + b;",
+        "  const kind = typeof(value);",
+        "  const has = key in(obj);",
+        "  const has = (key)in obj;",
+        "  const v = await(load());",
+        "  export const ok = a > b;",
+        "  export default value;",
+    ] {
+        assert!(
+            !is_typescript_plain_value_declaration(line),
+            "`{line}` must keep the conservative predicate presentation"
+        );
+    }
+}
+
+/// #14381: a recognised (specific) shape is presented unchanged, and only the
+/// ambiguous predicate fallback is re-presented.
+#[test]
+fn presented_shape_rewrites_only_the_ambiguous_fallback() {
+    let declaration = "    const desc = Object.getOwnPropertyDescriptor(raw, key);";
+    assert_eq!(
+        presented_typescript_shape(&TypeScriptProbeShape::ambiguous_fallback(), declaration),
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    );
+    let specific = TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control);
+    assert_eq!(
+        presented_typescript_shape(&specific, declaration),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        presented_typescript_shape(
+            &TypeScriptProbeShape::ambiguous_fallback(),
+            "  const ok = a > b;"
+        ),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
 }
 
 #[test]

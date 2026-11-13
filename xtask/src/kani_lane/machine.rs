@@ -903,13 +903,10 @@ mod tests {
             .as_ref()
             .ok_or("missing counts")?;
         assert_eq!(
-            (
-                covers.satisfied,
-                covers.total,
-                covers.undetermined,
-                covers.unreachable
-            ),
-            (1, 3, 1, 1)
+            serde_json::to_value(covers).map_err(|error| error.to_string())?,
+            serde_json::json!({
+                "satisfied": 1, "total": 3, "undetermined": 1, "unreachable": 1
+            })
         );
         Ok(())
     }
@@ -1009,4 +1006,5 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "machine/inventory_tests.rs"]
 mod inventory_tests;

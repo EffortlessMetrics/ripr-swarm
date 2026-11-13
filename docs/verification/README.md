@@ -25,6 +25,7 @@ verification.
 | [Artifact layout](artifact-layout.md) | Standard paths for committed badge endpoints and generated CI artifacts. |
 | [Annotation policy](annotation-policy.md) | Non-blocking annotation rules and the inline-comment opt-in boundary. |
 | [Muse plugin evaluation input](muse-plugin-eval.md) | Canonical Muse record, optional structured observations, and DX ingestion limits. |
+| [Owned byte capture](owned-byte-capture.md) | Actual local invocation observation, complete byte capture, and process-containment limits for the native verification producer. |
 
 Machine-readable schemas live under `schemas/`:
 

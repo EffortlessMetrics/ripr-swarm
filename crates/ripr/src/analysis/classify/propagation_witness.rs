@@ -2909,13 +2909,73 @@ fn has_macro_invocation(text: &str) -> bool {
 }
 
 fn has_closure_syntax(text: &str) -> bool {
-    let mut pipes = text.match_indices('|');
-    if pipes.next().is_none() {
-        return false;
+    // Quoted `|` is not syntax, and a logical-or `||` between two operands is
+    // not a closure (#14326): only the pipes left after removing those count.
+    let masked = crate::analysis::extract::mask::mask_comments_and_strings(text);
+    // Conservative: any other paired pipes, including a `||` that opens an
+    // expression, are an opaque closure boundary.
+    without_logical_or(&masked, text).matches('|').count() >= 2
+}
+
+/// `masked` with each `||` that follows an operand removed. An operand ends in
+/// an identifier character, a closing bracket, `?`, or a string or character
+/// literal; a `||` after an operator, an opening bracket, `,`, `=`, a label or
+/// a keyword such as `move`, `mut`, `async` or `return` opens a closure and is kept.
+/// `original` is the same text before masking (equal length). The operand
+/// check reads code from `masked`; only a masked tail is read from `original`,
+/// and only a literal there counts, so comment text never ends an operand.
+fn without_logical_or(masked: &str, original: &str) -> String {
+    let mut out = String::with_capacity(masked.len());
+    let mut from = 0;
+    while let Some(found) = masked[from..].find("||") {
+        let at = from + found;
+        out.push_str(&masked[from..at]);
+        if !follows_operand(masked, original, at) {
+            out.push_str("||");
+        }
+        from = at + 2;
     }
-    // Conservative: any paired pipes, including `||`, are an opaque closure
-    // boundary.
-    pipes.next().is_some()
+    out.push_str(&masked[from..]);
+    out
+}
+
+/// Whether the code before byte `at` (a `||` in `masked`) ends an operand.
+fn follows_operand(masked: &str, original: &str, at: usize) -> bool {
+    let code = masked.get(..at).unwrap_or_default().trim_end();
+    let hidden = original.get(code.len()..at).unwrap_or_default().trim();
+    if !hidden.is_empty() {
+        // A masked literal right before the `||`. A comment anywhere in the
+        // masked run stays conservative: the `||` is kept.
+        return !hidden.contains("//")
+            && !hidden.contains("/*")
+            && (hidden.starts_with(['"', '\'', 'r', 'b', 'c']))
+            && hidden.ends_with(['"', '\'', '#']);
+    }
+    let last_word = code
+        .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .next()
+        .unwrap_or_default();
+    let labelled = code
+        .get(..code.len() - last_word.len())
+        .is_some_and(|head| !last_word.is_empty() && head.ends_with('\''));
+    code.chars().next_back().is_some_and(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '_' | ')' | ']' | '}' | '?')
+    }) && !labelled
+        && !matches!(
+            last_word,
+            "move"
+                | "mut"
+                | "async"
+                | "gen"
+                | "use"
+                | "static"
+                | "const"
+                | "return"
+                | "break"
+                | "yield"
+                | "in"
+                | "else"
+        )
 }
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
@@ -3236,6 +3296,61 @@ mod tests {
     use crate::analysis::facts::{FunctionSummary, ReturnFact};
     use crate::domain::{DeltaKind, ProbeId, SourceLocation};
     use std::path::PathBuf;
+
+    /// #14326: a logical-or between two operands is not a closure, so a
+    /// constructed field spelled with `||` completes its direct witness; a
+    /// real closure (`|x| ..`, `|| ..`, `move || ..`) and a quoted pipe pair
+    /// keep their reading.
+    #[test]
+    fn logical_or_is_not_closure_syntax() -> Result<(), String> {
+        for text in [
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+            "is_v(flag) || flag == \"x\"",
+            "a || b || c",
+            "items[0] || done?",
+            "label: \"a|b\"",
+            "name == \"a\" || name == r#\"b\"# || ok",
+        ] {
+            assert!(!has_closure_syntax(text), "{text}");
+        }
+        for text in [
+            "items.iter().any(|x| x > 1)",
+            "run(|| 1)",
+            "spawn(move || work())",
+            "handler: || ready",
+            "f = |a, b| a || b",
+            // Closure prefixes and keywords that a `||` closure can follow.
+            "spawn(async || work().await)",
+            "return || 1",
+            "break || 1",
+            "yield || 1",
+            "static || 1",
+            "const || 1",
+            "x in || 1",
+            "else || 2",
+            // A label is not an operand, and neither is comment text.
+            "break 'outer || x",
+            "spawn(\n    // start now\n    || work())",
+            "spawn(/* now */ || work())",
+            "spawn_with(&mut || work())",
+            "f(\"a\" // say \"x\"\n || g())",
+        ] {
+            assert!(has_closure_syntax(text), "{text}");
+        }
+        let probe = probe(
+            ProbeFamily::FieldConstruction,
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+        );
+        let sinks = vec![sink(
+            FlowSinkKind::StructField,
+            "verbose: flag == \"-v\" || flag == \"--verbose\"",
+            14,
+        )];
+        let witness = current_path_witness(&probe, &sinks)
+            .ok_or_else(|| "logical-or field witness was absent".to_string())?;
+        assert!(complete_direct_witness(&probe, Some(&witness)));
+        Ok(())
+    }
 
     /// #6673: `Insufficient` contains the letters `ffi`; only an `ffi`
     /// identifier word names an FFI boundary.

@@ -1889,6 +1889,59 @@ pub(crate) fn run_command(
     }
 }
 
+/// The native command that runs one named Rust test in `test_file` (#14320),
+/// spelled exactly as `ripr agent stub` spells its run command: an
+/// integration file runs as `--test TARGET NAME` once its cargo target name
+/// is established and plain. `None` for everything else, including inline
+/// module tests: whether a by-name run reaches an inline file depends on
+/// `[lib] test`, `cfg` and feature gates, and `#[path]` resolution that a
+/// static walk cannot settle, so no command is offered rather than one that
+/// runs 0 tests and exits 0.
+pub(crate) fn focused_test_run_command(
+    root: &Path,
+    test_file: &str,
+    test_name: &str,
+) -> Option<String> {
+    let spelled = test_file.replace('\\', "/");
+    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
+    let plain_name = !test_name.is_empty()
+        && test_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !plain_name || file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+        return None;
+    }
+    let integration = RustTestStub {
+        placement: TestStubPlacement::ExistingIntegrationFile { file },
+        test_name: test_name.to_string(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+    };
+    let manifest = package_manifest_for(root, &integration)?;
+    let target = match integration_target_lookup(root, &manifest, &integration) {
+        // A manifest `[[test]] name` is printed into a copyable command, so
+        // only a plain cargo target name is offered; anything else fails
+        // closed instead of being run by the developer's shell.
+        TargetLookup::Name(name)
+            if !name.starts_with('-')
+                && !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+        {
+            name
+        }
+        _ => return None,
+    };
+    let manifest = root.join(&manifest);
+    // A literal `\` in a Unix checkout root is part of the path, so the
+    // manifest renders natively, as the repair start command renders it.
+    let manifest = root_path_display(manifest.strip_prefix(".").unwrap_or(&manifest));
+    run_command(&shell_arg(&manifest), &integration, Some(&target))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2418,6 +2471,145 @@ mod tests {
             Some("cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary")
         );
         assert_eq!(run_command("crates/a/Cargo.toml", &integration, None), None);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_names_the_target_or_refuses() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-run-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // Inline module files (declared or not) and bench files get no
+        // command: only an established integration target is exact.
+        std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("benches")).map_err(|error| error.to_string())?;
+        for (path, text) in [
+            ("src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests;\n"),
+            ("src/tests/mod.rs", "mod pricing;\n"),
+            ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("src/stray.rs", "#[test]\nfn t() {}\n"),
+            ("tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("benches/pricing.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let manifest = shell_arg(&root_path_display(&root.join("Cargo.toml")));
+        assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        // A `./` spelling names the same target.
+        assert_eq!(
+            focused_test_run_command(&root, "./tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "src/lib.rs", "equal_threshold"),
+            None
+        );
+        // No exact command: a non-identifier name, a non-Rust file, or a
+        // file outside any package.
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "a b; rm"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "tests/test_pricing.py", "test_x"),
+            None
+        );
+        let orphan = root.join("orphan");
+        std::fs::create_dir_all(orphan.join("tests")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&orphan, "tests/pricing.rs", "t"),
+            None
+        );
+        // A `tests` directory under `src/` is an inline module file of the
+        // library, not an integration target (#14320 review), so it gets no
+        // `--test` command either.
+        assert_eq!(
+            focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "benches/pricing.rs", "t"),
+            None
+        );
+        // A manifest target name with shell syntax is never printed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n\n[[test]]\nname = \"p;touch x\"\npath = \"tests/pricing.rs\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        // `autotests = false` without an entry leaves the target unnamed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\nautotests = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_keeps_a_literal_backslash_unix_root() -> Result<(), String> {
+        // A literal `\` is part of a Unix directory name and must survive
+        // into the printed manifest path (#14320 review).
+        let root = std::env::temp_dir()
+            .join(format!(
+                "ripr-focused-root-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_nanos()
+            ))
+            .join(if cfg!(unix) { "team\\repo" } else { "repo" });
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("tests/pricing.rs"),
+            "#[test]\nfn equal_threshold() {}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let command = focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold")
+            .ok_or("an established integration target must get a command")?;
+        assert!(
+            command.ends_with(" --test pricing equal_threshold"),
+            "{command}"
+        );
+        if cfg!(unix) {
+            assert!(command.contains("team\\repo"), "{command}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

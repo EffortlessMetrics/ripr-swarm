@@ -567,6 +567,11 @@ pub(super) fn match_same_test_file(
     for stem in stems {
         if let Some(indices) = context.tests_by_file_stem.get(&stem) {
             for test_index in indices {
+                // #7527: a shared leaf name is not module identity; the
+                // finding-level relation applies the same scope.
+                if !owner_file_admits_companion(owner, context, *test_index) {
+                    continue;
+                }
                 insert_related_candidate(
                     candidates,
                     context,
@@ -577,6 +582,20 @@ pub(super) fn match_same_test_file(
             }
         }
     }
+}
+
+fn owner_file_admits_companion(
+    owner: &OwnerContext<'_>,
+    context: &CompactGripContext<'_>,
+    test_index: usize,
+) -> bool {
+    let (Some(owner_file), Some(indexed)) = (
+        owner.function.and_then(|function| function.file.to_str()),
+        context.tests.get(test_index),
+    ) else {
+        return true;
+    };
+    crate::analysis::classify::companion_scope_admits(owner_file, &indexed.path_normalized)
 }
 
 pub(super) fn match_same_module(
