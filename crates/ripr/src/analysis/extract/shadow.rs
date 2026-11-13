@@ -334,27 +334,26 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
         }
     }
     // `match .. { <pat> => .. }`
-    if let Some(open) = body.find("match ") {
-        if let Some(brace) = body[open..].find('{') {
-            let arms = &body[open + brace + 1..];
-            // Only text before a `=>` is a pattern; the final segment is the
-            // last arm's body and must not be scanned as a pattern (#14508
-            // review).
-            let mut rest = arms;
-            while let Some((pattern, after)) = rest.split_once("=>") {
-                let pattern = pattern.rsplit(['{', ',', ';']).next().unwrap_or(pattern);
-                if pattern_contains_word(pattern, callee) {
-                    return true;
-                }
-                rest = after;
+    if let Some(open) = body.find("match ")
+        && let Some(brace) = body[open..].find('{')
+    {
+        let arms = &body[open + brace + 1..];
+        // Only text before a `=>` is a pattern; the final segment is the
+        // last arm's body and must not be scanned as a pattern (#14508
+        // review).
+        let mut rest = arms;
+        while let Some((pattern, after)) = rest.split_once("=>") {
+            let pattern = pattern.rsplit(['{', ',', ';']).next().unwrap_or(pattern);
+            if pattern_contains_word(pattern, callee) {
+                return true;
             }
+            rest = after;
         }
     }
     // `|<pat>| ..`
     let mut search = 0usize;
     while let Some(offset) = body[search..].find('|') {
         let start = search + offset;
-        search = start + 1;
         if body.as_bytes().get(start + 1) == Some(&b'|') {
             search = start + 2;
             continue;
