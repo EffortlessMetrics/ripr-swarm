@@ -107,6 +107,48 @@ Fixed identity strings and other bounds of existing harnesses remain unchanged;
 this does not establish packet validation, full-program behavior, or a full-lane
 qualification.
 
+### Exact self-computed oracle cap (#12109)
+
+The reveal-side scalar cap preserves the identity of weaker evidence. Its
+complete contract is:
+
+| Input strength | Self-computed | Independent |
+| --- | --- | --- |
+| Strong | Weak | Strong |
+| Medium | Weak | Medium |
+| Weak | Weak | Weak |
+| Smoke | Smoke | Smoke |
+| None | None | None |
+| Unknown | Unknown | Unknown |
+
+`reveal/cap_contract.rs` declares literal expected variants independently of
+the production rank function. The same declaration generates the symbolic
+domain and a wildcard-free expected-value match that rejects duplicate
+patterns. A removed row, duplicate row or new enum constructor must fail
+compilation. The exact-mapping harness calls the production cap and requires a
+reachable cover for every strength/Boolean pair. The scalar function and its
+domain selection contain no loops or recursion; no unwind exclusion is needed.
+
+The ordinary controls separately exercise the production reveal caller over
+pre-extracted assertion facts, both credited and uncredited related rows, and
+specific direct-call detection examples. They require the intended related
+row to exist before checking its strength. These controls do not prove that
+arbitrary source extraction, call relations or self-computation detection are
+sound. A literal independent expected value retains its strong evidence.
+
+Maintain this obligation with `cargo test --locked -p ripr --lib self_computed`
+and `cargo xtask kani --harness self_computed_cap`. When the enum, rank, cap,
+detector or caller changes, review the literal table and affected caller
+examples, rerun the affected controls, and retain the exact source, tools,
+effective options, native status and cover results. A changed verifier
+configuration needs new qualification, not reuse of an older green result.
+The retained wrong-implementation control returns `None` for self-computed
+inputs and preserves independent inputs: it satisfies the old rank laws but
+must fail the exact contract. For native adequacy qualification, run that
+temporary mutation through the same exact-mapping harness, require an actual
+assertion counterexample, restore the production code, and rerun the positive
+proof. Compilation failure or timeout is not the required negative witness.
+
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
