@@ -177,9 +177,11 @@ fn disabled_preview_misses_disclose_scope_and_replay_exact_listing() -> TestResu
                 "{label}/{command}: {stderr}"
             );
             // #14406: the location hint never reads as an all-clear for a
-            // file the run did not analyze.
+            // file the run did not analyze, and the incompleteness the #14077
+            // cause already states is not repeated.
             assert!(
-                stderr.contains("Analysis of this scope was incomplete"),
+                stderr.contains("No finding was reported in \"src/z.ts\"")
+                    && stderr.matches("was incomplete").count() == 1,
                 "{label}/{command}: {stderr}"
             );
             assert!(
@@ -341,7 +343,8 @@ fn uncompiled_preview_misses_name_binary_prerequisites_not_config_enablement() -
             "{stderr}"
         );
         assert!(
-            stderr.contains("Analysis of this scope was incomplete"),
+            stderr.contains("No finding was reported in \"src/z.pl\"")
+                && stderr.matches("was incomplete").count() == 1,
             "{stderr}"
         );
         assert!(

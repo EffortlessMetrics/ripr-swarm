@@ -65,11 +65,14 @@ root-relative, counting other files the path also matches, with a suggested
 pointer to probe ids when every listed line holds several); otherwise up to
 five files that hold findings; otherwise that the scope has none. A
 `file:line:column` selector is told to drop the column. Id selectors keep
-their existing miss text, and the typed selector never enters a command.
+their existing miss text, and the typed selector never enters a command. On a
+fresh run whose miss-cause clause (#14077) already names the same file's
+other finding lines, that sentence is not repeated.
 The empty-scope and other-file forms claim no findings exist only when the
 run is known complete: a fresh run with an incomplete producer outcome, a
-non-`Ok` language run or unanalyzed preview files says analysis was
-incomplete (#14406), and a replayed `--from` miss says the artifact does not
+partial diff scope, a non-`Ok` language run or unanalyzed preview files says
+analysis was incomplete (#14406), stated once when the miss cause already
+says so, and a replayed `--from` miss says the artifact does not
 record whether its run was complete (#14440), so a finding there may be
 missing. When no finding path matches exactly but one matches ignoring ASCII
 case, the sentence starts "Paths match case-sensitively." and names the

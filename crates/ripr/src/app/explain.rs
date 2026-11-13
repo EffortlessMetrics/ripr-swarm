@@ -377,18 +377,32 @@ pub(crate) fn no_finding_matched_fresh_run(
         }
         message
     };
-    // #14384: a location miss names where this scope's findings are, so the
-    // next selector needs no separate listing run.
-    if let Some(hint) = super::selector::location_miss_hint(
-        &output.findings,
-        root,
-        selector,
-        if fresh_run_incomplete(output) {
-            super::selector::ScopeCompleteness::Incomplete
-        } else {
-            super::selector::ScopeCompleteness::Complete
-        },
-    ) {
+    // #14077: one cause clause from facts the run holds. When it already
+    // names the other finding lines of the same file, the #14384 hint
+    // would repeat it; otherwise the hint adds where this scope's findings
+    // are (and the column note), so the next selector needs no listing run.
+    let cause = location_miss_cause(selector, output);
+    let names_same_file_lines = cause
+        .as_ref()
+        .is_some_and(|cause| cause.names_same_file_lines);
+    let names_incomplete = cause.as_ref().is_some_and(|cause| cause.names_incomplete);
+    if let Some(LocationMissCause { text: cause, .. }) = cause {
+        message.push_str(". ");
+        message.push_str(&cause);
+    }
+    // #14406: an incomplete run never reads as an all-clear; when the cause
+    // already said so, the hint keeps its wording without repeating it.
+    let completeness = if names_incomplete {
+        super::selector::ScopeCompleteness::IncompleteDisclosed
+    } else if fresh_run_incomplete(output) {
+        super::selector::ScopeCompleteness::Incomplete
+    } else {
+        super::selector::ScopeCompleteness::Complete
+    };
+    if !names_same_file_lines
+        && let Some(hint) =
+            super::selector::location_miss_hint(&output.findings, root, selector, completeness)
+    {
         message.push('.');
         message.push_str(&hint);
     }
@@ -406,6 +420,9 @@ fn fresh_run_incomplete(output: &CheckOutput) -> bool {
         .analysis_outcome
         .as_ref()
         .is_some_and(|outcome| !outcome.kind.is_complete())
+        // A diff degraded to a partial scope (`limited_partial_scope`), the
+        // same signal #14077's miss cause reads as incomplete.
+        || output.partial_scope.is_some()
         || output
             .language_runs
             .iter()
@@ -414,6 +431,164 @@ fn fresh_run_incomplete(output: &CheckOutput) -> bool {
             .preview_language_advisories
             .iter()
             .any(|advisory| !advisory.analyzed(&output.language_runs))
+}
+
+/// How many same-file finding locations a location miss names.
+const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
+
+/// Why a well-formed `file:line` selector matched nothing (#14077), from
+/// facts this run already holds: its finding list, its analyzed root and the
+/// producer's outcome counts. One message used to answer six different
+/// causes, so a typo, an unchanged line and a finding one line up were
+/// indistinguishable.
+///
+/// The run output carries counts, not the per-file changed-line set, so this
+/// never says whether the named line itself changed. Finding ids, seam ids
+/// and malformed locations return `None`: they keep their own wording.
+fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    location_miss_cause_text(selector, output)
+}
+
+/// A [`location_miss_cause`] clause, whether it already names the same
+/// file's other finding lines (so the #14384 hint must not repeat them),
+/// and whether it already says the analysis was incomplete (so the hint
+/// must not repeat that either, #14406).
+struct LocationMissCause {
+    text: String,
+    names_same_file_lines: bool,
+    names_incomplete: bool,
+}
+
+impl LocationMissCause {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            names_same_file_lines: false,
+            names_incomplete: false,
+        }
+    }
+}
+
+fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
+    if selector.starts_with("probe:")
+        || selector.starts_with("repo-probe:")
+        || selector.starts_with("gap:")
+        || seam_id_of(selector).is_some()
+        || super::selector::location_selector_needs_syntax_hint(selector)
+    {
+        return None;
+    }
+    let (selector_file, selector_line) = selector.rsplit_once(':')?;
+    let wanted_line = selector_line.parse::<usize>().ok()?;
+    // A `file:line:column` selector would read its line as part of the path
+    // and be told the path is misspelled; the #14384 hint names the column
+    // form instead.
+    if selector_file
+        .rsplit_once(':')
+        .is_some_and(|(_, line)| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let wanted_file = super::selector::normalize_locator_path(selector_file);
+    if wanted_file.is_empty() {
+        return None;
+    }
+
+    // Same file, another line: the user is one retry away from the finding.
+    let mut nearby: Vec<(usize, String)> = output
+        .findings
+        .iter()
+        .filter_map(|finding| {
+            let stored = crate::analysis::stable_path_text(&finding.probe.location.file);
+            super::selector::locator_paths_match(stored.as_ref(), selector_file).then(|| {
+                (
+                    finding.probe.location.line,
+                    // Shown root-relative, as every rendered location is: a
+                    // fresh run stores absolute (on Windows, verbatim) paths.
+                    super::selector::normalize_locator_path(
+                        &crate::analysis::finding_location_text(
+                            &output.root,
+                            &finding.probe.location.file,
+                        ),
+                    ),
+                )
+            })
+        })
+        .collect();
+    nearby.sort();
+    nearby.dedup();
+    if !nearby.is_empty() {
+        let total = nearby.len();
+        nearby.sort_by_key(|(line, file)| (line.abs_diff(wanted_line), *line, file.clone()));
+        nearby.truncate(MAX_NEARBY_FINDING_LOCATIONS);
+        nearby.sort();
+        let listed = nearby
+            .iter()
+            .map(|(line, file)| format!("{file}:{line}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let scope = if total > nearby.len() {
+            format!("the {} nearest of {total} are", nearby.len())
+        } else if total == 1 {
+            "it is at".to_string()
+        } else {
+            "they are at".to_string()
+        };
+        let noun = if total == 1 {
+            "a finding at another line"
+        } else {
+            "findings at other lines"
+        };
+        return Some(LocationMissCause {
+            text: format!(
+                "No finding is at line {wanted_line}, but this run has {noun} of that file: {scope} {listed}. Retry with one of those locations"
+            ),
+            names_same_file_lines: true,
+            names_incomplete: false,
+        });
+    }
+
+    // Only a plain relative path is probed on disk, so a selector can never
+    // be used to ask whether something outside the analyzed root exists.
+    // Selection also accepts a path suffix (`lib.rs` for `src/lib.rs`), which
+    // only finding files can resolve; with none matching, the miss says the
+    // text is not a path from the root rather than that no such file exists.
+    let relative = Path::new(&wanted_file);
+    let confined = relative
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !confined {
+        return None;
+    }
+    let root = output.root.display();
+    if !output.root.join(relative).is_file() {
+        return Some(LocationMissCause::plain(format!(
+            "{wanted_file:?} is not the path of a file from the analyzed root `{root}`, and no finding is in a file whose path ends with it; give the file's path from that root, check the spelling, or pass `--root`"
+        )));
+    }
+    let mut cause = format!("{wanted_file:?} exists, but this run has no finding anywhere in it");
+    // Only a complete run supports "nothing there to report": an incomplete
+    // or partitioned run may never have analyzed the file, and a run with no
+    // producer outcome establishes neither.
+    let Some(outcome) = &output.analysis_outcome else {
+        return Some(LocationMissCause::plain(cause));
+    };
+    if !outcome.kind.is_complete() || output.partial_scope.is_some() {
+        cause.push_str(
+            ". The analysis was incomplete, so that file may not have been analyzed; `ripr check` for the same scope lists what was left out",
+        );
+        return Some(LocationMissCause {
+            text: cause,
+            names_same_file_lines: false,
+            names_incomplete: true,
+        });
+    }
+    let counts = &outcome.counts;
+    cause.push_str(&format!(
+        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
+    ));
+    Some(LocationMissCause::plain(cause))
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.

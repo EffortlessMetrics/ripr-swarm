@@ -73,6 +73,10 @@ fn annotation(comment: &Value) -> Result<Option<String>, Fail> {
         Value::String(String::new())
     };
     let message = add(reason, suffix)?;
+    let message = match crate::output::review_comments::displaced_seam_prefix(comment) {
+        Some(prefix) => add(Value::from(prefix), message)?,
+        None => message,
+    };
     // A card that offers no test to add is a note about RIPR's reach, not a
     // warning about the change: it must not turn the check yellow or sit
     // among the findings a reviewer is asked to fix.
@@ -163,6 +167,37 @@ mod tests {
                 "::notice file=src/a.rs,line=2,{TITLE}::RIPR has no test to suggest here.\n\
                  ::warning file=src/a.rs,line=3,{TITLE}::RIPR has no test to suggest here.\n\
                  ::warning file=src/a.rs,line=4,{TITLE}::older\n"
+            )
+        );
+        Ok(())
+    }
+
+    /// #14303: a card placed on another changed line of its function says
+    /// where the gap is; an exact placement, or one that names no other
+    /// line, keeps the plain reason.
+    #[test]
+    fn a_card_placed_on_another_changed_line_names_the_gap_line() -> Result<(), String> {
+        let card = |mode: &str, seam_line: u64| {
+            json!({
+                "placement": { "path": "src/pricing.rs", "line": 3, "mode": mode },
+                "source_location": { "line": seam_line },
+                "seam": { "line": seam_line, "expression": "total_cents >= 5_000" },
+                "reason": "Missing `5_000`."
+            })
+        };
+        let document = json!({ "comments": [
+            card("owner_function_changed_line", 5),
+            card("same_file_changed_line", 9),
+            card("exact_seam_line", 5),
+            card("owner_function_changed_line", 3),
+        ]});
+        assert_eq!(
+            rendered(&document)?,
+            format!(
+                "::warning file=src/pricing.rs,line=3,{TITLE}::Gap at line 5 (`total_cents >= 5_000`) of this function: Missing `5_000`.\n\
+                 ::warning file=src/pricing.rs,line=3,{TITLE}::Gap at line 9 (`total_cents >= 5_000`) of this function: Missing `5_000`.\n\
+                 ::warning file=src/pricing.rs,line=3,{TITLE}::Missing `5_000`.\n\
+                 ::warning file=src/pricing.rs,line=3,{TITLE}::Missing `5_000`.\n"
             )
         );
         Ok(())

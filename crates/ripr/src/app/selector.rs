@@ -245,6 +245,14 @@ pub(in crate::app) fn selector_matches_file_line(
     if selector_line != stored_line.to_string() {
         return false;
     }
+    locator_paths_match(stored_file, selector_file)
+}
+
+/// The path half of [`selector_matches_file_line`]: whether a typed locator
+/// path names a stored finding file, under the same normalization and
+/// either-direction suffix rule. Shared so a miss diagnosis (#14077) reads
+/// "same file" exactly as selection does.
+pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str) -> bool {
     let stored = normalize_locator_path(stored_file);
     let wanted = normalize_locator_path(selector_file);
     if wanted.is_empty() || stored.is_empty() {
@@ -264,6 +272,9 @@ pub(in crate::app) enum ScopeCompleteness {
     Complete,
     /// A fresh run that reported an incomplete outcome or unanalyzed files.
     Incomplete,
+    /// [`Self::Incomplete`] whose incompleteness the same message already
+    /// states (the #14077 miss cause), so the hint does not repeat it.
+    IncompleteDisclosed,
     /// A replayed artifact, which records findings but not run completeness.
     Unrecorded,
 }
@@ -313,7 +324,7 @@ pub(in crate::app) fn location_miss_hint(
     };
     let analysis_incomplete = completeness != ScopeCompleteness::Complete;
     let incomplete_note = match completeness {
-        ScopeCompleteness::Complete => "",
+        ScopeCompleteness::Complete | ScopeCompleteness::IncompleteDisclosed => "",
         ScopeCompleteness::Incomplete => {
             " Analysis of this scope was incomplete, so a finding there may be missing."
         }
@@ -343,14 +354,11 @@ pub(in crate::app) fn location_miss_hint(
     let mut other_files = std::collections::BTreeSet::<String>::new();
     for finding in findings {
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
-        let stored = normalize_locator_path(file.as_ref());
-        let matches = stored == wanted
-            || stored.ends_with(&format!("/{wanted}"))
-            || wanted.ends_with(&format!("/{stored}"));
-        let folded = stored.to_ascii_lowercase();
-        let matches_folded = folded == wanted_folded
-            || folded.ends_with(&format!("/{wanted_folded}"))
-            || wanted_folded.ends_with(&format!("/{folded}"));
+        // The same "same file" rule selection uses (#14077's shared helper).
+        let matches = locator_paths_match(file.as_ref(), &wanted);
+        // #14416: the same rule ignoring ASCII case, for the hint only.
+        let matches_folded =
+            locator_paths_match(&file.as_ref().to_ascii_lowercase(), &wanted_folded);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.
@@ -454,7 +462,7 @@ pub(in crate::app) fn location_miss_hint(
 /// `./`, and trim a trailing `/`. Lets the path a user copies from `check`
 /// output (or types naturally) match the stored form regardless of platform
 /// separators or the leading-current-directory prefix.
-fn normalize_locator_path(path: &str) -> String {
+pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
     let forward = path.replace('\\', "/");
     let trimmed = forward.strip_prefix("./").unwrap_or(forward.as_str());
     trimmed.trim_end_matches('/').to_string()
@@ -844,6 +852,18 @@ mod tests {
             Some(
                 " No finding was reported in \"nofile.rs\"; findings are in src/lib.rs. Analysis of this scope was incomplete, so a finding there may be missing. Selectors are file:line; drop the column."
             )
+        );
+        // An incompleteness the message already stated keeps the
+        // "reported" wording but is not repeated.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1",
+                ScopeCompleteness::IncompleteDisclosed
+            )
+            .as_deref(),
+            Some(" No finding was reported in \"nofile.rs\"; findings are in src/lib.rs.")
         );
         // #14440: a replayed artifact's completeness is unrecorded, so its
         // empty-scope and other-file wording never reads as an all-clear.

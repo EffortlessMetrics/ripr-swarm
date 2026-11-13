@@ -25138,15 +25138,66 @@ fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Resu
         &artifact,
     ]);
     assert_success(&check);
-    let routes: [Vec<&str>; 3] = [
-        vec![
-            "explain",
-            "--root",
-            &root,
-            "--diff",
-            &diff,
-            "src/lib.rs:9999",
-        ],
+    // Fresh route: the #14077 cause already names the file's other finding
+    // lines, so the #14384 hint does not repeat them; for a file with no
+    // finding it adds where this scope's findings are.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("No finding is at line 9999")
+        || stderr.contains("Findings in src/lib.rs are on line")
+    {
+        return Err(format!(
+            "fresh same-file miss must name lines once: {stderr}"
+        ));
+    }
+    // The cause names those lines root-relative even though a fresh run
+    // stores absolute paths.
+    if !(stderr.contains("it is at src/lib.rs:") || stderr.contains("are at src/lib.rs:")) {
+        return Err(format!(
+            "fresh same-file miss must show a root-relative path: {stderr}"
+        ));
+    }
+    // A column is named as such, never read as a misspelled path.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999:5",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("drop the column")
+        || stderr.contains("is not the path of a file")
+    {
+        return Err(format!(
+            "fresh column miss must name the column form: {stderr}"
+        ));
+    }
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/nofile.rs:3",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2) || !stderr.contains("findings are in src/lib.rs") {
+        return Err(format!(
+            "fresh other-file miss must name finding files: {stderr}"
+        ));
+    }
+    let routes: [Vec<&str>; 2] = [
         vec![
             "explain",
             "--root",
@@ -28575,6 +28626,107 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     {
         return Err(format!(
             "no-origin JSON must bind guidance to its resolved local base: {value}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #14265: a branch that is behind its base (or already merged into it) has
+/// an empty range because the base contains HEAD, not because no file is in
+/// an analyzed language. The headline and the next action say so and never
+/// suggest `--worktree` or committing as the missing step. Both `HEAD~1`
+/// arms run on a real repository, with an ordinary feature branch as the
+/// control.
+#[test]
+fn check_on_a_branch_its_base_already_contains_names_that_cause() -> Result<(), String> {
+    const CONTAINED: &str = "Nothing to check: HEAD is already contained in the comparison base";
+    let root = unique_temp_workspace("head-contained-in-base");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"head-contained\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|err| format!("write .gitignore: {err}"))?;
+    for (step, body) in ["a + b", "a + b + 1", "a + b + 2"].iter().enumerate() {
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub fn add(a: i32, b: i32) -> i32 {{ {body} }}\n"),
+        )
+        .map_err(|err| format!("write lib.rs: {err}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", &format!("step {step}")])?;
+    }
+    // `main` is at the third commit; `behind` sits one commit back and
+    // `first` on the root commit, so each has no commit `main` lacks.
+    run_git(&root, &["branch", "behind", "HEAD~1"])?;
+    run_git(&root, &["branch", "first", "HEAD~2"])?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    for (branch, expected_move, absent_move) in [
+        (
+            "behind",
+            "or to check the last commit run `ripr check --base HEAD~1`",
+            "or commit a change and re-run",
+        ),
+        ("first", "or commit a change and re-run", "--base HEAD~1"),
+    ] {
+        run_git(&root, &["checkout", "-q", branch])?;
+        let output = run_ripr(&["check", "--root", &root_str]);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let action = "Safe next action: HEAD is already contained in `main` (it has no commit that `main` lacks), so there is no diff; switch to the branch that has your change, ";
+        if !stdout.contains(CONTAINED)
+            || !stdout.contains(action)
+            || !stdout.contains(expected_move)
+            || stdout.contains(absent_move)
+        {
+            return Err(format!(
+                "{branch}: a branch behind `main` must name the contained-HEAD cause and its moves; got:\n{stdout}"
+            ));
+        }
+        for wrong in [
+            "no changed source file in a language ripr analyzes",
+            "--worktree",
+            "which is the comparison base",
+        ] {
+            if stdout.contains(wrong) {
+                return Err(format!(
+                    "{branch}: the contained-HEAD result must not print `{wrong}`; got:\n{stdout}"
+                ));
+            }
+        }
+        // An explicit base reaches the same headline.
+        let explicit = run_ripr(&["check", "--root", &root_str, "--base", "main"]);
+        assert_success(&explicit);
+        let explicit_stdout = String::from_utf8_lossy(&explicit.stdout);
+        if !explicit_stdout.contains(CONTAINED) {
+            return Err(format!(
+                "{branch}: `--base main` must name the contained-HEAD cause; got:\n{explicit_stdout}"
+            ));
+        }
+    }
+
+    // Control: a branch with its own commit is an ordinary range.
+    run_git(&root, &["checkout", "-q", "-b", "feature", "behind"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b + 9 }\n",
+    )
+    .map_err(|err| format!("write feature lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "feature"])?;
+    let control = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&control);
+    let control_stdout = String::from_utf8_lossy(&control.stdout);
+    if control_stdout.contains("already contained in") {
+        return Err(format!(
+            "a branch with its own commit must not be reported as contained; got:\n{control_stdout}"
         ));
     }
 
@@ -36711,6 +36863,86 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert!(
         suggested.status.success(),
         "the suggested base must load through `check`: {suggested:?}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #14238: a revision range typed where one revision is expected is answered
+/// as a range. A fixture with one configured remote would otherwise send the
+/// reader to `git fetch origin` for a branch name Git forbids. The suggested
+/// base then loads, and a misspelt plain branch keeps the fetch advice.
+#[test]
+fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("base-revision-range");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    assert!(add.status.success(), "fixture must gain `origin`: {add:?}");
+    let root_arg = root.display().to_string();
+
+    let control = run_ripr(&["check", "--root", &root_arg, "--base", "no-such-branch"]);
+    assert_eq!(control.status.code(), Some(2), "{control:?}");
+    let control_stderr = String::from_utf8_lossy(&control.stderr);
+    assert!(
+        control_stderr.contains("git fetch origin") && !control_stderr.contains("revision range"),
+        "fixture precondition: a misspelt plain branch gets the fetch advice: {control_stderr}"
+    );
+
+    for (range, start) in [
+        ("HEAD..HEAD", "HEAD"),
+        ("HEAD...HEAD", "HEAD"),
+        ("HEAD~0..", "HEAD~0"),
+    ] {
+        let output = run_ripr(&["check", "--root", &root_arg, "--base", range]);
+        assert_eq!(output.status.code(), Some(2), "{range}: {output:?}");
+        assert!(output.stdout.is_empty(), "{range}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("`{range}` is a revision range"))
+                && stderr.contains("`--base` takes one revision")
+                && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
+            "{range}: the refusal must name the range and the base to pass: {stderr}"
+        );
+        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+            assert!(
+                !stderr.contains(wrong),
+                "{range}: a range must get no `{wrong}` advice: {stderr}"
+            );
+        }
+        let suggested = run_ripr(&["check", "--root", &root_arg, "--base", start]);
+        assert!(
+            suggested.status.success(),
+            "{range}: the suggested `--base {start}` must load: {suggested:?}"
+        );
+    }
+
+    let head = run_ripr(&[
+        "diff",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD..HEAD~0",
+    ]);
+    assert_eq!(head.status.code(), Some(2), "{head:?}");
+    let head_stderr = String::from_utf8_lossy(&head.stderr);
+    assert!(
+        head_stderr.contains("`--head` takes one revision")
+            && head_stderr.contains("Pass the range's end: `--head HEAD~0`")
+            && !head_stderr.contains("git fetch"),
+        "the head refusal must name its own flag and the range's end: {head_stderr}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())
