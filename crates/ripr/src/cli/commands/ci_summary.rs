@@ -1,5 +1,6 @@
 //! `ripr reports ci-summary`: print the generated workflow's step summary.
 
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::{CiSummaryInput, render_ci_summary};
@@ -26,6 +27,7 @@ pub(super) struct CiSummaryOptions {
 pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
     let settings = super::ci_packet::CiSettings::from_env()?;
     let options = parse_ci_summary_options_with(args, &settings)?;
+    ensure_command_root(std::path::Path::new(&options.root), "reports ci-summary")?;
     let input = CiSummaryInput {
         configured_languages: configured_languages(&options.root),
         root: options.root,
