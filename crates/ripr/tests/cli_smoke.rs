@@ -36735,6 +36735,148 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     result
 }
 
+/// `first-pr` only reads its artifacts after the root passes its preflight, so
+/// the rows need a real committed Cargo project; in an empty directory the
+/// command stops at its wrong-root recovery packet and never touches the
+/// flag. With a project, an endless `--check-output` is refused at the shared
+/// limit (exit 2), and an endless `--gap-ledger` takes the command's
+/// established malformed-artifact route (exit 0, a packet that names the limit)
+/// instead of growing until the process is ended.
+#[cfg(unix)]
+#[test]
+fn first_pr_artifact_flags_from_endless_device_reach_the_input_limit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("endless-first-pr");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let check_output = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        assert_input_limit_refusal(&check_output, "first-pr --check-output /dev/zero");
+        let ledger = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        let stdout = String::from_utf8_lossy(&ledger.stdout);
+        assert_eq!(
+            ledger.status.code(),
+            Some(0),
+            "first-pr --gap-ledger keeps its malformed-artifact exit:\n{}",
+            String::from_utf8_lossy(&ledger.stderr)
+        );
+        assert!(
+            stdout.contains("State: malformed artifact")
+                && stdout.contains("268435456 byte input limit (256 MiB)"),
+            "the packet must name the limit, not the wrong-root recovery:\n{stdout}"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+/// `receipt check --ledger` reads the gap decision ledger after the receipt
+/// itself validates, so a valid receipt is needed to reach the read. An endless
+/// ledger must hit the shared input limit and name it.
+#[cfg(unix)]
+#[test]
+fn receipt_check_ledger_from_endless_device_is_refused_at_input_limit() -> Result<(), std::io::Error>
+{
+    let cwd = unique_temp_workspace("endless-receipt-ledger");
+    std::fs::create_dir_all(&cwd)?;
+    let receipt = cwd.join("receipt.json");
+    std::fs::write(
+        &receipt,
+        serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": "gap:test:ledger",
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-06-14T00:00:00Z"
+        })
+        .to_string(),
+    )?;
+    let receipt_arg = receipt.display().to_string();
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "receipt",
+            "check",
+            "--path",
+            &receipt_arg,
+            "--ledger",
+            "/dev/zero",
+        ],
+        Stdio::null(),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    assert_input_limit_refusal(&output?, "receipt check --ledger /dev/zero");
+    Ok(())
+}
+
+/// `pr-comments summary --raw -` reads the pages from standard input after it
+/// has read the review comments packet; an endless producer must hit the same
+/// cap as the file-backed routes.
+#[cfg(unix)]
+#[test]
+fn pr_comments_summary_raw_stdin_from_endless_stream_is_refused_at_input_limit()
+-> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-summary-stdin");
+    let review = cwd.join("target").join("ripr").join("review");
+    std::fs::create_dir_all(&review)?;
+    std::fs::write(review.join("comments.json"), "{\"comments\":[]}")?;
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "pr-comments",
+            "summary",
+            "--pull-request",
+            "1",
+            "--head-sha",
+            "abc",
+            "--raw",
+            "-",
+        ],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    let output = output?;
+    assert_input_limit_refusal(&output, "pr-comments summary --raw - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not read standard input"),
+        "the refusal must name standard input:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,
 /// and `/proc/self/cwd` makes that path point into the checkout, so rustup's
 /// `cargo` proxy would run the repository's own program. `ripr doctor` must
