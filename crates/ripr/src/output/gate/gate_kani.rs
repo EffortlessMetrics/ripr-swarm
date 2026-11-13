@@ -6,25 +6,23 @@ use super::presentation::status_fails_gate;
 use super::{
     GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR, GateMode, GateSummary, top_level_status,
 };
+use crate::proof_domains::{GATE_MODES, cover_gate_modes};
 
 fn any_mode() -> GateMode {
-    let which: u8 = kani::any();
-    kani::assume(which < 4); // exactly the four GateMode variants
-    match which {
-        0 => GateMode::VisibleOnly,
-        1 => GateMode::Acknowledgeable,
-        2 => GateMode::BaselineCheck,
-        _ => GateMode::CalibratedGate,
-    }
+    let index: usize = kani::any();
+    // Bound: the compiler-checked domain contains every production constructor.
+    kani::assume(index < GATE_MODES.len());
+    let mode = GATE_MODES[index];
+    cover_gate_modes(&mode);
+    mode
 }
 
-/// Bound: 0 or 1 entries (production reads only emptiness).
-fn any_zero_or_one_entry() -> Vec<String> {
-    if kani::any() {
-        vec![String::new()]
-    } else {
-        Vec::new()
-    }
+/// Bound: 0 or 1 entries (production reads only slice emptiness).
+/// Static storage represents both input cases without modeling allocation or drop.
+fn any_zero_or_one_entry() -> &'static [String] {
+    static EMPTY: [String; 0] = [];
+    static ONE_ENTRY: [String; 1] = [String::new()];
+    if kani::any() { &ONE_ENTRY } else { &EMPTY }
 }
 
 fn any_summary() -> GateSummary {
@@ -52,13 +50,7 @@ fn top_level_status_fails_closed() {
     let mode = any_mode();
     let exception_blocking: usize = kani::any();
 
-    let status = top_level_status(
-        &summary,
-        &warnings,
-        &config_errors,
-        mode,
-        exception_blocking,
-    );
+    let status = top_level_status(&summary, warnings, config_errors, mode, exception_blocking);
 
     kani::cover!(status == "pass");
     kani::cover!(status == GATE_STATUS_BLOCKED);
