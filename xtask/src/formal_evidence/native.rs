@@ -7,6 +7,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path};
 
+mod profile;
+pub use profile::{aggregate_process, native_tool_header};
+
 /// Sorted repository-relative file commitments. This is a captured input
 /// manifest, not a claim of production-body equivalence or producer identity.
 pub type SourceManifest = BTreeMap<String, String>;

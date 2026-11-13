@@ -1,7 +1,23 @@
 [[extend]]
 id = "RIPR-SPEC-0371"
-code = ["xtask/src/formal_evidence.rs", "xtask/src/formal_evidence/native.rs"]
+code = ["xtask/src/formal_evidence.rs", "xtask/src/formal_evidence/native.rs", "xtask/src/formal_evidence/native_inventory.rs", "xtask/src/formal_evidence/native/profile.rs"]
 tests = [
+  "xtask/src/formal_evidence/kani_output.rs::tests::native_multiline_description_preserves_quotes_followed_by_spaces",
+  "xtask/src/formal_evidence/native/tests.rs::incomplete_streams_preserve_observations_and_known_process_failures",
+  "xtask/src/formal_evidence/native/tests.rs::unsupported_stderr_results_cannot_leave_verified_rows",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_failed_summary_cannot_become_verified",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summaries_reject_malformed_duplicate_and_inconsistent_counts",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_counts_unreachable_assertions_but_not_covers",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_preserves_expected_panic_and_counterexample_boundaries",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_does_not_consume_quoted_description_payload",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_accepts_native_properties_without_locations",
+  "xtask/src/formal_evidence/native/tests.rs::aggregate_process_preserves_nonzero_timeout_and_unsettled_capture",
+  "xtask/src/formal_evidence/native/tests.rs::native_failed_assertion_is_distinct_from_unwind_expected_panic_and_false_success",
+  "xtask/src/formal_evidence/native/tests.rs::measured_multiline_assertion_description_is_retained_without_metadata_borrowing",
+  "xtask/src/formal_evidence/native/tests.rs::native_property_identity_and_summary_must_both_establish_success",
+  "xtask/src/formal_evidence/native/tests.rs::ambiguous_native_blocks_publish_a_consistent_refusal_without_borrowed_properties",
+  "xtask/src/formal_evidence/native/tests.rs::pinned_native_inventory_requires_exact_version_count_and_captured_files",
+  "xtask/src/formal_evidence/native/tests.rs::observed_invocation_cannot_borrow_success_across_profile_or_process_refusals",
   "xtask/src/formal_evidence/native/tests.rs::required_schema_fields_cannot_be_omitted",
   "xtask/src/formal_evidence/native/tests.rs::native_document_status_and_complete_subject_cannot_borrow_success",
   "xtask/src/formal_evidence/native/tests.rs::native_document_admission_refuses_false_currentness_and_incomplete_covers",

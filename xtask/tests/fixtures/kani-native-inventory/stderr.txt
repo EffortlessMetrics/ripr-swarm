@@ -1,0 +1,14 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.6
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling serde v1.0.229
+   Compiling digest v0.10.7
+   Compiling serde_derive v1.0.229
+   Compiling sha2 v0.10.9
+   Compiling ripr-contract v0.11.0 (/workspace/scratch/cbdfae970a24/ripr-cap/crates/ripr-contract)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.43s

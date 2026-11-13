@@ -5,6 +5,7 @@
 
 pub mod kani_output;
 pub mod native;
+pub mod native_inventory;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};

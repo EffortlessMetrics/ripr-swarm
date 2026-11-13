@@ -1,0 +1,306 @@
+Kani Rust Verifier 0.68.0 (kani-0.68.0) (cargo plugin)
+using rustc 1.100.0-nightly (8925ea358 2026-08-20) (commit 8925ea35 2026-08-20) with LLVM 23.1.0
+CBMC 6.11.0
+[Kani] Running: `/workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/toolchain/bin/cargo pkgid ripr-contract`
+[Kani] Running: `CARGO_ENCODED_RUSTFLAGS="-Coverflow-checks=on-Zunstable-options-Ztrim-diagnostic-paths=no-Zhuman_readable_cgu_names-Zalways-encode-mir--cfg=kani-Zcrate-attr=feature(register_tool)-Zcrate-attr=register_tool(kanitool)--force-warnunstable_features--sysroot/workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0-L/workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/lib--externforce:kani--externnoprelude,nounused:std=/workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/lib/libstd.rlib-Cpanic=abort-Csymbol-mangling-version=v0-Zpanic_abort_tests=yes-Zmir-enable-passes=-RemoveStorageMarkers--check-cfg=cfg(kani)-Clinker=echo--kani-compiler-Cllvm-args=--check-version=0.68.0" CARGO_TERM_PROGRESS_WHEN="never" RUSTC="/workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/bin/kani-compiler" RUSTC_BOOTSTRAP="1" /workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/toolchain/bin/cargo rustc --target x86_64-unknown-linux-gnu -Zhost-config -Ztarget-applies-to-host --config=host.rustflags=["--cfg=kani_host"] --target-dir /workspace/scratch/cbdfae970a24/ripr-native/target/kani --message-format json-diagnostic-rendered-ansi -v -p path+file:///workspace/scratch/cbdfae970a24/ripr-native/crates/ripr-contract#0.11.0 --lib -- "-Cllvm-args=--reachability=harnesses --log-level=info --assertion-reach-checks --harness domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint -Z unstable-options"`
+warning: use of an unstable feature
+ --> <crate attribute>:1:12
+  |
+1 | #![feature(register_tool)]
+  |            ^^^^^^^^^^^^^
+  |
+  = note: requested on the command line with `--force-warn unstable-features`
+
+[Kani] Running: `goto-cc /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.symtab.out /workspace/scratch/cbdfae970a24/fv-tools/kani/kani-0.68.0/library/kani/kani_lib.c -o /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out`
+Finished goto-cc in 0.04641995s
+[Kani] Running: `goto-cc /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out --function _RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint -o /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out`
+Finished goto-cc in 0.02794058s
+[Kani] Running: `goto-instrument --add-library --no-malloc-may-fail /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out`
+Reading GOTO program from '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Adding CPROVER library (x86_64)
+Writing GOTO program to '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Finished goto-instrument in 0.03411886s
+[Kani] Running: `goto-instrument --generate-function-body-options assert-false-assume-false --generate-function-body .* --drop-unused-functions /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out`
+Reading GOTO program from '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Function Pointer Removal
+Virtual function removal
+Cleaning inline assembler statements
+Removing unused functions
+Writing GOTO program to '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Finished goto-instrument in 0.030835481s
+[Kani] Running: `goto-instrument --ensure-one-backedge-per-target /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out`
+Reading GOTO program from '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Trying to force one backedge per target
+Writing GOTO program to '/workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out'
+Finished goto-instrument in 0.032455627s
+Checking harness domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint...
+[Kani] Running: `cbmc --no-malloc-may-fail --no-undefined-shift-check --no-signed-overflow-check --nan-check --no-self-loops-to-assumptions --no-pointer-primitive-check --object-bits 16 --unwind 32 --sat-solver cadical --slice-formula /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out --verbosity 9 --json-ui`
+CBMC 6.11.0 (cbmc-6.11.0)
+CBMC version 6.11.0 (cbmc-6.11.0) 64-bit x86_64 linux
+Reading GOTO program from file /workspace/scratch/cbdfae970a24/ripr-native/target/kani/x86_64-unknown-linux-gnu/debug/build/ripr-contract/059bd8e803106bce/out/ripr_contract-059bd8e803106bce__RNvNtNtNtCs1qdvU98nwlu_13ripr_contract6domain5probe11kani_proofs45currentness_action_and_base_side_are_disjoint.out
+Generating GOTO Program
+Adding CPROVER library (x86_64)
+Removal of function pointers and virtual functions
+Generic Property Instrumentation
+Running with 16 object bits, 48 offset bits (user-specified)
+Starting Bounded Model Checking
+Runtime Symex: 0.0217451s
+size of program expression: 1123 steps
+slicing removed 560 assignments
+Generated 140 VCC(s), 21 remaining after simplification
+Runtime Postprocess Equation: 0.000405117s
+Passing problem to propositional reduction
+converting SSA
+Runtime Convert SSA: 0.00297992s
+Running propositional reduction
+Post-processing
+Runtime Post-process: 7.671e-06s
+Solving with CaDiCaL 3.0.0
+1752 variables, 2743 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000282627s
+Runtime decision procedure: 0.003445s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1753 variables, 2744 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000443494s
+Runtime decision procedure: 0.000537151s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1754 variables, 2745 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000297539s
+Runtime decision procedure: 0.000362474s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1755 variables, 2746 clauses
+SAT checker: instance is SATISFIABLE
+Runtime Solver: 0.000345649s
+Runtime decision procedure: 0.000410274s
+Running propositional reduction
+Solving with CaDiCaL 3.0.0
+1756 variables, 2747 clauses
+SAT checker: instance is UNSATISFIABLE
+Runtime Solver: 0.00024449s
+Runtime decision procedure: 0.000296277s
+Finished run_cbmc in 0.09966046s
+
+RESULTS:
+Check 1: domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.assertion.1
+	 - Status: FAILURE
+	 - Description: "assertion failed: value.permits_candidate_action() ==
+value == SourceCurrentness::CandidateCurrent"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:32:5 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+Check 2: domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.assertion.2
+	 - Status: SUCCESS
+	 - Description: "assertion failed: !(value.permits_candidate_action() && value.is_base_side())"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:36:5 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+Check 3: domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.assertion.3
+	 - Status: UNREACHABLE
+	 - Description: "assertion failed: !value.permits_candidate_action() && !value.is_base_side()"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:38:9 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+Check 4: domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.cover.1
+	 - Status: SATISFIED
+	 - Description: "cover condition: value.is_base_side()"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:40:5 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+Check 5: domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.cover.2
+	 - Status: SATISFIED
+	 - Description: "cover condition: value.permits_candidate_action()"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:41:5 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+Check 6: domain::proof_domains::cover_currentness.cover.1
+	 - Status: SATISFIED
+	 - Description: "cover condition: * value == SourceCurrentness::CandidateCurrent"
+	 - Location: crates/ripr-contract/src/domain/proof_domains.rs:40:1 in function domain::proof_domains::cover_currentness
+
+Check 7: domain::proof_domains::cover_currentness.cover.2
+	 - Status: SATISFIED
+	 - Description: "cover condition: * value == SourceCurrentness::BaseDeleted"
+	 - Location: crates/ripr-contract/src/domain/proof_domains.rs:40:1 in function domain::proof_domains::cover_currentness
+
+Check 8: domain::proof_domains::cover_currentness.cover.3
+	 - Status: SATISFIED
+	 - Description: "cover condition: * value == SourceCurrentness::MovedOrRenamed"
+	 - Location: crates/ripr-contract/src/domain/proof_domains.rs:40:1 in function domain::proof_domains::cover_currentness
+
+Check 9: domain::proof_domains::cover_currentness.cover.4
+	 - Status: SATISFIED
+	 - Description: "cover condition: * value == SourceCurrentness::UnresolvedSubject"
+	 - Location: crates/ripr-contract/src/domain/proof_domains.rs:40:1 in function domain::proof_domains::cover_currentness
+
+Check 10: domain::probe::kani_proofs::any_currentness.assertion.1
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 11: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.1
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 12: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.2
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 13: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.3
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 14: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.4
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 15: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.5
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 16: domain::probe::SourceCurrentness::is_base_side.pointer_dereference.6
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:951:18 in function domain::probe::SourceCurrentness::is_base_side
+
+Check 17: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.1
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 18: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.2
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 19: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.3
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 20: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.4
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 21: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.5
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 22: domain::probe::SourceCurrentness::permits_candidate_action.pointer_dereference.6
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:943:19 in function domain::probe::SourceCurrentness::permits_candidate_action
+
+Check 23: domain::probe::kani_proofs::any_currentness.pointer_dereference.1
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 24: domain::probe::kani_proofs::any_currentness.pointer_dereference.2
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 25: domain::probe::kani_proofs::any_currentness.pointer_dereference.3
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 26: domain::probe::kani_proofs::any_currentness.pointer_dereference.4
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 27: domain::probe::kani_proofs::any_currentness.pointer_dereference.5
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 28: domain::probe::kani_proofs::any_currentness.pointer_dereference.6
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: crates/ripr-contract/src/domain/probe_kani.rs:14:17 in function domain::probe::kani_proofs::any_currentness
+
+Check 29: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.1
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 30: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.2
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 31: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.3
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 32: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.4
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 33: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.5
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 34: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.6
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 35: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.7
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer NULL"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 36: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.8
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer invalid"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 37: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.9
+	 - Status: SUCCESS
+	 - Description: "dereference failure: deallocated dynamic object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 38: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.10
+	 - Status: SUCCESS
+	 - Description: "dereference failure: dead object"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 39: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.11
+	 - Status: SUCCESS
+	 - Description: "dereference failure: pointer outside object bounds"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+Check 40: <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq.pointer_dereference.12
+	 - Status: SUCCESS
+	 - Description: "dereference failure: invalid integer address"
+	 - Location: crates/ripr-contract/src/domain/probe.rs:887:39 in function <domain::probe::SourceCurrentness as std::cmp::PartialEq>::eq
+
+
+SUMMARY:
+ ** 1 of 34 failed (1 unreachable)
+
+ ** 6 of 6 cover properties satisfied
+
+Failed Checks: assertion failed: value.permits_candidate_action() ==
+value == SourceCurrentness::CandidateCurrent
+ File: "crates/ripr-contract/src/domain/probe_kani.rs", line 32, in domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+
+VERIFICATION:- FAILED
+Verification Time: 0.09935829s
+
+Manual Harness Summary:
+Verification failed for - domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.

@@ -1,0 +1,48 @@
+{
+  "kani-version": "0.68.0",
+  "file-version": "0.1",
+  "standard-harnesses": {
+    "crates/ripr-contract/src/domain/causal_delta_kani.rs": [
+      "domain::causal_delta::kani_proofs::compare_is_total_and_unknown_is_never_fixture_backed",
+      "domain::causal_delta::kani_proofs::gap_state_parse_roundtrip_and_unknown_fallback",
+      "domain::causal_delta::kani_proofs::identity_mismatch_is_unknown",
+      "domain::causal_delta::kani_proofs::same_identity_decision_table",
+      "domain::causal_delta::kani_proofs::unavailable_snapshot_is_always_unknown",
+      "domain::causal_delta::kani_proofs::unknown_gap_input_never_becomes_causal"
+    ],
+    "crates/ripr-contract/src/domain/evidence/kani_proofs.rs": [
+      "domain::evidence::kani_proofs::oracle_strength_rank_is_injective",
+      "domain::evidence::kani_proofs::oracle_strength_rank_is_the_documented_chain",
+      "domain::evidence::kani_proofs::oracle_strength_wire_word_identifies_strength"
+    ],
+    "crates/ripr-contract/src/domain/executed_control_kani.rs": [
+      "domain::executed_control::kani_proofs::result_state_satisfaction_matches_contract",
+      "domain::executed_control::kani_proofs::substitute_outcome_execution_partition_matches_contract"
+    ],
+    "crates/ripr-contract/src/domain/feedback_kani.rs": [
+      "domain::feedback::kani_proofs::classify_reference_is_total_and_fail_closed",
+      "domain::feedback::kani_proofs::judgment_label_roundtrip",
+      "domain::feedback::kani_proofs::reason_judgment_mapping_is_total_and_note_rule_holds",
+      "domain::feedback::kani_proofs::reason_label_roundtrip"
+    ],
+    "crates/ripr-contract/src/domain/identity/fields/kani_proofs.rs": [
+      "domain::identity::fields::kani_proofs::surface_matches_accepts_exactly_identical_or_separator_anchored_suffix"
+    ],
+    "crates/ripr-contract/src/domain/probe_kani.rs": [
+      "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+      "domain::probe::kani_proofs::from_probe_delta_never_upgrades_without_after",
+      "domain::probe::kani_proofs::probe_family_wire_roundtrip",
+      "domain::probe::kani_proofs::stop_reason_for_unknown_class_is_exactly_the_unknown_classes"
+    ],
+    "crates/ripr-contract/src/domain/test_evidence_identity/kani_proofs.rs": [
+      "domain::test_evidence_identity::kani_proofs::encode_missing_discriminators_is_injective"
+    ]
+  },
+  "contract-harnesses": {},
+  "contracts": [],
+  "totals": {
+    "standard-harnesses": 21,
+    "contract-harnesses": 0,
+    "functions-under-contract": 0
+  }
+}
