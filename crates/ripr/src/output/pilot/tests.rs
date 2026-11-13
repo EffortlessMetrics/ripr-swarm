@@ -2925,6 +2925,9 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
 #[test]
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::language_availability::{
+        AvailabilityState, availability_report_for_detected,
+    };
     use crate::domain::LanguageId;
     use crate::output::repo_exposure::TsFullRepoGuidance;
 
@@ -2949,11 +2952,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     // A language this binary cannot analyze (#4252: TypeScript and Python
     // in a Rust-only build, Perl without `lang-perl`) gets the unavailable
     // route whatever ripr.toml enables: no command, the adapter notice.
-    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute| {
+    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute,
+                              guidance_expected: bool| {
         assert_eq!(route.language_status(), "unavailable");
         assert_eq!(route.route(), "unavailable_in_this_binary");
         assert_eq!(route.command, None);
-        assert_eq!(route.guidance, None);
+        if !guidance_expected {
+            assert_eq!(route.guidance, None);
+        }
     };
     let typescript_available = LanguageId::TypeScript.is_available();
     let summary = required
@@ -2973,7 +2979,15 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     );
     for route in &required.routes[..2] {
         if !typescript_available {
-            assert_unavailable(route);
+            let report = availability_report_for_detected(
+                route.language,
+                route.file_count,
+                Some(&enabled),
+                false,
+            );
+            assert_eq!(report.state, AvailabilityState::ConfiguredEnabledButUnavailable);
+            assert_unavailable(route, true);
+            assert_eq!(route.guidance, Some(report.remediation.join("; ")));
             continue;
         }
         assert_eq!(route.command.as_deref(), Some(route_command().as_str()));
@@ -2996,14 +3010,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
             python.guidance
         );
     } else {
-        assert_unavailable(python);
+        assert_unavailable(python, false);
     }
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
         assert_eq!(perl.command.as_deref(), Some(route_command().as_str()));
     } else {
-        assert_unavailable(perl);
+        assert_unavailable(perl, false);
     }
     let route = route_command();
     let expected_commands: Vec<&str> = if typescript_available || LanguageId::Python.is_available()
