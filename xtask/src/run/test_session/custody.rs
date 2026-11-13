@@ -9,11 +9,10 @@ use rustix::process::{
 use std::fs;
 use std::time::{Duration, Instant};
 
-// Both ordinary group confirmation and isolated session cleanup consume this
-// single disappearance decision, including when custody is used by an
-// integration test with its own independent deadline loop.
-#[path = "../proc_stat.rs"]
-mod proc_stat;
+// The parent binds the one shared disappearance decision for its target.
+// Custody is reused by the independently bounded integration driver without
+// compiling a second instance of this module or the procfs helper.
+use super::proc_stat;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum CleanupFault {
@@ -138,7 +137,7 @@ impl Drop for TestSession {
     }
 }
 
-pub(super) fn pid(value: u32) -> Result<Pid, String> {
+pub(crate) fn pid(value: u32) -> Result<Pid, String> {
     Pid::from_raw(value as i32).ok_or_else(|| "invalid isolated process identity".to_string())
 }
 
@@ -149,14 +148,14 @@ fn send_kill(handle: &rustix::fd::OwnedFd) -> Result<(), String> {
     }
 }
 
-pub(super) struct Member {
-    pub(super) pid: u32,
-    pub(super) session: u32,
-    pub(super) start: String,
-    pub(super) state: String,
+pub(crate) struct Member {
+    pub(crate) pid: u32,
+    pub(crate) session: u32,
+    pub(crate) start: String,
+    pub(crate) state: String,
 }
 
-pub(super) fn read_member(pid: u32) -> Result<Option<Member>, String> {
+pub(crate) fn read_member(pid: u32) -> Result<Option<Member>, String> {
     member_from_stat_read(pid, fs::read_to_string(format!("/proc/{pid}/stat")))
 }
 

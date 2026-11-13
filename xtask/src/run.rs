@@ -23,6 +23,8 @@ mod test_session;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
+#[cfg(all(test, target_os = "linux", not(feature = "automation")))]
+pub(crate) use test_session::custody;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///

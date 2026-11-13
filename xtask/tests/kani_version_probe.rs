@@ -16,8 +16,14 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(not(feature = "automation"))]
+use crate::run::custody;
+#[cfg(feature = "automation")]
 #[path = "../src/run/test_session/custody.rs"]
 mod custody;
+#[cfg(feature = "automation")]
+#[path = "../src/run/proc_stat.rs"]
+mod proc_stat;
 
 const CHILD: &str = "RIPR_KANI_PROBE_WATCHDOG_CHILD";
 const LANE_FAILURE_CODE: i32 = if cfg!(feature = "automation") { 1 } else { 101 };

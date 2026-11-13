@@ -1,11 +1,13 @@
 //! Deadline adapter and controls for the shared cooperative Linux test session.
 
-use super::{CaptureDeadline, OwnedProcess, WaitOutcome, poll_interval, proc_peak_rss_bytes};
+use super::{
+    CaptureDeadline, OwnedProcess, WaitOutcome, poll_interval, proc_peak_rss_bytes, proc_stat,
+};
 use rustix::process::{WaitId, WaitIdOptions, waitid};
 use std::time::{Duration, Instant};
 
 #[path = "test_session/custody.rs"]
-mod custody;
+pub(crate) mod custody;
 pub(super) use custody::TestSession;
 use custody::{enter_test_session, pid};
 
