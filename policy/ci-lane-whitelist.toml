@@ -167,7 +167,7 @@ jobs = ["jactionlint"]
 commands = ["jactionlint --profile correctness --no-online --shellcheck= --pyflakes="]
 estimated_lem = 1
 artifact_families = []
-description = "Optional path-filtered workflow correctness check with a checksum-verified jactionlint 2.5.0 binary, no Rust build and no API access. Findings fail this job; it is not a new branch-protection requirement."
+description = "Explicit manual workflow correctness check with a checksum-verified jactionlint 2.5.0 binary, no Rust build and no API access. Development lint runs in the owning session. Findings fail this job; it is not a new branch-protection requirement."
 
 [[lane]]
 id = "badge-endpoints"
@@ -204,7 +204,7 @@ id = "fuzz"
 posture = "advisory"
 workflow = ".github/workflows/fuzz.yml"
 jobs = ["fuzz"]
-commands = ["cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames --test stage_metamorphic --test fuzz_inprocess", "cargo test --locked -p ripr --lib differential_tests", "mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true"]
+commands = ["cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames --test stage_metamorphic --test diff_scope_properties --test fuzz_inprocess", "cargo test --locked -p ripr --lib differential_tests", "mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true"]
 estimated_lem = 40
 artifact_families = ["fuzz-findings"]
 description = "Weekly and manual panic and hang fuzzing: mutated source, diff, config and MCP/LSP stdio frames through the built binary, and the same source, diff and config mutation through the CLI adapter in-process, with a raised proptest case count; fails on a panic, a signal or a missed deadline and uploads leftover case workspaces."
@@ -257,7 +257,7 @@ jobs = ["archive"]
 commands = ["cargo xtask first-run --install-archive <version>"]
 estimated_lem = 10
 artifact_families = ["first-run-archive"]
-description = "First-run archive install: weekly and on demand (scheduled runs install the version the QUICKSTART snippets pin); verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
+description = "First-run archive install: on demand only (an empty version selects the QUICKSTART snippet pin); verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
 
 [[lane]]
 id = "published-install-matrix"
@@ -267,7 +267,7 @@ jobs = ["install"]
 commands = ["cargo install ripr --locked", "pip install --pre ripr-rs", "npm install @effortlessmetrics/ripr@next"]
 estimated_lem = 10
 artifact_families = []
-description = "Published install matrix: weekly and on demand; installs the public crates.io, PyPI and npm packages on Linux x86-64/ARM64, macOS ARM64/Intel and Windows, then runs ripr --version and ripr doctor in a fresh Cargo project. Documented unavailable platforms are reported as known gaps. Read-only; publishes nothing."
+description = "Published install matrix: on demand only; installs the public crates.io, PyPI and npm packages on Linux x86-64/ARM64, macOS ARM64/Intel and Windows, then runs ripr --version and ripr doctor in a fresh Cargo project. Documented unavailable platforms are reported as known gaps. Read-only; publishes nothing."
 
 [[lane]]
 id = "public-proof"
@@ -350,16 +350,6 @@ artifact_families = ["ripr-evidence"]
 description = "Advisory SARIF rendering and optional code-scanning upload."
 
 [[lane]]
-id = "droid-tag-response"
-posture = "advisory"
-workflow = ".github/workflows/droid.yml"
-jobs = ["droid"]
-commands = []
-estimated_lem = 4
-artifact_families = []
-description = "Issue or PR mention-triggered Droid response workflow."
-
-[[lane]]
 id = "droid-security-scan"
 posture = "advisory"
 workflow = ".github/workflows/droid-security-scan.yml"
@@ -377,7 +367,7 @@ jobs = ["windows-advisory", "windows-advisory-subset"]
 commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings", "npx mocha --ui tdd out/test/suite/managed_server_install.test.js"]
 estimated_lem = 30
 artifact_families = []
-description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/VS Code install-lock (#9498)/Windows-clippy filter when `merge-ready` is applied to a PR (the explicit labeled event), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. The ordinary PR/label subscriber is retired under #4842. Queue qualification uses the existing staged callable subset rather than starting this advisory workflow from development events. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
 id = "windows-gate"
@@ -387,7 +377,7 @@ jobs = ["Ripr Windows Gate Result"]
 commands = ["cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
 estimated_lem = 12
 artifact_families = []
-description = "Diff-scoped always-reporting Windows gate (#5088): ubuntu detection plus optional windows-latest subset for cfg(windows)-touching diffs. Posts Ripr Windows Gate Result on every PR push/sync; pass-as-skips when irrelevant. Command verdicts fail the Result when the subset runs; missing evidence fails the run job. Not yet a branch-protection required check."
+description = "Diff-scoped always-reporting Windows gate (#5088): ubuntu detection plus optional windows-latest subset for cfg(windows)-touching diffs. The PR/main-push triggers are retired under #4842; explicit dispatch runs the retained bounded probe. Command verdicts fail the Result when the subset runs; missing evidence fails the run job. Not yet a branch-protection required check."
 
 [[lane]]
 id = "macos-advisory"
@@ -397,7 +387,7 @@ jobs = ["macos-advisory"]
 commands = ["cargo clippy -p ripr -p xtask --all-targets -- -D warnings", "cargo test -p ripr --lib --no-fail-fast"]
 estimated_lem = 20
 artifact_families = []
-description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly, on dispatch, and on pull requests labeled macos-ci or full-ci when the merge-ready label is applied. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
+description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly and on explicit dispatch; the ordinary PR/label subscriber is retired under #4842. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
 
 [[lane]]
 id = "printed-command-paste"
@@ -407,7 +397,7 @@ jobs = ["paste"]
 commands = ["cargo test -p ripr --test printed_command_paste"]
 estimated_lem = 18
 artifact_families = []
-description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly, on pull requests touching ripr source or the harness, and on dispatch. A shell the platform should provide but lacks fails the job."
+description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly and on explicit dispatch; the ordinary PR subscription is retired under #4842. A shell the platform should provide but lacks fails the job."
 
 [[lane]]
 id = "kani"
@@ -417,7 +407,7 @@ jobs = ["kani"]
 commands = ["cargo xtask kani"]
 estimated_lem = 25
 artifact_families = []
-description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani once per owning package (ripr and ripr-contract) over discovered #[kani::proof] harnesses and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly, on dispatch, and on merge-ready for pull requests touching either owning crate source or the lane runner or workflow. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
+description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani once per owning package (ripr and ripr-contract) over discovered #[kani::proof] harnesses and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly and on explicit dispatch; the ordinary PR/label subscriber is retired under #4842. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
 
 [[lane]]
 id = "future-clippy"
@@ -527,4 +517,4 @@ jobs = ["completions"]
 commands = ["cargo test --locked -p ripr --test completions_command"]
 estimated_lem = 6
 artifact_families = []
-description = "Completion script smoke (#7438): on pull requests touching the completions command or catalog, and on dispatch, installs zsh and fish on a hosted Ubuntu runner and loads each `ripr completions` script in its shell (bash -n and source, zsh -n, fish --no-execute). A required shell that is missing fails the job."
+description = "Completion script smoke (#7438): on explicit dispatch, installs zsh and fish on a hosted Ubuntu runner and loads each `ripr completions` script in its shell (bash -n and source, zsh -n, fish --no-execute). A required shell that is missing fails the job."

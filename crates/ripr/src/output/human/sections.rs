@@ -141,6 +141,84 @@ fn digest_missing_label(finding: &Finding, missing: &str) -> &'static str {
     }
 }
 
+/// The digest's one missing-evidence line as `(label, value)`.
+fn digest_missing_entry(finding: &Finding) -> Option<(String, String)> {
+    // #9033: the digest names the first entry the full form's Weakness list
+    // would also show, so a one-line pointer never names an entry that
+    // `--format human-full` dropped as a restatement of its Evidence block.
+    let missing = finding
+        .missing
+        .iter()
+        .find(|missing| !restates_no_static_path_evidence(finding, missing))?;
+    // #2273: preview-language classifiers record an observation rationale
+    // (not a missing discriminator) in this field for `exposed` findings;
+    // label it as observed advisory evidence so the header does not
+    // contradict the machine state. Rust `exposed` findings never carry a
+    // `missing` entry, so this switch only affects advisory preview output.
+    // #3317 follow-up: the unknown-class `missing` entry is
+    // analyzer-limitation prose ("No clear propagation path…"), not a
+    // discriminator a test could supply. Label it as the limitation it
+    // is when no real discriminator is missing; keep the
+    // discriminator label whenever one exists.
+    // #7071: a weak finding whose reach witness ripr could not trace
+    // carries the limit's prose here, not a discriminator.
+    // A typed static limitation is the analyzer naming what it could not
+    // bind, never an assertion a test could add.
+    let label = digest_missing_label(finding, missing);
+    // `decision.rs` builds these entries as `Missing check value:
+    // <value>`, which restates the label the renderer is about to print:
+    // `Missing check: Missing check value: X`. Print the
+    // value alone. Entries that are not value-shaped ("No strong
+    // discriminator was detected") carry no such prefix and are unchanged.
+    // `evidence_lines.rs` strips the same prefix for the same reason.
+    let missing = missing
+        .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
+        .unwrap_or(missing);
+    let missing = &super::evidence_lines::plain_default_missing_for(
+        finding,
+        &super::evidence_lines::plain_internal_wording(missing),
+    );
+    // #4320: the digest renders one entry while the exhaustive form's
+    // Weakness section may carry several; disclose the window the same way
+    // the evidence window below does, so the reader knows more
+    // missing-discriminator evidence exists in `--format human-full`.
+    let total_weakness_entries = weakness_lines(finding).len();
+    let label = if label == "Missing check" && total_weakness_entries > 1 {
+        format!("Missing check (1 of {total_weakness_entries})")
+    } else {
+        label.to_string()
+    };
+    // #4323 parity: this prose names what is missing and why, and it ends
+    // with the operative classification — a hard `one_line` cut drops that
+    // tail silently (the old clipped card ended "but helper-derived…"
+    // with no pointer to the rest). Wrap like the next-step and
+    // not-credited lines instead of truncating; `--format human-full`
+    // keeps the same text in its Weakness section.
+    let plain_missing = if missing == "No strong discriminator was detected" {
+        "No strong check was detected"
+    } else {
+        missing.as_str()
+    };
+    let value = trim_field_period(
+        &plain_missing
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+    .to_string();
+    Some((label, value))
+}
+
+/// Two digest values state the same fact: equal after collapsing whitespace,
+/// dropping one terminal period and ignoring ASCII case.
+fn restates_digest_fact(left: &str, right: &str) -> bool {
+    let normalize = |value: &str| {
+        trim_field_period(&value.split_whitespace().collect::<Vec<_>>().join(" "))
+            .to_ascii_lowercase()
+    };
+    normalize(left) == normalize(right)
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -187,6 +265,7 @@ pub(crate) fn render_finding_digest_with_config(
             .iter()
             .find(|missing| !restates_no_static_path_evidence(finding, missing))
             .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
+    let digest_missing = digest_missing_entry(finding);
     if let Some(hint) = unresolved_fixture_hint(finding)
         .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
         .or_else(|| {
@@ -221,75 +300,12 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
-    // #9033: the digest names the first entry the full form's Weakness list
-    // would also show, so a one-line pointer never names an entry that
-    // `--format human-full` dropped as a restatement of its Evidence block.
-    let first_missing = finding
-        .missing
-        .iter()
-        .find(|missing| !restates_no_static_path_evidence(finding, missing));
-    if let Some(missing) = first_missing {
-        // #2273: preview-language classifiers record an observation rationale
-        // (not a missing discriminator) in this field for `exposed` findings;
-        // label it as observed advisory evidence so the header does not
-        // contradict the machine state. Rust `exposed` findings never carry a
-        // `missing` entry, so this switch only affects advisory preview output.
-        // #3317 follow-up: the unknown-class `missing` entry is
-        // analyzer-limitation prose ("No clear propagation path…"), not a
-        // discriminator a test could supply. Label it as the limitation it
-        // is when no real discriminator is missing; keep the
-        // discriminator label whenever one exists.
-        // #7071: a weak finding whose reach witness ripr could not trace
-        // carries the limit's prose here, not a discriminator.
-        // A typed static limitation is the analyzer naming what it could not
-        // bind, never an assertion a test could add.
-        let label = digest_missing_label(finding, missing);
-        // `decision.rs` builds these entries as `Missing check value:
-        // <value>`, which restates the label the renderer is about to print:
-        // `Missing check: Missing check value: X`. Print the
-        // value alone. Entries that are not value-shaped ("No strong
-        // discriminator was detected") carry no such prefix and are unchanged.
-        // `evidence_lines.rs` strips the same prefix for the same reason.
-        let missing = missing
-            .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
-            .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_default_missing_for(
-            finding,
-            &super::evidence_lines::plain_internal_wording(missing),
-        );
-        // #4320: the digest renders one entry while the exhaustive form's
-        // Weakness section may carry several; disclose the window the same way
-        // the evidence window below does, so the reader knows more
-        // missing-discriminator evidence exists in `--format human-full`.
-        let total_weakness_entries = weakness_lines(finding).len();
-        let label = if label == "Missing check" && total_weakness_entries > 1 {
-            format!("Missing check (1 of {total_weakness_entries})")
-        } else {
-            label.to_string()
-        };
-        // #4323 parity: this prose names what is missing and why, and it ends
-        // with the operative classification — a hard `one_line` cut drops that
-        // tail silently (the old clipped card ended "but helper-derived…"
-        // with no pointer to the rest). Wrap like the next-step and
-        // not-credited lines instead of truncating; `--format human-full`
-        // keeps the same text in its Weakness section.
-        let plain_missing = if missing == "No strong discriminator was detected" {
-            "No strong check was detected"
-        } else {
-            missing.as_str()
-        };
-        let value = trim_field_period(
-            &plain_missing
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
-        .to_string();
+    if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{value}\n"));
         } else {
-            out.push_str(&wrap_human_prose(&value, &prefix, "    "));
+            out.push_str(&wrap_human_prose(value, &prefix, "    "));
             out.push('\n');
         }
     }
@@ -413,15 +429,26 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             out.push_str(HUMAN_EVIDENCE_LEGEND);
         }
-        for line in evidence.iter().take(2) {
+        // A stage detail that repeats the missing-evidence line above adds
+        // no fact to the two-line window; the full form keeps it.
+        let details: Vec<String> = evidence
+            .iter()
+            .map(|line| super::evidence_lines::plain_internal_wording(line))
+            .filter(|line| {
+                !digest_missing.as_ref().is_some_and(|(_, value)| {
+                    line.split_once(": ")
+                        .is_some_and(|(_, detail)| restates_digest_fact(detail, value))
+                })
+            })
+            .collect();
+        for line in details.iter().take(2) {
             // #7756: list-item values carry no trailing period.
-            let line = super::evidence_lines::plain_internal_wording(line);
-            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(&line))));
+            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
         }
-        if evidence.len() > 2 {
+        if details.len() > 2 {
             out.push_str(&format!(
                 "    - {} more detail line(s) in --format human-full\n",
-                evidence.len() - 2
+                details.len() - 2
             ));
         }
     }

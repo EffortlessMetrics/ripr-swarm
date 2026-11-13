@@ -123,7 +123,10 @@ into a single bucket named only when non-zero. Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
-(#10691). The static-limited `State:` line reads `ripr cannot tell from reading
+(#10691). The pointer is printed only when such a note follows for that
+limitation: with no preview-language advisory, or for Rust switched off in
+`[languages]` (which has no such note), the line drops the pointer and a
+`Fix:` line carries the limitation's own recovery (#14152). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id
@@ -202,6 +205,15 @@ When that JSON budget engages, it keeps the highest-priority findings
 file-order prefix, and its `limited_findings_bound` message names the dropped
 counts per class and file (#10093).
 
+The hidden identity list chooses its 20 rows by that same priority order when
+more than 20 findings are omitted, so a gap in a late-sorting file is named
+ahead of an already-noticed finding in an early one. The chosen rows still
+print in report (file, line) order, the hidden test-stub rows use the same
+window, and the remainder line counts the findings outside the window by
+class, for example `… and 7 more omitted finding(s): 7 exposed; every identity
+is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.` At 20 or fewer omitted
+findings every one is listed and the output is unchanged (#14233).
+
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
@@ -272,6 +284,13 @@ when detail remains the line
 `- N more detail line(s) in --format human-full` discloses the count and names
 the recovery format. `--format human-full` still renders every evidence line,
 and no machine format reads the compact line.
+
+The digest states each fact once (#14308). A stage detail whose prose equals
+the digest's `Missing check` / `Analyzer limit` value (after collapsing
+whitespace, one terminal period and ASCII case) is left out of the two-line
+window, the next detail takes its place, and the `N more detail line(s)` count
+covers only the details not shown. Classification, `--format human-full`
+and the machine formats are unchanged.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
@@ -429,7 +448,13 @@ without a named next step; beside a repair advisory that names its own route or
 recovery (several binding seams, a not-ready packet, the seam budget, a
 classification failure, an unavailable gap route, an unreadable config, or no
 binding seam while the file holds seams, which points at `ripr pilot`) the
-step omits the "no repair route" clause. A refusal that already names the existing test to
+step omits the "no repair route" clause. For a changed predicate the step names
+inputs that fit its shape: just below, on and just above the limit for an
+ordering comparison; equal and different compared values for an equality with
+no ordering operator; the true and false sides for a condition with no
+comparison. String literal contents are ignored, and an angle bracket left
+after removing `=>`, `->`, `<<` and `>>` (an ordering operator, a generic
+argument or a mixed predicate) keeps the limit wording (#14349). A refusal that already names the existing test to
 strengthen (the weak-assertion pointer) gets no such line. When several seams
 share the line and exactly one is the finding's changed expression, the block
 prints the stub command for that seam (`--seam-id`) instead of listing the
@@ -513,7 +538,7 @@ literal the owner does not return are refused by name.
 | State | Meaning |
 | --- | --- |
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. |
-| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. |
+| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
@@ -969,6 +994,20 @@ because the caller is the test an agent edits to grip the changed value. A
 change, never a smoke-only caller. Rows without a recorded relation rank as
 `Opaque`, so their order falls back to oracle strength.
 
+### Identical agent gap rows fold (#14338)
+
+`check --format agent` prints one gap row for findings whose records would
+print identically apart from `id=`: class, `FILE:LINE`, changed expression,
+`missing=`, the strongest related test's whole `tK=` line and the `stages=`
+row, compared unclipped and over every missing discriminator's value,
+shape and flow sink (the explanatory prose counts only when no discriminator
+is named). The first
+finding in triage order keeps the row, so the top gap and
+`next=` do not move. `gaps=` counts rows (tests to write) and `folded_gaps=`
+the extra findings. Any printed difference keeps the rows apart. Folding is
+display-only: the folded findings stay gaps for `limits=` and `stop=`, count
+in `verify=`, and stay listed in `--format json`.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
@@ -1122,6 +1161,8 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_names_gap_findings_before_already_noticed_ones`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_remainder_names_each_unlisted_class_by_position`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

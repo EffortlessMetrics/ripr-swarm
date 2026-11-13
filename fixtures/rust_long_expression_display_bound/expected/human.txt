@@ -38,8 +38,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason
-    - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
-    - 6 more detail line(s) in --format human-full
+    - propagation unknown: Propagation is not statically obvious from syntax-first analysis
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

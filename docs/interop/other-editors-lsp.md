@@ -52,7 +52,15 @@ key by key:
    setting overrides `ripr.toml`.
 
 **Diagnostics transport.** Push (`textDocument/publishDiagnostics`) unless the
-client advertises pull diagnostics (`textDocument.diagnostic`).
+client advertises pull diagnostics (`textDocument.diagnostic`). A pull client
+is offered document pull only (`workspaceDiagnostics: false`), so it re-pulls
+each open file when ripr sends `workspace/diagnostic/refresh` after a save or
+refresh. ripr sends that request only to a client that advertises
+`workspace.diagnostics.refreshSupport`; a pull client without it sees new
+results when it next pulls on its own, for example after an edit. Workspace pull is offered only to the ripr VS Code extension
+(`experimental.riprEditor`) (#1630), so a generic pull client shows
+diagnostics for open files only, not for changed files it has not opened. The
+server still answers a `workspace/diagnostic` request from any client.
 
 **Commands.** `executeCommandProvider` lists `ripr.refresh`,
 `ripr.collectContext`, `ripr.collectEvidenceContext`,
@@ -100,8 +108,10 @@ from a scripted client):
 | **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text ripr itself bounds to 240 characters (ending in `…` when cut, with absolute paths redacted), and the remedy leads the text while the root path trails, so a long root is the part cut. Diff-scoped analysis needs Git: open a folder inside a repository or pass `--root <path>` to one, run `ripr doctor` for the full remedy, or use `ripr pilot --root .` to explore without history |
 | `ripr` not on the client's `PATH` | Typical editor behavior; wording varies. Clients generally report a failed server start (places to look: Helix `:log-open`, Neovim `:checkhealth vim.lsp`, Zed language server status). Use an absolute path in `cmd` / `command` |
 
-A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
-analysis has not finished; save the file or run `ripr.refresh`.
+A first-open diagnostic of `ripr-diagnostic-analysis-pending` means no
+analysis has finished yet. While one is running it says so, and the run's
+results replace it when the run ends. If it asks you to save or run `ripr.refresh`,
+no run was under way when it was published.
 
 Neovim needs `vim.lsp.config` and `vim.lsp.enable` (Neovim 0.11 or newer)
 for the snippet below. Older versions can use `vim.lsp.start` with the same
@@ -166,16 +176,15 @@ vim.lsp.enable("ripr")
 any root, which would stop with `root_unavailable`. Refresh with the
 `exec_cmd` call in the recipe's step 4.
 
-Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
-its own; the recipe's
+Earlier ripr builds advertised workspace diagnostics to every pull client.
+Neovim 0.12 answers `workspace/diagnostic/refresh` with a workspace pull alone
+when the server offers one, and ignores that report for buffers it pulls by
+document, so a refreshed finding never reached the open buffer (the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
-records that run and the upstream fix. In one further check on 2026-10-31
-(Linux, Neovim v0.12.6, the snippet above, `ripr.refresh` through `exec_cmd`),
-the refreshed finding also did not appear within 60 seconds; after analysis had
-finished, one manual `textDocument/diagnostic` request made the `weakly_exposed`
-finding available. That check is recorded only on this page, and its transcript
-was not retained. On these releases, re-open the buffer or request document
-diagnostics after a refresh has finished analyzing.
+records the v0.12.5 and v0.12.6 runs). ripr now offers generic clients document pull only, and
+Neovim re-pulls each open buffer on refresh (#1630). This was checked against
+Neovim v0.12.6's `runtime/lua/vim/lsp/diagnostic.lua` and a scripted client
+that follows its refresh logic, not yet in a Neovim binary.
 
 ## Zed
 

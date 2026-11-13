@@ -337,7 +337,45 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
+    // #14084: the before phase selects its seam through the agent brief, which
+    // withholds a gap-class seam whose evidence is unknown or opaque at a
+    // stage. The route readiness above does not read every stage, so without
+    // this the picker and `ripr check` offered a start the before phase then
+    // refused. The brief's own predicate decides; this only words it.
+    if super::agent_brief::agent_brief_withholds(entry, policy) {
+        return Some((RefusalKind::Other, evidence_limited_reason(entry)));
+    }
     proposal_start_refusal(entry, &eligibility.readiness)
+}
+
+/// The refusal for a gap-class seam the agent brief withholds because one of
+/// its evidence stages is unknown or opaque (#14084). It names the first such
+/// stage in plain words; wording only, the brief owns the decision.
+fn evidence_limited_reason(entry: &crate::analysis::ClassifiedSeam) -> String {
+    use crate::domain::StageState;
+    let evidence = &entry.evidence;
+    let unclear = [
+        (&evidence.reach, "whether a test runs this code"),
+        (
+            &evidence.activate,
+            "which test input makes this change take effect",
+        ),
+        (
+            &evidence.propagate,
+            "whether the changed value reaches a result a test can check",
+        ),
+        (&evidence.observe, "whether a test reads the changed result"),
+        (
+            &evidence.discriminate,
+            "whether an existing assertion would notice the change",
+        ),
+    ]
+    .into_iter()
+    .find(|(stage, _)| matches!(stage.state, StageState::Unknown | StageState::Opaque))
+    .map_or("what a test would have to check here", |(_, what)| what);
+    format!(
+        "ripr does not start an automatic repair here because it cannot tell from reading the code {unclear}; write the test by hand"
+    )
 }
 
 /// #12867 / #13203 A0: the start publishes an attempt and then renders the
@@ -2430,7 +2468,19 @@ fn start_refusal_with_next(reason: &str, next: &str) -> String {
 /// `ripr repair`, the agent card and the MCP admission so every surface names
 /// the same cause (#11397).
 pub(crate) fn held_inline_reason(file: &str) -> String {
-    format!("the inline test target `{file}` has uncommitted changes; commit or stash them first")
+    format!("{HELD_INLINE_OPENING}{file}{HELD_INLINE_CLOSING}")
+}
+
+const HELD_INLINE_OPENING: &str = "the inline test target `";
+const HELD_INLINE_CLOSING: &str = "` has uncommitted changes; commit or stash them first";
+
+impl RepairStartRefusal {
+    /// Whether the start is held only because its inline test target has
+    /// uncommitted changes ([`held_inline_reason`]). Undoing or committing
+    /// those changes lifts this hold, unlike a refusal about the gap itself.
+    pub(crate) fn held_by_uncommitted_target(&self) -> bool {
+        self.reason.starts_with(HELD_INLINE_OPENING) && self.reason.ends_with(HELD_INLINE_CLOSING)
+    }
 }
 
 /// What the human agent card says when the shared start gate holds a seam
@@ -2906,7 +2956,11 @@ pub(crate) fn check_repair_route(
         // no-card refusal adds nothing to its screen (its limitation
         // guidance is the whole story); only a finding that would otherwise
         // have been offered a start names it.
-        if static_limited && reason == NO_TEST_TARGET_REASON {
+        // #14084: the same holds for a seam the before phase withholds as
+        // evidence-limited; the finding's own limitation guidance covers it.
+        if static_limited
+            && (reason == NO_TEST_TARGET_REASON || reason == evidence_limited_reason(entry))
+        {
             return CheckRepairRoute::Silent;
         }
         // A bound seam carries a canonical gap id, which a strongly gripped
@@ -5358,6 +5412,67 @@ pub(crate) mod tests {
             refused.reason
         );
         Ok(())
+    }
+
+    /// Only the uncommitted-target hold is one that undoing a change lifts.
+    #[test]
+    fn held_by_uncommitted_target_reads_only_the_held_inline_reason() {
+        let refusal = |reason: String| RepairStartRefusal {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        assert!(refusal(held_inline_reason("src/lib.rs")).held_by_uncommitted_target());
+        assert!(!refusal(GRIPPED_SPOT_REASON.to_string()).held_by_uncommitted_target());
+        assert!(!refusal(NO_TEST_TARGET_REASON.to_string()).held_by_uncommitted_target());
+    }
+
+    /// #14084: the gate words the first unknown or opaque stage of a seam the
+    /// agent brief withholds, and the brief's predicate (not this wording)
+    /// makes the decision.
+    #[test]
+    fn evidence_limited_reason_names_the_first_unclear_stage() {
+        use crate::analysis::seams::SeamGripClass;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let unclear = |state| StageEvidence::new(state, Confidence::Low, "test stage");
+
+        let clear = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        assert!(!crate::app::agent_brief::agent_brief_withholds(
+            &clear, policy
+        ));
+
+        let mut propagate = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        propagate.evidence.propagate = unclear(StageState::Unknown);
+        assert!(crate::app::agent_brief::agent_brief_withholds(
+            &propagate, policy
+        ));
+        assert_eq!(
+            evidence_limited_reason(&propagate),
+            "ripr does not start an automatic repair here because it cannot tell from reading the code whether the changed value reaches a result a test can check; write the test by hand"
+        );
+
+        // The earliest unclear stage is the one named.
+        let mut observe = gate_entry(
+            SeamGripClass::ReachableUnrevealed,
+            vec![weak_related_test()],
+        );
+        observe.evidence.observe = unclear(StageState::Opaque);
+        observe.evidence.discriminate = unclear(StageState::Unknown);
+        assert!(
+            evidence_limited_reason(&observe).contains(
+                "it cannot tell from reading the code whether a test reads the changed result;"
+            ),
+            "{}",
+            evidence_limited_reason(&observe)
+        );
     }
 
     /// An opaque seam is still refused (class and eligibility unchanged), but

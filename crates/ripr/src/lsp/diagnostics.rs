@@ -1112,6 +1112,10 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
 pub(super) enum AnalysisPendingRecovery {
     /// Configuration valid, root admitted: the ordinary cold-start state.
     SaveOrRefresh,
+    /// Configuration valid, root admitted, and an analysis attempt is queued
+    /// or running (#14447): asking the user to save or refresh to start
+    /// analysis would be wrong while one is already under way.
+    AnalysisRunning,
     /// Configuration invalid: `refresh_diagnostics` returns before
     /// analysis until the configuration is repaired.
     FixConfiguration,
@@ -1124,6 +1128,7 @@ impl AnalysisPendingRecovery {
     pub(super) fn recovery_id(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "save_or_refresh",
+            Self::AnalysisRunning => "analysis_running",
             Self::FixConfiguration => "fix_configuration",
             Self::RootBlocked(route) => route,
         }
@@ -1132,6 +1137,7 @@ impl AnalysisPendingRecovery {
     fn route_text(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
                 "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
             }
@@ -1172,6 +1178,12 @@ fn analysis_pending_diagnostic_for(
     let message = if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if recovery == AnalysisPendingRecovery::AnalysisRunning {
+        format!(
+            "ripr analysis is in progress, so no findings are reported yet — \
              this is not evidence of a clean workspace. {}",
             recovery.route_text()
         )
@@ -4718,8 +4730,10 @@ fn lsp_message(finding: &Finding) -> String {
     // The recommended next step is generic ("add boundary tests ..."); the
     // Problems panel row is the only text many editors show, so name the
     // concrete missing input or value the witness already carries.
+    // The check leads (#14465): a Problems row cut to its first words then
+    // still shows what to test rather than the generic step.
     let base = match missing_check_suffix(finding, &base) {
-        Some(suffix) => format!("{base} {suffix}"),
+        Some(check) => format!("{check} {base}"),
         None => base,
     };
     if finding
@@ -4727,12 +4741,26 @@ fn lsp_message(finding: &Finding) -> String {
         .as_ref()
         .is_some_and(|status| status.as_str() == "preview")
     {
+        // The Problems panel row is often the only text shown, so say
+        // "preview" once: the producer's own step usually opens with
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
+        // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
-            .as_ref()
-            .map(|language| language.as_str())
-            .unwrap_or("preview-language");
-        let mut message = format!("{language} preview evidence (syntax-first, advisory): {base}");
+            .map(|language| language.display_name())
+            .unwrap_or("Preview-language");
+        let step = [
+            format!("{language} preview advisory: "),
+            format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
+        ]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix.as_str()))
+        .unwrap_or(&base);
+        let mut message = format!("{language} preview (advisory): {step}");
         if let Some(static_limit_kind) = &finding.static_limit_kind {
             message.push_str(&format!(" Static limit: {}.", static_limit_kind.as_str()));
         }
@@ -6836,7 +6864,7 @@ mod diagnostic_policy_tests {
         let message = lsp_message(&finding);
         assert_eq!(
             message,
-            "Add boundary tests for the changed threshold. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add boundary tests for the changed threshold."
         );
 
         // A step that already quotes the value is not repeated.
@@ -6862,7 +6890,7 @@ mod diagnostic_policy_tests {
         assert_eq!(with_value(&mut finding, "   ".to_string()), "Add a test.");
         assert_eq!(
             with_value(&mut finding, " age == 18 ".to_string()),
-            "Add a test. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add a test."
         );
         // The 80-character limit counts characters, not bytes.
         assert_eq!(
@@ -6872,11 +6900,11 @@ mod diagnostic_policy_tests {
         );
         assert_eq!(
             with_value(&mut finding, "x".repeat(80)),
-            format!("Add a test. Missing check: `{}`.", "x".repeat(80))
+            format!("Missing check: `{}`. Add a test.", "x".repeat(80))
         );
         assert_eq!(
             with_value(&mut finding, "é".repeat(40)),
-            format!("Add a test. Missing check: `{}`.", "é".repeat(40))
+            format!("Missing check: `{}`. Add a test.", "é".repeat(40))
         );
         // Values that would break the Markdown code span are left out.
         assert_eq!(with_value(&mut finding, "a`b".to_string()), "Add a test.");
@@ -6920,8 +6948,8 @@ mod diagnostic_policy_tests {
         ];
         assert_eq!(
             lsp_message(&finding),
-            "Add boundary tests for below, equal, and above the changed threshold. \
-             Missing check: `n == 0`."
+            "Missing check: `n == 0`. \
+             Add boundary tests for below, equal, and above the changed threshold."
         );
 
         // Without a boundary input the first check is still named.
@@ -6930,7 +6958,7 @@ mod diagnostic_policy_tests {
             crate::domain::DiscriminatorShape::Other,
         )];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -6946,7 +6974,7 @@ mod diagnostic_policy_tests {
             fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
         ];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
