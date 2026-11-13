@@ -1469,6 +1469,8 @@ weakly_exposed|src/lib.rs:13|v|missing=x == 1…|test=t1|id=probe:g\n";
             "x as u32",
             "if x > 5",
             "if enabled",
+            "a == b",
+            "a + b",
             "-",
         ] {
             assert!(!reads_as_sentence(code), "{code}");

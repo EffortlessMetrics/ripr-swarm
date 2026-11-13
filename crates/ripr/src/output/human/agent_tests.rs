@@ -371,6 +371,15 @@ fn gap_row_counts_missing_facts_beyond_the_first() {
                 == "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50 (+1 more)|test=t1|id=probe:a"),
         "{text}"
     );
+    // A second reason for the same value is not a second fact.
+    let mut repeated = weak_gap("probe:a", 2);
+    let same_value = MissingDiscriminatorFact {
+        reason: "another reason".to_string(),
+        ..repeated.activation.missing_discriminators[0].clone()
+    };
+    repeated.activation.missing_discriminators.push(same_value);
+    let repeated = rendered(&output(vec![repeated]));
+    assert!(repeated.contains("|missing=pct == 50|"), "{repeated}");
     let single = rendered(&output(vec![weak_gap("probe:a", 2)]));
     assert!(single.contains("|missing=pct == 50|"), "{single}");
     assert!(!single.contains("more)"), "{single}");

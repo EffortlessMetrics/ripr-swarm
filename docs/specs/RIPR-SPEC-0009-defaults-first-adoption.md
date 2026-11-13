@@ -90,7 +90,7 @@ The default contract is:
   The DETAIL step (`ripr explain`, then `ripr context`) is skipped only when a
   gap row's `missing=` is one complete code value; it is followed when
   `missing=` is `-`, prose, clipped (`…`) or carries the renderer's
-  `(+N more)` count of further missing facts.
+  `(+N more)` count of further distinct missing discriminator values.
   A language counts
   only when it is both detected and enabled in the effective
   `[languages].enabled` (the config this run writes, else the one it keeps,

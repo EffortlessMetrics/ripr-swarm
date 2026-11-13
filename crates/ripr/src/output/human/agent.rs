@@ -1090,11 +1090,17 @@ fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missin
         .unwrap_or("-");
     // The row shows one fact; `(+N more)` tells a reader that explain has the
     // rest, so a single code value is never mistaken for the whole check.
-    let more = finding
+    // Counts distinct discriminator values; `finding.missing` prose lines are
+    // generic labels, not further facts.
+    let mut values: Vec<&str> = finding
         .activation
         .missing_discriminators
-        .len()
-        .saturating_sub(1);
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .collect();
+    values.sort_unstable();
+    values.dedup();
+    let more = values.len().saturating_sub(1);
     let missing = if with_missing && more > 0 {
         format!("{} (+{more} more)", clip(missing))
     } else {
