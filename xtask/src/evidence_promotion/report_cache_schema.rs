@@ -11,7 +11,7 @@
 //! report's recorded version and must be older than the current one, so a pin
 //! cannot silently outlive the need for it.
 
-use super::{EVIDENCE_PROMOTION_HONESTY_CORPUS, read_evidence_promotion_corpus};
+use super::EVIDENCE_PROMOTION_HONESTY_CORPUS;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -140,9 +140,11 @@ fn check_reports(
     }
 }
 
-pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result<(), String> {
+pub(super) fn check_report_cache_schemas(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
-    let corpus = read_evidence_promotion_corpus(corpus_path)?;
     let Some(parent) = corpus_path.parent() else {
         return Ok(());
     };
@@ -176,7 +178,7 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
             .map_err(|error| format!("{display} is not JSON: {error}"))?;
         reports.push((display, report));
     }
-    let pins = read_pins(&corpus, violations);
+    let pins = read_pins(corpus, violations);
     if reports.is_empty() && pins.is_empty() {
         return Ok(());
     }
