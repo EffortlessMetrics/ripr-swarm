@@ -3855,7 +3855,11 @@ diagnostic, hover repair text, code action or code lens for a finding id in
 withheld count and the `owner_mutants_skip` reason under
 `diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
 (the reason is `null` when nothing is withheld). The set is recomputed on every
-refresh, so removing the attribute brings the findings back.
+refresh, so removing the attribute brings the findings back. The count is the
+owner opt-out count, which equals the withheld set because withheld findings are
+removed before the out-of-scope test-file partition; the partition therefore
+cannot reduce it. The fixed `owner_mutants_skip` reason holds while
+the editor supplies no suppression policy (#14610).
 
 Surfaces that still report withheld findings (not yet wired to the opt-out):
 MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
