@@ -433,34 +433,19 @@ def reviews_allow_source_attestation(
     native = _latest_decisive(reviews)
     if any(str(r.get("state") or "") == "CHANGES_REQUESTED" for r in native):
         return False
-    if any(
-        str(r.get("commit_id") or "") == head
+    approvals = [
+        r for r in native
+        if str(r.get("commit_id") or "") == head
         and str(r.get("state") or "") == "APPROVED"
         and _trusted(r)
-        for r in native
-    ):
-        return True
-    commented = [
-        r
-        for r in _latest_by_login(reviews)
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
     ]
-    # Any trusted reviewer's current negative disposition refuses, even when another
-    # trusted reviewer's current comment is ready.
-    if any(comment_body_negative(str(r.get("body") or "")) for r in commented):
-        return False
-    if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
-        return True
-    # The description is only another carrier, so it must not be easier to satisfy
-    # than a ready review from the same people. A thread reply creates a neutral
-    # COMMENTED review that replaces its author's earlier one in the latest-per-login
-    # view above; here each trusted reviewer's latest current-head statement that
-    # says anything (ready or negative) decides, and a negative one refuses.
+    # Every positive carrier is subject to the same unresolved-negative veto.
+    # Neutral replies cannot erase a statement. A later explicit ready COMMENT
+    # or still-current native approval resolves only that reviewer's objection.
+    # Use the selected native approvals, not historical ones: a dismissed or
+    # superseded approval cannot silently clear a negative COMMENT.
     stated = [
-        r
-        for r in reviews
+        r for r in reviews
         if str(r.get("commit_id") or "") == head
         and _trusted(r)
         and str(r.get("state") or "") == "COMMENTED"
@@ -469,8 +454,23 @@ def reviews_allow_source_attestation(
             or comment_body_negative(str(r.get("body") or ""))
         )
     ]
-    if any(comment_body_negative(str(r.get("body") or "")) for r in _latest_by_login(stated)):
+    if any(
+        str(r.get("state") or "") == "COMMENTED"
+        and comment_body_negative(str(r.get("body") or ""))
+        for r in _latest_by_login(stated + approvals)
+    ):
         return False
+    if approvals:
+        return True
+    commented = [
+        r
+        for r in _latest_by_login(reviews)
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+    ]
+    if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
+        return True
     return pull_allows_source_attestation(pull, head=head)
 
 
@@ -777,6 +777,23 @@ def self_test() -> None:
     )
     assert reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head)], head=head
+    )
+    # #14578: no positive carrier bypasses another reviewer's unresolved
+    # negative, even if the objecting reviewer later posts a neutral reply.
+    negative = review(state="COMMENTED", commit_id=head, id=2,
+                      submitted_at="2026-10-15T01:00:02Z", body="REPAIR_REQUIRED")
+    neutral = review(state="COMMENTED", commit_id=head, id=3,
+                     submitted_at="2026-10-15T01:00:03Z", body="")
+    for state, body in [("APPROVED", ""), ("COMMENTED", "SOURCE_REVIEW_READY")]:
+        positive = review(state=state, commit_id=head, id=1, body=body,
+                          user={"login": "other"})
+        assert not reviews_allow_source_attestation(
+            [positive, negative, neutral], head=head
+        )
+    assert reviews_allow_source_attestation(
+        [negative, neutral, review(state="APPROVED", commit_id=head, id=4,
+                                   submitted_at="2026-10-15T01:00:04Z")],
+        head=head,
     )
     # Another trusted reviewer's later negative comment refuses despite a ready comment.
     assert not reviews_allow_source_attestation(
