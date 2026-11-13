@@ -1,0 +1,128 @@
+name: Unblock Rust 1.100 repair applicator
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-applicator-hotfix.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: rust-1.100-applicator-hotfix
+  cancel-in-progress: false
+
+jobs:
+  repair-applicator-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: build/rust-1.100-upgrade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt,clippy
+
+      - name: Install source-floor compiler
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --no-self-update
+
+      - name: Repair the applicator and execute it
+        shell: bash
+        env:
+          INITIAL_HEAD: ${{ github.sha }}
+          BRANCH: build/rust-1.100-upgrade
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INITIAL_HEAD"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/rust-1.100-review-repair.yml")
+          text = path.read_text(encoding="utf-8")
+          old = '''          for path in ["docs/swarm-development.md", "docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:
+              replace_exact(path, "runner_image_unavailable", "runner_capacity_unavailable")
+'''
+          new = '''          replace_exact(
+              "docs/swarm-development.md",
+              "runner_image_unavailable",
+              "runner_capacity_unavailable",
+          )
+          replace_exact(
+              "docs/SWARM_RUNNER_ROLLOUT_PLAN.md",
+              "runner_image_unavailable",
+              "runner_capacity_unavailable",
+              count=3,
+          )
+'''
+          if text.count(old) != 1:
+              raise SystemExit("Rust 1.100 applicator documentation loop drifted")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/rust-1.100-review-repair.yml
+          git commit -m "ci: make Rust 1.100 reason-code repair count explicit"
+          git push \
+            --force-with-lease="refs/heads/$BRANCH:$INITIAL_HEAD" \
+            origin "HEAD:refs/heads/$BRANCH"
+
+          export EXPECTED_HEAD="$(git rev-parse HEAD)"
+
+          # Keep both temporary applicators out of permanent workflow-inventory
+          # tests without staging their deletion.
+          hotfix=.github/workflows/rust-1.100-applicator-hotfix.yml
+          hotfix_tmp="$(mktemp)"
+          mv "$hotfix" "$hotfix_tmp"
+          restore_hotfix() {
+            mv "$hotfix_tmp" "$hotfix"
+          }
+          trap restore_hotfix EXIT
+
+          python3 - <<'PY' > /tmp/rust-1.100-repair.sh
+          from pathlib import Path
+
+          lines = Path(".github/workflows/rust-1.100-review-repair.yml").read_text(
+              encoding="utf-8"
+          ).splitlines()
+          marker = "      - name: Apply bounded Rust 1.100 repairs"
+          try:
+              start = lines.index(marker)
+          except ValueError as error:
+              raise SystemExit("Rust 1.100 repair step marker drifted") from error
+
+          try:
+              run_line = next(
+                  index for index in range(start + 1, len(lines))
+                  if lines[index] == "        run: |"
+              )
+          except StopIteration as error:
+              raise SystemExit("Rust 1.100 repair run block drifted") from error
+
+          body = lines[run_line + 1 :]
+          if not body:
+              raise SystemExit("Rust 1.100 repair run block is empty")
+          for line in body:
+              if line and not line.startswith("          "):
+                  raise SystemExit(f"Unexpected repair-script indentation: {line!r}")
+              print(line[10:] if line else "")
+          PY
+
+          chmod +x /tmp/rust-1.100-repair.sh
+          bash /tmp/rust-1.100-repair.sh
+
+          restore_hotfix
+          trap - EXIT
