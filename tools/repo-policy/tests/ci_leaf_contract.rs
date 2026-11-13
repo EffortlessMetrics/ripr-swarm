@@ -1141,3 +1141,58 @@ fn callable_and_manual_leaf_rejects_development_event_reactivation() -> TestResu
     );
     Ok(())
 }
+
+// #14433: this production-dependent leaf stays outside the sibling workflow
+// executable. Conserve its native inventory independently of that sibling's map.
+// Frozen from d61bac5093dd430ad10df2707882a8c05324e2ff (17 active cases),
+// plus this guard. Intentional additions must update the explicit inventory.
+#[test]
+fn native_inventory_conserves_every_ci_leaf_case_and_ignored_state() -> TestResult {
+    let expected = [
+        "actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selection: test",
+        "callable_and_manual_leaf_rejects_development_event_reactivation: test",
+        "ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection: test",
+        "effective_shell_precedence_matches_the_actual_workflow_declarations: test",
+        "exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs: test",
+        "feature_command_action_and_manual_denominators_are_unchanged: test",
+        "independent_event_labels_reject_request_guard_removal: test",
+        "literal_runtime_commands_propagate_native_failure: test",
+        "native_inventory_conserves_every_ci_leaf_case_and_ignored_state: test",
+        "pr_owned_step_allowance_is_exact_and_job_scoped: test",
+        "release_steps_preserve_manual_semantics_and_ignore_labels_on_calls: test",
+        "removing_the_declared_shell_reproduces_masked_pkgid_failures: test",
+        "selected_child_missing_failed_cancelled_or_unexpected_cannot_pass: test",
+        "selected_rust_runtime_cannot_be_pruned_by_event_diff_or_missing_history: test",
+        "shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged: test",
+        "unlocked_install_and_readiness_preserve_each_native_failure: test",
+        "vscode_payload_requires_every_command_in_order: test",
+        "wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections: test",
+    ];
+    let executable = std::env::current_exe()?;
+    let executable = executable
+        .to_str()
+        .ok_or("non-UTF-8 test executable path")?;
+    // Reuse the owned scratch directory and five-second timeout. Quoting the
+    // environment binding keeps executable paths out of shell source syntax.
+    for (arguments, expected) in [
+        ("--list --format=terse", expected.as_slice()),
+        ("--list --ignored --format=terse", &[][..]),
+    ] {
+        let output = run(
+            &format!("\"$CI_LEAF_EXECUTABLE\" {arguments}"),
+            &[("CI_LEAF_EXECUTABLE", executable)],
+        )?;
+        assert!(
+            output.status.success(),
+            "native inventory failed: {output:?}"
+        );
+        let text = String::from_utf8(output.stdout)?;
+        let mut actual: Vec<_> = text.lines().collect();
+        actual.sort_unstable();
+        // Compare rows, not just counts: omission, renaming, duplication and
+        // unexpected output must refuse. Query ignored cases separately because
+        // the complete terse listing does not expose their ignored state.
+        assert_eq!(actual, expected, "CI-leaf inventory {arguments}");
+    }
+    Ok(())
+}
