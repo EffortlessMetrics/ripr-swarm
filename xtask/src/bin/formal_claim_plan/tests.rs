@@ -1,5 +1,12 @@
 use super::*;
 
+fn rejection<T>(result: PlanResult<T>) -> PlanResult<String> {
+    match result {
+        Err(reason) => Ok(reason),
+        Ok(_) => Err("expected a diagnostic refusal, but selection was accepted".to_string()),
+    }
+}
+
 fn member(pr_number: u64, digit: char) -> Member {
     Member {
         pr_number,
@@ -284,7 +291,10 @@ fn index_without_critical_claims_rejects() -> PlanResult<()> {
     for claim in &mut input.claim_index.claims {
         claim.criticality = Criticality::Advisory;
     }
-    assert!(plan(&input, "sha256:test".to_string()).is_err());
+    assert!(
+        rejection(plan(&input, "sha256:test".to_string()))?
+            .contains("claim index has no critical claims")
+    );
     Ok(())
 }
 
@@ -292,7 +302,10 @@ fn index_without_critical_claims_rejects() -> PlanResult<()> {
 fn stale_registry_or_invalid_stack_identity_rejects() -> PlanResult<()> {
     let mut input = fixture();
     input.change_set.expected_registry_generation = "registry-2".to_string();
-    assert!(plan(&input, "sha256:test".to_string()).is_err());
+    assert!(
+        rejection(plan(&input, "sha256:test".to_string()))?
+            .contains("selected registry generation does not match")
+    );
     let mut input = fixture();
     let first_head = input
         .change_set
@@ -307,10 +320,13 @@ fn stale_registry_or_invalid_stack_identity_rejects() -> PlanResult<()> {
         .get_mut(1)
         .ok_or("missing second member")?
         .head = first_head;
-    assert!(plan(&input, "sha256:test".to_string()).is_err());
+    assert!(rejection(plan(&input, "sha256:test".to_string()))?.contains("duplicate member head"));
     let mut input = fixture();
     input.change_set.group = input.change_set.base.clone();
-    assert!(plan(&input, "sha256:test".to_string()).is_err());
+    assert!(
+        rejection(plan(&input, "sha256:test".to_string()))?
+            .contains("base and group must be distinct")
+    );
     Ok(())
 }
 
@@ -362,16 +378,23 @@ fn duplicate_keys_unknown_fields_and_missing_values_reject() -> PlanResult<()> {
     let input = fixture();
     let encoded = serde_json::to_string(&input).map_err(|error| error.to_string())?;
     let duplicate = encoded.replacen("{", "{\"repository\":\"shadow\",", 1);
-    assert!(parse_input(duplicate.as_bytes()).is_err());
+    assert!(
+        rejection(parse_input(duplicate.as_bytes()))?.contains("duplicate JSON key: repository")
+    );
     let unknown = encoded.replacen("{", "{\"execute\":true,", 1);
-    assert!(parse_input(unknown.as_bytes()).is_err());
+    assert!(rejection(parse_input(unknown.as_bytes()))?.contains("unknown field `execute`"));
     let mut value = serde_json::to_value(input).map_err(|error| error.to_string())?;
     value
         .get_mut("change_set")
         .and_then(serde_json::Value::as_object_mut)
         .ok_or("missing change_set")?
         .remove("classification_complete");
-    assert!(parse_input(&serde_json::to_vec(&value).map_err(|error| error.to_string())?).is_err());
+    assert!(
+        rejection(parse_input(
+            &serde_json::to_vec(&value).map_err(|error| error.to_string())?
+        ))?
+        .contains("missing field `classification_complete`")
+    );
     Ok(())
 }
 
