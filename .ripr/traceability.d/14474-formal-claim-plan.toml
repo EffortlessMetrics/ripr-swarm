@@ -22,4 +22,5 @@ tests = [
   "xtask/src/bin/formal_claim_plan/tests.rs::json_and_markdown_project_the_same_plan",
   "xtask/src/bin/formal_claim_plan/tests.rs::duplicate_keys_unknown_fields_and_missing_values_reject",
   "xtask/src/bin/formal_claim_plan/tests.rs::complete_ordered_stack_identity_is_preserved",
+  "xtask/src/bin/formal_claim_plan/input.rs::normalization_tests::normalization_sorts_unordered_projection_fields_without_reordering_members",
 ]
