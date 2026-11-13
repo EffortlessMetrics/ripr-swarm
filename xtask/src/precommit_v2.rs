@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::policy::CoverageEnumeration;
 use crate::run::{COMMAND_DIAGNOSTIC_DISCLOSURE, CommandDiagnostic};
 use crate::run::{ProcessErrorKind, capture_output_without_timeout, capture_process_output};
 
@@ -184,11 +185,11 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
     run_composition_in(
         root,
         ci_policy,
-        &mut |ci_policy| {
+        &mut |ci_policy, coverage| {
             if ci_policy {
-                crate::precommit_policy(true)
+                crate::precommit_policy(true, coverage)
             } else {
-                crate::precommit()
+                crate::precommit(coverage)
             }
         },
         &mut run_status,
@@ -204,7 +205,7 @@ type StatusRunner<'a> =
 fn run_composition_in(
     root: PathBuf,
     ci_policy: bool,
-    policy: &mut dyn FnMut(bool) -> Result<(), String>,
+    policy: &mut dyn FnMut(bool, CoverageEnumeration) -> Result<(), String>,
     status: &mut StatusRunner<'_>,
 ) -> Result<(), String> {
     let mut report = PrecommitReport {
@@ -315,7 +316,13 @@ fn run_composition_in(
     };
     report.impact_plan = build_impact_plan(&report.change_set, &package_roots);
 
-    let policy_result = policy(ci_policy);
+    let coverage = coverage_enumeration(ci_policy, &report.change_set, &report.impact_plan);
+    if coverage == CoverageEnumeration::SkipUnaffectedChangeSet {
+        report
+            .skipped
+            .push(COVERAGE_ENUMERATION_SKIPPED.to_string());
+    }
+    let policy_result = policy(ci_policy, coverage);
     // #8793: a file-policy instrument failure (cargo lock wait or timeout)
     // alone is infrastructure state, not a source failure. The outer checks
     // still run; the failure is recorded now so any later report keeps it, and
@@ -368,6 +375,9 @@ fn run_composition_in(
     }
 
     if ci_policy {
+        report.skipped.push(
+            "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation".to_string(),
+        );
         report.skipped.push(
             "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation".to_string(),
         );
@@ -830,6 +840,44 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
         workspace_clippy: false,
         workspace_widening_reason: None,
         skipped_reason,
+    }
+}
+
+/// Skipped-row text for a local run that built no `covered_by` test binary.
+const COVERAGE_ENUMERATION_SKIPPED: &str = "check-file-policy did not build or list test-valued covered_by selectors: no Rust source, manifest, workspace-wide Rust control file or policy/ path changed. Hosted qualification enumerates them.";
+
+/// Whether this run must build test binaries to enumerate the test-valued
+/// `covered_by` selectors (#13705).
+///
+/// A selector's listing depends on Rust sources, manifests, the workspace-wide
+/// Rust control files and the policy declarations. When the complete local
+/// change set touches none of them, the listing equals the merge base's, which
+/// hosted qualification already enumerated, so the build is skipped. This is
+/// the same premise that skips local Clippy. Any other local run enumerates,
+/// resolving library unit-test selectors in source where it can, because the
+/// `ripr` library test build does not fit a 15 GB container. Every `ci-policy`
+/// run enumerates in full: hosted qualification never skips or substitutes.
+fn coverage_enumeration(
+    ci_policy: bool,
+    change_set: &ChangeSet,
+    plan: &ImpactPlan,
+) -> CoverageEnumeration {
+    let rust_or_policy_changed = change_set
+        .paths()
+        .iter()
+        .any(|path| is_rust_relevant(path) || path_is_under(path, "policy"));
+    if ci_policy {
+        CoverageEnumeration::Enumerate
+    } else if !change_set.complete
+        || plan.workspace_clippy
+        || !plan.impacted_packages.is_empty()
+        || rust_or_policy_changed
+    {
+        // Local runs do not build a library test target for a selector that
+        // resolves in source; hosted qualification lists it.
+        CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
+    } else {
+        CoverageEnumeration::SkipUnaffectedChangeSet
     }
 }
 
@@ -1666,6 +1714,183 @@ mod tests {
         )
     }
 
+    fn single_path_change_set(path: &str, old_path: Option<&str>, complete: bool) -> ChangeSet {
+        ChangeSet {
+            changes: vec![ChangedPath {
+                kind: "modified".to_string(),
+                path: path.to_string(),
+                old_path: old_path.map(str::to_string),
+                origins: vec!["unstaged".to_string()],
+            }],
+            complete,
+            limitations: Vec::new(),
+        }
+    }
+
+    /// #13705: the test-binary builds behind `covered_by` enumeration are
+    /// skipped only for a complete local change set that cannot change any
+    /// listing. Every other shape, and every `ci-policy` run, enumerates.
+    #[test]
+    fn coverage_enumeration_is_skipped_only_for_an_unaffected_local_change_set()
+    -> Result<(), String> {
+        let roots = [PackageRoot {
+            name: "a".to_string(),
+            relative_root: "crates/a".to_string(),
+            dependencies: Vec::new(),
+            proc_macro: false,
+        }];
+        let decide = |ci_policy: bool, change_set: &ChangeSet| {
+            coverage_enumeration(
+                ci_policy,
+                change_set,
+                &build_impact_plan(change_set, &roots),
+            )
+        };
+        for path in [
+            "docs/guide.md",
+            ".github/workflows/ci.yml",
+            "editors/vscode/src/extension.ts",
+            "crates/a/tests/fixtures/input.json",
+        ] {
+            let change_set = single_path_change_set(path, None, true);
+            require(
+                decide(false, &change_set) == CoverageEnumeration::SkipUnaffectedChangeSet,
+                format!("{path} alone must not build covered_by test binaries"),
+            )?;
+            require(
+                decide(true, &change_set) == CoverageEnumeration::Enumerate,
+                format!("ci-policy must enumerate even for {path}"),
+            )?;
+            require(
+                decide(false, &single_path_change_set(path, None, false))
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("an incomplete change set must enumerate even for {path}"),
+            )?;
+        }
+        for path in [
+            "crates/a/src/lib.rs",
+            "crates/a/Cargo.toml",
+            "crates/a/build.rs",
+            "scratch/outside_any_package.rs",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/config.toml",
+            "policy/non-rust-allowlist.toml",
+            "policy/clippy-exceptions.toml",
+        ] {
+            require(
+                decide(false, &single_path_change_set(path, None, true))
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("{path} can change a covered_by listing and must enumerate"),
+            )?;
+            require(
+                decide(true, &single_path_change_set(path, None, true))
+                    == CoverageEnumeration::Enumerate,
+                format!("ci-policy must list in full for {path}"),
+            )?;
+        }
+        // A rename away from a Rust or policy path still removes that input.
+        for old_path in ["crates/a/src/gone.rs", "policy/non-rust-allowlist.toml"] {
+            require(
+                decide(
+                    false,
+                    &single_path_change_set("docs/moved.md", Some(old_path), true),
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("a rename from {old_path} must enumerate"),
+            )?;
+        }
+        // The decision does not rest on the impact plan alone.
+        require(
+            coverage_enumeration(
+                false,
+                &single_path_change_set("docs/guide.md", None, true),
+                &ImpactPlan {
+                    impacted_packages: vec!["a".to_string()],
+                    ..ImpactPlan::empty()
+                },
+            ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
+                && coverage_enumeration(
+                    false,
+                    &single_path_change_set("docs/guide.md", None, true),
+                    &ImpactPlan {
+                        workspace_clippy: true,
+                        ..ImpactPlan::empty()
+                    },
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+            "an impacted package or workspace widening must enumerate",
+        )
+    }
+
+    /// The composition hands the decision to the policy leg and discloses a
+    /// skipped enumeration in the published report; a Rust change does neither.
+    #[test]
+    fn composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip()
+    -> Result<(), String> {
+        for (changed, contents, expected) in [
+            (
+                "docs/guide.md",
+                "changed\n",
+                CoverageEnumeration::SkipUnaffectedChangeSet,
+            ),
+            (
+                "crates/a/src/lib.rs",
+                "pub fn a_changed() {}\n",
+                CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+            ),
+        ] {
+            let fixture = TestRepo::new()?;
+            fixture.write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"2\"\n",
+            )?;
+            fixture.write(
+                "crates/a/Cargo.toml",
+                "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            fixture.write("crates/a/src/lib.rs", "pub fn a() {}\n")?;
+            fixture.write("docs/guide.md", "base\n")?;
+            fixture.git(&["add", "."])?;
+            fixture.git(&["commit", "-q", "-m", "base"])?;
+            fixture.write(changed, contents)?;
+            let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
+            let mut observed = Vec::new();
+            run_composition_in(
+                root,
+                false,
+                &mut |_, coverage| {
+                    observed.push(coverage);
+                    Ok(())
+                },
+                &mut |program, args| {
+                    if program == "cargo" && args.first().map(String::as_str) == Some("clippy") {
+                        // Stand in for Clippy without compiling the fixture.
+                        return run_status("git", &["--version".to_string()]);
+                    }
+                    run_status(program, args)
+                },
+            )?;
+            require(
+                observed == [expected],
+                format!("{changed}: policy received {observed:?}, expected {expected:?}"),
+            )?;
+            let report: serde_json::Value = serde_json::from_slice(
+                &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let disclosed = report
+                .get("skipped")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("skipped obligations missing")?
+                .iter()
+                .any(|item| item.as_str() == Some(COVERAGE_ENUMERATION_SKIPPED));
+            require(
+                disclosed == (expected == CoverageEnumeration::SkipUnaffectedChangeSet),
+                format!("{changed}: wrong skipped-enumeration disclosure: {report}"),
+            )?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn merge_base_falls_back_to_local_main_and_fails_closed_without_one() -> Result<(), String> {
         {
@@ -2059,14 +2284,25 @@ mod tests {
         fixture: &TestRepo,
         policy_result: Result<(), String>,
     ) -> Result<Driven, String> {
+        drive_composition_with_mode(fixture, policy_result, false)
+    }
+
+    fn drive_composition_with_mode(
+        fixture: &TestRepo,
+        policy_result: Result<(), String>,
+        ci_policy: bool,
+    ) -> Result<Driven, String> {
         let mut calls = Vec::new();
         // Temp dirs may sit behind a symlink (macOS /var -> /private/var) and
         // package roots are canonicalized before prefix stripping.
         let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
         let result = run_composition_in(
             root,
-            false,
-            &mut |_| policy_result.clone(),
+            ci_policy,
+            &mut |observed_mode, _coverage| {
+                require(observed_mode == ci_policy, "policy received the wrong mode")?;
+                policy_result.clone()
+            },
             &mut |program, args| {
                 calls.push(format!("{program} {}", args.join(" ")));
                 if program == "cargo" {
@@ -2076,11 +2312,55 @@ mod tests {
                 run_status(program, args)
             },
         );
+        let report_path = if ci_policy {
+            "target/ripr/reports/ci-policy.json"
+        } else {
+            REPORT_JSON
+        };
         let report = serde_json::from_slice(
-            &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+            &fs::read(fixture.path.join(report_path)).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
         Ok((result, calls, report))
+    }
+
+    #[test]
+    fn composition_discloses_external_formatting_only_for_ci_policy() -> Result<(), String> {
+        for ci_policy in [false, true] {
+            let fixture = composition_fixture()?;
+            let (result, calls, report) = drive_composition_with_mode(&fixture, Ok(()), ci_policy)?;
+            result?;
+            let expected_composition = if ci_policy {
+                "ci_policy"
+            } else {
+                "local_precommit"
+            };
+            require(
+                report
+                    .get("composition")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected_composition),
+                format!("wrong composition identity: {report}"),
+            )?;
+            let skipped = report
+                .get("skipped")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("skipped obligations missing")?;
+            for obligation in [
+                "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation",
+                "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation",
+            ] {
+                require(
+                    skipped.iter().any(|item| item.as_str() == Some(obligation)) == ci_policy,
+                    format!("wrong external obligation for {expected_composition}: {skipped:?}"),
+                )?;
+            }
+            require(
+                calls.iter().any(|call| call.starts_with("cargo clippy")) != ci_policy,
+                format!("wrong selected Clippy execution for {expected_composition}: {calls:?}"),
+            )?;
+        }
+        Ok(())
     }
 
     #[test]

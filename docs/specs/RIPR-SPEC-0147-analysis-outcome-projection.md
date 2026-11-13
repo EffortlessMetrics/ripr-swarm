@@ -14,6 +14,33 @@ enough to establish that the input was fully analyzable.
 
 ## Behavior
 
+The generated agent loop uses bounded Agent output to discover a gap, then a
+single post-edit Agent-format check for both verification and completion.
+Its final `verify=` line (#13516) projects the complete outcome, analysis
+completeness, full summary counts and worktree/partial/no-scope disclosures,
+including untracked source excluded from the diff in a language enabled for
+the run (`untracked_source_excluded`), from one app-owned verdict
+(`CheckOutput::verification`). An agent's new file stays untracked until
+`git add -N`, so an untracked enabled-language path is exactly the edit a
+working-tree diff would silently miss; the enabled set is the one the
+producer recorded for the run, and an unknown set refuses on any untracked
+routed path. An untracked file in a disabled language would not be analyzed
+even if staged, so it does not refuse. Gitignored source does not refuse: the
+repository excludes it deliberately (dependency trees, virtualenvs, build
+output, nested worktrees), it is almost never the agent's edit, and refusing
+on it would make `verify=complete` unreachable in ordinary repositories; the
+human, GitHub and JSON disclosures keep naming it;
+full JSON is an explicit drilldown. The report must describe the same root,
+base and saved source; changed inputs require a fresh check. The consumer
+requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+When full summary findings exceed full summary exposed findings the refusal
+reason is `unexposed_findings_remain` (#13825). It names what it counts rather
+than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
+is reported under the header's `limits=`, not `gaps=`, so the record never
+claims gaps remain beside a `gaps=0` header.
+Explain navigation retains its printed format for artifact replay with an
+explicit suppression policy, since that combination refuses Agent format.
+
 The diff pipeline consumes `AnalysisLimitation` records from the parser and
 language adapters without reconstructing them from warning text. It publishes
 one `AnalysisOutcome` containing:
@@ -95,6 +122,21 @@ finding message and must state that zero findings is not a clean result when a
 limitation exists. JSON/status output must expose the same DTO and derive
 `analysis_complete` from its closed kind; it must not maintain an independent
 completeness flag.
+
+Compact `check --format agent` projects an incomplete producer kind as
+`analysis=incomplete|outcome=<kind>` before its findings or terminal message.
+It previews one producer limitation with its recovery intact and names any
+remaining limitations for inspection through JSON. Partial, unsupported and
+failed outcomes never emit `done=`, including when retained findings are all
+exposed. With no test-side action left, `stop=` states that the analysis is
+incomplete rather than claiming a clean result. Retained test-side gaps keep
+their detail and navigation as advisory evidence beneath the incomplete state;
+they do not acquire a contradictory completion or stop claim. Complete outcomes
+retain their existing triage behavior (#13138).
+
+A run that analyzed nothing because the diff held no analyzable source (for
+example docs-only; the empty-diff `no_scope` case is RIPR-SPEC-0083) never emits `done=` in the agent format and never prints the
+clean GitHub notice; it states the not-established state instead (#13658).
 
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
@@ -261,6 +303,15 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
   explicit repo-only non-applicability.
 
 ## Test Mapping
+
+`cli::commands::check::tests::zero_findings_hedge_names_config_excluded_rust_instead_of_diff_validity`
+runs a valid Rust diff through the check producer with Rust disabled, asserts
+the nonempty changed-file subject and partial zero outcome, then exercises the
+production Agent render dispatcher. The companion
+`agent_dispatch_never_completes_incomplete_empty_or_exposed_reports` covers
+partial, unsupported and failed producer outcomes with empty and all-exposed
+findings. `agent_dispatch_keeps_partial_gaps_and_complete_controls` preserves
+retained gap navigation and complete empty, exposed and gap controls (#13138).
 
 `cli_smoke::unsupported_check_exit::check_json_outcome_exit_preserves_subject_and_coverage`
 executes named-file and stdin inputs with literal complete, partial, empty,

@@ -567,6 +567,11 @@ pub(super) fn match_same_test_file(
     for stem in stems {
         if let Some(indices) = context.tests_by_file_stem.get(&stem) {
             for test_index in indices {
+                // #7527: a shared leaf name is not module identity; the
+                // finding-level relation applies the same scope.
+                if !owner_file_admits_companion(owner, context, *test_index) {
+                    continue;
+                }
                 insert_related_candidate(
                     candidates,
                     context,
@@ -577,6 +582,20 @@ pub(super) fn match_same_test_file(
             }
         }
     }
+}
+
+fn owner_file_admits_companion(
+    owner: &OwnerContext<'_>,
+    context: &CompactGripContext<'_>,
+    test_index: usize,
+) -> bool {
+    let (Some(owner_file), Some(indexed)) = (
+        owner.function.and_then(|function| function.file.to_str()),
+        context.tests.get(test_index),
+    ) else {
+        return true;
+    };
+    crate::analysis::classify::companion_scope_admits(owner_file, &indexed.path_normalized)
 }
 
 pub(super) fn match_same_module(
@@ -770,20 +789,45 @@ pub(super) fn sort_related_tests_for_seam<'a>(
         related.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
+    let claims_pin = super::claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related.iter().map(|(indexed, _)| indexed.test),
+    );
+    // #12478: one reverse owner-reach walk for the whole related set. A
+    // one-element slice per test rebuilt the walk (and its unbounded
+    // OnceLock closure) on every related test of the seam.
+    let credited_views = ((refuse || claims_pin.is_some()) && !related.is_empty()).then(|| {
+        let related_pairs: Vec<_> = related
+            .iter()
+            .map(|&(indexed, reason)| (indexed.test, reason))
+            .collect();
+        super::credited_related_tests(
+            context,
+            owner_fn,
+            &related_pairs,
+            refuse,
+            claims_pin.as_ref(),
+        )
+    });
+    debug_assert!(
+        credited_views
+            .as_ref()
+            .is_none_or(|views| views.len() == related.len())
+    );
     let mut ranked: Vec<_> = related
         .iter()
-        .map(|&entry| {
+        .enumerate()
+        .map(|(i, &entry)| {
             let (indexed, reason) = entry;
             // #12060: rank and publish the oracle the stages credit. A
             // proximity test whose assertion pins another function keeps its
             // identity but offers no oracle for this match arm or predicate
             // boundary (#12434).
-            let credited = refuse.then(|| {
-                super::credited_related_tests(context, owner_fn, &[(indexed.test, reason)], refuse)
-            });
-            let credited_test = credited
+            let credited_test = credited_views
                 .as_ref()
-                .and_then(|views| views.first())
+                .and_then(|views| views.get(i))
                 .map_or(indexed.test, AsRef::as_ref);
             let oracle = best_oracle(
                 credited_test,

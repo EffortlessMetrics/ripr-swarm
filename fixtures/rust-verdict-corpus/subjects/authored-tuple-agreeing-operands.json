@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-tuple-agreeing-operands",
+  "origin": "authored",
+  "version_label": "authored 2026-11-10 for a one-field integer tuple struct owner whose test passes operands both versions agree on (#12808)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e8bf37a26b8adc4dbcf9dcbbc72fd9bda566b3b720dd69b25e864d6d42add048"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0ae5dc5a018a19c323375a1602b3fe865868af3d4acb37f62b4093aa20c2767f"
+    }
+  ]
+}

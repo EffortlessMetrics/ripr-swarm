@@ -32,7 +32,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 9 more detail line(s) in --format human-full
+    - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -44,7 +44,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:9 (weak); kind: return_value; reason: Missing discriminator value: ParseError::InvalidData
+    - ./src/lib.rs:9 (weak); kind: return_value; reason: Missing check value: ParseError::InvalidData
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

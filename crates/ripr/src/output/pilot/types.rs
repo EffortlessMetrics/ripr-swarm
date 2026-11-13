@@ -52,6 +52,11 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// `seams[]` (#12108). The file then carries fewer seams than ranked here.
     pub(crate) repo_exposure_byte_bound:
         Option<&'a crate::output::repo_exposure::RepoExposureByteBound>,
+    /// The inventory's seam-evidence pass failed (#13340): one pass-wide
+    /// `producer_failure` limitation, so every classified seam is an opaque
+    /// stand-in. Empty for a healthy run, which keeps the summary
+    /// byte-identical. Distinct from `current_change`'s own supplement pass.
+    pub(crate) inventory_evidence_limitations: &'a [crate::analysis_outcome::AnalysisLimitation],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -236,9 +241,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }

@@ -238,13 +238,35 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
             &["--suppression-policy", "policy.toml", "--format", format],
         )?;
         if !(error.starts_with(
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github)",
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt)",
         ) && error.ends_with("it is not yet supported for SARIF, badge, or repo formats"))
         {
             return Err(format!(
                 "{format}: refusal must name the limitation, got {error}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn suppression_policy_is_not_refused_on_missed_txt() -> Result<(), String> {
+    let root = TempRoot::new("suppression-missed-txt")?;
+    let mut argv = vec!["--root".to_string(), root.arg()];
+    argv.extend(
+        [
+            "--suppression-policy",
+            "policy.toml",
+            "--format",
+            "missed-txt",
+        ]
+        .iter()
+        .map(|value| value.to_string()),
+    );
+    if let Err(error) = check(&argv)
+        && error.contains("applies to the findings-based check formats")
+    {
+        return Err(format!("missed-txt must accept the flag, got {error}"));
     }
     Ok(())
 }
@@ -551,6 +573,7 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
         OutputFormat::Json,
         OutputFormat::Sarif,
         OutputFormat::Github,
+        OutputFormat::MissedTxt,
         OutputFormat::BadgeJson,
         OutputFormat::RepoExposureJson,
         OutputFormat::AgentSeamPacketsJson,
@@ -559,6 +582,13 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
             return Err(format!("{format:?} must carry a refusal document"));
         };
         let document = document?;
+        if matches!(format, OutputFormat::MissedTxt) {
+            assert_eq!(
+                document,
+                "# ripr run refused: run_status=repository_root_unusable; repair_route=analysis/repository-root; synthetic refusal\n"
+            );
+            continue;
+        }
         if matches!(format, OutputFormat::Github) {
             assert_eq!(
                 document,
@@ -681,5 +711,155 @@ fn implicit_root_rebinds_to_the_enclosing_workspace_from_a_member_directory() ->
             at_root.root.display()
         ));
     }
+    Ok(())
+}
+
+// ── #12417: the repair-lifecycle discovery gate ─────────────────────────────
+
+/// A directory no project encloses, for the unanchored-gate controls. `TMPDIR`
+/// can sit inside a checkout (an anchored root, where the gate is silent), so
+/// fall back to the process temp dir and `/tmp`, and fail loudly if none is
+/// free of markers: a silent early return would leave the gate unchecked.
+/// Unix-only: the tests that use it are (the temp parent must hold no
+/// manifest or repo).
+#[cfg(unix)]
+fn marker_free_temp_base() -> Result<PathBuf, String> {
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let candidates = [
+        std::env::var_os("TMPDIR").map(PathBuf::from),
+        Some(std::env::temp_dir()),
+        Some(PathBuf::from("/tmp")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or_else(|| {
+            "no temp directory outside every project was found for the unanchored control"
+                .to_string()
+        })
+}
+
+/// A marker-free directory the guard removes on drop.
+#[cfg(unix)]
+struct UnanchoredDir(PathBuf);
+
+#[cfg(unix)]
+impl UnanchoredDir {
+    fn new(label: &str) -> Result<Self, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            marker_free_temp_base()?.join(format!("ripr-{label}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(Self(dir))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnanchoredDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// #12417: the repair-lifecycle gate refuses an unanchored directory with the
+/// discovery cause, while the ordinary resolution keeps retaining it
+/// (check/pilot/context/rerun behavior) and an explicit `--root` skips the
+/// gate. Unix-only like the other implicit-root controls (the temp parent
+/// must hold no manifest or repo).
+#[cfg(unix)]
+#[test]
+fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips()
+-> Result<(), String> {
+    let _cwd = cwd_lock::hold_cwd();
+    let guard = UnanchoredDir::new("gate-refusal")?;
+    let original = std::env::current_dir().map_err(|err| err.to_string())?;
+    let _restore = CwdRestore(original);
+    std::env::set_current_dir(&guard.0).map_err(|err| err.to_string())?;
+
+    let Some(cause) = unanchored_implicit_root_cause() else {
+        return Err("an unanchored directory must produce a refusal cause".to_string());
+    };
+    if !cause.contains("no workspace, package or Git repository was found") {
+        return Err(format!("cause must name the discovery outcome: {cause}"));
+    }
+
+    // The gate itself: refuse, naming the cause.
+    let error = resolve_implicit_command_root_refusing(&mut PathBuf::from("."), false);
+    if error != Err(cause.clone()) {
+        return Err(format!(
+            "the gate must refuse with its cause, got {error:?}"
+        ));
+    }
+
+    // check/pilot/context/rerun keep retain-start: the plain walk answers Ok
+    // and leaves the root as typed.
+    let mut retained = PathBuf::from(".");
+    resolve_implicit_command_root(&mut retained, false)
+        .map_err(|error| format!("the plain walk must keep retain-start: {error}"))?;
+    if retained != Path::new(".") {
+        return Err(format!(
+            "retain-start keeps the root, got {}",
+            retained.display()
+        ));
+    }
+
+    // An explicit --root skips the gate.
+    let mut explicit = PathBuf::from(".");
+    resolve_implicit_command_root_refusing(&mut explicit, true)
+        .map_err(|error| format!("an explicit --root must skip the gate: {error}"))?;
+    if explicit != Path::new(".") {
+        return Err(format!(
+            "an explicit root is kept as typed, got {}",
+            explicit.display()
+        ));
+    }
+    Ok(())
+}
+
+/// #12417, #12480: a standalone `package.json` project without Git or Cargo
+/// still reads as unanchored to `resolve_project_root`, but the gate keeps it
+/// anchored: it is a project.
+#[cfg(unix)]
+#[test]
+fn a_plain_package_manifest_keeps_the_gate_anchored() -> Result<(), String> {
+    let _cwd = cwd_lock::hold_cwd();
+    let guard = UnanchoredDir::new("gate-plain-package")?;
+    std::fs::write(guard.0.join("package.json"), "{\"name\":\"shop\"}")
+        .map_err(|err| err.to_string())?;
+    let original = std::env::current_dir().map_err(|err| err.to_string())?;
+    let _restore = CwdRestore(original);
+    std::env::set_current_dir(&guard.0).map_err(|err| err.to_string())?;
+
+    // The walk itself still finds no anchor; the ordinary manifest is what
+    // keeps the gate silent.
+    if !matches!(resolve_project_root(Path::new(".")), Ok(None)) {
+        return Err("a plain package.json without workspaces must not anchor the walk".to_string());
+    }
+    if let Some(cause) = unanchored_implicit_root_cause() {
+        return Err(format!(
+            "a plain package project must not be refused: {cause}"
+        ));
+    }
+    let mut root = PathBuf::from(".");
+    resolve_implicit_command_root_refusing(&mut root, false)
+        .map_err(|error| format!("the gate must keep a plain package project: {error}"))?;
     Ok(())
 }

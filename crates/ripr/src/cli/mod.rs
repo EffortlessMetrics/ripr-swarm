@@ -19,12 +19,17 @@ mod parse;
 pub(crate) mod progress;
 mod rerun;
 mod suggest;
+mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
+pub(crate) use parse::reconcile_root;
 #[doc(hidden)]
-pub use parse::extract_global_verbose;
-pub(crate) use suggest::{unknown_argument, unknown_value};
+pub use parse::{extract_global_verbose, split_long_flag_values};
+pub(crate) use suggest::unknown_argument;
+
+#[doc(hidden)]
+pub use commands::impacted_evidence_command::run_impacted_evidence_at;
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
@@ -116,7 +121,18 @@ pub fn run_with_interrupt_handling(args: Vec<String>) -> Result<(), CommandError
 }
 
 fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+    // #11584: under an explicit JSON request a usage-class failure also writes
+    // a standalone `cli_refusal` document to stdout; exit code and stderr
+    // prose are unchanged. The argv copy is only read for that request check.
+    usage_refusal::reset();
+    // #14292: `--name=value` means `--name value` on every command family;
+    // the rewrite runs once here, before every reader of argv below.
+    let args = parse::split_long_flag_values(args);
+    let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
+    if let Err(error) = &outcome {
+        usage_refusal::emit_for(&argv, error);
+    }
     // #5213: observe this process's own CPU time and peak resident memory
     // once the command has finished, so the peak covers rendering and
     // serialization instead of stopping at the analysis boundary. Emits
@@ -295,7 +311,9 @@ fn drive_before_phase_inner(
         .is_some()
         .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
-        Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(Into::into),
+        Ok(()) => {
+            persist_before_repair_attempt(&options, &identity).map_err(BeforePhaseError::from)
+        }
         Err(error) => Err(error),
     };
     let stdout_document = match published {
@@ -501,6 +519,39 @@ fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
     ]
 }
 
+/// The before phase's stderr attempt lines (waiting state, manifest path,
+/// and the `ripr: attempt next command:` protocol line), printed only when
+/// stdout does not already carry the start result (#13803).
+fn before_phase_attempt_stderr(
+    attempt_id: &str,
+    manifest_path: &Path,
+    next_command: &str,
+    baseline_ambiguous: bool,
+) {
+    if baseline_ambiguous {
+        eprintln!(
+            "ripr: repair attempt {attempt_id} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above."
+        );
+    } else {
+        eprintln!("ripr: repair attempt {attempt_id} is waiting for your test");
+    }
+    eprintln!(
+        "{}",
+        crate::output::human::terminal_safe(format!(
+            "ripr: attempt manifest: {}",
+            crate::output::path::human_path(manifest_path)
+        ))
+    );
+    // Human next-step lines teach `ripr continue` for ordinary attempts
+    // (#7879). The persisted manifest and JSON continuation keep the
+    // advanced `--phase after` spelling.
+    let follow_up = crate::agent::human_after_phase_follow_up(next_command);
+    eprintln!("ripr: attempt next command: {follow_up}");
+    if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
+        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    }
+}
+
 /// Publish one before attempt and return its success stdout: the exact
 /// document the caller prints (or holds, façade-side, until its follow-on
 /// card renders). Composing the document without printing keeps one owner
@@ -548,9 +599,24 @@ fn persist_before_repair_attempt(
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
-    // during preparation refuses attempt publication.
-    crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} No repair attempt was started. Fix the cause above and rerun the repair command."))?;
+    // during preparation stops attempt publication.
+    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
+        let rerun = if options.gap_id.is_some() {
+            "the same `ripr agent repair --phase before` command".to_string()
+        } else {
+            format!("`{}`", crate::app::task_first::repair_rerun_command(root, seam_id))
+        };
+        // #13452: this recheck runs after the before phase already rewrote
+        // shared workflow files, so it can never be the clean "nothing was
+        // started" refusal the early admission gives: the shared files may
+        // already differ from before. Both outcomes are operational failures
+        // that say so.
+        let detail = crate::app::task_first::build_output_precondition_detail(error);
+        format!(
+            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            detail.trim_end()
+        )
+    })?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
@@ -706,6 +772,7 @@ fn persist_before_repair_attempt(
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
         typescript_test_cache_guidance,
+        focused_test_command: focused_test_command(root, &packet_text),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -713,6 +780,19 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
+    // #13803: without `--json` the stdout summary already names the target,
+    // the one edit surface with its terminality, the packet path, and the
+    // one next command. Stderr then keeps only what stdout does not say
+    // (progress narration and the redirect warning), so an agent reading
+    // both streams sees one copy of the next command instead of two. The
+    // gap-bound start keeps its stderr route: its directive (commit the
+    // test; closure is checked first) is not in the stdout summary.
+    let stdout_owns_start = options.gap_id.is_none()
+        && commands::before_phase_stdout_owns_start_result(
+            &packet_text,
+            options.json,
+            &continuation,
+        );
     // #7204: an attempt whose captured baseline is already ambiguous can
     // never be scored, so the disclosure comes BEFORE any edit directive and
     // the ambiguous branch replaces the unqualified "Next: add ..." line —
@@ -730,6 +810,8 @@ fn persist_before_repair_attempt(
         eprintln!(
             "ripr: repair started. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
+    } else if stdout_owns_start {
+        // The stdout summary carries this seam route's edit directive.
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
@@ -748,35 +830,27 @@ fn persist_before_repair_attempt(
     } else {
         "target/ripr/workflow/agent-packet.json"
     };
-    eprintln!(
-        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
-    );
-    if baseline_ambiguous {
+    if stdout_owns_start {
+        // The stdout summary already names the packet path.
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above.",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The same applies to the next step."
         );
     } else {
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
         );
     }
-    eprintln!(
-        "{}",
-        crate::output::human::terminal_safe(format!(
-            "ripr: attempt manifest: {}",
-            crate::output::path::human_path(&result.manifest_path)
-        ))
-    );
-    // Human next-step lines teach `ripr continue` for ordinary attempts
-    // (#7879). The persisted manifest and JSON continuation keep the
-    // advanced `--phase after` spelling.
-    let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
-    eprintln!("ripr: attempt next command: {follow_up}");
-    let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
-    if let Some(form) = &next_powershell {
-        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    if !stdout_owns_start {
+        // With `--json` (or an unreadable or ambiguous summary) stderr keeps
+        // the protocol-bearing attempt lines; otherwise stdout's
+        // `Next, after the test edit:` line is the one copy, and the
+        // manifest stays reachable through `ripr agent status`.
+        before_phase_attempt_stderr(
+            result.manifest.repair_attempt_id.as_str(),
+            &result.manifest_path,
+            &result.manifest.next_command,
+            baseline_ambiguous,
+        );
     }
     // The stdout document owns its trailer: the after-edit directive, or the
     // #7204 ambiguity warning and clean-state restart for an unscorable
@@ -787,6 +861,17 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
+}
+
+/// The exact native command for the packet's suggested Rust test (#14320),
+/// read from the first packet's `recommended_test`. `None` when the packet
+/// names no file or test name, or no exact command can be established.
+fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let test = value.pointer("/packets/0/recommended_test")?;
+    let file = test.get("file")?.as_str()?;
+    let name = test.get("name")?.as_str()?;
+    crate::app::test_stub::focused_test_run_command(root, file, name)
 }
 
 #[cfg(test)]
@@ -1189,6 +1274,30 @@ mod tests {
             run(args(&["ripr", "-v", "-v", "check", "--format", "xml"])),
             Err(CommandError::Failure(
                 "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn run_reads_flag_equals_value_like_the_spaced_spelling() {
+        // #14292: the rewrite runs on the `run` path, so `--format=xml`
+        // reaches check's own format validation like `--format xml`.
+        let format_error = Err(CommandError::Failure(
+            "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                .to_string(),
+        ));
+        assert_eq!(run(args(&["ripr", "check", "--format=xml"])), format_error);
+        assert_eq!(
+            run(args(&["ripr", "check", "--format", "xml"])),
+            format_error
+        );
+        // A switch given a boolean literal stays one token and is refused
+        // as typed, never read as the switch plus a stray value.
+        assert_eq!(
+            run(args(&["ripr", "check", "--quiet=false"])),
+            Err(CommandError::Failure(
+                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
                     .to_string()
             ))
         );

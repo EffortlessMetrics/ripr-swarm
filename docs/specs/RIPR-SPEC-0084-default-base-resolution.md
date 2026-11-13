@@ -174,6 +174,24 @@ without picking one. A nested branch name (`feature/topic`) probes the
 same tracking forms before its first segment is treated as a remote
 qualifier; explicit `refs/...` paths and rev expressions never probe.
 
+In a repository with no commits and no refs at all, no revision can resolve, so
+the repair says the repository has no commits yet and to commit once instead
+of asking for a spelling check or a remote (#13664). A repository that has
+other refs keeps the spelling and remote advice.
+
+A `--base` or `--head` value that contains `..` is a revision range
+(`main..HEAD`, `main...HEAD`, `main..`), which Git never allows inside a ref
+name, so it is answered as a range before any spelling, depth or remote
+advice: the refusal says the flag takes one revision and that ripr builds the
+range itself, and names the value to pass, the range's start for `--base` and
+its end for `--head` (#14238). An end is quoted as a command only when it is
+non-empty, not option-shaped and spelled with revision characters alone;
+otherwise the advice names the end in words. The separator is read only where
+Git reads one: dots inside a commit-message search (`<rev>^{/text}` up to its
+closing brace, `:/text` to the end of the value) and a leading-colon path are
+free text, so `HEAD^{/wip..done}` is one revision while `HEAD^{/fix}..HEAD`
+is a range. The analysis still does not run (exit 2).
+
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
 and a `--head <ref>` repair, never git's `ambiguous argument` advice. They
@@ -363,6 +381,12 @@ shown unchanged.
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote`
 - `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names`
 - `crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone`
+- `crates/ripr/src/analysis/diff/load.rs::tests::revision_range_separator_is_read_outside_a_commit_message_search`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_answers_a_range_before_any_remote_or_spelling_advice`
+- `crates/ripr/tests/cli_smoke.rs::check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch`
 
 ## Implementation Mapping
 

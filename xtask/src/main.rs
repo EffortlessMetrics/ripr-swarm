@@ -21,7 +21,9 @@ use ripr::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED,
 };
 
+mod admission_incident_route;
 mod agent_skills;
+mod ansi;
 use repo_policy::*;
 mod blind_journey;
 mod blind_journey_execute;
@@ -41,10 +43,14 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod fixture_expected_classes;
+mod generation_pins;
 mod kani_lane;
 mod public_proof;
+mod publish_rehearsal;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod current_state;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -58,13 +64,18 @@ mod issue_lifecycle_real_rows;
 mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
+mod outcome_page;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
@@ -73,7 +84,9 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
 mod repo_readiness;
+mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -103,10 +116,12 @@ mod schema_producer_sweep;
 mod verification_allocation_adapter;
 mod verification_allocation_policy;
 mod verification_contracts;
+mod verification_plan_corpus;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_acl_evidence;
+mod windows_advisory_file_policy_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -308,7 +323,8 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -413,151 +429,12 @@ use run::{
     run_output_owned_with_timeout, run_owned, run_with_envs, tool_build_timeout,
 };
 
-/// Process-wide fair reader-writer gate serialising tests that mutate the process
-/// working directory. The xtask test suite spawns subprocesses (rustc, cargo,
-/// git) that inherit the current cwd; meanwhile other tests (`with_temp_cwd`,
-/// `with_repo_cwd`) call `std::env::set_current_dir` and delete the temporary
-/// directory on teardown. Without serialisation, a subprocess spawn can land
-/// in the tiny window between `set_current_dir(temp)` and
-/// `remove_dir_all(temp)`, producing "Could not locate working directory" or
-/// exit-status-1 failures in unrelated `run_output*` / `capture_output*`
-/// tests.
-///
-/// Readers still run in parallel, while a waiting writer blocks new readers.
-/// The standard library `RwLock` admitted enough new readers under Windows
-/// parallel test load to starve the dispatch test's writer indefinitely (see
-/// #2875), so this small gate makes writer admission explicit without
-/// serialising the entire spawning-test lane. See issues #2044 and #2124.
 #[cfg(test)]
-struct CwdLockState {
-    active_readers: usize,
-    active_writer: bool,
-    waiting_writers: usize,
-}
-
+mod test_cwd;
 #[cfg(test)]
-pub(crate) struct CwdLock {
-    state: std::sync::Mutex<CwdLockState>,
-    available: std::sync::Condvar,
-}
-
-#[cfg(test)]
-impl CwdLock {
-    fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(CwdLockState {
-                active_readers: 0,
-                active_writer: false,
-                waiting_writers: 0,
-            }),
-            available: std::sync::Condvar::new(),
-        }
-    }
-
-    /// Acquire a shared reader slot.
-    ///
-    /// This gate is not reentrant: callers must not acquire another reader
-    /// while holding a `CwdReadGuard`, because a queued writer would block the
-    /// nested acquisition while the existing guard blocks that writer.
-    fn read(&self) -> CwdReadGuard<'_> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        while state.active_writer || state.waiting_writers > 0 {
-            state = self
-                .available
-                .wait(state)
-                .unwrap_or_else(|poison| poison.into_inner());
-        }
-        state.active_readers += 1;
-        CwdReadGuard { lock: self }
-    }
-
-    /// Acquire the exclusive writer slot.
-    ///
-    /// This gate is not reentrant: callers must not acquire a writer while
-    /// holding either a `CwdReadGuard` or a `CwdWriteGuard`.
-    fn write(&self) -> CwdWriteGuard<'_> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        state.waiting_writers += 1;
-        while state.active_writer || state.active_readers > 0 {
-            state = self
-                .available
-                .wait(state)
-                .unwrap_or_else(|poison| poison.into_inner());
-        }
-        state.waiting_writers = state.waiting_writers.saturating_sub(1);
-        state.active_writer = true;
-        CwdWriteGuard { lock: self }
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct CwdReadGuard<'a> {
-    lock: &'a CwdLock,
-}
-
-#[cfg(test)]
-impl Drop for CwdReadGuard<'_> {
-    fn drop(&mut self) {
-        let active_readers = {
-            let mut state = self
-                .lock
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            state.active_readers = state.active_readers.saturating_sub(1);
-            state.active_readers
-        };
-        if active_readers == 0 {
-            self.lock.available.notify_all();
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct CwdWriteGuard<'a> {
-    lock: &'a CwdLock,
-}
-
-#[cfg(test)]
-impl Drop for CwdWriteGuard<'_> {
-    fn drop(&mut self) {
-        {
-            let mut state = self
-                .lock
-                .state
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            state.active_writer = false;
-        }
-        self.lock.available.notify_all();
-    }
-}
-
-#[cfg(test)]
-pub(crate) static CWD_LOCK: std::sync::OnceLock<CwdLock> = std::sync::OnceLock::new();
-
-/// Acquire the exclusive write guard for cwd-manipulating tests (those that
-/// call `set_current_dir` or delete a temp cwd). Excludes every other cwd-
-/// sensitive test — both writers and readers.
-#[cfg(test)]
-pub(crate) fn acquire_test_cwd_write_guard() -> CwdWriteGuard<'static> {
-    CWD_LOCK.get_or_init(CwdLock::new).write()
-}
-
-/// Acquire the shared read guard for subprocess-spawning tests (those that
-/// inherit the process cwd but do not change it). Multiple spawning tests can
-/// hold the read guard concurrently; they are only excluded while a
-/// cwd-manipulating test holds the write guard.
-#[cfg(test)]
-pub(crate) fn acquire_test_cwd_read_guard() -> CwdReadGuard<'static> {
-    CWD_LOCK.get_or_init(CwdLock::new).read()
-}
+pub(crate) use test_cwd::{
+    CwdReadGuard, CwdWriteGuard, acquire_test_cwd_read_guard, acquire_test_cwd_write_guard,
+};
 
 fn main() {
     // #9564: first, so the relocated driver child the bootstrap spawns joins
@@ -604,6 +481,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-droid-review-config",
     "check-spec-format",
     "check-spec-numbering",
+    "check-generation-pins",
     "check-fixture-contracts",
     "check-rust-judged-panel",
     "check-release-challenge-selection",
@@ -646,11 +524,17 @@ fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
 }
 
-fn precommit() -> Result<(), String> {
-    precommit_policy(false)
+/// Local `precommit` policy leg. `coverage` comes from the precommit change
+/// set: a diff that cannot change any test-valued `covered_by` listing skips
+/// the test-binary builds that enumeration needs (#13705).
+fn precommit(coverage: policy::CoverageEnumeration) -> Result<(), String> {
+    precommit_policy(false, coverage)
 }
 
-fn precommit_policy(collect_all: bool) -> Result<(), String> {
+fn precommit_policy(
+    collect_all: bool,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
     // CI rejects stale/partial proof before compilation-bearing file policy.
@@ -658,7 +542,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || {
+        run("cargo", &["fmt", "--check"]).map(|_| ())
+    })?;
     if collect_all {
         policy::check_policy_all()?;
     } else {
@@ -672,7 +558,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
     let mut deferred = None;
-    check_file_policy_deferring(&mut deferred)?;
+    check_file_policy_deferring(&mut deferred, coverage)?;
     let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
     finish_precommit_policy(deferred, remaining, collect_all)
 }
@@ -685,8 +571,11 @@ const PRECOMMIT_INSTRUMENT_PREFIX: &str =
 
 /// `check_file_policy`, except that an instrument failure (cargo lock wait or
 /// timeout) is stored in `deferred` instead of returned.
-fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
-    match check_file_policy() {
+fn check_file_policy_deferring(
+    deferred: &mut Option<String>,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
+    match policy::check_file_policy_with(coverage) {
         Err(error) if policy::is_covered_by_instrument_failure(&error) => {
             *deferred = Some(error);
             Ok(())
@@ -733,6 +622,7 @@ fn precommit_policy_remaining(
     check_droid_review_config()?;
     check_spec_format()?;
     check_spec_numbering()?;
+    check_generation_pins()?;
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
     check_release_challenge_selection()?;
@@ -1757,6 +1647,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_droid_review_config()?;
     check_spec_format()?;
     check_spec_numbering()?;
+    check_generation_pins()?;
     check_fixture_contracts()?;
     check_traceability()?;
     check_capabilities()?;
@@ -1789,7 +1680,7 @@ fn ci_full() -> Result<(), String> {
     check_pr()?;
     run_ci_full_evidence_gates(&ci_full_evidence_gates())?;
     run("cargo", &["package", "-p", "ripr", "--list"])?;
-    run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
+    publish_rehearsal::run()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -5809,7 +5700,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-generation-pins`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -6201,6 +6092,32 @@ fn collect_rust_conversion_candidates() -> Result<Vec<RustConversionCandidate>, 
 }
 
 fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCandidate> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "explicit pre-compiler developer provisioning".to_string(),
+            recommendation: "Keep bootstrap installation in the dependency-free Node entrypoint; delegate requirements, activation and verification to their existing owners.".to_string(),
+            reason: "Provisioning must work before Rust or npm packages are installed (#13437).".to_string(),
+        });
+    }
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "dependency-free Node editor setup entrypoint".to_string(),
+            recommendation: "Keep the pre-install checkout report in this Node entrypoint; delegate explicit validation to existing Rust and editor owners.".to_string(),
+            reason: "Setup diagnostics must run before a Rust build or npm dependency installation is available (#13201, #13212).".to_string(),
+        });
+    }
+
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(RustConversionCandidate {
             path: path.to_string(),
@@ -6237,6 +6154,13 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         });
     }
 
+    // The generic fallback defers to the enforced retention owner instead of
+    // carrying its own list (#13290), so an approved runtime boundary can never
+    // be reported here as unapproved while `check-file-policy` retains it.
+    if let Some(reason) = non_rust_programming_retention_reason(path) {
+        return Some(retained_non_rust_source_candidate(path, reason));
+    }
+
     Some(RustConversionCandidate {
         path: path.to_string(),
         line: None,
@@ -6246,6 +6170,37 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         recommendation: "Move this behavior into Rust under crates/ripr for product logic or xtask for repository automation.".to_string(),
         reason: "Rust is the default implementation surface, and this file has no approved external-runtime or fixture retention rule.".to_string(),
     })
+}
+
+/// Advisory retained-boundary row derived from the enforced
+/// `non_rust_programming_retention_reason` owner. The conversion inventory
+/// shares this single authority with `check-file-policy` instead of
+/// maintaining a second, incomplete allowlist; the report's reason is the
+/// enforced retention reason verbatim. Fixture inputs keep their own kind so
+/// the retained table keeps distinguishing analyzed inputs from runtime
+/// adapters.
+fn retained_non_rust_source_candidate(path: &str, reason: &str) -> RustConversionCandidate {
+    if path.starts_with("benchmarks/muse-plugin/fixtures/") {
+        return RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_fixture_input".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "muse plugin evaluation fixture input".to_string(),
+            recommendation: "Keep as fixture input; move only reusable evaluation orchestration into Rust/xtask.".to_string(),
+            reason: reason.to_string(),
+        };
+    }
+
+    RustConversionCandidate {
+        path: path.to_string(),
+        line: None,
+        kind: "retained_external_runtime".to_string(),
+        priority: "retained".to_string(),
+        current_surface: "approved non-Rust runtime boundary".to_string(),
+        recommendation: "Keep this file on its approved external runtime; move only adjacent unretained behavior into Rust/xtask.".to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 fn workflow_run_conversion_candidate(
@@ -6552,6 +6507,26 @@ fn specs(args: &[String]) -> Result<(), String> {
 fn check_spec_numbering() -> Result<(), String> {
     let violations = spec_numbering_violations(Path::new("."))?;
     finish_spec_numbering_report(&violations)
+}
+
+fn check_generation_pins() -> Result<(), String> {
+    generation_pins::check_generation_pins()
+}
+
+/// `cargo xtask generations` — the generation-allocation front door mirroring
+/// `specs` (#11736 Proposal C).
+fn generations(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("next") => generation_pins::generations_next(&args[1..]),
+        Some(other) => Err(format!(
+            "unknown generations command `{other}`\n{}",
+            generation_pins::GENERATIONS_USAGE
+        )),
+        None => Err(format!(
+            "missing generations command\n{}",
+            generation_pins::GENERATIONS_USAGE
+        )),
+    }
 }
 
 fn finish_spec_numbering_report(violations: &[String]) -> Result<(), String> {
@@ -14662,6 +14637,50 @@ mod architecture_rule_tests {
                 .any(|violation| violation.contains("is stale"))
         );
     }
+
+    #[test]
+    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    -> Result<(), String> {
+        let policy_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
+        let records =
+            super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
+        let required_paths = [
+            "crates/ripr/src/output/**",
+            "!crates/ripr/src/output/first_pr.rs",
+        ];
+        let records = records
+            .into_iter()
+            .filter(|record| {
+                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+            })
+            .collect::<Vec<_>>();
+        for path in required_paths {
+            assert!(
+                records.iter().any(|record| record[0] == path),
+                "policy/architecture.txt must retain {path}|crate::cli"
+            );
+        }
+        let violations = architecture_rule_violations(
+            &records,
+            &[
+                (
+                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
+                    "use crate::cli::unknown_argument;".to_string(),
+                ),
+                (
+                    "crates/ripr/src/output/first_pr.rs".to_string(),
+                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("first_pr/options.rs"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role
@@ -15134,20 +15153,22 @@ fn check_output_contracts() -> Result<(), String> {
     let records = read_pipe_records("policy/output_contracts.txt", 3)?;
     let mut domain = String::new();
     for path in [
-        "crates/ripr/src/domain/mod.rs",
-        "crates/ripr/src/domain/classification.rs",
-        "crates/ripr/src/domain/evidence.rs",
-        "crates/ripr/src/domain/language.rs",
+        "crates/ripr-contract/src/domain/mod.rs",
+        "crates/ripr-contract/src/domain/classification.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/language.rs",
         "crates/ripr/src/domain/next_action.rs",
-        "crates/ripr/src/domain/probe.rs",
-        "crates/ripr/src/domain/refusal_remedy.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/refusal_remedy.rs",
         "crates/ripr/src/domain/repair_card.rs",
-        "crates/ripr/src/domain/summary.rs",
-        "crates/ripr/src/domain/support.rs",
+        "crates/ripr-contract/src/domain/summary.rs",
+        "crates/ripr-contract/src/domain/support.rs",
     ] {
         domain.push_str(&read_text_lossy(Path::new(path))?);
         domain.push('\n');
     }
+    domain.push_str(&read_text_lossy(Path::new("crates/ripr/src/domain.rs"))?);
+    domain.push('\n');
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
     let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
@@ -15292,7 +15313,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "refusal_remedy_kind"
             | "next_action_class" => {
                 require_contract_value(
-                    "crates/ripr/src/domain/",
+                    "domain (crates/ripr-contract/src/domain + crates/ripr/src/domain)",
                     &domain,
                     value,
                     kind,
@@ -17988,53 +18009,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-/// Parse a `[workspace.lints.<section>]` block from `Cargo.toml`-shaped TOML.
-///
-/// Returns a map of bare lint name (e.g. `unwrap_used`, `unsafe_code`) to its
-/// level string (e.g. `deny`, `forbid`, `warn`, `allow`). Only direct
-/// `name = "level"` lines are recognized; this matches how the workspace
-/// declares lints today and keeps the parser dependency-free.
-fn parse_workspace_lints_section(text: &str, section: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let header = format!("[workspace.lints.{section}]");
-    let mut in_section = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        if line == header {
-            in_section = true;
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_section = false;
-            continue;
-        }
-        if !in_section {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = raw_value.trim().trim_end_matches('#').trim();
-        // Take the first quoted token as the level. Anything more elaborate
-        // (table-form lint configuration) is intentionally not supported here
-        // — workspace lints today are flat `name = "level"` lines.
-        let level = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(level, _)| level.to_string()));
-        if let Some(level) = level {
-            out.insert(key.to_string(), level);
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LedgerLintEntry {
     name: String,
@@ -18320,7 +18294,13 @@ fn collect_clippy_debt_violations(
     today: &str,
 ) -> Vec<String> {
     let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => {
+            violations.push(err);
+            return violations;
+        }
+    };
     let (lints, _) = parse_clippy_lints_ledger(lints_text);
 
     let mut seen_ids = BTreeSet::new();
@@ -18561,8 +18541,14 @@ fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
 }
 
 fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
+    let cargo_rust = match parse_workspace_lints_section(cargo_text, "rust") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
@@ -18664,6 +18650,10 @@ fn check_lint_policy() -> Result<(), String> {
         &ledger_text,
         &no_panic::today_date_string(),
     ));
+    match policy::workspace_lint_inheritance_violations() {
+        Ok(member_violations) => violations.extend(member_violations),
+        Err(error) => violations.push(error),
+    }
 
     finish_policy_report(
         PolicyReportSpec {
@@ -18677,6 +18667,7 @@ fn check_lint_policy() -> Result<(), String> {
                 "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
                 "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
                 "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
+                "Every Cargo workspace member must opt in with `[lints] workspace = true`; remove member-local lint tables that replace or override the shared policy.",
             ],
             rerun_command: "cargo xtask check-lint-policy",
             exception_template: None,
@@ -19491,6 +19482,7 @@ const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
     "editors/vscode/package-lock.json",
     ".github/workflows/publish-extension.yml",
     ".github/workflows/release-server-binaries.yml",
+    ".github/workflows/package-family-qualification.yml",
 ];
 
 /// The full release proof the `release-package` pack MUST require: workspace
@@ -19503,7 +19495,7 @@ const PROOF_PACK_RELEASE_REQUIRED_COMMANDS: &[&str] = &[
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo xtask check-pr",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
     "cargo xtask release-readiness",
 ];
 
@@ -19514,11 +19506,12 @@ const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
     "cargo check --workspace --all-targets",
     "cargo test --workspace",
     "cargo test -p ripr",
+    "cargo test -p ripr-contract",
     "cargo test -p xtask",
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo doc --workspace --no-deps",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
 ];
 
 fn check_proof_packs_impl() -> Result<(), String> {
@@ -20621,6 +20614,7 @@ fn is_analysis_path(path: &str) -> bool {
 fn is_output_surface_path(path: &str) -> bool {
     path.starts_with("crates/ripr/src/output/")
         || path.starts_with("crates/ripr/src/domain/")
+        || path.starts_with("crates/ripr-contract/src/domain/")
         || path == "crates/ripr/src/lsp.rs"
         || path == "docs/OUTPUT_SCHEMA.md"
         || path == "policy/output_contracts.txt"
@@ -21834,6 +21828,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
     let output_changed = changes.iter().any(|change| {
         change.path.starts_with("crates/ripr/src/output/")
             || change.path.starts_with("crates/ripr/src/domain/")
+            || change.path.starts_with("crates/ripr-contract/src/domain/")
             || change.path == "crates/ripr/src/lsp.rs"
     });
     let output_evidence = changes.iter().any(|change| {
@@ -23750,6 +23745,29 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(
+            "Explicit Node provisioning must run before Rust or npm dependencies exist; its controlled tests run through the Rust-owned developer_provisioning integration target (#13437).",
+        );
+    }
+    if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
+        return Some(
+            "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
+        );
+    }
+    if path == "tools/activate-rust.sh" {
+        return Some(
+            "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+        );
+    }
+    if path == "tools/test-activate-rust.sh" {
+        return Some(
+            "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -23767,9 +23785,26 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some("npm launcher runtime and focused launcher contract tests");
     }
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(
+            "Dependency-free Node setup entrypoint must inspect the editor checkout before Rust or npm dependencies are available; explicit verification delegates to existing validation owners (#13201, #13212).",
+        );
+    }
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
+        return Some(
+            "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
         );
     }
 
@@ -23804,6 +23839,27 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("examples/")
+        && (path.ends_with(".ts") || path.ends_with(".py"))
+        && (path.contains("/project/") || path.contains("/strengthened/"))
+    {
+        return Some(
+            "Starter example projects are analyzed inputs that users run `ripr check` on (#14151); the Python and TypeScript examples must stay in their own language to show the preview adapters honestly.",
+        );
+    }
+
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
         );
     }
 
@@ -23858,6 +23914,10 @@ fn is_process_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
         || (path.starts_with("tools/python/") && path.ends_with(".py"))
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -23871,6 +23931,10 @@ fn is_network_policy_candidate(path: &str) -> bool {
         || path.ends_with(".ps1")
         || path.ends_with(".yml")
         || path.ends_with(".yaml")
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn process_policy_patterns() -> Vec<String> {
@@ -23924,6 +23988,14 @@ fn network_policy_patterns() -> Vec<String> {
         concat!("async-", "std"),
         concat!("Invoke-", "WebRequest"),
         concat!("Invoke-", "RestMethod"),
+        // Python network literals (#13092): stdlib fetch/socket surfaces
+        // that were previously invisible in tracked .py files. Split with
+        // concat! so the gate does not flag its own source. Deliberately
+        // excludes urllib.parse, which performs no network behavior.
+        concat!("urllib.", "request"),
+        concat!("url", "open"),
+        concat!("import so", "cket"),
+        concat!("http.", "client"),
     ]
     .iter()
     .map(|value| value.to_string())

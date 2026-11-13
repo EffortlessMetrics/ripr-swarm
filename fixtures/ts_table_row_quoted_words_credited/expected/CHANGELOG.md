@@ -10,3 +10,25 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — ts_table_row_quoted_words_credited (2)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless ts_table_row_quoted_words_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — ts_table_row_quoted_words_credited (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless ts_table_row_quoted_words_credited --reason "..."`
+
+Updated:
+- `expected/check.json`

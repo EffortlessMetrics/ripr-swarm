@@ -886,9 +886,20 @@ fn rust_excluded_by_config_limitation(
         )
         .with_affected_items(excluded as u64)?
         .with_detail(format!(
-            "rust changed {excluded} file(s), but rust is not in the effective [languages].enabled set [{enabled}], so these files were not analyzed"
+            "{RUST_EXCLUDED_DETAIL_LEAD}{excluded} file(s), {RUST_EXCLUDED_DETAIL_CAUSE} [{enabled}], so these files were not analyzed"
         ))?,
     ))
+}
+
+const RUST_EXCLUDED_DETAIL_LEAD: &str = "rust changed ";
+const RUST_EXCLUDED_DETAIL_CAUSE: &str = "but rust is not in the effective [languages].enabled set";
+
+/// Whether a limitation detail is the one [`rust_excluded_by_config_limitation`]
+/// writes (#14152). Rust is the one language that is never a preview advisory,
+/// so this limitation is the `language_adapter_unavailable` case with no
+/// preview-language note; a renderer that points at that note asks here first.
+pub(crate) fn is_rust_excluded_by_config_detail(detail: &str) -> bool {
+    detail.starts_with(RUST_EXCLUDED_DETAIL_LEAD) && detail.contains(RUST_EXCLUDED_DETAIL_CAUSE)
 }
 
 /// Changed files in languages no ripr adapter reads, counted per router
@@ -1011,6 +1022,19 @@ fn truncated_diff_disclosure_message(truncated_file_sections: usize) -> Option<S
 /// without capturing stderr.
 fn is_truncated_diff_stream(truncated_file_sections: usize) -> bool {
     truncated_file_sections > 0
+}
+
+/// #13659: a tracked file that became (or stopped being) a symlink is not
+/// source and is never analyzed; say so instead of leaving only the
+/// deletion-only line for the regular-file half of a type change.
+fn symlink_disclosure_message(symlink_file_count: usize) -> Option<String> {
+    (symlink_file_count > 0).then(|| {
+        format!(
+            "ripr: skipped {symlink_file_count} symlink change(s); a symlink is not source, so \
+             the link itself is never analyzed and an empty result does not mean its behavior \
+             is covered. A regular-file half of a type change is analyzed normally."
+        )
+    })
 }
 
 fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
@@ -1315,8 +1339,10 @@ fn enforce_changed_language_line_limit(
 /// failure is non-abort (recorded in `language_runs`), while this refusal is
 /// infra-class and must propagate exactly like the Rust guard's, so the
 /// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
-/// `--json` limited artifact) keeps working. Runs after the Rust adapter so
-/// a mixed Rust+Python oversized diff keeps the Rust refusal it gets today.
+/// `--json` limited artifact) keeps working. Runs after the Rust adapter,
+/// over the selected partition when one exists (#13641), so an oversized
+/// diff degrades into `limited_partial_scope` and only a diff in which no
+/// file fits still refuses.
 /// Counts only files each adapter would admit past its generated-name and
 /// excluded-directory authorities, so generated bulk cannot refuse a diff
 /// whose hand-written surface is small (Devin review, PR #10803).
@@ -1465,6 +1491,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
+    let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
     let pure_rename_file_count = parsed_diff.pure_rename_file_count;
     let pure_rename_paths = parsed_diff.pure_rename_paths;
@@ -1485,6 +1512,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
         crate::analysis::consumed_source::ConsumedRustSources::default();
+    let mut owner_opt_outs = Vec::new();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
     // adapter that ran records its own count in `changed_files_by_language`.
     let mut rust_changed_files: usize = 0;
@@ -1495,6 +1523,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // non-success compatibility projection.
     let mut diff_outcomes: Vec<LanguageAnalysisOutcomeV1> = Vec::new();
     let mut partial_scope: Option<PartialDiffScope> = None;
+    let mut rust_not_selected_files: Option<usize> = None;
     let mut candidate_line_count = 0usize;
 
     // Rust (the stable reference adapter) runs first, ahead of the preview
@@ -1513,6 +1542,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                 &analysis_changed_files,
                 languages,
                 rust_config,
+                language_config,
             )
         })?;
         cancellation::checkpoint()?;
@@ -1573,6 +1603,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
+        owner_opt_outs = result.owner_opt_outs;
         value_origins.extend(result.value_origins);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
@@ -1586,23 +1617,64 @@ fn run_pipeline_for_diff_text_with_language_config(
         // advisory below covers only preview languages, so the reference
         // adapter's exclusion is recorded here as a typed limitation.
         limitations.push(limitation);
-        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
-            LanguageId::Rust.as_str(),
+        rust_not_selected_files = Some(
             analysis_changed_files
                 .iter()
                 .filter(|file| route(&file.path) == Some(LanguageId::Rust))
                 .count(),
+        );
+    }
+    // #13641: without the Rust adapter nothing selected a partition, so a
+    // preview-only diff over its changed-line guard selects one here through
+    // the same selector instead of refusing outright. Below the guard the run
+    // keeps its full scope, exactly as before.
+    if partial_scope.is_none()
+        && !languages.contains(&LanguageId::Rust)
+        && enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)
+            .is_err()
+    {
+        partial_scope = super::language::select_partial_diff_scope(
+            &analysis_changed_files,
+            languages,
+            language_config,
+        )?;
+    }
+    // #13641: the Rust not-selected outcome is recorded once the run's scope
+    // is settled, so a preview-only partial run labels it partial too.
+    if let Some(count) = rust_not_selected_files {
+        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+            LanguageId::Rust.as_str(),
+            count,
             "rust is not in the effective [languages].enabled set",
-            &diff_scope_label(None),
+            &diff_scope_label(partial_scope.as_ref()),
         ));
     }
-    // #10730: fail closed before any preview adapter runs when an enabled
-    // preview language's changed-line count exceeds its budget. The refusal
-    // propagates like the Rust guard's, keeping the diff_scope_oversized
-    // prefix handling (LSP conversion, CLI exit 2, --json limited artifact)
-    // intact. The count admits only files each adapter's generated-name and
-    // excluded-directory authorities would let it probe.
-    enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)?;
+    // When a partial partition exists, preview adapters analyze only the
+    // selected files; uninspected accounting lives on the scope record.
+    let selected_changed_files = partial_scope.as_ref().map(|scope| {
+        analysis_changed_files
+            .iter()
+            .filter(|file| scope.selects(&file.path))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    // #10730 / #13641: fail closed before any preview adapter runs when an
+    // enabled preview language's changed-line count over the files this run
+    // analyzes (the selected partition, when one exists) exceeds its budget.
+    // A larger diff degrades into `limited_partial_scope` above; this stays a
+    // backstop, and refuses the whole diff when no file fits (no partition). The
+    // refusal propagates like the Rust guard's, keeping the
+    // diff_scope_oversized prefix handling (LSP conversion, CLI exit 2,
+    // --json limited artifact) intact. The count admits only files each
+    // adapter's generated-name and excluded-directory authorities would let
+    // it probe.
+    enforce_changed_preview_line_limits(
+        languages,
+        selected_changed_files
+            .as_deref()
+            .unwrap_or(&analysis_changed_files),
+        language_config,
+    )?;
     let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
@@ -1614,21 +1686,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             ));
         }
     }
-    // When the Rust adapter returned a partial partition, preview adapters
-    // analyze only the selected files; uninspected accounting lives on the
-    // scope record. Otherwise the full diff is dispatched as before.
-    let restricted_changed_files;
-    let preview_changed_files: &[diff::ChangedFile] = match &partial_scope {
-        Some(scope) => {
-            restricted_changed_files = analysis_changed_files
-                .iter()
-                .filter(|file| scope.selects(&file.path))
-                .cloned()
-                .collect::<Vec<_>>();
-            &restricted_changed_files
-        }
-        None => &changed_files,
-    };
+    // Otherwise the full diff is dispatched as before.
+    let preview_changed_files: &[diff::ChangedFile] =
+        selected_changed_files.as_deref().unwrap_or(&changed_files);
 
     // Limitations kept only because they describe caller-supplied evidence
     // (#5421). They say nothing about whether the diff parsed, so the
@@ -1662,7 +1722,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                         options,
                         oracle_policy,
                         preview_changed_files,
-                        &language_config.typescript.handwritten_files,
+                        &language_config.typescript,
                     )
                 })
             }
@@ -1687,7 +1747,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     options,
                     oracle_policy,
                     preview_changed_files,
-                    &language_config.python.handwritten_files,
+                    &language_config.python,
                 )
             }),
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
@@ -1861,8 +1921,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
-    let preview_advisories =
+    let mut preview_advisories =
         detect_preview_advisories(languages, preview_paths.into_iter(), language_config);
+    attach_nested_python_packages(&mut preview_advisories, &options.root);
     for advisory in &preview_advisories {
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
@@ -1996,6 +2057,15 @@ fn run_pipeline_for_diff_text_with_language_config(
                      no longer marks it generated and re-run the analysis."
                 ),
             ),
+            PreviewSkipClass::ConfiguredPattern => (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. These paths match \
+                     `[{config_section}] excluded_file_patterns`; remove or narrow a pattern if \
+                     that skip is inaccurate, or keep the pattern to omit fixture or data files \
+                     from preview-language indexing."
+                ),
+            ),
         };
         limitations.push(
             AnalysisLimitation::new(
@@ -2040,6 +2110,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    if let Some(message) = symlink_disclosure_message(symlink_file_count) {
+        eprintln!("{message}");
+    }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
         eprintln!("{message}");
@@ -2378,6 +2451,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        owner_opt_outs,
         language_view: Some(language_view),
         preview_fact_caches,
     })
@@ -2569,11 +2643,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         let attempted = match language {
             LanguageId::TypeScript | LanguageId::JavaScript => {
                 contain_adapter_panic(options, *language, || {
-                    analyze_typescript_repo(
-                        options,
-                        oracle_policy,
-                        &language_config.typescript.handwritten_files,
-                    )
+                    analyze_typescript_repo(options, oracle_policy, &language_config.typescript)
                 })
             }
             LanguageId::Python => contain_adapter_panic(options, *language, || {
@@ -2641,11 +2711,12 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
     let discovered_preview_files = super::workspace::discover_routed_language_files(&options.root);
-    let preview_advisories = preview_advisories_from_discovered(
+    let mut preview_advisories = preview_advisories_from_discovered(
         &discovered_preview_files,
         languages,
         &crate::config::LanguagesConfig::default(),
     );
+    attach_nested_python_packages(&mut preview_advisories, &options.root);
     for outcome in repo_not_selected_outcomes(&discovered_preview_files, languages) {
         repo_language_aggregate.record(outcome);
     }
@@ -2694,6 +2765,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        // Owner opt-outs are a diff-scope disclosure (#13819); repo scope
+        // reports every owner.
+        owner_opt_outs: Vec::new(),
         language_view: Some(language_view),
         preview_fact_caches: Vec::new(),
     })
@@ -2752,6 +2826,24 @@ fn repo_not_selected_outcomes(
         .collect()
 }
 
+/// Name the nested Python packages on a not-enabled Python advisory, so the
+/// renderers can suggest `--root <package>` without touching the filesystem
+/// (#13618). Computed only for the disclosure that needs it.
+fn attach_nested_python_packages(
+    advisories: &mut [PreviewLanguageAdvisory],
+    root: &std::path::Path,
+) {
+    for advisory in advisories {
+        if advisory.language == LanguageId::Python.as_str() && !advisory.enabled {
+            advisory.nested_packages =
+                crate::config::language_detection::nested_python_packages_unclaimed(root)
+                    .iter()
+                    .map(|package| package.to_string_lossy().replace('\\', "/"))
+                    .collect();
+        }
+    }
+}
+
 fn preview_advisories_from_discovered(
     discovered: &[(LanguageId, std::path::PathBuf)],
     enabled: &[LanguageId],
@@ -2790,6 +2882,7 @@ fn preview_advisories_from_discovered(
             sample_paths,
             javascript_file_count,
             enabled: analyzed_only,
+            nested_packages: Vec::new(),
         });
     }
     advisories
@@ -2882,6 +2975,7 @@ where
                 sample_paths: sample_paths.clone(),
                 javascript_file_count: *javascript_file_count,
                 enabled: enabled.contains(language) && language.is_available(),
+                nested_packages: Vec::new(),
             });
         }
     }
@@ -2898,6 +2992,7 @@ where
 enum PreviewSkipClass {
     GeneratedName,
     ExcludedDirectory,
+    ConfiguredPattern,
 }
 
 fn detect_preview_skipped_paths<'a, I>(
@@ -2923,6 +3018,8 @@ where
         let generated_name = preview_skip_generated_name(language, &changed.path);
         let skip_class = if generated_name {
             PreviewSkipClass::GeneratedName
+        } else if preview_skip_configured_pattern(language, &changed.path, language_config) {
+            PreviewSkipClass::ConfiguredPattern
         } else {
             PreviewSkipClass::ExcludedDirectory
         };
@@ -2966,6 +3063,26 @@ fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> 
         LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
             false
         }
+    }
+}
+
+fn preview_skip_configured_pattern(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::Python => crate::config::path_matches_preview_excluded_patterns(
+            &language_config.python.excluded_file_patterns,
+            path,
+        ),
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            crate::config::path_matches_preview_excluded_patterns(
+                &language_config.typescript.excluded_file_patterns,
+                path,
+            )
+        }
+        LanguageId::Rust | LanguageId::Perl => false,
     }
 }
 
@@ -3104,13 +3221,14 @@ fn is_excluded_from_preview_analysis(
 ) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {
-            is_excluded_from_typescript_preview_analysis(
-                path,
-                &language_config.typescript.handwritten_files,
-            )
+            is_excluded_from_typescript_preview_analysis(path, language_config)
         }
         LanguageId::Python => {
             crate::config::is_detectable_generated_python_path(path)
+                || crate::config::path_matches_preview_excluded_patterns(
+                    &language_config.python.excluded_file_patterns,
+                    path,
+                )
                 || (crate::config::is_detectable_excluded_python_path(path)
                     && !crate::config::is_declared_handwritten_python_path(
                         &language_config.python.handwritten_files,
@@ -3127,11 +3245,19 @@ fn is_excluded_from_preview_analysis(
 /// diff in a rust-only build as in a full build (#10730).
 fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
-    handwritten: &[String],
+    language_config: &crate::config::LanguagesConfig,
 ) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
-        || (crate::config::is_detectable_excluded_typescript_path(path)
-            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
+        || crate::config::path_matches_preview_excluded_patterns(
+            &language_config.typescript.excluded_file_patterns,
+            path,
+        )
+        || ((crate::config::is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -3139,10 +3265,10 @@ fn analyze_typescript_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -3150,7 +3276,7 @@ fn analyze_typescript_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -3173,6 +3299,7 @@ fn untouched_preview_result() -> LanguageDiffResult {
         rust_diagnostic_origins: Default::default(),
         rust_consumed_sources: Default::default(),
         preview_fact_cache: crate::analysis::language::PreviewFactCacheStats::zero_work(),
+        owner_opt_outs: Vec::new(),
     }
 }
 
@@ -3181,10 +3308,10 @@ fn analyze_python_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, python_config)
 }
 
 #[cfg(not(feature = "lang-python"))]
@@ -3192,7 +3319,7 @@ fn analyze_python_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Python)
 }
@@ -3201,17 +3328,17 @@ fn analyze_python_diff(
 fn analyze_typescript_repo(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, handwritten)
+    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
 fn analyze_typescript_repo(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -4428,12 +4555,34 @@ mod tests {
         // shapes and its own tests. The run must disclose a typed producer
         // limitation naming the file, so downstream gates fail closed, and
         // the parsing control must stay complete.
+        // #13660: a file over the nesting budget was declined by a static
+        // limit, so its recovery must not tell the user to fix a syntax
+        // error nor certify the file as valid (the scan runs before parsing,
+        // so a real syntax error can coexist with the excess nesting).
+        let deep = format!(
+            "pub fn f(x: i32) -> bool {{ {}x >= 1{} }}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        let deep_and_broken = format!("{deep}pub fn broken( {{\n");
         for (label, source, degraded, recovery) in [
             (
                 "lexical-fallback-changed",
                 &b"pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n"[..],
                 true,
                 "parses as Rust",
+            ),
+            (
+                "lexical-fallback-nesting-budget",
+                deep.as_bytes(),
+                true,
+                "nesting budget",
+            ),
+            (
+                "lexical-fallback-nesting-budget-and-syntax-error",
+                deep_and_broken.as_bytes(),
+                true,
+                "nesting budget",
             ),
             (
                 // Parses cleanly but is Latin-1: the recovery is re-encoding.
@@ -4488,6 +4637,12 @@ mod tests {
                 assert!(detail.contains("lexical fallback"), "{label}: {detail}");
                 let action = &limitation.recovery.detail;
                 assert!(action.contains(recovery), "{label}: {action}");
+                assert!(!action.contains("valid"), "{label}: {action}");
+                assert_eq!(
+                    action == crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                    recovery == "parses as Rust",
+                    "{label}: only a real parse failure carries the parse-failure text: {action}"
+                );
             } else {
                 assert!(fallback.is_none(), "{label}: {:?}", outcome.limitations);
                 assert!(outcome.kind.is_complete(), "{label}: {:?}", outcome.kind);
@@ -5472,6 +5627,20 @@ mod tests {
         if deletion_disclosure_message(0).is_some() {
             return Err("zero deleted files must not produce a disclosure".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_disclosure_names_type_changes_and_non_claim() -> Result<(), String> {
+        let message = symlink_disclosure_message(1)
+            .ok_or_else(|| "a symlink change must produce a disclosure".to_string())?;
+        assert!(
+            message.starts_with("ripr: skipped 1 symlink change(s);"),
+            "{message}"
+        );
+        assert!(message.contains("does not mean"), "{message}");
+        assert!(message.contains("analyzed normally"), "{message}");
+        assert_eq!(symlink_disclosure_message(0), None);
         Ok(())
     }
 
@@ -8685,6 +8854,8 @@ index 0000000..1111111 100644
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -9123,11 +9294,40 @@ index 0000000..1111111 100644
     }
 
     #[test]
-    fn oversized_diff_still_fails_closed_without_a_scope() -> Result<(), String> {
-        let refusal = run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?
-            .err()
-            .ok_or("an unscoped oversized diff must be refused")?;
-        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
+    fn oversized_file_sorting_first_is_left_out_of_a_partial_scope() -> Result<(), String> {
+        // #13641: `src/big.rs` sorts first and alone carries 2,100 changed
+        // Rust lines, over the 2,000-line guard. It used to refuse the whole
+        // diff; it is now left out and named, and `src/lib.rs` is analyzed.
+        let result =
+            run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?.map_err(|error| {
+                format!("an over-limit file beside a fitting one must not refuse: {error}")
+            })?;
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("the run must be limited_partial_scope")?;
+        assert_eq!(scope.selected_files, vec!["src/lib.rs".to_string()]);
+        assert_eq!(
+            over_limit_summary(scope),
+            vec![("src/big.rs", 2_100, "RIPR_MAX_DIFF_CHANGED_RUST_LINES")]
+        );
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::FileExceedsAnalysisLimit
+        );
+        assert_eq!(scope.uninspected_files_lower_bound, 1);
+        assert_eq!(scope.uninspected_changed_lines_lower_bound, 2_100);
+        assert!(
+            result.findings.iter().all(|finding| finding
+                .probe
+                .location
+                .file
+                .ends_with("src/lib.rs")),
+            "no finding may come from the over-limit file"
+        );
+        assert!(!result.findings.is_empty(), "the lib.rs finding stays");
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{:?}", outcome.kind);
         Ok(())
     }
 
@@ -9447,6 +9647,41 @@ index 0000000..1111111 100644
     }
 
     #[test]
+    fn changed_typescript_line_count_excludes_docs_site_unless_declared_handwritten()
+    -> Result<(), String> {
+        // The pipeline exclusion site (not just the adapter predicate) must
+        // refuse docs-site components, and a declared handwritten path under
+        // `docs/` must be admitted again; a near-miss name stays source.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("packages/docs/components/ecosystem.tsx", 2_001, 0),
+            changed_line_file("packages/docsify/index.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected docs-site lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files =
+            vec!["packages/docs/components/ecosystem.tsx".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten docs path to count again, got {declared_count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn changed_typescript_line_count_counts_the_whole_ts_js_family() -> Result<(), String> {
         // The one TypeScript adapter reads the whole routed family; the
         // guard must measure exactly what the adapter would receive.
@@ -9644,8 +9879,418 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #13641: a diff whose `files` each stay under the changed-line guards
+    /// but whose total exceeds them. Every file carries `lines_per_file`
+    /// added lines built by `line`.
+    fn multi_file_diff(files: &[&str], lines_per_file: usize, line: fn(usize) -> String) -> String {
+        let mut diff = String::new();
+        for path in files {
+            diff.push_str(&format!(
+                "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{lines_per_file} @@\n"
+            ));
+            for index in 0..lines_per_file {
+                diff.push_str(&format!("+{}\n", line(index)));
+            }
+        }
+        diff
+    }
+
+    /// The partition every #13641 degrade test expects from three 800-line
+    /// files under the default budgets: the first file only (a second would
+    /// cross the 1,000-line budget), the other two counted as uninspected.
+    fn assert_degraded_to_first_of_three(
+        result: &AnalysisResult,
+        first: &str,
+    ) -> Result<(), String> {
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("an over-guard diff must degrade into limited_partial_scope, not full scope")?;
+        assert_eq!(scope.run_status, PartialDiffScope::RUN_STATUS);
+        assert_eq!(scope.selected_files, vec![first.to_string()]);
+        assert_eq!(scope.selected_changed_lines, 800);
+        assert_eq!(scope.uninspected_files_lower_bound, 2);
+        assert_eq!(scope.uninspected_changed_lines_lower_bound, 1_600);
+        assert_eq!(scope.unselected_files.len(), 2);
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::LineBudget
+        );
+        let outcome = result
+            .analysis_outcome
+            .as_ref()
+            .ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{:?}", outcome.kind);
+        assert!(
+            outcome.limitations.iter().any(|limitation| limitation.kind
+                == AnalysisLimitationKind::DiffScopeOversized
+                && limitation
+                    .recovery
+                    .detail
+                    .contains("widen the analyzed partition")),
+            "the partial scope must be disclosed as a limitation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_diff_over_the_changed_line_guard_degrades_into_partial_scope() -> Result<(), String> {
+        // 3 x 800 = 2,400 changed Rust lines exceed the 2,000-line guard,
+        // which refused this diff before #13641. No single file exceeds it,
+        // so the bounded partition analyzes the first file instead.
+        let root = temp_root("rust-guard-degrade")?;
+        let files = ["src/a.rs", "src/b.rs", "src/c.rs"];
+        for path in files {
+            write(root.join(path).as_path(), "pub fn seed() -> u32 { 0 }\n")?;
+        }
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&files, 800, |index| {
+                format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "src/a.rs")
+    }
+
+    #[test]
+    fn python_diff_over_the_changed_line_guard_degrades_into_partial_scope() -> Result<(), String> {
+        // Python-only enablement: no Rust adapter selects a partition, so the
+        // pipeline selects one through the same selector (#13641).
+        let root = temp_root("py-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["pkg/a.py", "pkg/b.py", "pkg/c.py"], 800, |index| {
+                format!("v_{index} = {index}")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "pkg/a.py")
+    }
+
+    #[test]
+    fn typescript_diff_over_the_changed_line_guard_degrades_into_partial_scope()
+    -> Result<(), String> {
+        // Rust enabled alongside: the Rust adapter's partition governs the
+        // preview guard, which now measures only the selected files.
+        let root = temp_root("ts-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["web/a.ts", "web/b.ts", "web/c.ts"], 800, |index| {
+                format!("export const v_{index} = {index};")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "web/a.ts")
+    }
+
+    #[test]
+    fn over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope() -> Result<(), String> {
+        // #13641: the over-limit `pkg/a.py` sorts first; it is left out and
+        // the fitting `pkg/b.py` is still analyzed, instead of refusing.
+        let root = temp_root("py-guard-over-limit-first")?;
+        let mut diff = oversized_preview_diff("pkg/a.py", "x =", 2_100);
+        diff.push_str(&multi_file_diff(&["pkg/b.py"], 10, |index| {
+            format!("v_{index} = {index}")
+        }));
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("the run must be limited_partial_scope")?;
+        assert_eq!(scope.selected_files, vec!["pkg/b.py".to_string()]);
+        assert_eq!(
+            over_limit_summary(scope),
+            vec![("pkg/a.py", 2_100, DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)]
+        );
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::FileExceedsAnalysisLimit
+        );
+        Ok(())
+    }
+
+    /// `(path, changed lines, limit env)` of each over-limit file (#13641).
+    fn over_limit_summary(scope: &PartialDiffScope) -> Vec<(&str, usize, &'static str)> {
+        scope
+            .over_limit_files
+            .iter()
+            .map(|file| (file.path.as_str(), file.changed_lines, file.limit_env))
+            .collect()
+    }
+
+    #[test]
+    fn lowered_python_limit_leaves_an_over_limit_py_out_beside_rust() -> Result<(), String> {
+        // #13641 review: each file is judged against its own language limit.
+        // With `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=500`, an 800-line `.py`
+        // beside small Rust files is left out (it is within the Rust limit),
+        // and the Rust files are analyzed. Python-only, the same rule holds.
+        for (label, languages) in [
+            ("with-rust", vec![LanguageId::Rust, LanguageId::Python]),
+            ("python-only", vec![LanguageId::Python]),
+        ] {
+            let root = temp_root(&format!("py-lowered-limit-{label}"))?;
+            write(
+                root.join("src/lib.rs").as_path(),
+                "pub fn seed() -> u32 { 0 }\n",
+            )?;
+            let mut diff = multi_file_diff(&["src/lib.rs"], 10, |index| {
+                format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+            });
+            diff.push_str(&multi_file_diff(&["pkg/big.py"], 800, |index| {
+                format!("v_{index} = {index}")
+            }));
+            diff.push_str(&multi_file_diff(&["pkg/small.py"], 10, |index| {
+                format!("w_{index} = {index}")
+            }));
+            let result =
+                with_forced_diff_limit_env(&[(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")], || {
+                    run_pipeline_for_diff_text(
+                        &sample_rust_diff_options(root.clone()),
+                        &OraclePolicy::default(),
+                        &languages,
+                        &crate::config::RustLanguageConfig::default(),
+                        &diff,
+                    )
+                })
+                .map_err(|error| format!("{label}: must degrade, not refuse: {error}"))?;
+            let scope = result
+                .partial_scope
+                .as_ref()
+                .ok_or_else(|| format!("{label}: the run must be limited_partial_scope"))?;
+            assert_eq!(
+                over_limit_summary(scope),
+                vec![("pkg/big.py", 800, DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)],
+                "{label}"
+            );
+            assert!(
+                scope.selected_files.contains(&"pkg/small.py".to_string()),
+                "{label}: {:?}",
+                scope.selected_files
+            );
+            assert_eq!(
+                scope.selected_files.contains(&"src/lib.rs".to_string()),
+                languages.contains(&LanguageId::Rust),
+                "{label}: {:?}",
+                scope.selected_files
+            );
+            // #13641 review: the advice keeps every selected file and adds
+            // `pkg/big.py` (10-line `pkg/small.py`, plus the 10-line
+            // `src/lib.rs` when Rust is enabled), not only its own 800 lines.
+            let reach = if languages.contains(&LanguageId::Rust) {
+                820
+            } else {
+                810
+            };
+            assert!(
+                scope.widen_instruction().contains(&format!(
+                    "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least {reach}"
+                )),
+                "{label}: {}",
+                scope.widen_instruction()
+            );
+            if !languages.contains(&LanguageId::Rust) {
+                // F5: the Rust not-selected child carries the partial label.
+                let aggregate = captured_aggregate(&root)?;
+                let rust = aggregate
+                    .outcomes
+                    .get("rust")
+                    .ok_or("rust not-selected child missing")?;
+                assert!(
+                    rust.scope
+                        .as_deref()
+                        .is_some_and(|scope| scope.starts_with("partial:")),
+                    "{:?}",
+                    rust.scope
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn raised_typescript_limit_never_runs_over_limit_files_as_full_scope() -> Result<(), String> {
+        // #13641 review (F2): two 2,100-line `.ts` files are each over the
+        // Rust limit. Judged by a raised TS limit they fit, so the run is a
+        // bounded partition; under the default TS limit nothing fits and the
+        // run refuses. Neither combination may run as full scope.
+        let diff = multi_file_diff(&["web/a.ts", "web/b.ts"], 2_100, |index| {
+            format!("export const v_{index} = {index};")
+        });
+        let languages = [LanguageId::Rust, LanguageId::TypeScript];
+        let root = temp_root("ts-raised-limit")?;
+        let raised = with_forced_diff_limit_env(
+            &[(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV, "5000")],
+            || {
+                run_pipeline_for_diff_text(
+                    &sample_rust_diff_options(root),
+                    &OraclePolicy::default(),
+                    &languages,
+                    &crate::config::RustLanguageConfig::default(),
+                    &diff,
+                )
+            },
+        )?;
+        let scope = raised
+            .partial_scope
+            .as_ref()
+            .ok_or("a raised-limit over-budget diff must be partial, never full scope")?;
+        assert_eq!(scope.selected_files, vec!["web/a.ts".to_string()]);
+        assert!(scope.over_limit_files.is_empty());
+
+        let root = temp_root("ts-default-limit")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &languages,
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )
+        .err()
+        .ok_or("every file over its limit must refuse, never run as full scope")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generated_python_bulk_beside_rust_proceeds_and_is_never_over_limit() -> Result<(), String> {
+        // #13641 review (N1): with Rust and Python enabled, a 2,001-line
+        // generated `.py` is no partition candidate — the Python adapter
+        // never counts it — so the run proceeds instead of refusing, and the
+        // file is never named over its limit.
+        let root = temp_root("py-generated-beside-rust")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn seed() -> u32 { 0 }\n",
+        )?;
+        let generated_only = oversized_preview_diff("pkg/generated_models.py", "def", 2_001);
+        let mut with_admitted_bulk = generated_only.clone();
+        with_admitted_bulk.push_str(&multi_file_diff(
+            &["pkg/a.py", "pkg/b.py", "pkg/c.py"],
+            800,
+            |index| format!("v_{index} = {index}"),
+        ));
+        for (label, diff) in [
+            ("generated-only", generated_only),
+            ("with-admitted-bulk", with_admitted_bulk),
+        ] {
+            let result = run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root.clone()),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust, LanguageId::Python],
+                &crate::config::RustLanguageConfig::default(),
+                &diff,
+            )
+            .map_err(|error| format!("{label}: must proceed, not refuse: {error}"))?;
+            if let Some(scope) = result.partial_scope.as_ref() {
+                assert!(scope.over_limit_files.is_empty(), "{label}: {scope:?}");
+                assert!(
+                    !scope
+                        .unselected_files
+                        .contains(&"pkg/generated_models.py".to_string()),
+                    "{label}: {scope:?}"
+                );
+            }
+            assert_eq!(
+                result.partial_scope.is_some(),
+                label == "with-admitted-bulk",
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn configured_python_exclusion_keeps_the_file_out_of_partial_selection() -> Result<(), String> {
+        // #13641 review: partial selection must use the run's parsed
+        // `[languages]` configuration, not the default. `schema_dump.py` is
+        // admitted by default (2,100 lines, over the Python limit) but the
+        // repository excludes it via `excluded_file_patterns`, so the Python
+        // adapter never counts it and the partition must not name it over
+        // its limit. Both selection sites: the Rust adapter (Rust enabled)
+        // and the preview-only path (Python only, where the admitted bulk
+        // trips the guard).
+        let mut language_config = crate::config::LanguagesConfig::default();
+        language_config.python.excluded_file_patterns = vec!["schema_dump.py".to_string()];
+        let mut diff = oversized_preview_diff("pkg/schema_dump.py", "x =", 2_100);
+        diff.push_str(&multi_file_diff(
+            &["pkg/a.py", "pkg/b.py", "pkg/c.py"],
+            800,
+            |index| format!("v_{index} = {index}"),
+        ));
+        for (label, languages) in [
+            ("with-rust", vec![LanguageId::Rust, LanguageId::Python]),
+            ("python-only", vec![LanguageId::Python]),
+        ] {
+            let root = temp_root(&format!("py-configured-exclusion-{label}"))?;
+            let result = run_pipeline_for_diff_text_with_language_config(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &languages,
+                &crate::config::RustLanguageConfig::default(),
+                &language_config,
+                DiffIntake {
+                    perl_cache_dir: None,
+                    scope: &DiffScopeFilter::default(),
+                },
+                &diff,
+            )
+            .map_err(|error| format!("{label}: must degrade, not refuse: {error}"))?;
+            let scope = result
+                .partial_scope
+                .as_ref()
+                .ok_or_else(|| format!("{label}: the admitted bulk must be partial"))?;
+            assert_eq!(scope.selected_files, vec!["pkg/a.py"], "{label}");
+            assert!(scope.over_limit_files.is_empty(), "{label}: {scope:?}");
+            assert!(
+                !scope
+                    .unselected_files
+                    .contains(&"pkg/schema_dump.py".to_string()),
+                "{label}: {scope:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_diff_over_the_changed_line_guard_degrades_into_partial_scope()
+    -> Result<(), String> {
+        // #13641 review (N2): JavaScript-only enablement. `route` maps `.js`
+        // to the TypeScript adapter's id; the selector must treat it as
+        // enabled, or nothing is selected and the guard refuses.
+        let root = temp_root("js-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::JavaScript],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["web/a.js", "web/b.js", "web/c.js"], 800, |index| {
+                format!("export const v_{index} = {index};")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "web/a.js")
+    }
+
     #[test]
     fn oversized_python_diff_is_refused_before_python_analysis() -> Result<(), String> {
+        // #13641: one file alone over the guard means nothing fits — a
+        // partition never splits a file — so it still refuses.
         let root = temp_root("py-guard-oversized")?;
         let refusal = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
@@ -9657,7 +10302,12 @@ index 0000000..1111111 100644
         .err()
         .ok_or("an oversized Python diff must be refused")?;
         assert!(is_diff_scope_oversized(&refusal), "{refusal}");
-        assert!(refusal.contains("changed Python lines"), "{refusal}");
+        // #13641: no file fits, so the explicit nothing-fits refusal names
+        // the Python limit (the `--json` basis follows it).
+        assert!(
+            refusal.contains("2100 changed lines over the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES"),
+            "{refusal}"
+        );
         assert!(
             refusal.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
             "{refusal}"
@@ -9682,7 +10332,10 @@ index 0000000..1111111 100644
         .err()
         .ok_or("an oversized TypeScript diff must be refused")?;
         assert!(is_diff_scope_oversized(&refusal), "{refusal}");
-        assert!(refusal.contains("changed TypeScript lines"), "{refusal}");
+        assert!(
+            refusal.contains("2100 changed lines over the RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES"),
+            "{refusal}"
+        );
         assert!(
             refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
             "{refusal}"

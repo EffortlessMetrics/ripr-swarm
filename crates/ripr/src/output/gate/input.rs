@@ -4,7 +4,6 @@ use crate::output::gap_decision_ledger::{self, GapRecord};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Digests of the exact bytes each decision-affecting reader parsed, keyed
@@ -21,6 +20,7 @@ pub(super) struct ConsumedInputHashes {
     pub(super) mutation_calibration: Option<String>,
     pub(super) baseline: Option<String>,
     pub(super) exception_policy: Option<String>,
+    pub(super) acknowledgements: Option<String>,
 }
 
 impl ConsumedInputHashes {
@@ -32,7 +32,7 @@ impl ConsumedInputHashes {
         resolved: &Path,
         display: &Path,
     ) -> Result<(Value, String), String> {
-        let bytes = fs::read(resolved).map_err(|err| {
+        let bytes = crate::bounded_input::read(resolved).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 format!("read {} failed: not found", display_path(display))
             } else {
@@ -53,7 +53,7 @@ impl ConsumedInputHashes {
         resolved: &Path,
         display: &str,
     ) -> Result<(String, String), String> {
-        let bytes = fs::read(resolved)
+        let bytes = crate::bounded_input::read(resolved)
             .map_err(|err| format!("failed to read exception policy `{display}`: {err}; check that the path exists and is readable, then rerun"))?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let text = String::from_utf8(bytes)
@@ -120,7 +120,7 @@ pub(super) fn read_gap_ledger_impl(
     // Read once: the subject hash is computed from exactly the bytes parsed
     // here, so the receipt cannot bind the decision to other contents
     // (review round 1, #5263).
-    let bytes = match fs::read(&resolved) {
+    let bytes = match crate::bounded_input::read(&resolved) {
         Ok(bytes) => bytes,
         Err(error) => {
             config_errors.push(format!(

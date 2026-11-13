@@ -15,9 +15,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:a::gate:predicate_boundary:predicate:x==0
   Changed behavior: x > 0
-  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the
-    owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle
-    do not establish that discriminator
+  Missing check: Check unconfirmed: no supported assertion that distinguishes the changed behavior
+    is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a
+    separate exact assertion do not establish that pairing
   Related test (1 of 2 matched rows): src/lib.rs:12 same_test_separate_owners
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
@@ -33,7 +33,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach gate: same_test_separate_owners
     - infection yes: Detected related test input at the changed boundary
-    - 13 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -45,7 +45,7 @@ Write this test by hand: call the function with an input just below, exactly on,
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: No assertion was tied to the changed value
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

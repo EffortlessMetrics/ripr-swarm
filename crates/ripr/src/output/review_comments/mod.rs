@@ -23,7 +23,10 @@ mod scope;
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
 
-pub(crate) use placement::{normalize_path_text, placement_for, placement_json};
+pub(crate) use placement::{
+    displaced_seam_location, displaced_seam_prefix, normalize_path_text, placement_for,
+    placement_json,
+};
 pub(crate) use render::display_paths;
 
 use publish_plan::{
@@ -204,6 +207,11 @@ pub(crate) fn render_review_comments_json_with_scope(
     // from a producer that predates the disclosure.
     scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
     scope_json["omitted_by_policy"] = json!(selection.omitted_by_policy);
+    // #14082: the part of the policy omissions ripr could not judge. Emitted
+    // only when nonzero so documents with nothing withheld stay byte-stable.
+    if selection.omitted_static_limited > 0 {
+        scope_json["static_limited_omitted_seams"] = json!(selection.omitted_static_limited);
+    }
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -609,7 +617,8 @@ mod tests {
         AgentBriefWhyNowReason,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::repair_guidance::{
         AssertionBasis, AssertionGuidance, AssertionKind, GuidanceReason, GuidanceRecovery,
@@ -670,6 +679,8 @@ mod tests {
                     value: "amount == discount_threshold".to_string(),
                     reason: "producer identified the equality boundary as missing".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -824,6 +835,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         }
     }
 
@@ -974,6 +986,7 @@ mod tests {
                 file: PathBuf::from(file),
                 owner,
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             ..NewTestTargetAdmission::default()
         });
@@ -1650,6 +1663,7 @@ mod tests {
             mode: crate::output::gate::GateMode::Acknowledgeable,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
         let report = crate::output::gate::build_gate_decision_report(&input);
         let _ = fs::remove_dir_all(&root);
@@ -1815,6 +1829,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -3217,6 +3232,7 @@ mod tests {
             )],
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            omitted_static_limited: 0,
         };
         assert_json_fixture(
             "configured-off",

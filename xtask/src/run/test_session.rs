@@ -1,56 +1,15 @@
-//! A private Linux session for a cooperative reexecuted test. Nested timed
-//! commands may create process groups, but remain in this session. Keep the
-//! primary waitable until cleanup so its SID cannot be recycled beneath us.
+//! Deadline adapter and controls for the shared cooperative Linux test session.
 
 use super::{CaptureDeadline, OwnedProcess, WaitOutcome, poll_interval, proc_peak_rss_bytes};
-use rustix::process::{
-    Pid, PidfdFlags, Signal, WaitId, WaitIdOptions, getsid, pidfd_open, pidfd_send_signal, setsid,
-    waitid,
-};
-use std::fs;
+use rustix::process::{WaitId, WaitIdOptions, waitid};
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CleanupFault {
-    BeforePrimaryKill,
-    AfterPrimaryStop,
-}
-
-thread_local! {
-    // Module is test-only; injection is local to the exercising parent thread.
-    static CLEANUP_FAULT: std::cell::Cell<Option<CleanupFault>> = const { std::cell::Cell::new(None) };
-}
-
-fn injected_failure(point: CleanupFault) -> Result<(), String> {
-    CLEANUP_FAULT.with(|fault| {
-        if fault.get() == Some(point) {
-            fault.set(None);
-            Err("injected isolated-session cleanup failure".to_string())
-        } else {
-            Ok(())
-        }
-    })
-}
-
-pub(crate) fn enter_test_session() -> Result<(), String> {
-    setsid()
-        .map(|_| ())
-        .map_err(|error| format!("could not create isolated test session: {error}"))
-}
-
-pub(super) struct TestSession {
-    primary: u32,
-    active: bool,
-}
+#[path = "test_session/custody.rs"]
+mod custody;
+pub(super) use custody::TestSession;
+use custody::{enter_test_session, pid};
 
 impl TestSession {
-    pub(super) fn new(primary: u32) -> Self {
-        Self {
-            primary,
-            active: true,
-        }
-    }
-
     pub(super) fn wait(
         &mut self,
         child: &mut OwnedProcess,
@@ -77,11 +36,8 @@ impl TestSession {
             if exited || timed_out {
                 // A cleanup error may precede stopping the primary. Never
                 // block in wait on that path, and keep Drop's retry armed.
-                self.cleanup()
+                self.finish()
                     .map_err(|error| format!("{context}: {error}"))?;
-                // Successful cleanup observed the primary waitable and left
-                // no live session members. Disarm before reaping releases SID.
-                self.active = false;
                 return Ok(WaitOutcome {
                     status: child.wait().map_err(|error| {
                         format!("{context}: failed to reap isolated primary: {error}")
@@ -94,150 +50,76 @@ impl TestSession {
             std::thread::sleep(poll_interval(sample_rss));
         }
     }
-
-    fn cleanup(&mut self) -> Result<(), String> {
-        let primary = pid(self.primary)?;
-        injected_failure(CleanupFault::BeforePrimaryKill)?;
-        let handle = pidfd_open(primary, PidfdFlags::empty())
-            .map_err(|error| format!("could not open isolated primary handle: {error}"))?;
-        send_kill(&handle)?;
-        let end = Instant::now() + Duration::from_secs(2);
-        loop {
-            if waitid(
-                WaitId::Pid(primary),
-                WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
-            )
-            .map_err(|error| format!("could not observe stopped isolated primary: {error}"))?
-            .is_some()
-            {
-                break;
-            }
-            if Instant::now() >= end {
-                return Err("isolated primary did not stop during cleanup".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        // A timeout during test startup may precede setsid(). In that case
-        // kill only our primary; its inherited session belongs to the caller.
-        if getsid(Some(primary))
-            .map_err(|error| format!("could not verify isolated session identity: {error}"))?
-            != primary
-        {
-            return Ok(());
-        }
-        injected_failure(CleanupFault::AfterPrimaryStop)?;
-        loop {
-            let members = live_members(self.primary)?;
-            if members.is_empty() {
-                return Ok(());
-            }
-            for member in members {
-                // Open the PID handle before revalidating membership. Signals
-                // then address that process, never a recycled numeric PID.
-                let member_pid = pid(member.pid)?;
-                let handle = match pidfd_open(member_pid, PidfdFlags::empty()) {
-                    Ok(handle) => handle,
-                    Err(rustix::io::Errno::SRCH) => continue,
-                    Err(error) => return Err(format!("could not own session member: {error}")),
-                };
-                match read_member(member.pid)? {
-                    Some(current)
-                        if current.session == self.primary && current.start == member.start =>
-                    {
-                        send_kill(&handle)?;
-                    }
-                    _ => {}
-                }
-            }
-            if Instant::now() >= end {
-                return Err(
-                    "could not confirm isolated session is empty during cleanup".to_string()
-                );
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
-
-impl Drop for TestSession {
-    fn drop(&mut self) {
-        if self.active {
-            // Declared after OwnedProcess, so this executes before its Drop
-            // can reap/release the primary. The explicit path reports errors.
-            let _ = self.cleanup();
-        }
-    }
-}
-
-fn pid(value: u32) -> Result<Pid, String> {
-    Pid::from_raw(value as i32).ok_or_else(|| "invalid isolated process identity".to_string())
-}
-
-fn send_kill(handle: &rustix::fd::OwnedFd) -> Result<(), String> {
-    match pidfd_send_signal(handle, Signal::KILL) {
-        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
-        Err(error) => Err(format!("could not terminate owned session member: {error}")),
-    }
-}
-
-struct Member {
-    pid: u32,
-    session: u32,
-    start: String,
-    state: String,
-}
-
-fn read_member(pid: u32) -> Result<Option<Member>, String> {
-    let text = match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("could not inspect session member {pid}: {error}")),
-    };
-    let (_, fields) = text.rsplit_once(')').ok_or("malformed process stat")?;
-    let fields: Vec<_> = fields.split_whitespace().collect();
-    let session = fields
-        .get(3)
-        .ok_or("missing session identity")?
-        .parse::<u32>()
-        .map_err(|error| format!("invalid session identity: {error}"))?;
-    Ok(Some(Member {
-        pid,
-        session,
-        state: fields.first().ok_or("missing process state")?.to_string(),
-        start: fields
-            .get(19)
-            .ok_or("missing process start identity")?
-            .to_string(),
-    }))
-}
-
-fn live_members(session: u32) -> Result<Vec<Member>, String> {
-    let mut members = Vec::new();
-    for entry in fs::read_dir("/proc").map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if let Some(member) = read_member(pid)?
-            && member.session == session
-            && member.state != "Z"
-            && member.state != "X"
-        {
-            members.push(member);
-        }
-    }
-    Ok(members)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use custody::{CLEANUP_FAULT, CleanupFault, member_from_stat_read, read_member};
+    use rustix::process::{PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    // #13424: exercise the isolated reader, which must consume the shared
+    // procfs disappearance decision from #6810 without hiding other failures.
+    #[test]
+    fn isolated_member_read_treats_enoent_and_esrch_as_absent() -> Result<(), String> {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(3),
+        ] {
+            if member_from_stat_read(42, Err(error))?.is_some() {
+                return Err("a vanished stat read must not produce a session member".into());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_member_read_preserves_non_disappearance_errors() -> Result<(), String> {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            std::io::Error::from_raw_os_error(13),
+            std::io::Error::from_raw_os_error(1),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ] {
+            let expected = format!("could not inspect session member 42: {error}");
+            match member_from_stat_read(42, Err(error)) {
+                Err(actual) if actual == expected => {}
+                _ => {
+                    return Err(format!(
+                        "the reader must retain this inspection failure: {expected}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_member_read_preserves_identity_and_rejects_malformed_stat() -> Result<(), String> {
+        let stat = "42 (name with ) parenthesis) S 1 42 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345";
+        let member = member_from_stat_read(42, Ok(stat.to_string()))?
+            .ok_or("a valid stat read must retain the session member")?;
+        if member.pid != 42 || member.session != 7 || member.state != "S" || member.start != "12345"
+        {
+            return Err("the reader changed the process identity, session, state or start".into());
+        }
+        for malformed in [
+            "no closing parenthesis",
+            "42 (worker) S",
+            "42 (worker) S 1 42 invalid",
+            "42 (worker) S 1 42 7",
+        ] {
+            if member_from_stat_read(42, Ok(malformed.to_string())).is_ok() {
+                return Err(format!("malformed process stat was accepted: {malformed}"));
+            }
+        }
+        Ok(())
+    }
 
     const ROLE: &str = "RIPR_XTASK_SESSION_TEST_ROLE";
     const MARKER: &str = "RIPR_XTASK_SESSION_TEST_MARKER";

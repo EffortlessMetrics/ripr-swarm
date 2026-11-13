@@ -1,8 +1,7 @@
 //! `cargo xtask kani`: honest runner for the Kani bounded-model-checking lane
 //! (RIPR-SPEC-0371).
 //!
-//! The lane runs `cargo kani -p ripr` once (Kani compiles the whole library, so
-//! one invocation per harness would multiply a minutes-long build) and reads
+//! The lane runs Kani once per owning package and reads
 //! one result block per discovered `#[kani::proof]` harness:
 //!
 //! - `VERIFIED` (within the harness's documented bounds), or
@@ -15,11 +14,14 @@
 
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::run;
 
-const HARNESS_ROOT: &str = "crates/ripr/src";
+const HARNESS_PACKAGES: [(&str, &str); 2] = [
+    ("ripr", "crates/ripr/src"),
+    ("ripr-contract", "crates/ripr-contract/src"),
+];
 const REPORT_DIR: &str = "target/ripr/reports";
 const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
@@ -322,18 +324,18 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
 
 /// Availability is a separate subprocess and must never wait without a bound.
 /// Reuse the shared timed capture's descendant cancellation and status checks.
-fn tool_available(timeout_secs: u64) -> Result<(), String> {
+fn tool_available(timeout_secs: u64) -> Result<run::TimedOutput, String> {
     let budget = Duration::from_secs(timeout_secs.clamp(1, MAX_KANI_VERSION_PROBE_SECS));
-    let output = run::capture_output_with_timeout(
+    let output = run::capture_output_with_timeout_typed(
         "cargo",
         &["kani".to_string(), "--version".to_string()],
-        &[],
+        &[("CARGO_TERM_COLOR", "never")],
         budget,
         "cargo kani --version",
     )
     // A low-level capture error may itself contain unsanitized child output.
     // Report the failure class, not arbitrary subprocess text as trusted Markdown.
-    .map_err(|_error| "cargo kani --version failed to run or capture output".to_string())?;
+    .map_err(|error| probe_capture_failure_reason(error.kind).to_string())?;
     if output.timed_out {
         let units = if budget.as_secs() == 1 {
             "second"
@@ -347,9 +349,38 @@ fn tool_available(timeout_secs: u64) -> Result<(), String> {
     }
     // Do not echo untrusted version stdout/stderr into the Markdown report.
     match output.status {
-        Some(status) if status.success() => Ok(()),
+        Some(status) if status.success() => Ok(output),
+        Some(status)
+            if status.code() == Some(101)
+                && output
+                    .stderr
+                    .lines()
+                    .any(|line| line.trim() == "error: no such command: `kani`") =>
+        {
+            Err("cargo is installed but the kani subcommand is unavailable".to_string())
+        }
         Some(status) => Err(format!("cargo kani --version failed with {status}")),
         None => Err("cargo kani --version returned without a process exit status".to_string()),
+    }
+}
+
+fn probe_capture_failure_reason(kind: run::TimedCaptureErrorKind) -> &'static str {
+    use run::TimedCaptureErrorKind;
+    match kind {
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::NotFound) => {
+            "cargo could not be launched: executable or interpreter not found"
+        }
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::PermissionDenied) => {
+            "cargo could not be launched: permission denied"
+        }
+        TimedCaptureErrorKind::Launch(_) => "cargo could not be launched: other launch failure",
+        TimedCaptureErrorKind::ProcessControl => {
+            "cargo kani --version process observation or termination failed"
+        }
+        TimedCaptureErrorKind::Capture => {
+            "cargo kani --version output capture failed or was incomplete"
+        }
+        TimedCaptureErrorKind::Cleanup => "cargo kani --version descendant cleanup failed",
     }
 }
 
@@ -446,8 +477,8 @@ fn all_not_established(harnesses: &[Harness], reason: &str) -> Vec<HarnessResult
 
 /// The exact `cargo` arguments for the lane, kept separate so a test can pin
 /// what Kani actually receives.
-fn kani_command(args: &KaniArgs) -> Vec<String> {
-    let mut command = vec!["kani".to_string(), "-p".to_string(), "ripr".to_string()];
+fn kani_command(args: &KaniArgs, package: &str) -> Vec<String> {
+    let mut command = vec!["kani".to_string(), "-p".to_string(), package.to_string()];
     if let Some(wanted) = &args.harness {
         command.push("--harness".to_string());
         command.push(wanted.clone());
@@ -516,23 +547,18 @@ fn complete_lane_verdict(
     }
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> KaniRun {
-    let command = kani_command(args);
-    let output = match run::capture_output_with_timeout(
-        "cargo",
-        &command,
-        &[],
-        Duration::from_secs(args.timeout_secs),
-        "cargo kani",
-    ) {
-        Err(error) => {
-            return KaniRun {
-                results: all_not_established(harnesses, &error),
-                process_problem: Some(error),
-            };
-        }
-        Ok(output) => output,
-    };
+fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Duration) -> KaniRun {
+    let command = kani_command(args, package);
+    let output =
+        match run::capture_output_with_timeout("cargo", &command, &[], timeout, "cargo kani") {
+            Err(error) => {
+                return KaniRun {
+                    results: all_not_established(harnesses, &error),
+                    process_problem: Some(error),
+                };
+            }
+            Ok(output) => output,
+        };
     let exit_success = output.status.as_ref().map(|status| status.success());
     let exit_label = output
         .status
@@ -542,7 +568,8 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> KaniRun {
         output.timed_out,
         exit_success,
         &exit_label,
-        args.timeout_secs,
+        // The budget this invocation actually received, not the whole-run total.
+        timeout.as_secs(),
     );
     let combined = format!("{}\n{}", output.stdout, output.stderr);
     reconcile_kani_output(harnesses, &combined, problem)
@@ -550,17 +577,50 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> KaniRun {
 
 pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
     let args = parse_args(args)?;
-    let mut files = Vec::new();
-    collect_sources(Path::new(HARNESS_ROOT), &mut files)?;
-    let mut harnesses = discover_harnesses(&files);
-    if let Some(wanted) = &args.harness {
-        harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
+    let mut packages = Vec::new();
+    for (package, root) in HARNESS_PACKAGES {
+        let mut files = Vec::new();
+        collect_sources(Path::new(root), &mut files)?;
+        let mut harnesses = discover_harnesses(&files);
+        if let Some(wanted) = &args.harness {
+            harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
+        }
+        packages.push((package, harnesses));
     }
+    let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
     let availability = tool_available(args.timeout_secs);
     let available = availability.is_ok();
-    let run = if available && !harnesses.is_empty() {
-        eprintln!("kani: checking {} harness(es)", harnesses.len());
-        run_kani(&harnesses, &args)
+    let run = if available && count > 0 {
+        eprintln!("kani: checking {count} harness(es)");
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+        let mut results = Vec::new();
+        let mut problems = Vec::new();
+        for (package, harnesses) in &packages {
+            if harnesses.is_empty() {
+                continue;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let run = if remaining.is_zero() {
+                KaniRun {
+                    results: all_not_established(harnesses, "whole-run deadline exhausted"),
+                    process_problem: Some("whole-run deadline exhausted".to_string()),
+                }
+            } else {
+                run_kani(harnesses, &args, package, remaining)
+            };
+            results.extend(run.results);
+            if let Some(problem) = run.process_problem {
+                problems.push(format!("{package}: {problem}"));
+            }
+        }
+        KaniRun {
+            results,
+            process_problem: if problems.is_empty() {
+                None
+            } else {
+                Some(problems.join("; "))
+            },
+        }
     } else {
         KaniRun {
             results: Vec::new(),
@@ -608,6 +668,51 @@ mod tests {
             status,
             time: "1s".to_string(),
         }
+    }
+
+    #[test]
+    fn discovery_retains_domain_proofs_and_ripr_smoke() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or("missing workspace root")?;
+        let mut by_package = Vec::new();
+        for (package, path) in HARNESS_PACKAGES {
+            let mut files = Vec::new();
+            collect_sources(&root.join(path), &mut files)?;
+            by_package.push((package, discover_harnesses(&files)));
+        }
+        let contract = &by_package[1].1;
+        for name in [
+            "currentness_action_and_base_side_are_disjoint",
+            "from_probe_delta_never_upgrades_without_after",
+            "stop_reason_for_unknown_class_is_exactly_the_unknown_classes",
+            "probe_family_wire_roundtrip",
+            "reason_judgment_mapping_is_total_and_note_rule_holds",
+            "judgment_label_roundtrip",
+            "reason_label_roundtrip",
+            "classify_reference_is_total_and_fail_closed",
+            "unavailable_snapshot_is_always_unknown",
+            "same_identity_decision_table",
+            "identity_mismatch_is_unknown",
+            "compare_is_total_and_unknown_is_never_fixture_backed",
+            "gap_state_parse_roundtrip_and_unknown_fallback",
+            "unknown_gap_input_never_becomes_causal",
+            "result_state_satisfaction_matches_contract",
+            "substitute_outcome_execution_partition_matches_contract",
+        ] {
+            assert_eq!(
+                contract.iter().filter(|h| h.name == name).count(),
+                1,
+                "{name}"
+            );
+        }
+        assert!(
+            by_package[0]
+                .1
+                .iter()
+                .any(|h| h.file.ends_with("kani_smoke.rs"))
+        );
+        Ok(())
     }
 
     #[test]
@@ -664,7 +769,9 @@ mod tests {
     fn the_per_harness_timeout_reaches_the_kani_command() {
         let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
         assert!(parsed.is_ok());
-        let command = parsed.map(|args| kani_command(&args)).unwrap_or_default();
+        let command = parsed
+            .map(|args| kani_command(&args, "ripr"))
+            .unwrap_or_default();
         let position = command.iter().position(|arg| arg == "--harness-timeout");
         assert_eq!(
             position

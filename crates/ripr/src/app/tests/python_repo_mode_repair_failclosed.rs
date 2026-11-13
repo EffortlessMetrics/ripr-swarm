@@ -408,7 +408,7 @@ fn python_scope_matrix_discriminators_legacy_and_contradiction() -> Result<(), S
     for finding in &mut diff.findings {
         finding
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
     }
     let rendered = crate::render_check(&diff, &crate::OutputFormat::Json)?;
     let weak = py_findings(&rendered)?;

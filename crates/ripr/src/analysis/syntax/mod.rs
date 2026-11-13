@@ -27,6 +27,7 @@ pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
+pub(crate) use owner_pin::module_declaration_unestablished_gate;
 pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
@@ -57,15 +58,15 @@ pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
-#[cfg(test)]
-pub(crate) use macro_scope::splice_imported_macros;
 pub(crate) use macro_scope::{
-    ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
+    ImportedMacros, MacroScope, SPLICED_LINES, first_macro_call, generator_calls, macro_scope,
+    splice_imported_macros,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
-    name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
+    NameScope, NameScopes, UseBinding, expansion_declares_items, fn_call_has_local_binding,
+    function_type_param_names, name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
+    use_item_bindings,
 };
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file,
@@ -81,7 +82,7 @@ pub(crate) use ra::{
     GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
     fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    module_path_targets, passes_call_making_closure, unconditionally_invoked_param_positions,
 };
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,

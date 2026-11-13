@@ -68,6 +68,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 
 mod shared_macro_scan;
 mod shared_target_context;
+mod standard_wrapper_disclosure;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -782,6 +783,49 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
         Path::new(LIB),
         &two
     ));
+}
+
+/// The sole declaring file of the enum is decided once per index: repeated
+/// admissions on one index keep answering from the memo (including the
+/// ambiguous and absent answers) instead of masking every file that mentions
+/// the enum name again. Pilot on bevy re-masked those files per seam and test
+/// and timed out at 275 s.
+#[test]
+fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
+    const ENUM: &str = "pub enum Rule {\n    Upper,\n}\n";
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    let one = index(&[(HELPERS, ENUM), (LIB, glob)]);
+    for _ in 0..3 {
+        assert!(imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &one
+        ));
+    }
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    for _ in 0..3 {
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &two
+        ));
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Missing",
+            Path::new(LIB),
+            &two
+        ));
+    }
+    let stored = two
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored, None, "the ambiguous answer must come from the memo");
+    let stored = one
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored.as_deref(), Some(Path::new(HELPERS)));
 }
 
 /// #7172: per-assertion unit-struct pin admission must not rescan the
@@ -2230,6 +2274,115 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
 }
 
 #[test]
+fn a_scalar_early_return_beside_distinct_literal_exits_is_pinned() {
+    // #13037 Defect A: `return 100;` beside a distinct literal tail is the
+    // owner's only source of `100`, so an exact pin on `100` observes the
+    // changed exit; the sibling exits would return their own literals and
+    // fail the pin.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // The mirror holds for the tail: `5` beside distinct literal returns.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "5"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "5"
+    ));
+    // Several distinct literal siblings still admit each exit.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 7;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // A single-digit early return (`return 0;` zero-fee shape) credits too.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 0;\n    }\n    5\n}",
+            "return 0;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "0"
+    ));
+    for (body, changed) in [
+        // A second `return 100;` is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A computed sibling exit may alias `100` for an unread input.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return x * 2;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A parameter sibling exit may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    passthrough(100)\n}",
+            "return 100;",
+        ),
+        // A tail of the same literal is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    100\n}",
+            "return 100;",
+        ),
+        // A parameter tail may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    x\n}",
+            "return 100;",
+        ),
+        // A `?` builds an opaque early exit the spelling read cannot bound.
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A `return` inside a nested closure does not leave this function.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    let f = || {\n        return 7;\n    };\n    5\n}",
+            "return 100;",
+        ),
+        // Non-literal changed exits keep their existing gates or none.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "return x * 2;",
+        ),
+    ] {
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+    // The tail direction stays fail-closed on the same shapes: a sibling
+    // return of the tail's own literal, a computed sibling, or a `?`.
+    for (body, changed) in [
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 5;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "5",
+        ),
+    ] {
+        let at = body.rfind(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn return_path_gate_needs_the_changed_tail_on_the_pinned_path() {
     // No early exit: any pinned value came through the changed tail.
     assert!(matches!(
@@ -2913,6 +3066,42 @@ fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
 }
 
 #[test]
+fn receiver_let_bindings_scan_each_body_and_receiver_once_per_run() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\nlet e = weight(2);\nlet f = e;\nassert_eq!(weight(2), f);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+    let test = index.tests().at(0);
+    let answer = |receiver: &str| receiver_let_bindings(test, receiver);
+    let unscoped: Vec<_> = ["e", "f", "weight"].into_iter().map(answer).collect();
+    assert_eq!(
+        unscoped[0].as_deref(),
+        Some(&[" = weight(2)"][..]),
+        "one readable binding of `e`"
+    );
+    assert_eq!(unscoped[1].as_deref(), Some(&[" = e"][..]));
+    assert_eq!(
+        unscoped[2].as_deref(),
+        Some(&[][..]),
+        "no binding of the owner"
+    );
+    let before = RECEIVER_LET_SCANS.with(Cell::get);
+    let scoped: Vec<Vec<_>> = {
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        (0..4)
+            .map(|_| ["e", "f", "weight"].into_iter().map(answer).collect())
+            .collect()
+    };
+    for round in &scoped {
+        assert_eq!(round, &unscoped, "the memo never changes an answer");
+    }
+    assert_eq!(
+        RECEIVER_LET_SCANS.with(Cell::get) - before,
+        3,
+        "one scan per distinct (body, receiver), not one per ask"
+    );
+}
+
+#[test]
 fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
     let value = |items: &str, body: &str, operand: &str| -> Option<String> {
         let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
@@ -3384,6 +3573,121 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
     }
 }
 
+/// #14028: a `#[test]` refused because an import rebinds `test` is explained
+/// by the rebinding, not by the plain built-in attribute it looks like.
+#[test]
+fn a_rebound_test_attribute_is_named_as_the_import_not_the_attribute() {
+    let tests = "use demo::weight;\nuse skipper::serial as test;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let refusal = weight_refusal(tests, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestRebound
+        ))
+    );
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains("may rebind `test`") && !clause.contains("carries `#[test]`")
+            }),
+        "{clause:?}"
+    );
+}
+
+#[test]
+fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
+    for attributes in [
+        "#[async_std::test]",
+        "#[::async_std::test]",
+        "#[async_std::test()]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        "#[async_std::test(flavor = \"multi_thread\")]",
+        "mod async_std { pub use other::test; }\n#[async_std::test]",
+        "use other as async_std;\n#[async_std::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[async_std::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "async_std must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
+#[test]
+fn an_actix_test_runtime_runs_an_async_test_body_and_other_shapes_refuse() {
+    // #14073: both attributes expand to a `#[test]` that blocks on the body
+    // on an Actix `System`.
+    for attributes in [
+        "#[actix_rt::test]",
+        "#[::actix_rt::test]",
+        "#[actix_rt::test()]",
+        "#[actix_web::test]",
+        "#[::actix_web::test]",
+        "#[actix_web::test]\n#[serial_test::serial]",
+        "extern crate actix_rt;\n#[actix_rt::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An argument swaps the runtime that runs the body.
+        "#[actix_rt::test(system = \"other::System\")]",
+        // A local `actix_rt` / `actix_web` shadows the crate.
+        "mod actix_rt { pub use other::test; }\n#[actix_rt::test]",
+        "use other as actix_web;\n#[actix_web::test]",
+        // The other crate's attribute elsewhere in the module must hold too.
+        "mod actix_web { pub use other::test; }\n#[actix_web::test]\nstruct Decoy;\n#[actix_rt::test]",
+        "#[actix_rt::test]\n#[ignore]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A sync `fn` under the attribute does not compile, so it refuses.
+    let sync =
+        "use demo::weight;\n#[actix_rt::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert!(weight_admitted(sync).is_empty());
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[actix_web::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "actix must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
 #[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
@@ -3401,7 +3705,6 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         // Another crate's runtime path, and arguments that change what runs.
         "#[test]",
-        "#[async_std::test]",
         "#[tokio::test(crate = \"other\")]",
         "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
         "#[tokio::test(flavor = some_flavor())]",
@@ -8575,6 +8878,24 @@ fn a_bare_assert_keeps_the_owner_binding_defeats() {
     );
 }
 
+#[test]
+fn refusal_describe_uses_stable_slash_paths_on_every_host() {
+    // Evidence text must be byte-identical across hosts: a Windows-spelled
+    // path renders with `/`, never `\\`, so checked-in goldens hold.
+    let mut refusal = binding_refusal(Some(MacroBindingKind::Definition));
+    if let AssertionRefusal::MacroBinding {
+        site: Some((path, _)),
+        ..
+    } = &mut refusal
+    {
+        *path = PathBuf::from(r"tests\api.rs");
+    }
+    assert_eq!(
+        refusal.describe(),
+        "tests/api.rs:3 defines a macro named `assert_eq`"
+    );
+}
+
 fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
     AssertionRefusal::MacroBinding {
         name: "assert_eq".to_string(),
@@ -8969,6 +9290,93 @@ mod second {\n    use super::weight;\n    macro_rules! assert_eq { ($a:expr, $b:
 /// sites the scan reports.
 fn sites_in_widest_context(source: &str, trusted: &[&str]) -> Vec<(String, MacroBindingSite)> {
     trusted_macro_binding_sites(source, &BTreeSet::new(), trusted, &|_, _| false, &|_| false)
+}
+
+#[test]
+fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(), String> {
+    // `mod global_rng; pub use global_rng::*;` globs the file's own module the
+    // way `crate::global_rng::*` does, so it cannot rebind an assertion macro
+    // that the workspace scan does not already report at its own site (#14031).
+    for (source, local) in [
+        ("mod global;\npub use global::*;\n", true),
+        // An inline module's own imports are scoped to it, so a `pub use` inside
+        // would reach the root through the glob unseen.
+        ("mod global {}\nuse global::*;\n", false),
+        (
+            "mod global { pub use pretty_assertions::assert_eq; }\npub use global::*;\n",
+            false,
+        ),
+        ("#[cfg(unix)]\nmod global;\nuse global::*;\n", true),
+        // The root is no module of this file: another crate may supply it.
+        ("pub use global::*;\n", false),
+        ("mod other;\npub use global::*;\n", false),
+        // A nested glob spells a crate-root path in the 2015 edition.
+        ("mod global;\nmod inner { pub use global::*; }\n", false),
+        // Another item of the same name, or an item-position macro, may
+        // bind the root differently.
+        (
+            "mod global;\nextern crate foreign as global;\npub use global::*;\n",
+            false,
+        ),
+        ("mod global;\nitems!();\npub use global::*;\n", false),
+        // Another item or import may bind the root under a `cfg` the scan
+        // does not evaluate, or the module may hold files it cannot see.
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep as global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep::global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self};\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self as g2, x};\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(a)]\nmod global;\n#[cfg(not(a))]\nmod global {}\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[path = \"x.rs\"]\nmod global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global { include!(\"x.rs\"); }\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate r#global;\npub use global::*;\n",
+            false,
+        ),
+        ("mod global;\npub use ::global::*;\n", false),
+        // One local glob never suppresses another, foreign one.
+        ("mod global;\npub use global::*;\npub use dep::*;\n", false),
+        // Only the whole `module::*` glob is read: a longer path or a grouped
+        // glob keeps its dedicated rule.
+        ("mod global;\npub use global::prelude::*;\n", false),
+        ("mod global;\npub use global::{self, *};\n", false),
+        // The standard roots keep their dedicated rules.
+        ("mod std;\nuse std::*;\n", false),
+    ] {
+        let sites = sites_in_widest_context(source, &["assert_eq"]);
+        let candidates = stored_candidates(source)?;
+        assert_eq!(
+            sites.is_empty(),
+            local,
+            "scan {source:?} reported {sites:?}"
+        );
+        assert_eq!(
+            candidates.may_bind("assert_eq"),
+            !local,
+            "candidates {source:?} gave {candidates:?}"
+        );
+    }
+    Ok(())
 }
 
 fn stored_candidates(source: &str) -> Result<MacroBindingCandidates, String> {
@@ -11797,6 +12205,7 @@ mod claims_direction;
 mod claims_import_scope;
 mod expect_test_pins;
 mod helper_pins;
+mod path_value_pin;
 #[cfg(test)]
 mod projected_workspace_memo;
 
@@ -13363,6 +13772,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         // that module's own items, so a module named `core` beside the glob
         // (here, the one holding it) does not shadow the standard root.
         "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
+        // #14390: the `no_std` shim (rust-lang/log's `src/lib.rs`) aliases one
+        // standard crate to another, so it brings only standard macros.
+        "#[cfg(all(not(feature = \"std\"), not(test)))]\nextern crate core as std;\n",
+        "extern crate std as core;\n",
+        "extern crate core as alloc;\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -13383,6 +13797,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::rayon::prelude::*;\n",
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
+        "extern crate other as std;\n",
+        // `alloc` has no manifest proof, so its alias stays foreign too.
+        "extern crate alloc as std;\n",
+        // `#[macro_use]` keeps its own refusal whatever the alias names.
+        "#[macro_use]\nextern crate core as std;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
         // The module-local admission still refuses a binding in the glob's own
         // module, and an item-position macro that may emit one.
@@ -13404,6 +13823,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     assert!(rebound(refusal_under(
         &renamed,
         "use core::simd::prelude::*;\n"
+    )));
+    // A manifest-renamed `core` is foreign, so its alias rebinds `std`.
+    assert!(rebound(refusal_under(
+        &renamed,
+        "extern crate core as std;\n"
     )));
     let aliased_elsewhere = index(&[
         (LIB, &format!("extern crate other as std;\n{WEIGHT_LIB}")),
@@ -13740,7 +14164,7 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &roots, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved, false);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 

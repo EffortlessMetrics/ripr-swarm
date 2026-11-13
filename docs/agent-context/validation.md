@@ -105,6 +105,12 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
+In a container with about 15 GB of memory and 4 cores, run it as
+`CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo xtask precommit`. Measured on
+2026-11-11 for a change that selects whole-workspace Clippy: exit 0 in about
+19 minutes with a 12.8 GB peak. With the default job count the same run was
+stopped by the memory limit during Clippy (#13705).
+
 ### Local mirror of the required hosted gate
 
 Hosted CI is requested late (merge-ready), so the coding session carries the
@@ -116,9 +122,9 @@ PR-native continuation record's `Validation:` line (see
 
 | Hosted step | Local command | Notes |
 | --- | --- | --- |
-| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. |
+| fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. `check-file-policy` builds test binaries to list `covered_by` tests only when the diff touches Rust source, a manifest, a workspace-wide Rust control file or `policy/`; otherwise the reports say the listing was not run (#13705). When it does build, a library unit-test selector (`cargo test -p <package> --lib <module path>`) is checked against source instead of building the library test target, and its row says `not_listed`. Hosted `ci-policy` and `cargo xtask check-file-policy` always build and list. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
-| All-features check | `cargo check -p ripr --all-targets --all-features` | Run for `ripr` changes. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
+| Strict all-features RIPR Clippy | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | Lints optional-feature code as well as type-checking it. The default workspace pass below retains disabled-feature branches. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
@@ -193,6 +199,22 @@ WSL cannot prove Windows behavior (see [Environment and
 shell](#environment-and-shell)); it exists here to produce Linux bytes from a
 Windows machine.
 
+The hosted decision is also automated: `goldens-rebless.yml` (#11736,
+Proposal A, documented in [CI](../CI.md), "Golden Re-bless") dispatches a
+hosted Linux job that judges a PR's golden drift with workflow-layer gates
+(drain `golden-drift.json` for status `warn`, zero `check.json`-surface
+entries, empty semantic arrays, plus a byte-identity `git diff --no-index`
+witness stricter than the classifier's `formatting_only` label), blesses
+all-or-nothing per fixture with reasons derived from each fixture's own
+`SPEC.md` id, requires a clean second `goldens check`, and pushes one
+bot-authored commit on the PR head, then comments the command to re-arm
+`merge-ready` (a `GITHUB_TOKEN` push starts no workflows, so the route cannot
+re-arm it itself). Use it when the drift is renderer-prose formatting-only
+and a human has decided the flip is intended; a refused dispatch pushes
+nothing and the manual WSL route above remains the local fallback. Semantic
+drift (`check.json` or any non-empty semantic array) is never auto-blessed;
+it keeps the human route.
+
 Formatting-only versus semantic drift. After a renderer merge (for example
 #9657, #10886), prose lines drift across many fixtures at once; the re-bless
 keeps `check.json` unchanged and cites the landed renderer change as the
@@ -219,6 +241,32 @@ features, doctests, ignored tests, configuration, retries and execution behavior
 
 ## Workflow policy
 
+Run semantic workflow validation before paying for hosted qualification:
+
+```text
+uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes=
+```
+
+Run from the repository root so the complete workflow/action/config set is
+checked, not only changed lines. This matches the initial `workflow-lint.yml`
+scope: Actions correctness, explicitly excluding external ShellCheck/Pyflakes.
+Both commands explicitly load the repository-owned, unsuppressed configuration;
+personal global configuration cannot disable rules in this check. Node 20 or
+newer on `PATH` is needed for the `github-script-syntax` check. If Node is
+unavailable, record that dimension as omitted; a successful local exit does not
+then establish the same JavaScript syntax coverage as the hosted Ubuntu run.
+Keep any separate script/security checks. It neither proves concurrency or
+release independence nor measures cold/warm hosted-cache behavior.
+
+A user-level `uv tool install jactionlint` exposes `jactionlint` directly; verify
+`jactionlint --version` before comparing it with the hosted pin. If an existing
+agent session cannot find it, inspect `uv tool dir --bin` or use the pinned
+`uvx --from` command above. Do not fall back to a Python YAML parse because
+`actionlint` is absent. Record the actual version, command, exit status, findings
+and omitted coverage; do not add blanket ignores or a baseline to make it green.
+
+The semantic linter supplements the existing repository workflow policy:
+
 ```bash
 cargo xtask check-workflows
 ```
@@ -234,7 +282,7 @@ cargo xtask check-droid-review-config
 
 Run this with `check-workflows` for changes to:
 
-- `.github/workflows/droid.yml` or `droid-security-scan.yml`;
+- `.github/workflows/droid-security-scan.yml` or the retired development-review event boundary;
 - `docs/agent-context/review-invariants.md` or `droid-smoke-tests.md`;
 - `.factory/skills/review-guidelines/SKILL.md` or `.factory/rules/droid-review.md`.
 

@@ -1,0 +1,115 @@
+name: Mutation spot check (Python)
+
+# Scores ripr's Python verdicts against real cosmic-ray mutation outcomes
+# (#12901). It clones the pinned packages listed in
+# benchmarks/mutation_spot_check/corpus-python.json, runs cosmic-ray (exact
+# pinned version) over each package's module path, dumps the session, then runs
+# `cargo xtask mutation-spot-check --cosmic-ray-dump`, which synthesizes a
+# one-hunk diff per mutant, runs `ripr check --diff` on it, and compares the
+# verdict with the real outcome. Runs on explicit demand, never on a pull
+# request. Read-only: no secrets, nothing is published or pushed.
+#
+# STATUS: this workflow has NOT run. No package in the corpus has been
+# confirmed to install, pass its tests, or produce a cosmic-ray session; the
+# first run is the first evidence. The receipt is advisory and its
+# `synthetic_diff_verdict` figures are never merged with the Rust span-join
+# figures.
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Comma-separated corpus package names to run (default: all)"
+        required: false
+        default: ""
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-spot-check-python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (cosmic-ray)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Mutate the pinned packages with cosmic-ray
+        shell: bash
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -uo pipefail
+          corpus=benchmarks/mutation_spot_check/corpus-python.json
+          cosmic=$(jq -r .cosmic_ray.version "$corpus")
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          status="$reports/python-cosmic-ray-status.tsv"
+          mkdir -p "$RUNNER_TEMP/corpus" "$reports"
+          : > "$status"; : > "$RUNNER_TEMP/xtask-args"
+          python -m pip install --disable-pip-version-check "cosmic-ray==$cosmic" pytest
+          for name in $(jq -r '.packages[].name' "$corpus"); do
+            if [ -n "$PACKAGES" ] && ! [[ ",$PACKAGES," == *",$name,"* ]]; then continue; fi
+            pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
+            url=$(pkg url); sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg test_command)
+            dir="$RUNNER_TEMP/corpus/$name"
+            rc=0
+            { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
+              && git init -q && git remote add origin "$url" \
+              && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
+              && [ "$(git rev-parse HEAD)" = "$sha" ] \
+              && python -m pip install --disable-pip-version-check -e . \
+              && printf '[cosmic-ray]\nmodule-path = "%s"\ntimeout = 30.0\nexcluded-modules = []\ntest-command = "%s"\n\n[cosmic-ray.distributor]\nname = "local"\n' "$module" "$tests" > cosmic-ray.toml \
+              && cosmic-ray baseline cosmic-ray.toml \
+              && cosmic-ray init cosmic-ray.toml session.sqlite \
+              && cosmic-ray exec cosmic-ray.toml session.sqlite \
+              && cosmic-ray dump session.sqlite > dump.jsonl; } || rc=$?
+            cd "$GITHUB_WORKSPACE"
+            printf '%s\t%s\n' "$name" "$rc" >> "$status"
+            if [ -s "$dir/dump.jsonl" ]; then
+              printf -- '--repo %s=%s --cosmic-ray-dump %s=%s/dump.jsonl ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
+              cp "$dir/dump.jsonl" "$reports/python-$name-dump.jsonl"
+            fi
+          done
+          [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no cosmic-ray dump was produced"; exit 1; }
+
+      - name: Score ripr against the cosmic-ray outcomes
+        # Advisory lane: a scoring failure must not hide the receipt upload;
+        # the final step turns a missing receipt into a red job.
+        continue-on-error: true
+        shell: bash
+        run: cargo xtask mutation-spot-check --cosmic-ray-version "$(jq -r .cosmic_ray.version benchmarks/mutation_spot_check/corpus-python.json)" $(cat "$RUNNER_TEMP/xtask-args")
+
+      - name: Upload the spot-check receipt, dumps and per-package status
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-spot-check-python
+          path: |
+            target/ripr/reports/mutation-spot-check.json
+            target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/python-cosmic-ray-status.tsv
+            target/ripr/reports/python-*-dump.jsonl
+          if-no-files-found: error
+
+      - name: Fail when the receipt is missing or a package failed
+        if: always()
+        shell: bash
+        run: |
+          status=target/ripr/reports/python-cosmic-ray-status.tsv
+          [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
+          [ -f "$status" ] || { echo "no per-package cosmic-ray status was recorded"; exit 1; }
+          bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
+          [ -z "$bad" ] || { echo "cosmic-ray or setup failed for: $bad"; exit 1; }

@@ -62,7 +62,7 @@ need to run it.
 | Oracles | Snapshot and mock-expectation oracles are `medium`; broad error checks are `weak`. |
 | Seam diagnostics | Saved-workspace LSP seam diagnostics are on, with explicit config or initialization options allowed to disable them. |
 | Report caps | Context packets and collect-context commands include up to `5` related tests by default. |
-| Suppressions | Badge renderers look for `.ripr/suppressions.toml`; a missing file is normal. |
+| Suppressions | SARIF and the diff-scope and `ripr+` badge formats apply `.ripr/suppressions.toml`; human, human-full, JSON, JSON-compact, GitHub and missed-txt only mention a detected default-path file on stderr. A missing file is normal. |
 | Badges | Public repo badges count unresolved canonical actionable gaps, or explicit gap-decision-ledger projection targets when a ledger is supplied. Seam-native counts remain internal inventory. Badge rendering stays advisory unless an explicit failure policy is selected. |
 | Cache | Full and compact classified cache stores use an 8 MiB encoded-byte ceiling per entry or shard by default, with secondary record caps of `20000` (full) and `100000` (compact). Large repos can opt into higher process-local limits. |
 | CI | Generated GitHub workflows upload advisory pilot/report/agent artifacts, keep SARIF rendering/upload optional, and use `continue-on-error` by default. |
@@ -84,6 +84,96 @@ surface, not the toolchain around it. The production filter excludes paths under
 `xtask/`, top-level fixture data, editor extension sources, `target/`,
 `node_modules/`, test/example/bench trees, and `src/tests.rs`. Passing a fixture
 workspace itself as `--root` still analyzes that fixture normally.
+
+## `ripr.toml` reference
+
+Every key `ripr.toml` accepts. An unknown key fails the load and names the
+nearest valid key when one is close (``did you mean `mode`?``).
+A value of the wrong type or outside the listed values fails and names the
+key; most value errors also give the line and the accepted values. Check a
+file with `ripr config validate`.
+
+Editors can validate and complete the file with the published JSON schema,
+[`schemas/config/ripr-toml.schema.json`](../schemas/config/ripr-toml.schema.json).
+For Even Better TOML or Taplo, add `#:schema` pointing at it, or map it to
+`ripr.toml` in the extension's schema settings.
+
+A test keeps this table, the schema, and the parser's accepted keys identical.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
+| `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
+| `analysis.production_like_targets` | array of string | Repository-relative source file paths treated as production-like test infrastructure. |
+| `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. Every field is required; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`. |
+| `analysis.test_harnesses[].registration_id` | string |  |
+| `analysis.test_harnesses[].target` | string | Repository-relative path. |
+| `analysis.test_harnesses[].kind` | one of `custom_harness`, `registered_attribute` |  |
+| `analysis.test_harnesses[].adapter` | one of `libtest_mimic_v1`, `exact_attribute_v1` |  |
+| `analysis.test_harnesses[].marker` | string | Exact identifier path, no wildcards. |
+| `oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
+| `severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `lsp.seam_diagnostics` | boolean | Publish saved-workspace seam diagnostics. |
+| `lsp.diagnostic_profile` | one of `actionable`, `full` | Editor diagnostic profile. |
+| `reports.max_related_tests` | integer, at least 1 | Default related-test cap for context packets. |
+| `suppressions.path` | string | Repository-relative, slash-separated suppressions file. |
+| `languages.enabled` | array of `rust`, `typescript`, `javascript`, `python`, `perl` | Enabled languages. |
+| `languages.rust.generated_file_patterns` | array of string | Additive generated-source globs. |
+| `languages.rust.handwritten_files` | array of string | Exact paths exempt from generated-name conventions. |
+| `languages.python.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `profiles.bun_ub.test_roots` | non-empty array of unique strings, required in `[profiles.bun_ub]` | Test-root globs. |
+| `profiles.bun_ub.bridge_hints` | string, required in `[profiles.bun_ub]` | Repository-relative bridge hints file. |
+| `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
+| `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
+| `perl.executable` | string | Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1. |
+| `perl.timeout_ms` | integer, at least 1 | Per-invocation timeout. |
+| `perl.cache_dir` | string | Fact cache location. |
+| `overrides[]` | array of tables | Per-crate or per-path severity and oracle overrides. Each row sets exactly one of `crate` or `path`, plus a severity or oracles block. |
+| `overrides[].crate` | string | Cargo package name. |
+| `overrides[].path` | string | Repository-relative glob. |
+| `overrides[].severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `overrides[].severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `overrides[].severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `overrides[].severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `overrides[].severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `overrides[].severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `overrides[].severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `overrides[].severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `overrides[].severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `overrides[].severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `overrides[].severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `overrides[].severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `overrides[].oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `overrides[].oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `overrides[].oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
 
 ## CLI flags
 
@@ -221,7 +311,7 @@ Runs the static exposure analysis and renders findings.
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
 | `--json` | _(off)_ | Shortcut for `--format json`. |
 | `--no-unchanged-tests` | `ripr.toml` `analysis.include_unchanged_tests`, otherwise tests included | Limits the source index to changed Rust files. By default unchanged tests are part of the index so `Reach` evidence can find them. |
-| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
+| `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON, JSON-compact, GitHub and missed-txt formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. Python truthiness findings that require a live physical audit refuse `--from`; run explain/context without it. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
 | `--output-dir DIR` | _(unset)_ | With a named `--diff` file, write native `badge.json`, `detail.json` and `human.txt` from one analysis plus a `manifest.json`. `DIR` must be new (its parent must exist). Does not combine with `--format`/`--json`, scope switches, `--gap-ledger`, `--write-artifact` or `--suppression-policy`. See [Output schema](OUTPUT_SCHEMA.md). |
@@ -241,17 +331,18 @@ that needs the tuning.
 | --- | --- | --- |
 | `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged, except that `ripr check` refuses to run when `target`, `target/ripr`, `target/ripr/cache` or `target/ripr/reports` under the workspace is a symlink resolving outside it (a checked-in link could otherwise redirect where ripr writes); set `RIPR_CACHE_DIR` to choose the location explicitly (#7781). `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
 | `RIPR_MAX_DIFF_CHANGED_LINES` | `100000` | Maximum added plus removed diff lines recorded while parsing a unified diff before `ripr check` fails closed with `diff_scope_oversized`. This is a language-neutral streaming guard: context, quarantined conflict lines, and scope-dropped sections do not count. Per-language adapter limits (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, Python, TypeScript) may still refuse earlier or with a tighter bound. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
-| `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes before failing closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
-| `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` | `2000` | Maximum added plus removed Python diff lines that `ripr check` will hand to the Python adapter before failing closed with `diff_scope_oversized` — the same early, explainable refusal the Rust limit provides, so a large Python diff (for example a 167-file django extraction) is refused before the expensive per-language analysis instead of burning minutes or the whole timeout. Checked only when the Python adapter is enabled, before any preview adapter runs. With `--json`, the command still exits non-zero but emits a limited artifact. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
-| `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES` | `2000` | Maximum added plus removed TypeScript diff lines that `ripr check` will hand to the TypeScript adapter before failing closed with `diff_scope_oversized`. Counts the whole routed TS/JS source family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and `.js`/`.jsx`/`.mjs`/`.cjs`), and is checked when either the `typescript` or `javascript` language is enabled, before any preview adapter runs. Same repair route as the Rust limit: narrow the diff with `--path`/`--exclude` or raise the limit for a single command. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
+| `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes. Applied to the files the run actually analyzes: a larger diff degrades into a bounded `limited_partial_scope` partition (`RIPR_PARTIAL_DIFF_LINE_BUDGET`, clamped to the smallest enabled language limit) instead of refusing (#13641). A file that alone exceeds its own language's limit is never split or analyzed: it is left out of the partition, listed in `analysis_scope.over_limit_files`, counted as uninspected and disclosed with the limit it exceeds, and the files that fit are still analyzed (stop reason `file_exceeds_analysis_limit` when nothing else stopped selection). It fails closed with `diff_scope_oversized` only when no changed file fits its language's limit. The variable is read only when the Rust (or Perl) adapter is enabled. With `--json`, that refusal still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
+| `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` | `2000` | Maximum added plus removed Python diff lines that `ripr check` will hand to the Python adapter. Measured over the files the run analyzes, before any preview adapter runs and only when the Python adapter is enabled: a larger diff (for example a 167-file django extraction) degrades into a bounded `limited_partial_scope` partition instead of burning minutes or the whole timeout (#13641), a file over the limit on its own is left out of the partition, and only a diff in which no file fits still fails closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
+| `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES` | `2000` | Maximum added plus removed TypeScript diff lines that `ripr check` will hand to the TypeScript adapter. Like the Python limit it is measured over the files the run analyzes: a larger diff degrades into `limited_partial_scope`, a file over it on its own is left out, and only a diff in which no file fits fails closed with `diff_scope_oversized` (#13641). Counts the whole routed TS/JS source family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and `.js`/`.jsx`/`.mjs`/`.cjs`), and is checked when either the `typescript` or `javascript` language is enabled, before any preview adapter runs. Same repair route as the Rust limit: narrow the diff with `--path`/`--exclude` or raise the limit for a single command. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_INDEX_FILES` | `10000` | Maximum Rust files that diff-scoped analysis will load into the Rust index before failing closed with `diff_scope_oversized`. This is a memory guard: measured runs cost about 0.1 to 0.35 MB per indexed file, so the default stays within a 7 GB runner. Speed is bounded separately by `RIPR_DIFF_NARROW_INDEX_FILES`; a selection that stays above that threshold after narrowing (for example a changed package that alone holds more files) still runs up to this limit. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Lower it on a constrained runner; raise it only for a single command on a machine with enough memory, or reduce the diff scope. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. The same value bounds the number of changed files a parsed diff may name. |
 | `RIPR_DIFF_NARROW_INDEX_FILES` | `1200` | Index size above which a Draft/Fast selection narrows the packages that depend on the changed ones under `RIPR_DIFF_DEPENDENT_SCOPE=auto`, and at which the on-demand reach widening stops and names `rust_transitive_reach_unresolved` instead. It bounds time, not memory, and never refuses a run. Values above the effective `RIPR_MAX_DIFF_INDEX_FILES` are clamped to it, so lowering the hard limit keeps narrowing at or below it. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_DIFF_DEPENDENT_SCOPE` | `auto` | How Draft/Fast diff analysis indexes packages that depend on the changed ones (#5320). `auto` indexes them whole while that fits under `RIPR_DIFF_NARROW_INDEX_FILES` and switches to `named` when it would not. `named` keeps the changed packages whole and admits a dependent file only when it can change a result: it names a changed owner the changed packages leave undecided, declares a same-named function, type or trait impl, sits in a package nested under a changed one, is a registered harness target, composes modules with `include!` or `#[path]`, or runs a Cargo binary when a binary changed. The bounded transitive and macro reach witnesses widen on demand to the owner's caller levels; when that widening would exceed `RIPR_DIFF_NARROW_INDEX_FILES` and the narrowed index names no witness itself, the finding names `rust_transitive_reach_unresolved` with the file count instead of refusing the whole run. `named` can be slower than `full` when the witness widening admits most dependent files. `full` always indexes the whole reverse dependency closure, which `RIPR_MAX_DIFF_INDEX_FILES` then bounds. Any other value fails every diff run, in any mode, with a diagnostic naming the variable. |
 | `RIPR_PARTIAL_DIFF_FILE_BUDGET` | `200` | Changed-line files a diff-scoped analysis inspects before returning a bounded `limited_partial_scope` result (RIPR-PROP-0019): the run analyzes a deterministic whole-file partition (supported-language files first, then package path, then file path) and discloses the exact selected paths, lower-bound uninspected counts, a named stop reason, and `gate_eligibility = "ineligible"` under `analysis_scope` in the JSON output. The human output names the budget that stopped the run with its effective size (for example `the file budget of 200 changed file(s) (RIPR_PARTIAL_DIFF_FILE_BUDGET=200)`), the number of findings produced before the stop, the lower-bound uninspected scope (or, when every changed file ripr's language adapters read was selected, that the result still stays partial), and the smallest budget values that admit the next file, stopping budget first, each followed by the value that selects the whole diff when that value fits the effective analysis-cost limits and the whole diff's changed packages fit `RIPR_MAX_DIFF_INDEX_FILES` (the index guard still applies to dependent packages the wider run adds; for example `raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 201 (240 to select the whole diff) and RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 1040 (1300 to select the whole diff), then re-run`)); a value only just above the current budget can select the same partition again, and the next-file minimum alone can leave the run partial. The JSON `analysis_scope.continuation` string, the LSP top limitation (`ripr: Show Main Analysis Limit` in VS Code) and the `diff_scope_oversized` analysis-outcome recovery carry the same instruction. A partial result is advisory only — never a gate, baseline, badge, or RIPR Zero input — and raising this variable is the only continuation route. Values above the effective `RIPR_MAX_DIFF_INDEX_FILES` limit (its env override when set, otherwise the `10000` default) are clamped to that effective limit with a disclosure. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
-| `RIPR_PARTIAL_DIFF_LINE_BUDGET` | `1000` | Added plus removed changed lines a diff-scoped analysis inspects before returning `limited_partial_scope`. A later whole file that would exceed the remaining budget is excluded (never an overshoot); the first selected file is always analyzed even when it alone exceeds the budget (stop reason `line_budget_exceeded_on_first_file`). Values above the effective `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit (its env override when set, otherwise the `2000` default) are clamped to that effective limit with a disclosure — so a runner that raises the max limit accepts a line budget up to the same ceiling instead of silently truncating it back to the default. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
+| `RIPR_PARTIAL_DIFF_LINE_BUDGET` | `1000` | Added plus removed changed lines a diff-scoped analysis inspects before returning `limited_partial_scope`. A later whole file that would exceed the remaining budget is excluded (never an overshoot); the first selected file is always analyzed even when it alone exceeds the budget (stop reason `line_budget_exceeded_on_first_file`), unless it also exceeds its own language's changed-line limit (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` or `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`; Perl uses the Rust limit), in which case it is left out and the next file that fits is selected instead (#13641). Values above the smallest effective changed-line limit among the enabled languages (each its env override when set, otherwise the `2000` default; only enabled languages' limits are read) are clamped to that limit with a disclosure — so a runner that raises the max limit accepts a line budget up to the same ceiling instead of silently truncating it back to the default. A widen instruction that asks for a line budget above that limit also names each enabled language limit below it (for example `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least 700 (it caps the line budget, currently 500)`), so following it widens the partition instead of being clamped back to it. Preview files the Python or TypeScript/JavaScript adapter refuses as generated or excluded are never partition candidates, just as generated Rust is not: they neither consume the budget nor appear in `over_limit_files`. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
 | `RIPR_REPO_SEAM_CACHE_LIMIT` | `20000` | Secondary maximum classified seam *count* per single entry or shard in the full repo seam cache. Encoded bytes are the primary bound (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`). Raise this to allow more records per shard only when those records still fit the byte ceiling and the machine has enough disk and time budget. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` | `100000` | Secondary seam *count* cap per single entry or shard in the compact repo seam cache. Encoded bytes remain the primary bound (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`). Raise this for large repos only when shards still fit the byte ceiling and the machine has enough disk and time budget. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
-| `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` | `8388608` (8 MiB) | Primary encoded-byte ceiling for one classified-cache single entry or shard on both the full and compact store paths (RIPR-SPEC-0222). Record-count env vars are secondary. A single record that cannot fit is skipped with `skipped_oversized_record_index_*` (`skipped_oversized_metadata_ceiling_*` when the metadata overflows); analysis output stays usable, the cache is not claimed populated, and one stderr line names the record, its encoded size and the value that fits. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. This is a store-path bound, not a process RSS guarantee or a load/decode bound. |
+| `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` | `8388608` (8 MiB) | Encoded-byte ceiling for a full or compact classified-cache entry, shard, or manifest on read, and for an entry or shard on write (RIPR-SPEC-0222). The reader also limits reconstructed related-test references per entry or shard to the ceiling divided by the larger of 8 and the size of one `Arc` slot (1,048,576 at the default on 64-bit hosts); an over-limit unit is ignored and recomputed. This slot bound excludes the encoded buffer, decoded index vectors, and final multi-shard payload, and is not a process RSS guarantee. Record-count env vars are secondary write limits. A single record that cannot fit is skipped with `skipped_oversized_record_index_*` (`skipped_oversized_metadata_ceiling_*` when the metadata overflows); analysis output stays usable and one stderr line names the record, its encoded size and the value that fits. Must be a positive integer for writes; an invalid read value falls back to the default ceiling. |
+| `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
 | `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. |
@@ -265,6 +356,7 @@ that needs the tuning.
 | `RIPR_PILOT_REPO_EXPOSURE_BYTES` | `8000000` | Byte budget for the `seams[]` entries of the `ripr pilot` `repo-exposure.json` (#12108). `RIPR_PILOT_SEAM_BUDGET` bounds the seam count only: at the default 2000 seams the file measured 13.1 MB on this repository (about 6.6 KB per seam, mostly each seam's `evidence_record`). When the entries exceed the budget, the file keeps the current-change seams first, then the remaining seams in pilot ranking order, then the rest in inventory order (written in inventory order); a seam that does not fit is skipped (counted in `seams_skipped_over_budget` when a later seam of its group was kept), and a group that skipped a seam ends the selection. It sets `run_status = "limited_repo_exposure_bytes"` (a seam limit keeps `seam_limit_applied`), adds a `limitations[]` entry `pilot_repo_exposure_byte_bound_applied` with `seams_rendered`, `seams_total`, `seam_bytes_rendered`, `byte_budget`, `limit_source`, `control` and `repair_route`, drops the `artifact` identity, and `pilot-summary.json` carries `repo_exposure_byte_bound`. A bounded file is not a comparable snapshot: `ripr outcome` and `ripr agent verify` refuse it by name. `agent-seam-packets.json`, `repo-exposure.md` and the ranking still cover every seam. Set to `0` to write every seam; any other value that is not a positive integer exits `2` and names the variable. Agents should read `pilot-summary.json` and `agent-seam-packets.json` first, and treat `repo-exposure.json` as the bounded seam listing. The budget counts each kept entry's bytes plus the 2-byte `,\n` separator the writer adds between entries, so the written `seams[]` content never exceeds it; the document adds a few KB of metadata and array framing. Sizing renders every seam once before the cut (the same per-seam serialization the writer performs), so the control bounds output bytes, not analysis time. Because a bounded file is not a comparable baseline, `ripr pilot` then prints `before_snapshot_command` (`ripr check --format repo-exposure-json` to `before.repo-exposure.json`) and points `outcome_command` at that file; `ripr calibrate cargo-mutants` also refuses a bounded file. |
 | `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files; any other value that is not a positive integer exits `2` and names the variable. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. The budget bounds seam count, not bytes: measured on this repository (181,217 seams, budget 2000) `repo-exposure.json` is 13.1 MB (about 6.6 KB per seam on disk, dominated by each seam's `evidence_record`), so size scales roughly as 6.6 KB times the budget (#11951). It is the `ripr outcome --before/--after` snapshot, not a file to read end to end; an agent should follow `next.inspect_packet` to `agent-seam-packets.json` (bounded by `RIPR_PILOT_PACKET_BUDGET`) or `pilot-summary.json`. `RIPR_PILOT_REPO_EXPOSURE_BYTES` now bounds the bytes of `repo-exposure.json` `seams[]` (#12108); a byte-bounded file is no longer a comparable `ripr outcome` snapshot. A file cut by this budget (or by `RIPR_REPO_EXPOSURE_SEAM_LIMIT`) keeps a prefix of the inventory, so `ripr outcome`, `ripr agent verify` and `ripr calibrate cargo-mutants` refuse it by name and control (#12150); `ripr pilot` then points `outcome_command` at a full `before.repo-exposure.json` baseline. |
 | `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable and `analysis_outcome.document_complete: false` with rendered/total counts. The budget keeps the highest-priority findings (candidate-current, then the strongest gap classes) and the limitation names the dropped counts per class and file. Set to `0` to remove the cap; an unparseable value fails the run. |
+| `RIPR_SARIF_RESULTS_BYTES` | `1000000` | Byte budget for the results array in `ripr check --format sarif` and `--format repo-sarif`. When it engages, the run properties carry `results_rendered`, `results_total`, `results_omitted`, `results_byte_budget`, `limited_results_bound: true` and `document_complete: false`; the first result always renders. Set to `0` to remove the cap; an unparseable value fails the run. |
 | `RIPR_PYTHON_MAX_WORKSPACE_FILES` | `4000` | Maximum `.py` files discovered in one diff-mode Python walk; exceeding it produces a named limitation, and changed `.py` files are kept past it (the byte budgets still apply). Sized so a Django-sized workspace (about 2,900 files) completes in diff mode; separate from the repo-mode `RIPR_MAX_REPO_INDEX_FILES` working set. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one Python source file; an oversized file is refused with a named limitation. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate Python source-read budget per analysis run. Invalid or zero values use the default bound. |
@@ -341,10 +433,13 @@ directory, and `ripr cache clear --dry-run` previews what `--force` would
 remove. Both honor `RIPR_CACHE_DIR`. In this repository, `cargo xtask cache
 report` and `cargo xtask cache gc` honor the same root.
 
-To run a deliberately large Rust extraction diff on a larger runner:
+A diff over the changed-line limits is analyzed as a bounded
+`limited_partial_scope` partition by default. To analyze a deliberately large
+Rust extraction diff whole on a larger runner, raise both the limit and the
+partial line budget it clamps:
 
 ```bash
-RIPR_MAX_DIFF_CHANGED_RUST_LINES=5000 ripr check --root . --diff extraction.diff --json
+RIPR_MAX_DIFF_CHANGED_RUST_LINES=5000 RIPR_PARTIAL_DIFF_LINE_BUDGET=5000 ripr check --root . --diff extraction.diff --json
 ```
 
 To analyze a subset of an oversized diff instead (generated, vendored or
@@ -366,7 +461,10 @@ leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
 skipped with a named limitation before the limits apply, without any flag.
-`--path` and `--exclude` do not apply to repo-scoped formats.
+`--path` and `--exclude` do not apply to repo-scoped formats. `ripr explain`
+and `ripr context` accept the same flags, and a scoped `ripr check` prints
+them on its explain, context, and `check --json` drill-in commands so a paste
+re-analyzes the same files instead of the full oversized diff.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 
@@ -391,6 +489,7 @@ Renders a single finding in human format.
 
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
@@ -415,6 +514,7 @@ Emits a compact JSON context packet for one finding.
 
 ```text
 ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -438,6 +538,16 @@ Reports local tooling and workspace shape. Takes no analysis-shaping flags.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
+
+For source-build diagnosis, `tool_rustc` probes the explicit `RUSTC` executable,
+then `CARGO_BUILD_RUSTC` when `RUSTC` is unset, otherwise `rustc` on PATH. A bare
+override name uses PATH; an override containing a path separator resolves from
+the selected root. Paths containing spaces remain one executable, without shell
+expansion. An explicit missing, failing or incompatible compiler fails the check
+and names the override to fix or unset. Empty or non-Unicode selected values are
+refused rather than replaced by a healthy PATH compiler. This bounded check does
+not evaluate Cargo configuration files or compiler wrappers, install a toolchain,
+or establish that a build succeeds. The analysis profile keeps its PATH probe.
 
 Use `--json` for the same core checks as the human report when onboarding an
 agent, editor, or CI wrapper:
@@ -807,7 +917,18 @@ has agreed to carry as known debt. Suppressed findings remain visible in
 detailed reports — they only move from `unsuppressed_*` into `suppressed_*`
 in the badge counts.
 
-Validated by `ripr check --format badge-*` (loaded relative to `--root`).
+A changed function or method that already carries cargo-mutants'
+`#[mutants::skip]` (or `#[cfg_attr(<predicate>, mutants::skip)]`) needs no
+entry here: `ripr check` reads the attribute as an owner opt-out, withholds
+that owner's findings and discloses the count with the `owner_mutants_skip`
+reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). The human, JSON,
+GitHub, SARIF, `missed-txt` and diff-scope badge formats of `ripr check`
+withhold them; LSP
+diagnostics, MCP gaps and repair cards, `ripr explain` and repo-scope output
+still report them. There is no setting to turn this off; remove the attribute
+to see the findings again.
+
+Validated by `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats (loaded relative to `--root`).
 Schema:
 
 ```toml
@@ -950,6 +1071,15 @@ Analysis formats, diff-scoped:
 | `github` | `--format github` | GitHub Actions annotations. |
 | `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
 
+Terminal behavior of `human` and `human-full`: the report on stdout is plain
+text with no ANSI color or cursor control, so `NO_COLOR`, pagers and
+redirected stdout all see the same bytes. Progress and heartbeat lines go to
+stderr only (silence them with `--quiet` or `RIPR_QUIET`). Wrapped advisory
+notes break at a fixed 100 columns, never the detected terminal width; other
+lines, such as commands and paths, are not wrapped. The report is therefore
+byte-identical in a terminal, in CI logs, in goldens and in an agent's
+captured output (#7442).
+
 Badge formats, diff-scoped, for PR and CI artifacts only: `badge-json`,
 `badge-shields`, `badge-plus-json`, `badge-plus-shields`. These are not public
 README, crate-page, or store headline authority.
@@ -986,6 +1116,12 @@ and differs from the loaded config, naming the skipped directory entry and
 `--root` (default cwd) and do not take that workspace walk. Missing config is
 normal and preserves current built-in defaults. Unknown keys are errors so
 policy typos do not silently change analysis intent.
+
+Enumerated values (`mode`, the oracle strengths, the severities and
+`[languages] enabled`) are lowercase and case-sensitive: `mode = "Draft"` is
+an error, not `draft`. When a rejected value is an accepted one in another
+case, padded with spaces, or a small typo, the error ends with
+`(did you mean ...?)` naming the accepted spelling.
 
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.
@@ -1041,11 +1177,61 @@ smoke-only assertions remain smoke.
 | `mock_expectation_strength` | same enum | `medium` | Strength assigned to mock/side-effect expectation oracles. |
 | `broad_error_strength` | same enum | `weak` | Strength assigned to broad error checks such as `is_err()`. |
 
+### `[[overrides]]`
+
+Optional. Absent or empty means every crate uses the repo-wide `[severity]`
+and `[oracles]` values — existing configs stay byte-identical. Each row
+selects **exactly one** of `crate` or `path` and overrides **only** nested
+`severity` and/or `oracles` fields; unspecified nested keys keep the
+repo-wide value. Other `ripr.toml` sections cannot be overridden here.
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `crate` | Cargo package name | Matches one workspace package (`letters`, digits, `_`, `-`). Unknown names fail closed at load with a diagnostic that lists known packages. |
+| `path` | repository-relative glob | Matches `/`-separated paths with `*`, `?`, and `**` (the same dialect as generated-file patterns). |
+| `severity` | table | Partial `[severity.findings]` / `[severity.seams]` overlay. Render-only, like repo-wide severity. |
+| `oracles` | table | Partial `[oracles]` overlay. Finding-affecting: it joins the check-artifact config identity. |
+
+Resolution: the most specific matching row wins, otherwise the repo-wide
+default. A `crate` selector outranks a `path` glob. Among path globs, more
+literal path segments win. Equal specificity keeps the later matching row;
+that later-row order is part of the oracle overlay identity, so swapping two
+equally specific oracle rows is a finding-affecting change.
+
+Crate names resolve from the `Cargo.toml` workspace that owns the discovered
+`ripr.toml` (including nested `members` globs such as `crates/*/plugins/*`,
+and `workspace.exclude`). A crate selector applies to that package's files
+only; nested workspace packages keep their own match. Unknown names fail
+closed at load, including `--candidate-tree` runs, which bind names against
+manifests in that immutable tree rather than the worktree.
+
+Oracle overlays apply on the Rust adapter, which is the only language adapter
+that currently consumes `[oracles]` / `OraclePolicy`. Python, TypeScript, and
+Perl adapters ignore `OraclePolicy` today (repo-wide and overlay alike).
+Severity overlays still apply at render time for every language.
+
+```toml
+[severity.findings]
+weakly_exposed = "warning"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
+
+[[overrides]]
+path = "crates/preview/**"
+oracles.snapshot_strength = "weak"
+```
+
+`ripr init` still writes defaults only; it does not add `[[overrides]]`.
+
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
-and LSP Finding diagnostics. Valid values are `info`, `warning`, and `note`.
-Use suppressions for accepted debt; Finding severities cannot be `off`.
+SARIF finding result levels, the `severity` field of `ripr context` packets,
+`missed-txt` output, and LSP Finding diagnostics. Valid values are `info`,
+`warning`, and `note`. Use suppressions for accepted debt; Finding severities
+cannot be `off`.
 
 | Key | Default |
 | --- | --- |
@@ -1059,8 +1245,13 @@ Use suppressions for accepted debt; Finding severities cannot be `off`.
 
 ### `[severity.seams]`
 
-Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
-`warning`, and `note`. Classes set to `off` do not publish diagnostics.
+Seam severities apply to LSP seam diagnostics, SARIF seam results, the seam
+`severity` field in `review-comments` output, and agent results: agent-brief
+seam selection and its `severity` field, `ripr agent start` and `ripr agent
+card`. Valid values are `off`, `info`, `warning`, and `note`. A class set to `off` publishes no LSP diagnostic or SARIF result and is
+left out of agent results with the omission reason named (agent start and agent
+card refuse it); `review-comments` output still lists it, labelled `off`.
+`ripr check` findings use `[severity.findings]`.
 
 | Key | Default |
 | --- | --- |
@@ -1093,7 +1284,7 @@ Seam severities affect LSP seam diagnostics. Valid values are `off`, `info`,
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | Badge renderers load suppressions from this path. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 
@@ -1127,11 +1318,12 @@ finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
 `[languages.python]` and `[languages.typescript]` configure the preview
-adapters. Each admits one override:
+adapters:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:
@@ -1139,6 +1331,13 @@ package can admit it:
 ```toml
 [languages.python]
 handwritten_files = ["build/lib/pipeline.py"]
+```
+
+To keep syntax-highlighted or other fixture trees out of Python preview indexing:
+
+```toml
+[languages.python]
+excluded_file_patterns = ["tests/syntax-tests/**"]
 ```
 
 When a changed file is still skipped by these conventions, the run's
@@ -1237,9 +1436,10 @@ enabled = ["rust", "typescript", "python"]
 ### `[profiles.bun_ub]`
 
 The Bun UB profile is an opt-in advisory profile for Bun stable-byte review.
-It records where TypeScript-family integration tests and Bun bridge hints live
-so operators can run the calibrated Blob / ArrayBuffer cross-language preview
-without changing Rust defaults.
+It records where TypeScript-family integration tests and Bun bridge hints live,
+for operators running the calibrated Blob / ArrayBuffer cross-language preview.
+Only `ripr doctor` reads it today: analysis does not consult these values, and
+the Bun bridge preview uses its own built-in test paths and bridge profile.
 
 ```toml
 [languages]
@@ -1255,8 +1455,8 @@ bridge_hints = "ripr.bun.bridge.toml"
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Names the TypeScript-family Bun integration tests to inspect. JavaScript test files are covered by the `typescript` adapter. |
-| `bridge_hints` | repo-relative path | none; required when the profile is present | Points to the opt-in Bun TS-to-Rust bridge-hint file. |
+| `test_roots` | non-empty array of repo-relative glob strings | none; required when the profile is present | Records the TypeScript-family Bun integration test globs; `ripr doctor` reports them. Analysis does not read this list. JavaScript test files are covered by the `typescript` adapter. |
+| `bridge_hints` | repo-relative path | none; required when the profile is present | Records the opt-in Bun TS-to-Rust bridge-hint file path; `ripr doctor` reports it. Analysis does not load this file. |
 
 This profile is read-only configuration. It does not enable TypeScript by
 itself, run `tsc`, start `tsserver`, execute Bun/Jest/Vitest, generate tests,
@@ -1291,6 +1491,10 @@ static_unknown = "note"
 [severity.seams]
 weakly_gripped = "warning"
 opaque = "info"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
 
 [lsp]
 seam_diagnostics = true

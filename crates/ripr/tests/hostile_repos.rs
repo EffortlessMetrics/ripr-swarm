@@ -731,7 +731,7 @@ fn fifo_metadata_files_are_refused_instead_of_blocking() -> Result<(), String> {
 }
 
 #[test]
-fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
+fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result<(), String> {
     let scratch = Scratch::new("huge")?;
     let root = scratch.path.join("r");
     repo(&root, |root| {
@@ -748,11 +748,18 @@ fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
         &[("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "1000")],
     )?;
     assert_sane(&ran, "oversized diff")?;
-    if ran.code != Some(2)
-        || !ran.stderr.contains("diff_scope_oversized")
-        || !ran.stderr.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES")
+    // #13641: the 5,000-line `src/gen.rs` alone exceeds the limit; it is left
+    // out and named, the rest of the diff is analyzed, and the widen route
+    // names the limit instead of refusing the whole run.
+    if ran.code != Some(0)
+        || ran.stderr.contains("diff_scope_oversized")
+        || !ran.stdout.contains("over limit (not analyzed): src/gen.rs")
+        || !ran.stdout.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES")
     {
-        return Err(format!("expected oversized-diff refusal\n{}", ran.stderr));
+        return Err(format!(
+            "expected a partial scope that leaves src/gen.rs out\n{:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
     }
     Ok(())
 }
@@ -1909,6 +1916,14 @@ fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
             ran.stderr
         ));
     }
+    // `origin/feat` names HEAD here too, but the real base is `origin/main`:
+    // the last-commit fallback (#13644) must leave this to the hedge above.
+    if ran.stderr.contains("analyzed the last commit") {
+        return Err(format!(
+            "a feature-branch clone must not be rescoped to the last commit\n{}",
+            ran.stderr
+        ));
+    }
     // The same repository compared against a real base still finds the change.
     assert_found_change(
         &ripr(&clone, &["check", "--base", "origin/main"], &[])?,
@@ -2317,6 +2332,89 @@ fn unreadable_unchanged_python_source_does_not_downgrade_a_rust_only_diff() -> R
         return Err(format!("Rust-only diff must stay complete\n{}", ran.stdout));
     }
     Ok(())
+}
+
+/// An unreadable UNCHANGED Rust directory or file must not abort the run
+/// (#13598): the walk skips it and the result names the path as an
+/// incomplete-analysis limitation, never a clean result. A mode-000 path is
+/// still readable by root, so the case is skipped there (the pattern of
+/// `unreadable_ref_without_base_is_not_reported_as_unborn`).
+#[cfg(unix)]
+fn assert_unreadable_unchanged_rust_path_is_disclosed(
+    name: &str,
+    make: impl FnOnce(&Path) -> Result<PathBuf, String>,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new(name)?;
+    let root = plain(&scratch, name)?;
+    let locked = make(&root)?;
+    let original = fs::metadata(&locked)
+        .map_err(|e| format!("metadata: {e}"))?
+        .permissions();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    let result = (|| {
+        let readable = if locked.is_dir() {
+            fs::read_dir(&locked).is_ok()
+        } else {
+            fs::read(&locked).is_ok()
+        };
+        if readable {
+            eprintln!("permission control unavailable: this user can read a mode-000 path");
+            return Ok(());
+        }
+        let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+        assert_found_change(&ran, name)?;
+        let relative = locked
+            .strip_prefix(&root)
+            .map_err(|e| format!("strip prefix: {e}"))?
+            .to_string_lossy()
+            .into_owned();
+        if ran.stdout.contains("(analysis complete)")
+            || !ran.stdout.contains("(analysis incomplete)")
+            || !ran.stdout.contains(&relative)
+        {
+            return Err(format!(
+                "expected an incomplete result naming `{relative}`\n{}\n{}",
+                ran.stdout, ran.stderr
+            ));
+        }
+        let json = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+        for needle in [
+            "\"kind\":\"partial_with_limitations\"",
+            "\"kind\":\"language_scope_unsupported\"",
+            &format!("\"path\":\"{relative}\""),
+        ] {
+            if !json.stdout.contains(needle) {
+                return Err(format!("json missing `{needle}`\n{}", json.stdout));
+            }
+        }
+        Ok(())
+    })();
+    fs::set_permissions(&locked, original).map_err(|e| format!("restore permissions: {e}"))?;
+    result
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_unchanged_rust_directory_is_disclosed_not_aborting() -> Result<(), String> {
+    assert_unreadable_unchanged_rust_path_is_disclosed("unread-rs-dir", |root| {
+        let dir = root.join("src/locked");
+        fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {e}"))?;
+        fs::write(dir.join("inner.rs"), "pub fn inner() {}\n")
+            .map_err(|e| format!("write failed: {e}"))?;
+        Ok(dir)
+    })
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_unchanged_rust_file_is_disclosed_not_aborting() -> Result<(), String> {
+    assert_unreadable_unchanged_rust_path_is_disclosed("unread-rs-file", |root| {
+        let file = root.join("src/locked.rs");
+        fs::write(&file, "pub fn locked() {}\n").map_err(|e| format!("write failed: {e}"))?;
+        Ok(file)
+    })
 }
 
 /// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The

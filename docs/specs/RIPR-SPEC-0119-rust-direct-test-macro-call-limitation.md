@@ -124,7 +124,7 @@ macro calls.
 ## Required Evidence
 
 - `StaticLimitKind::RustMacroWrappedTestCallUnresolved` in
-  `crates/ripr/src/domain/language.rs`.
+  `crates/ripr-contract/src/domain/language.rs`.
 - Rust adapter selection in `crates/ripr/src/analysis/language/rust/mod.rs`.
 - Unit guard proving test-body macro witnesses and production-entry macro
   witnesses select different limitation kinds.
@@ -140,8 +140,8 @@ macro calls.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/rust/mod.rs::tests::macro_reach_limit_kind_names_direct_test_body_macro_path`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_test_call_static_limit_kind`
 - `fixtures/rust_macro_wrapped_test_call_limitation/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
@@ -150,7 +150,7 @@ macro calls.
 
 | Component | Location |
 |---|---|
-| Static limit enum and text | `crates/ripr/src/domain/language.rs` |
+| Static limit enum and text | `crates/ripr-contract/src/domain/language.rs` |
 | Macro-host selection | `crates/ripr/src/analysis/language/rust/mod.rs` |
 | Macro witness test-body marker | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |

@@ -1,0 +1,24 @@
+[[behavior]]
+id = "RIPR-SPEC-0438"
+name = "long flag --name=value spelling"
+spec = "docs/specs/RIPR-SPEC-0438-long-flag-equals-value.md"
+tests = [
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_rewrites_only_long_flag_assignments",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_keeps_a_value_position_token_whole",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_splits_a_choice_list_flag_and_not_a_split_off_value",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_keeps_global_switch_assignments_whole",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_leaves_flags_before_the_command_alone",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_leaves_argv0_and_tokens_after_double_dash",
+  "crates/ripr/src/cli/parse.rs::tests::split_long_flag_values_feeds_the_same_command_as_the_spaced_spelling",
+  "crates/ripr/src/cli/help_flags.rs::tests::a_lowercase_choice_list_takes_a_value",
+  "crates/ripr/src/cli/mod.rs::tests::run_reads_flag_equals_value_like_the_spaced_spelling",
+  "crates/ripr/src/startup.rs::tests::startup_splits_flag_equals_value_on_the_mcp_route",
+]
+code = [
+  "crates/ripr/src/cli/parse.rs::split_long_flag_values",
+  "crates/ripr/src/cli/help_flags.rs::is_metavar",
+  "crates/ripr/src/cli/mod.rs",
+  "crates/ripr/src/startup.rs::routed_mcp_args",
+  "crates/ripr/src/cli/help/overview.rs",
+]
+metrics = ["unit_test_pass_rate"]

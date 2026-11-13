@@ -170,6 +170,21 @@ fn credited(lib: &str, before: &str, after: &str, label: &str) -> Result<(), Str
     Ok(())
 }
 
+/// No finding on the edited line is credited (`exposed`).
+fn not_credited(lib: &str, before: &str, after: &str, label: &str) -> Result<(), String> {
+    let findings = edited(lib, before, after)?;
+    if findings
+        .iter()
+        .any(|finding| finding.class == ExposureClass::Exposed)
+    {
+        return Err(format!(
+            "{label}: expected no exposure credit, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
 const BEFORE: &str = "    x + 1";
 const AFTER: &str = "    1 + x";
 
@@ -189,7 +204,7 @@ mod tests {{
 }
 
 #[test]
-fn a_path_value_in_an_argument_is_a_limit_not_a_gap() -> Result<(), String> {
+fn a_path_value_in_an_argument_is_credited_by_the_path_value_pin() -> Result<(), String> {
     let lib = values(
         "    #[test]
     fn mapped() {
@@ -197,7 +212,45 @@ fn a_path_value_in_an_argument_is_a_limit_not_a_gap() -> Result<(), String> {
     }
 ",
     );
-    withheld(&lib, BEFORE, AFTER, "path value")
+    credited(&lib, BEFORE, AFTER, "path value")
+}
+
+#[test]
+fn an_unresolved_path_value_in_map_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn mapped() {
+        assert_eq!(vec![1, 2].into_iter().map(not_inc).collect::<Vec<_>>(), vec![2, 3]);
+    }
+",
+    );
+    not_credited(&lib, BEFORE, AFTER, "unresolved path in map")
+}
+
+#[test]
+fn a_shadowed_owner_name_in_map_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    fn other(x: u32) -> u32 { x + 9 }
+    #[test]
+    fn mapped() {
+        let inc = other;
+        assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "shadowed owner in map")
+}
+
+#[test]
+fn a_foreign_same_name_module_in_map_keeps_the_gap() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn mapped() {
+        assert_eq!(vec![1, 2].into_iter().map(other::inc).collect::<Vec<_>>(), vec![10, 11]);
+    }
+",
+    ));
+    keeps_gap(&lib, BEFORE, AFTER, "foreign same-name module in map")
 }
 
 #[test]

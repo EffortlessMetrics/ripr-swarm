@@ -3,7 +3,10 @@ use crate::analysis::test_stub::TestStubRefusal;
 use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::RepairRouteRefusal;
 use crate::app::test_stub::StubRouteDecision;
-use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
+use crate::app::{
+    CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute,
+};
 use crate::config::RiprConfig;
 use crate::domain::ProbeFamily;
 use crate::domain::{
@@ -12,6 +15,7 @@ use crate::domain::{
     NextActionProducer, NextActionStop, StaticLimitKind, current_command_platform,
     select_canonical_next_action,
 };
+use crate::output::count_noun::count_noun;
 use crate::output::path::display_path;
 use crate::output::preview_actionability::{
     preview_actionability_for, repo_scope_no_repair_reason,
@@ -19,6 +23,120 @@ use crate::output::preview_actionability::{
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
+
+/// A changed Python predicate that holds several relational comparisons, as
+/// the boundary analysis names it in the Missing check (`The changed predicate
+/// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
+/// names this reason and the by-hand test shape where the shared readiness
+/// owner already declined the gap; it never decides readiness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MultiComparisonPredicate {
+    pub(crate) condition: String,
+    pub(crate) comparisons: usize,
+}
+
+impl MultiComparisonPredicate {
+    /// Why no repair target exists, in plain words.
+    pub(crate) fn reason(&self) -> String {
+        format!(
+            "the changed predicate `{}` holds {} comparisons, so static evidence cannot tell which boundary a test pins",
+            self.condition, self.comparisons
+        )
+    }
+
+    /// The by-hand test shape: one row per boundary, naming each boundary
+    /// equality when every comparison is a plain `left OP right` (or a chain
+    /// of them), otherwise the shape alone.
+    pub(crate) fn manual_test_shape(&self) -> String {
+        match self.boundary_equalities() {
+            Some(rows) => format!(
+                "add one test row per boundary ({})",
+                rows.iter()
+                    .map(|row| format!("`{row}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            None => "add one test row per boundary of the predicate".to_string(),
+        }
+    }
+
+    fn boundary_equalities(&self) -> Option<Vec<String>> {
+        const OPERATORS: [&str; 6] = ["<=", ">=", "==", "!=", "<", ">"];
+        let mut rows = Vec::new();
+        let normalized = self.condition.replace(" and ", " or ");
+        for part in normalized.split(" or ") {
+            let part = part.trim().trim_start_matches('(').trim_end_matches(')');
+            let mut operands = Vec::new();
+            let mut rest = part;
+            loop {
+                let next = OPERATORS
+                    .iter()
+                    .filter_map(|op| rest.find(op).map(|at| (at, op.len())))
+                    .min_by_key(|(at, len)| (*at, usize::MAX - len));
+                match next {
+                    Some((at, len)) => {
+                        // The producer counts only relational operators, so
+                        // an equality term would add a row it never counted:
+                        // keep the shape alone for mixed predicates.
+                        if matches!(rest.get(at..at + len)?, "==" | "!=") {
+                            return None;
+                        }
+                        operands.push(rest.get(..at)?.trim());
+                        rest = rest.get(at + len..)?;
+                    }
+                    None => {
+                        operands.push(rest.trim());
+                        break;
+                    }
+                }
+            }
+            if operands.len() < 2 {
+                return None;
+            }
+            for pair in operands.windows(2) {
+                let [left, right] = *pair else {
+                    return None;
+                };
+                let simple = |operand: &str| {
+                    !operand.is_empty()
+                        && operand
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+                };
+                if !simple(left) || !simple(right) {
+                    return None;
+                }
+                let literal = |operand: &str| operand.parse::<f64>().is_ok();
+                let row = if literal(left) && !literal(right) {
+                    format!("{right} == {left}")
+                } else {
+                    format!("{left} == {right}")
+                };
+                if !rows.contains(&row) {
+                    rows.push(row);
+                }
+            }
+        }
+        // Name rows only when they match the producer's own count; otherwise
+        // (duplicates, an unparsed term) the shape alone is the honest line.
+        (rows.len() > 1 && rows.len() == self.comparisons).then_some(rows)
+    }
+}
+
+/// The several-comparison predicate the Missing check names, if any (#13790).
+pub(crate) fn multi_comparison_predicate(missing: &[String]) -> Option<MultiComparisonPredicate> {
+    missing.iter().find_map(|line| {
+        let rest = line.split("The changed predicate `").nth(1)?;
+        let (condition, rest) = rest.split_once("` holds ")?;
+        let (count, _) = rest.split_once(" relational comparisons")?;
+        let comparisons = count.trim().parse::<usize>().ok().filter(|n| *n > 1)?;
+        let condition = condition.trim();
+        (!condition.is_empty()).then(|| MultiComparisonPredicate {
+            condition: condition.to_string(),
+            comparisons,
+        })
+    })
+}
 
 /// The operand static evidence cannot bind to a test input when a weakly
 /// exposed Python boundary finding declines its repair card: the Missing check
@@ -96,16 +214,8 @@ pub(crate) fn select_human_triage<'a>(
     config: &RiprConfig,
 ) -> HumanTriage<'a> {
     let role_context = triage_role_context(config);
-    let suppressed_ids: BTreeSet<&str> = output
-        .suppression
-        .iter()
-        .flat_map(|outcome| {
-            outcome
-                .suppressed
-                .iter()
-                .map(|entry| entry.finding_id.as_str())
-        })
-        .collect();
+    // #13819: owner opt-outs leave triage exactly like policy suppression.
+    let suppressed_ids: BTreeSet<&str> = output.withheld_finding_ids();
     // #9346 (same-owner): decisive production verdicts. An unknown
     // production probe is shadowed only by a decisive verdict that covers
     // the same changed behavior, or when the unknown carries no distinct
@@ -182,6 +292,52 @@ pub(crate) fn select_human_triage<'a>(
     }
 }
 
+/// True when the run is the all-clear a reader can act on: the shared
+/// verification owner (`CheckOutput::verification`, the same decision the
+/// agent format's `verify=complete` line prints) accepts it, and every
+/// finding, shown or not, reads as noticed by a test. Fail-closed: an
+/// incomplete or absent outcome, an unanalyzed or partial scope, untracked
+/// source left out of the diff, a withheld finding, or one finding of any
+/// other class keeps the narrower "no gap selected" wording, so the all-clear
+/// sentence is never printed over something it does not cover.
+fn every_finding_reads_noticed(output: &CheckOutput) -> bool {
+    output.verification().is_complete()
+        && !output.findings.is_empty()
+        && output.withheld_finding_ids().is_empty()
+        && output
+            .findings
+            .iter()
+            .all(|finding| finding.class == ExposureClass::Exposed)
+}
+
+/// The `Safe next action` line when the selected finding already reads as
+/// noticed by a test. It answers the reader's question first (is there
+/// anything to do?) and only then states the static-evidence boundary. When
+/// other findings are not noticed (a base-side or lower-ranked one), it says
+/// how many, so "none" is never read as a verdict on the whole diff.
+fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool) -> String {
+    const BOUNDARY: &str = "This is a static reading of the code, not a test run";
+    if all_noticed {
+        return format!(
+            "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. {BOUNDARY}\n"
+        );
+    }
+    let others = triage
+        .omitted
+        .iter()
+        .filter(|finding| finding.class != ExposureClass::Exposed)
+        .count();
+    if others == 0 {
+        return format!(
+            "  Safe next action: none for this change; a test appears to notice it. {BOUNDARY}\n"
+        );
+    }
+    format!(
+        "  Safe next action: none for this change; a test appears to notice it. {} did not read as noticed; see below. {BOUNDARY}\n",
+        count_noun(others, "other finding", "other findings")
+    )
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -193,11 +349,19 @@ pub(crate) fn render_human_triage(
     out.push_str("Start here:\n");
     // #8165: the default (bounded) human render speaks plain language only;
     // the `HumanTriageState` schema token stays in machine surfaces.
-    out.push_str(&format!("  State: {}\n", triage.state.plain_label()));
-    // The canonical decision (#6304) selects the line family; the prose
-    // below is unchanged, so the decision has one authority while rendered
-    // bytes stay put.
+    // The canonical decision (#6304) selects the line family, so the decision
+    // has one authority.
     let check_case = check_case_or_fallback(triage, output, drill_in, provenance);
+    let all_noticed =
+        check_case == NextActionCheckCase::NoDiffFinding && every_finding_reads_noticed(output);
+    out.push_str(&format!(
+        "  State: {}\n",
+        if all_noticed {
+            "no test gap found"
+        } else {
+            triage.state.plain_label()
+        }
+    ));
     // #10709: the one recommended route is stated only when the Safe next
     // action line and the `Next` block can both name it, so they cannot
     // disagree about which command is recommended.
@@ -218,14 +382,22 @@ pub(crate) fn render_human_triage(
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
         }
         NextActionCheckCase::SuppressedByPolicy => {
-            out.push_str(
-                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n",
-            );
+            // #13819: a run whose findings an owner opt-out withheld names
+            // that block, not a policy it never loaded.
+            out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
+                (false, false) => {
+                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                }
+                (true, false) => {
+                    "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
+                }
+                _ => {
+                    "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n"
+                }
+            });
         }
         NextActionCheckCase::NoDiffFinding => {
-            out.push_str(
-                "  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation\n",
-            );
+            out.push_str(&no_diff_finding_safe_action_line(triage, all_noticed));
         }
         NextActionCheckCase::StaticLimited => {
             let plain_no_path = triage.selected.is_some_and(|finding| {
@@ -333,11 +505,53 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && output
+                    .analyzed_revisions
+                    .as_ref()
+                    .is_some_and(crate::output::analyzed_revisions::head_is_contained_in_base)
+            {
+                // #14265: the base is ahead of HEAD and HEAD has no commit of
+                // its own, so committing "a change" is not the missing step
+                // the generic line implies: the reader is on a branch that is
+                // behind or already merged. Name that, then the two real moves.
+                if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or to check the last commit run `ripr check --base HEAD~1`\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: HEAD is already contained in `{base}` (it has no commit that `{base}` lacks), so there is no diff; switch to the branch that has your change, or commit a change and re-run\n"
+                    ));
+                }
+            } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
-                out.push_str(&format!(
-                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
-                ));
+                // #13036: when HEAD has a parent, the usual intent is "check the
+                // last commit", so print that command instead of leaving it to
+                // be guessed.
+                //
+                // A new file that was never `git add`ed is the usual first-run
+                // reason for this empty range: lead with the staging repair
+                // the header names, not with "edit a tracked file".
+                if output.unanalyzed_working_tree
+                    && !output.untracked_working_tree_source_paths.is_empty()
+                {
+                    let listing = crate::output::analyzed_revisions::name_paths(
+                        &output.untracked_working_tree_source_paths,
+                        super::escape_terminal_display,
+                    );
+                    out.push_str(&format!(
+                        "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
+                    ));
+                } else if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                    ));
+                }
             } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
             {
@@ -373,19 +587,22 @@ pub(crate) fn render_human_triage(
             &output.root,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
-            out.push_str("\nNext: drill into the top finding:\n");
-            // #12431: the finding-id label names the selector domain of the
-            // explain/context pair, like the repair start's spot-id label
-            // below and the digest's `Gap ID (for scripts):`.
-            super::push_labeled_commands(
-                out,
-                "  ",
-                super::FINDING_ID_COMMAND_LABEL,
-                &[
-                    navigation.explain_command(&finding.id),
-                    navigation.context_command(&finding.id),
-                ],
-            );
+            // #13502: a candidate-tree subject cannot be replayed by `explain`.
+            if !navigation.finding_routes_withheld() {
+                out.push_str("\nNext: drill into the top finding:\n");
+                // #12431: the finding-id label names the selector domain of the
+                // explain/context pair, like the repair start's spot-id label
+                // below and the digest's `Gap ID (for scripts):`.
+                super::push_labeled_commands(
+                    out,
+                    "  ",
+                    super::FINDING_ID_COMMAND_LABEL,
+                    &[
+                        navigation.explain_command(&finding.id),
+                        navigation.context_command(&finding.id),
+                    ],
+                );
+            }
             let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
@@ -415,9 +632,10 @@ pub(crate) fn render_human_triage(
             // #9103: a TypeScript finding with a validated repair packet gets
             // a gap-bound start in place of the seam-bound line. Computed by
             // the same pipeline step; static-limited findings never get one.
-            let gap_route = navigation.gap_repair_route_for(&finding.id);
-            if let Some(route) = gap_route {
-                if !is_static_limited(finding) {
+            // The selection is `printed_repair_route`, the one decision the
+            // JSON `finding_routes` projection also uses.
+            match printed_repair_route(navigation, finding) {
+                Some(PrintedRepairRoute::Gap(route)) => {
                     let command = navigation.gap_repair_command(route);
                     // #10698: the start refuses while tracked production
                     // files differ from HEAD, so name the commit first.
@@ -437,45 +655,44 @@ pub(crate) fn render_human_triage(
                     super::push_powershell_variant(out, "  ", &command);
                     repair_printed = true;
                 }
-            } else {
-                match navigation.repair_route_for(&finding.id) {
-                    Some(route) => {
-                        if !is_static_limited(finding) {
-                            repair_printed = true;
-                            let command = navigation.repair_command(&route.seam_id);
-                            if let Some(file) = route.uncommitted_target.as_deref() {
-                                // `ripr repair` would refuse this start: its
-                                // inline test module target begins from the
-                                // committed file. State the requirement instead
-                                // of a command that exits 2.
-                                let alternative = if stub_rendered {
-                                    ", or use the test route below"
-                                } else {
-                                    ""
-                                };
-                                out.push_str(&format!(
-                                "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
-                            ));
-                            } else {
-                                // #12431: the repair start keys on the seam
-                                // identity, a different id domain from the
-                                // explain/context pair above; label it in
-                                // glossary-safe plain words.
-                                super::push_labeled_commands(
-                                    out,
-                                    "  ",
-                                    super::SPOT_ID_COMMAND_LABEL,
-                                    std::slice::from_ref(&command),
-                                );
-                            }
-                        }
+                Some(PrintedRepairRoute::Seam(route)) => {
+                    repair_printed = true;
+                    let command = navigation.repair_command(&route.seam_id);
+                    if let Some(file) = route.uncommitted_target.as_deref() {
+                        // `ripr repair` would refuse this start: its
+                        // inline test module target begins from the
+                        // committed file. State the requirement instead
+                        // of a command that exits 2.
+                        let alternative = if stub_rendered {
+                            ", or use the test route below"
+                        } else {
+                            ""
+                        };
+                        out.push_str(&format!(
+                            "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
+                        ));
+                    } else {
+                        // #12431: the repair start keys on the seam
+                        // identity, a different id domain from the
+                        // explain/context pair above; label it in
+                        // glossary-safe plain words.
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
                     }
-                    None => {
-                        if let Some(refusal) = navigation.repair_route_refusal() {
-                            let advisory =
-                                refusal.advisory(&navigation.repair_command(&finding.id));
-                            out.push_str(&format!("  {advisory}\n"));
-                        }
+                }
+                None => {
+                    // A route withheld for a static limitation prints nothing;
+                    // only a finding offered no route at all names the refusal.
+                    if navigation.gap_repair_route_for(&finding.id).is_none()
+                        && navigation.repair_route_for(&finding.id).is_none()
+                        && let Some(refusal) = navigation.repair_route_refusal()
+                    {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
                     }
                 }
             }
@@ -580,7 +797,7 @@ pub(crate) fn render_human_triage(
         } else {
             out.push_str(&selected_hidden_line(&triage.omitted));
         }
-        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        let listed = hidden_window(&triage.omitted);
         // #7643: when the omitted set mixes currentness categories, the
         // count line's clauses cannot be connected to individual bullets;
         // append each finding's category so the reader can tell an
@@ -594,13 +811,19 @@ pub(crate) fn render_human_triage(
             }
             categories.len() > 1
         };
-        for finding in triage.omitted.iter().take(listed) {
+        let mut stub_template: Option<String> = None;
+        // Identical consecutive rows (same location, class, kind and reason)
+        // collapse to one row with a repeat count so a diff with many
+        // equivalent base-side findings stays scannable.
+        let mut previous: Option<(String, usize)> = None;
+        for finding in &listed {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
                 String::new()
             };
-            out.push_str(&format!(
+            let mut row = String::new();
+            row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
@@ -615,7 +838,7 @@ pub(crate) fn render_human_triage(
                 match navigation.stub_route_for(&finding.id) {
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
                         push_ambiguous_stub_choices(
-                            out,
+                            &mut row,
                             navigation,
                             &finding.id,
                             reason,
@@ -624,26 +847,38 @@ pub(crate) fn render_human_triage(
                         );
                     }
                     Some(StubRouteDecision::SeamStub { seam_id }) => {
-                        let command = navigation.stub_seam_command(seam_id);
-                        out.push_str("      Write a test for it:\n");
-                        out.push_str(&format!("        {command}\n"));
-                        super::push_powershell_variant(out, "        ", &command);
+                        // One command template below serves every listed row;
+                        // only the row's id repeats here.
+                        row.push_str(&format!("      Test id: {seam_id}\n"));
+                        stub_template = Some(navigation.stub_seam_command("TEST_ID"));
                     }
                     _ => {}
                 }
             }
+            match previous.as_mut() {
+                Some((prev, count)) if *prev == row => *count += 1,
+                _ => {
+                    if let Some((prev, count)) = previous.take() {
+                        push_hidden_row(out, &prev, count);
+                    }
+                    previous = Some((row, 1));
+                }
+            }
+        }
+        if let Some((prev, count)) = previous.take() {
+            push_hidden_row(out, &prev, count);
+        }
+        if let Some(command) = stub_template {
+            out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
+            out.push_str(&format!("    {command}\n"));
+            super::push_powershell_variant(out, "    ", &command);
         }
         // #9373: gloss each class named by a listed row, once, in the plain
         // vocabulary, so a run with several classes needs no `human-full`
         // rerun to read them.
         let mut listed_classes: Vec<&ExposureClass> = Vec::new();
         for class in ExposureClass::ALL.iter() {
-            if triage
-                .omitted
-                .iter()
-                .take(listed)
-                .any(|finding| finding.class == *class)
-            {
+            if listed.iter().any(|finding| finding.class == *class) {
                 listed_classes.push(class);
             }
         }
@@ -657,10 +892,14 @@ pub(crate) fn render_human_triage(
                 ));
             }
         }
-        let remaining = triage.omitted.len() - listed;
+        let remaining = triage.omitted.len() - listed.len();
         if remaining > 0 {
+            // The window above holds the highest-priority omitted findings,
+            // so the remainder names its own class mix: the reader can see
+            // whether anything beyond the window is still a gap.
             out.push_str(&format!(
-                "    - … and {remaining} more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and {remaining} more omitted finding(s): {}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n",
+                unlisted_class_mix(&triage.omitted)
             ));
         }
     }
@@ -673,6 +912,56 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The omitted findings the `Hidden:` list names. Within the window every
+/// omitted finding is listed in the report's file and line order. Beyond it,
+/// the window keeps the findings the check-JSON findings budget would keep
+/// (candidate-current gap classes first, `exposed` and non-candidate evidence
+/// last), still printed in file and line order, so a large diff does not spend
+/// the list on the alphabetically first files while later gaps go unnamed.
+fn hidden_window<'a>(omitted: &[&'a Finding]) -> Vec<&'a Finding> {
+    hidden_window_indices(omitted)
+        .into_iter()
+        .filter_map(|index| omitted.get(index).copied())
+        .collect()
+}
+
+/// Positions in `omitted` of the rows `hidden_window` names, ascending.
+fn hidden_window_indices(omitted: &[&Finding]) -> Vec<usize> {
+    if omitted.len() <= HIDDEN_FINDINGS_LISTED {
+        return (0..omitted.len()).collect();
+    }
+    let mut kept: Vec<usize> = crate::output::json::findings_priority::priority_order(omitted)
+        .into_iter()
+        .take(HIDDEN_FINDINGS_LISTED)
+        .collect();
+    kept.sort_unstable();
+    kept
+}
+
+/// Class counts of the omitted findings outside the listed window, in the
+/// plain vocabulary and class order of the rows above. Membership is by
+/// position in `omitted`, so findings that share an id are still counted.
+fn unlisted_class_mix(omitted: &[&Finding]) -> String {
+    let mut is_listed = vec![false; omitted.len()];
+    for index in hidden_window_indices(omitted) {
+        if let Some(slot) = is_listed.get_mut(index) {
+            *slot = true;
+        }
+    }
+    ExposureClass::ALL
+        .iter()
+        .filter_map(|class| {
+            let count = omitted
+                .iter()
+                .zip(&is_listed)
+                .filter(|(finding, listed)| !**listed && finding.class == *class)
+                .count();
+            (count > 0).then(|| format!("{count} {}", class.plain_label_with_stage()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Share display eligibility across the selected row and hidden routing.
 fn offers_test_stub(finding: &Finding) -> bool {
@@ -692,11 +981,8 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    triage
-        .omitted
-        .iter()
-        .take(HIDDEN_FINDINGS_LISTED)
-        .copied()
+    hidden_window(&triage.omitted)
+        .into_iter()
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -739,9 +1025,19 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::OwnerGeneric.reason() => {
             "call the function with concrete types for its type parameters and an input on each side of the changed behavior, and assert the exact result each time"
         }
-        ProbeFamily::Predicate => {
-            "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
-        }
+        // #14349: the input pair depends on the changed predicate's shape.
+        // Only an ordering comparison has a limit to sit below, on and above.
+        ProbeFamily::Predicate => match predicate_test_shape(&finding.probe.expression) {
+            PredicateTestShape::Ordering => {
+                "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
+            }
+            PredicateTestShape::Equality => {
+                "call the function once with inputs whose compared values are equal and once with inputs whose compared values differ, and assert the exact result each time"
+            }
+            PredicateTestShape::Condition => {
+                "call the function once with an input that makes the changed condition true and once with one that makes it false, and assert the exact result each time"
+            }
+        },
         ProbeFamily::FieldConstruction => {
             "call the function and assert the exact value of the changed field on what it returns"
         }
@@ -761,6 +1057,91 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // that no route exists beside it.
         format!("Write this test by hand: {shape}; then rerun `ripr check`.\n")
     }
+}
+
+/// The kind of input pair that tells a changed predicate's two outcomes apart.
+#[derive(Debug, PartialEq, Eq)]
+enum PredicateTestShape {
+    /// `<`, `<=`, `>`, `>=`: a limit with a just-below, on and just-above side.
+    Ordering,
+    /// `==` / `!=` with no ordering operator: equal versus different values.
+    Equality,
+    /// No comparison operator: the condition's true and false sides.
+    Condition,
+}
+
+/// Classify the changed predicate text for the hand-written step. Fails
+/// toward `Ordering` (the long-standing wording) whenever an angle bracket
+/// remains after removing arrows and shifts, since a generic argument or an
+/// unrecognised form must not lose the boundary advice.
+fn predicate_test_shape(expression: &str) -> PredicateTestShape {
+    let stripped = without_quoted_text(expression)
+        .replace("=>", " ")
+        .replace("->", " ")
+        .replace("<<", " ")
+        .replace(">>", " ");
+    if stripped.contains('<') || stripped.contains('>') {
+        PredicateTestShape::Ordering
+    } else if stripped.contains("==") || stripped.contains("!=") {
+        PredicateTestShape::Equality
+    } else {
+        PredicateTestShape::Condition
+    }
+}
+
+/// `text` with the contents of `"…"` and `` `…` `` literals blanked, so an
+/// operator character inside a string (`s == "<none>"`) is not read as the
+/// predicate's operator. Backslash escapes are skipped; an unterminated
+/// literal blanks to the end, which only removes operators and so fails
+/// toward the condition wording only when no operator sits outside it.
+fn without_quoted_text(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut index = 0;
+    while let Some(&character) = characters.get(index) {
+        index += 1;
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                    out.push(character);
+                    continue;
+                }
+                out.push(' ');
+            }
+            None => {
+                // A Rust or Python character literal (`'"'`, `'\''`, `'<'`)
+                // is blanked whole, so its quote never opens a string. A
+                // lifetime (`'a`) has no closing quote within reach.
+                if character == '\'' {
+                    let rest = characters.get(index..).unwrap_or_default();
+                    let len = match rest {
+                        ['\\', _, '\'', ..] => Some(3),
+                        [_, '\'', ..] => Some(2),
+                        _ => None,
+                    };
+                    if let Some(len) = len {
+                        out.push('\'');
+                        out.extend(std::iter::repeat_n(' ', len - 1));
+                        out.push('\'');
+                        index += len;
+                        continue;
+                    }
+                }
+                if character == '"' || character == '`' {
+                    quote = Some(character);
+                }
+                out.push(character);
+            }
+        }
+    }
+    out
 }
 
 /// The repair view already counts the finding's seam as gripped or exposed.
@@ -847,7 +1228,9 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(&super::evidence_lines::plain_default_missing(reason))
+    one_line(&super::evidence_lines::plain_default_missing_for(
+        finding, reason,
+    ))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -909,7 +1292,16 @@ pub(crate) fn canonical_next_action_for_triage(
         .selected
         .map(|finding| finding.id.clone())
         .unwrap_or_else(|| scope.clone());
+    // #13464: a candidate-tree subject cannot be replayed by `explain`, so
+    // its commands would analyze the live checkout. Withhold the detail route
+    // (and the considered-finding alternatives that carry the same commands)
+    // exactly as the JSON `finding_routes` projection does.
+    let routes_withheld = matches!(
+        drill_in,
+        Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
+    );
     let detail_route = match (&triage.selected, drill_in) {
+        (Some(_), _) if routes_withheld => String::new(),
         (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
             navigation.explain_command(&finding.id)
         }
@@ -919,7 +1311,7 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2) {
+    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -991,12 +1383,31 @@ pub(crate) fn canonical_next_action_for_triage(
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
+        // #13599: the same validated decision the human `Next` block prints.
+        check_repair_route: if check_case_for_triage(triage, output)
+            == NextActionCheckCase::PreviewAdvisory
+        {
+            gap_repair_start(triage.selected, drill_in).and_then(|start| start.command)
+        } else {
+            None
+        },
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
+fn head_has_parent(root: &std::path::Path) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .is_some_and(|output| output.status.success())
 }
 
 /// True when `HEAD` is the symbolic ref of local branch `base` (a detached
@@ -1326,24 +1737,44 @@ const GAP_REPAIR_START_RECOMMENDATION: &str =
     "start the repair with the `ripr agent repair` command under Next";
 
 /// Whether `Next` prints a gap-bound `ripr agent repair` start for the
-/// selected finding. The route exists only when the shared gap-bound
+/// selected finding. The compact agent surface's PreviewAdvisory terminal
+/// reads the same decision (#13277 review): when this is true the terminal
+/// must not deny that a guided route exists. The route exists only when the shared gap-bound
 /// validators accepted the packet and the run is complete
 /// (`app::task_first::gap_bound_route`), and a static-limited finding never
 /// prints one, so this reads that decision and forks nothing.
-fn recommends_gap_repair_start(
+pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
+    gap_repair_start(finding, drill_in).is_some()
+}
+
+/// The gap-bound `ripr agent repair` start the check pipeline validated for
+/// the selected finding (#13599). The human `Next` block, the compact agent
+/// terminal and the JSON `canonical_next_action` all read this one decision,
+/// so they cannot disagree about whether a guided repair can begin.
+pub(super) struct GapRepairStart {
+    /// The runnable start. `None` while tracked production files differ from
+    /// HEAD: the start refuses until they are committed.
+    pub(super) command: Option<String>,
+}
+
+pub(super) fn gap_repair_start(
+    finding: Option<&Finding>,
+    drill_in: Option<&FindingDrillIn>,
+) -> Option<GapRepairStart> {
     let (Some(finding), Some(FindingDrillIn::Commands(navigation))) = (finding, drill_in) else {
-        return false;
+        return None;
     };
-    if is_static_limited(finding) || navigation.gap_repair_route_for(&finding.id).is_none() {
-        return false;
+    let route = navigation.gap_repair_route_for(&finding.id)?;
+    if is_static_limited(finding) {
+        return None;
     }
     // Only the findings whose Safe next action line names the start: a ready
     // TypeScript/JavaScript preview packet (the shared validator's verdict) or
     // a Python finding with a repair card.
-    match finding.language {
+    let eligible = match finding.language {
         Some(LanguageId::Python) => {
             finding.class != ExposureClass::Exposed && python_repair_card(finding).is_some()
         }
@@ -1351,7 +1782,16 @@ fn recommends_gap_repair_start(
             preview_actionability_for(finding).is_some_and(|a| a.repair_packet_ready)
         }
         _ => false,
+    };
+    if !eligible {
+        return None;
     }
+    Some(GapRepairStart {
+        command: navigation
+            .gap_repair_prerequisite(route)
+            .is_none()
+            .then(|| navigation.gap_repair_command(route)),
+    })
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -1463,7 +1903,12 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
         // Missing check but cannot bind one operand to a test input, so no
         // repair card exists. Name that operand instead of the generic line;
         // routing stays fail-closed (no gap id, no card).
-        if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
+        if let Some(predicate) = multi_comparison_predicate(&finding.missing) {
+            // #13790: several comparisons in one predicate: name that reason
+            // here; the per-boundary rows ride the `agent repair` refusal.
+            // Routing stays closed.
+            (predicate.reason(), "add or strengthen a test by hand")
+        } else if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
             (
                 format!(
                     "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
@@ -1483,7 +1928,7 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
             )
         } else {
             (
-                "static evidence names no concrete missing discriminator".to_string(),
+                "static evidence names no concrete missing check".to_string(),
                 "add or strengthen a test by hand",
             )
         }
@@ -1701,6 +2146,112 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
+/// The one repair route the check screen prints for `finding`: the gap-bound
+/// route first, otherwise the seam route, and never for a static-limited
+/// finding (#8166 F3, #9103). The human renderer and the JSON
+/// `finding_routes` projection both decide through this, so a route the CLI
+/// declines to print is never offered as actionable in JSON.
+enum PrintedRepairRoute<'a> {
+    Gap(&'a GapRepairRoute),
+    Seam(&'a RepairRoute),
+}
+
+fn printed_repair_route<'a>(
+    navigation: &'a FindingNavigation,
+    finding: &Finding,
+) -> Option<PrintedRepairRoute<'a>> {
+    if is_static_limited(finding) {
+        return None;
+    }
+    if let Some(route) = navigation.gap_repair_route_for(&finding.id) {
+        return Some(PrintedRepairRoute::Gap(route));
+    }
+    navigation
+        .repair_route_for(&finding.id)
+        .map(PrintedRepairRoute::Seam)
+}
+
+/// Machine projection of one finding's follow-up routes for
+/// `check --format json` (#11976), built from the navigation's own commands
+/// and the same gates the human screen applies. `explain_command` is always
+/// present. `stub_command` appears for any carried finding whose resolved
+/// decision is a stub start (wider than the screen, which lists a stub only
+/// for the top finding and `SeamStub` among hidden ones); it is the same
+/// legitimate `ripr agent stub` command. `repair` appears only where the
+/// screen would print a repair route;
+/// a route held by uncommitted files names its blocker and carries no
+/// runnable `command`. An absent key means no route was offered. The whole
+/// member is withheld for a candidate-tree subject (see
+/// `FindingNavigation::finding_routes_withheld`).
+pub(crate) fn finding_routes_json(
+    navigation: &FindingNavigation,
+    finding: &Finding,
+) -> serde_json::Value {
+    let mut routes = serde_json::Map::new();
+    routes.insert("finding_id".to_string(), finding.id.clone().into());
+    routes.insert(
+        "explain_command".to_string(),
+        navigation.explain_command(&finding.id).into(),
+    );
+    if offers_test_stub(finding) {
+        match navigation.stub_route_for(&finding.id) {
+            Some(StubRouteDecision::Stub { file, line, kind }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_command(file, *line, kind).into(),
+                );
+            }
+            Some(StubRouteDecision::SeamStub { seam_id }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_seam_command(seam_id).into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut repair = serde_json::Map::new();
+    match printed_repair_route(navigation, finding) {
+        Some(PrintedRepairRoute::Gap(route)) => {
+            repair.insert("canonical_gap_id".to_string(), route.gap_id.clone().into());
+            if route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.gap_repair_command(route).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                repair.insert(
+                    "uncommitted_files".to_string(),
+                    route.uncommitted_files.clone().into(),
+                );
+            }
+        }
+        Some(PrintedRepairRoute::Seam(route)) => {
+            repair.insert("seam_id".to_string(), route.seam_id.clone().into());
+            match &route.uncommitted_target {
+                None => {
+                    repair.insert("status".to_string(), "ready".into());
+                    repair.insert(
+                        "command".to_string(),
+                        navigation.repair_command(&route.seam_id).into(),
+                    );
+                }
+                Some(file) => {
+                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+                    repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+            }
+        }
+        None => {}
+    }
+    if !repair.is_empty() {
+        routes.insert("repair".to_string(), repair.into());
+    }
+    routes.into()
+}
+
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
@@ -1773,6 +2324,19 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")
+}
+
+/// Append a hidden-finding block, annotating its first line with a repeat
+/// count when identical consecutive rows were collapsed.
+fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+    if count <= 1 {
+        out.push_str(row);
+        return;
+    }
+    match row.split_once('\n') {
+        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
+        None => out.push_str(&format!("{row} (x{count})")),
+    }
 }
 
 #[cfg(test)]
@@ -1879,11 +2443,34 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
+    }
+
+    #[test]
+    fn agent_next_line_is_withheld_for_a_candidate_tree_subject() {
+        let output = test_output(Vec::new());
+        let live = FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+        let line = super::super::agent::explain_next_line("finding:top", &output, Some(&live));
+        assert!(
+            line.as_deref()
+                .is_some_and(|line| line.starts_with("next=ripr explain")),
+            "control: a live subject names the explain route: {line:?}"
+        );
+        let withheld = FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_finding_routes_withheld(),
+        );
+        assert_eq!(
+            super::super::agent::explain_next_line("finding:top", &output, Some(&withheld)),
+            None,
+            "a candidate-tree subject cannot be replayed by explain"
+        );
     }
 
     #[test]
@@ -2036,6 +2623,63 @@ mod tests {
         );
     }
 
+    /// #14349: the hand-written predicate step names inputs that fit the
+    /// changed predicate: a limit for an ordering comparison, equal and
+    /// different values for an equality, true and false for a plain condition.
+    #[test]
+    fn hand_written_predicate_step_matches_the_predicate_shape() {
+        let mut finding = test_finding("predicate-shape");
+        finding.probe.family = ProbeFamily::Predicate;
+        let refusal = TestStubRefusal::ObserverRequired.reason();
+        for (expression, expected, absent) in [
+            (
+                "if len(text) <= max_length:",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "amount > limit",
+                "just below, exactly on, and just above",
+                "equal",
+            ),
+            (
+                "self.key.get() == other.key.get()",
+                "compared values are equal",
+                "just below",
+            ),
+            ("left != right", "compared values differ", "just below"),
+            (
+                "if enabled && ready",
+                "condition true and once with one that makes it false",
+                "just below",
+            ),
+            ("Some(x) => x.is_empty()", "condition true", "just below"),
+            ("flags >> 2 == 0", "compared values are equal", "just below"),
+            ("x === limit", "compared values are equal", "just below"),
+            (
+                "if s == \"<none>\":",
+                "compared values are equal",
+                "just below",
+            ),
+            ("tag !== `<br>`", "compared values differ", "just below"),
+            ("if '\"' == ch", "compared values are equal", "just below"),
+            ("c != '<'", "compared values differ", "just below"),
+            // A mixed predicate keeps the limit wording.
+            ("a == b && c < d", "just below", "compared values"),
+            // A generic argument keeps the boundary wording (fail toward it).
+            ("v.is::<u8>() == true", "just below", "compared values"),
+        ] {
+            finding.probe.expression = expression.to_string();
+            let step = hand_written_test_step(&finding, refusal, true);
+            assert!(step.contains(expected), "{expression}: {step}");
+            assert!(!step.contains(absent), "{expression}: {step}");
+            assert!(
+                step.contains("exact result each time"),
+                "{expression}: {step}"
+            );
+        }
+    }
+
     /// #10710 review: render the selected finding with a stub decision and a
     /// repair refusal, and return the screen.
     fn render_with_refusal(
@@ -2178,10 +2822,31 @@ mod tests {
                 .map(|finding| finding.id.clone())
                 .collect::<Vec<_>>()
         };
-        assert!(
-            candidates(&rows).is_empty(),
-            "take the displayed window before eligibility filtering"
+        // #14233: the one candidate-current row sorts last in report order,
+        // and the window keeps it ahead of the non-candidate rows.
+        assert_eq!(
+            candidates(&rows),
+            vec!["hidden:20"],
+            "the window keeps the candidate-current row"
         );
+        // Eligibility is still decided inside the displayed window: with 21
+        // candidate-current rows, the one that ranks last (no recommended next
+        // step) falls outside the window and offers no stub route.
+        let mut all_current = rows.clone();
+        for (index, row) in all_current.iter_mut().enumerate() {
+            row.source_currentness = SourceCurrentness::CandidateCurrent;
+            if index != 7 {
+                row.recommended_next_step = Some("inspect".to_string());
+            }
+        }
+        let windowed = candidates(&all_current);
+        assert_eq!(windowed.len(), 20, "{windowed:?}");
+        assert!(
+            !windowed.contains(&"hidden:7".to_string()),
+            "take the displayed window before eligibility filtering: {windowed:?}"
+        );
+        rows[20].source_currentness = SourceCurrentness::BaseDeleted;
+        assert!(candidates(&rows).is_empty());
         rows[0].source_currentness = SourceCurrentness::CandidateCurrent;
         assert_eq!(candidates(&rows), vec!["hidden:0"]);
         rows[0].static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
@@ -2315,9 +2980,9 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::TopGap =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::TopGap => {
                 if !detail_route.contains("finding:top") {
                     return Err(format!(
                         "top gap must carry the selected inspect route, got {detail_route}"
@@ -2397,9 +3062,9 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::ScopeMissing =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::ScopeMissing => {
                 if !detail_route.is_empty() {
                     return Err(format!(
                         "missing scope must not publish a scope label as an inspect route, got {detail_route}"
@@ -2938,6 +3603,187 @@ mod tests {
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
+    /// #14080: a complete-with-findings outcome for `finding_count` findings.
+    fn complete_outcome(
+        finding_count: u64,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: finding_count,
+                candidate_line_count: finding_count,
+                probe_count: finding_count,
+                finding_count,
+            },
+            Vec::new(),
+        )
+    }
+
+    /// #14080: the `Start here` State and Safe next action lines of `output`.
+    fn start_here_lines(output: &CheckOutput) -> (String, String) {
+        let triage = select_human_triage(output, &RiprConfig::default());
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        let line = |prefix: &str| {
+            out.lines()
+                .find(|line| line.starts_with(prefix))
+                .unwrap_or_default()
+                .to_string()
+        };
+        (line("  State: "), line("  Safe next action: "))
+    }
+
+    const ALL_CLEAR_STATE: &str = "  State: no test gap found";
+    const ALL_CLEAR_ACTION: &str = "  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run";
+    const NARROW_STATE: &str = "  State: no gap selected for repair";
+    const NARROW_ACTION: &str = "  Safe next action: none for this change; a test appears to notice it. This is a static reading of the code, not a test run";
+
+    /// #14080: a complete run whose every finding reads `exposed` answers the
+    /// reader in plain words: no gap, nothing needed, static evidence only.
+    #[test]
+    fn all_clear_start_here_says_no_gap_and_nothing_needed() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:b", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, ALL_CLEAR_STATE);
+        assert_eq!(action, ALL_CLEAR_ACTION);
+        Ok(())
+    }
+
+    /// #14080 negative control: one finding of another class, even one that is
+    /// never selected (base-side evidence), withholds the all-clear wording
+    /// and is counted on the action line.
+    #[test]
+    fn all_clear_wording_is_withheld_when_another_finding_is_not_noticed() -> Result<(), String> {
+        let mut base_side = finding_at(
+            "finding:base",
+            "src/lib.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut unknown_base = finding_at(
+            "finding:base-unknown",
+            "src/lib.rs",
+            ExposureClass::StaticUnknown,
+        );
+        unknown_base.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            base_side,
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 1 other finding did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+
+        output.findings.push(unknown_base);
+        output.analysis_outcome = Some(complete_outcome(3)?);
+        let (state, action) = start_here_lines(&output);
+        assert_eq!(state, NARROW_STATE);
+        assert_eq!(
+            action,
+            "  Safe next action: none for this change; a test appears to notice it. 2 other findings did not read as noticed; see below. This is a static reading of the code, not a test run"
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording needs a complete
+    /// analysis outcome. An absent or incomplete one keeps the narrow wording
+    /// even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_needs_a_complete_analysis_outcome() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        let mut incomplete = complete_outcome(1)?;
+        incomplete.kind = crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations;
+        output.analysis_outcome = Some(incomplete);
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: the all-clear wording follows the shared
+    /// verification owner, so a working tree ripr did not analyze withholds
+    /// it even when every finding reads `exposed`.
+    #[test]
+    fn all_clear_wording_follows_the_shared_verification_verdict() -> Result<(), String> {
+        let mut output = test_output(vec![finding_at(
+            "finding:a",
+            "src/lib.rs",
+            ExposureClass::Exposed,
+        )]);
+        output.analysis_outcome = Some(complete_outcome(1)?);
+        output.unanalyzed_working_tree = true;
+        assert!(!output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        output.unanalyzed_working_tree = false;
+        assert!(output.verification().is_complete());
+        assert_eq!(
+            start_here_lines(&output),
+            (ALL_CLEAR_STATE.to_string(), ALL_CLEAR_ACTION.to_string())
+        );
+        Ok(())
+    }
+
+    /// #14080 negative control: a finding withheld by an owner opt-out was not
+    /// judged, so the run is not an all-clear even when every finding class
+    /// reads `exposed`.
+    #[test]
+    fn all_clear_wording_is_withheld_when_a_finding_is_withheld() -> Result<(), String> {
+        let mut output = test_output(vec![
+            finding_at("finding:a", "src/lib.rs", ExposureClass::Exposed),
+            finding_at("finding:withheld", "src/pricing.rs", ExposureClass::Exposed),
+        ]);
+        output.analysis_outcome = Some(complete_outcome(2)?);
+        output.owner_opt_outs = vec![crate::analysis::owner_opt_out::OwnerOptOut {
+            finding_id: "finding:withheld".to_string(),
+            owner: "shipping_cents".to_string(),
+            reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+        }];
+        assert_eq!(
+            start_here_lines(&output),
+            (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
+        );
+        Ok(())
+    }
+
     /// #9346: the same preference covers a weak production gap.
     #[test]
     fn start_here_prefers_weak_production_over_unknown_test_file() {
@@ -3427,6 +4273,77 @@ mod tests {
     }
 
     #[test]
+    fn multi_comparison_predicate_names_the_condition_and_boundary_rows() {
+        // #13790: the Missing check names a several-comparison predicate.
+        let missing = ["A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins.".to_string()];
+        let predicate = multi_comparison_predicate(&missing);
+        assert_eq!(
+            predicate,
+            Some(MultiComparisonPredicate {
+                condition: "rate < 0 or rate >= 1".to_string(),
+                comparisons: 2,
+            })
+        );
+        let Some(predicate) = predicate else {
+            return;
+        };
+        assert_eq!(
+            predicate.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // A chained comparison yields both boundaries, literal on the right.
+        let chained = MultiComparisonPredicate {
+            condition: "0 <= rate < 1".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            chained.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // An operand that is not a plain name or literal keeps the shape only.
+        let computed = MultiComparisonPredicate {
+            condition: "len(xs) > 0 and x < limit(y)".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            computed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // A mixed predicate with an equality term the producer did not
+        // count keeps the shape only (no extra `x == 1` row).
+        let mixed = MultiComparisonPredicate {
+            condition: "x < 0 or x != 1 or x >= 2".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            mixed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Rows that disagree with the counted comparisons keep the shape only.
+        let miscounted = MultiComparisonPredicate {
+            condition: "rate < 0 or rate >= 1".to_string(),
+            comparisons: 3,
+        };
+        assert_eq!(
+            miscounted.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Other Missing checks, a single comparison and a computed operand
+        // are not this shape.
+        assert_eq!(
+            multi_comparison_predicate(&["The changed predicate `x < limit(y)` compares a computed operand; static evidence cannot establish that a related test call pins its boundary".to_string()]),
+            None
+        );
+        assert_eq!(
+            multi_comparison_predicate(&[
+                "The changed predicate `x < 1` holds 1 relational comparisons".to_string()
+            ]),
+            None
+        );
+        assert_eq!(multi_comparison_predicate(&[]), None);
+    }
+
+    #[test]
     fn unresolved_boundary_operand_names_the_unbindable_side() {
         // #11103: the boundary decline names the equality in the Missing
         // check but one side reads `values: unresolved`.
@@ -3456,7 +4373,7 @@ mod tests {
             "{action}"
         );
         assert!(
-            !action.contains("names no concrete missing discriminator"),
+            !action.contains("names no concrete missing check"),
             "{action}"
         );
         // #10990: the unresolved-call boundary decline gets its own plain
@@ -3473,7 +4390,7 @@ mod tests {
             "{unresolved_action}"
         );
         assert!(
-            !unresolved_action.contains("names no concrete missing discriminator"),
+            !unresolved_action.contains("names no concrete missing check"),
             "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
@@ -3484,7 +4401,7 @@ mod tests {
         generic.language_status = Some(LanguageStatus::Preview);
         let generic_action = python_preview_safe_action(&generic, false);
         assert!(
-            generic_action.contains("static evidence names no concrete missing discriminator"),
+            generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
     }

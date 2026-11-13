@@ -9,7 +9,7 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
 use crate::output::workflow_escape::{
     escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
-    unplaced_location_prefix,
+    stable_path_has_non_utf8_marker, unplaced_location_prefix, unplaced_non_utf8_location_prefix,
 };
 
 /// Render findings as GitHub Actions workflow command annotations.
@@ -38,11 +38,25 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld the same way and counted under its own reason.
+    let withheld_ids: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
     let mut suppressed = 0usize;
+    let mut withheld = 0usize;
     let mut not_current = 0usize;
-    for finding in &output.findings {
+    let mut folded = 0usize;
+    let same_line = same_line_folds(output, &suppressed_ids, &withheld_ids);
+    for (index, finding) in output.findings.iter().enumerate() {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
+            continue;
+        }
+        if withheld_ids.contains(finding.id.as_str()) {
+            withheld += 1;
             continue;
         }
         // Candidate-actionable eligibility (#3281): annotations are current
@@ -53,11 +67,21 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             continue;
         }
         let Some(annotation_level) = config
-            .severity()
+            .severity_for_file(&finding.probe.location.file)
             .for_exposure(&finding.class)
             .github_annotation_level()
         else {
             continue;
+        };
+        // After the severity filter, like SARIF's fold: a class configured
+        // off is neither annotated nor counted as folded.
+        let (also_covers, other_gaps) = match same_line.get(&index) {
+            Some(SameLine::Folded) => {
+                folded += 1;
+                continue;
+            }
+            Some(SameLine::Keeps { count, other_gaps }) => (*count, other_gaps.as_slice()),
+            None => (0, &[][..]),
         };
         let title = format!("ripr {}", finding.class.as_str());
         let reconciled = reconcile_next_step(finding);
@@ -76,9 +100,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(" Stop reason: ");
             message.push_str(&reasons);
         }
+        if also_covers > 0 {
+            message.push_str(&format!(
+                " Also covers {also_covers} more {} of this change on this line.",
+                if also_covers == 1 { "probe" } else { "probes" }
+            ));
+        }
         if let Some(gap) = &finding.canonical_gap {
             message.push_str(" Canonical gap: ");
-            message.push_str(&gap.id);
+            message.push_str(&crate::output::human::cap_rendered_identity(&gap.id));
+        }
+        // A folded probe's own gap id stays on the line (RIPR-SPEC-0008).
+        for gap in other_gaps {
+            message.push_str(" Also canonical gap: ");
+            message.push_str(&crate::output::human::cap_rendered_identity(gap));
         }
         if let Some(actionability) = preview_actionability_for(finding) {
             message.push_str(" Preview actionability: ");
@@ -176,7 +211,22 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         // `file` arrives via `repository_display_path` (stable text, `%`
         // pre-encoded); `title` is raw text.
         let display_path = repository_display_path(&output.root, &finding.probe.location.file);
-        let (placement, message) = if path_is_unplaceable(&display_path) {
+        let (placement, message) = if stable_path_has_non_utf8_marker(&display_path) {
+            // `%XX` is not decoded by the runner, so `file=` would name a
+            // different file (#13961). Omit placement; name the path.
+            (
+                String::new(),
+                format!(
+                    "{}{message}",
+                    unplaced_non_utf8_location_prefix(
+                        // Keep `%25` (a literal `%`) distinct from a `%XX`
+                        // byte marker; `escape_data` encodes each `%` once.
+                        &display_path,
+                        &finding.probe.location.line.to_string()
+                    )
+                ),
+            )
+        } else if path_is_unplaceable(&display_path) {
             // A property cannot carry a control or bidi character, so omit
             // `file=`/`line=` and name the escaped location in the message.
             (
@@ -242,7 +292,10 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // preview-language files detected but not analyzed) downgrade the
     // empty-stream notice to warnings naming the unanalyzed surface and
     // the remedy route. These lead the stream like the other disclosures.
-    let state_warnings = unanalyzed_state_warnings(output);
+    let state_warnings: Vec<String> = unanalyzed_state_notes(output)
+        .iter()
+        .map(UnanalyzedStateNote::warning_annotation)
+        .collect();
     if let Some(outcome) = incomplete {
         *per_level.entry("warning").or_default() += 1;
         out.push_str(&incomplete_outcome_warning(
@@ -254,7 +307,23 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             *per_level.entry("notice").or_default() += 1;
             out.push_str(&complete_outcome_limitation_notice(outcome));
         }
-        if output.findings.is_empty() && state_warnings.is_empty() {
+        let no_scope = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+            outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+        });
+        if output.findings.is_empty() && no_scope && state_warnings.is_empty() {
+            // #13658: nothing was in scope (empty or unparseable --diff);
+            // "No static exposure findings" would read as an all-clear.
+            *per_level.entry("warning").or_default() += 1;
+            out.push_str("::warning title=ripr nothing analyzed::Nothing was in scope, so zero findings is not a clean result. Check that the diff is a valid unified diff or pass --base REV.\n");
+        } else if output.findings.is_empty()
+            && state_warnings.is_empty()
+            && crate::output::human::no_source_examined(output)
+        {
+            // #13658: no analyzable source (for example a docs-only diff)
+            // examined no behavior, the human "Nothing to check" state.
+            *per_level.entry("warning").or_default() += 1;
+            out.push_str("::warning title=ripr nothing analyzed::No changed source was analyzed (no analyzable source in scope). This is NOT a clean result; no behavior was examined.\n");
+        } else if output.findings.is_empty() && state_warnings.is_empty() {
             out.push_str("::notice title=ripr::No static exposure findings found\n");
         }
     }
@@ -262,11 +331,15 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         *per_level.entry("warning").or_default() += 1;
         out.push_str(warning);
     }
-    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
+    if !output.findings.is_empty() && (suppressed > 0 || withheld > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
-            suppressed,
-            not_current,
+            Unannotated {
+                suppressed,
+                withheld,
+                not_current,
+                folded,
+            },
         ));
     }
     if let Some(notice) = display_limit_notice(&per_level) {
@@ -298,6 +371,16 @@ pub(crate) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> Strin
 fn complete_outcome_limitation_notice(
     outcome: &crate::analysis_outcome::AnalysisOutcome,
 ) -> String {
+    format!(
+        "::notice title=ripr analysis limitations::{}\n",
+        escape_data(&complete_outcome_limitation_message(outcome))
+    )
+}
+
+/// Raw limitation disclosure for a complete outcome, shared with `missed-txt`.
+pub(crate) fn complete_outcome_limitation_message(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
     let mut message = format!(
         "Analysis outcome: {} (analysis complete; advisory limitation(s) follow).",
         outcome.kind.as_str()
@@ -309,10 +392,7 @@ fn complete_outcome_limitation_notice(
             limitation.recovery.detail
         ));
     }
-    format!(
-        "::notice title=ripr analysis limitations::{}\n",
-        escape_data(&message)
-    )
+    message
 }
 
 /// An incomplete analysis must not read as a clean one in a PR check: the
@@ -331,17 +411,27 @@ fn incomplete_outcome_warning(
         "Analysis outcome: {} (analysis incomplete). {scope}",
         outcome.kind.as_str()
     );
+    message.push_str(&incomplete_outcome_limitations(outcome));
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
+        escape_data(&message)
+    )
+}
+
+/// Each limitation of an incomplete outcome with its recovery, as
+/// ` Limitation: <kind>: <detail>` segments. Shared with `missed-txt`.
+pub(crate) fn incomplete_outcome_limitations(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
+    let mut text = String::new();
     for limitation in &outcome.limitations {
-        message.push_str(&format!(
+        text.push_str(&format!(
             " Limitation: {}: {}",
             limitation.kind.as_str(),
             limitation.recovery.detail
         ));
     }
-    format!(
-        "::warning title=ripr analysis incomplete::{}\n",
-        escape_data(&message)
-    )
+    text
 }
 
 /// The preview suffix must track the shared validator's own verdict, as the
@@ -357,12 +447,30 @@ fn advisory_packet_suffix(repair_packet_ready: bool) -> &'static str {
     }
 }
 
+/// One unanalyzed-state disclosure: the GitHub annotation title suffix and
+/// the raw (unescaped) message. Shared by the `github` and `missed-txt`
+/// renderers so the set of not-clean states has a single owner.
+pub(crate) struct UnanalyzedStateNote {
+    pub(crate) title: &'static str,
+    pub(crate) message: String,
+}
+
+impl UnanalyzedStateNote {
+    fn warning_annotation(&self) -> String {
+        format!(
+            "::warning title=ripr {}::{}\n",
+            self.title,
+            escape_data(&self.message)
+        )
+    }
+}
+
 /// Run states the human and JSON surfaces disclose as NOT clean, so an
 /// empty GitHub stream must not read as all-clear either (#5011). Each
 /// warning names the unanalyzed surface and the remedy route, mirroring
 /// the human notes; the preview-advisory arm reuses the JSON surface's
 /// shared `why` strings so the machine surfaces cannot drift.
-fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
+pub(crate) fn unanalyzed_state_notes(output: &CheckOutput) -> Vec<UnanalyzedStateNote> {
     let mut warnings = Vec::new();
     if output.unanalyzed_working_tree {
         // #5258: mirrors the human note's wording decision — untracked
@@ -386,7 +494,7 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                     str::to_string,
                 );
                 message.push_str(&format!(
-                    " Untracked files ({listing}) are invisible to both; stage them first \
+                    " Untracked files ({listing}) are not in either diff yet; stage them first \
                      (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
                      visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
                      `--diff PATH`."
@@ -411,10 +519,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
         // so it is workflow-command-escaped like the no-scope warning below —
         // a path containing a newline or `%` sequence must not start another
         // workflow command.
-        warnings.push(format!(
-            "::warning title=ripr unanalyzed working tree::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "unanalyzed working tree",
+            message,
+        });
     }
     // RIPR-SPEC-0116: a working-tree read names the untracked routed files
     // its diff does not contain; `--worktree` is already in effect, so the
@@ -426,10 +534,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             str::to_string,
         )
     {
-        warnings.push(format!(
-            "::warning title=ripr untracked files not analyzed::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "untracked files not analyzed",
+            message,
+        });
     }
     // #7467: a run that excluded gitignored routed files names them, on a
     // working-tree read and on a committed-history read alike — neither diff
@@ -448,10 +556,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             )
         };
         if let Some(message) = message {
-            warnings.push(format!(
-                "::warning title=ripr gitignored files not analyzed::{}\n",
-                escape_data(&message)
-            ));
+            warnings.push(UnanalyzedStateNote {
+                title: "gitignored files not analyzed",
+                message,
+            });
         }
     }
     if output.no_scope_provided {
@@ -472,10 +580,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                 crate::domain::WHOLE_REPO_PILOT_COMMAND,
             )
         };
-        warnings.push(format!(
-            "::warning title=ripr no analysis scope::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "no analysis scope",
+            message,
+        });
     }
     for advisory in &output.preview_language_advisories {
         if advisory.analyzed(&output.language_runs) {
@@ -492,10 +600,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             "{} {} {} in scope: {}",
             advisory.file_count, file_language, file_label, why
         );
-        warnings.push(format!(
-            "::warning title=ripr preview advisory::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "preview advisory",
+            message,
+        });
     }
     warnings
 }
@@ -526,18 +634,126 @@ fn display_limit_notice(
     Some(format!("::notice title=ripr::{}\n", escape_data(&message)))
 }
 
+/// Counts of findings the annotation stream leaves out, by reason.
+struct Unannotated {
+    suppressed: usize,
+    withheld: usize,
+    not_current: usize,
+    folded: usize,
+}
+
+/// A finding's part in a same-line fold.
+enum SameLine<'a> {
+    /// Annotated, standing for `count` more findings on its line, whose
+    /// canonical gap ids other than the kept finding's are `other_gaps`.
+    Keeps {
+        count: usize,
+        other_gaps: Vec<&'a str>,
+    },
+    /// Not annotated: another finding on its line stands for it.
+    Folded,
+}
+
+/// One annotation per changed line and class (#14302), the same groups the
+/// SARIF renderer folds (#11219): two probes of one class on one line (for
+/// example the `predicate` and `return_value` probes of `a.len() == 0`) are
+/// one edit to the reviewer, yet each used to print its own annotation and
+/// spend GitHub's per-step display budget. A finding with its own repair
+/// card or preview actionability never folds, and the kept annotation lists
+/// every folded canonical gap id, so the fold drops no gap identity; each
+/// folded probe's own next step stays in `ripr check --format json`. Only
+/// annotated findings group:
+/// suppressed, withheld and not-current findings keep their own counts. The
+/// kept finding is the one SARIF keeps (its fingerprint order, so a
+/// reorder never changes it); unlocated (line 0) findings never fold.
+fn same_line_folds<'a>(
+    output: &'a CheckOutput,
+    suppressed_ids: &std::collections::BTreeSet<&str>,
+    withheld_ids: &std::collections::BTreeSet<&str>,
+) -> std::collections::BTreeMap<usize, SameLine<'a>> {
+    // Grouped by the rendered `file=` text, so two spellings of one file
+    // (absolute and repository-relative) share a line, as in SARIF.
+    type Key<'k> = (&'k str, String, usize);
+    let mut groups = std::collections::BTreeMap::<Key<'a>, Vec<(usize, &'a Finding)>>::new();
+    for (index, finding) in output.findings.iter().enumerate() {
+        let line = finding.probe.location.line;
+        if line == 0
+            || suppressed_ids.contains(finding.id.as_str())
+            || withheld_ids.contains(finding.id.as_str())
+            || !finding.is_candidate_actionable()
+            || carries_own_guidance(finding)
+        {
+            continue;
+        }
+        groups
+            .entry((
+                finding.class.as_str(),
+                repository_display_path(&output.root, &finding.probe.location.file),
+                line,
+            ))
+            .or_default()
+            .push((index, finding));
+    }
+    let mut roles = std::collections::BTreeMap::new();
+    for mut group in groups.into_values() {
+        if group.len() < 2 {
+            continue;
+        }
+        // SARIF keeps the smallest `rule|finding id|probe id|file`
+        // fingerprint; rule and file are shared within a group, so the same
+        // `|`-joined text picks the same finding (a bare tuple order differs
+        // when one id is a prefix of another).
+        group.sort_by_cached_key(|(_, finding)| format!("{}|{}", finding.id, finding.probe.id.0));
+        let mut members = group.into_iter();
+        let Some((keeper_index, keeper)) = members.next() else {
+            continue;
+        };
+        let keeper_gap = keeper.canonical_gap.as_ref().map(|gap| gap.id.as_str());
+        let mut count = 0usize;
+        let mut other_gaps = Vec::new();
+        // Roles are keyed by each finding's place in `output.findings`, not
+        // its id, so a repeated id can neither block nor cross a fold.
+        for (index, member) in members {
+            roles.insert(index, SameLine::Folded);
+            count += 1;
+            if let Some(gap) = &member.canonical_gap
+                && Some(gap.id.as_str()) != keeper_gap
+                && !other_gaps.contains(&gap.id.as_str())
+            {
+                other_gaps.push(gap.id.as_str());
+            }
+        }
+        roles.insert(keeper_index, SameLine::Keeps { count, other_gaps });
+    }
+    roles
+}
+
+/// Whether a finding's annotation carries guidance of its own beyond its
+/// class and location: a preview actionability state or a language repair
+/// card. Folding such a finding would drop that guidance, so it keeps its own
+/// annotation.
+fn carries_own_guidance(finding: &Finding) -> bool {
+    preview_actionability_for(finding).is_some()
+        || python_repair_card(finding).is_some()
+        || python_no_action_annotation(finding).is_some()
+        || typescript_preview_card(finding).is_some()
+        || perl_preview_card(finding).is_some()
+}
+
 /// Denominator for findings the annotation stream deliberately omits (#4393).
 ///
 /// Without it, a run whose findings are all policy-suppressed or all
 /// base-side prints nothing, which a reader cannot tell apart from a clean
 /// run. The omitted findings stay unannotated; this line only counts them.
-fn unannotated_denominator_notice(
-    output: &CheckOutput,
-    suppressed: usize,
-    not_current: usize,
-) -> String {
+fn unannotated_denominator_notice(output: &CheckOutput, unannotated: Unannotated) -> String {
+    let Unannotated {
+        suppressed,
+        withheld,
+        not_current,
+        folded,
+    } = unannotated;
     let total = output.findings.len();
-    let annotated = total - suppressed - not_current;
+    let annotated = total - suppressed - withheld - not_current - folded;
     let mut parts = Vec::new();
     if suppressed > 0 {
         let policy = output
@@ -547,9 +763,24 @@ fn unannotated_denominator_notice(
             .unwrap_or_default();
         parts.push(format!("{suppressed} suppressed by policy {policy}"));
     }
+    if withheld > 0 {
+        let reason = output
+            .owner_opt_outs
+            .first()
+            .map(|opt_out| opt_out.reason.as_str())
+            .unwrap_or_default();
+        parts.push(format!(
+            "{withheld} withheld by owner opt-out ({reason}: the changed function carries #[mutants::skip])"
+        ));
+    }
     if not_current > 0 {
         parts.push(format!(
             "{not_current} not current in this change (base-side or unresolved evidence)"
+        ));
+    }
+    if folded > 0 {
+        parts.push(format!(
+            "{folded} folded into an annotation of the same class on the same line"
         ));
     }
     let message = format!(
@@ -649,10 +880,10 @@ mod tests {
     use super::render;
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, StaticLimitKind, StopReason, Summary, SymbolId,
+        Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, StaticLimitKind, StopReason, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -663,7 +894,7 @@ mod tests {
         // and repair route, never zero bytes.
         let notice =
             crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),
@@ -700,9 +931,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -712,6 +946,50 @@ mod tests {
             rendered,
             "::notice title=ripr::No static exposure findings found\n"
         );
+    }
+
+    /// #13658: a diff with no analyzable source (docs-only) examined nothing,
+    /// so the stream must warn instead of printing the clean notice. The
+    /// negative control is a diff that changed an analyzable Rust file and
+    /// found nothing.
+    #[test]
+    fn render_never_calls_a_no_analyzable_source_run_clean() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let outcome = |kind, changed_file_count| {
+            AnalysisOutcome::new(
+                kind,
+                AnalysisIdentity::default(),
+                AnalysisOutcomeCounts {
+                    changed_file_count,
+                    changed_line_count: changed_file_count,
+                    ..AnalysisOutcomeCounts::default()
+                },
+                Vec::new(),
+            )
+        };
+        // A docs-only diff changed files but none ripr analyzes: also nothing
+        // examined, matching the human "Nothing to check" state.
+        let mut docs_only = output_with_unknown_finding();
+        docs_only.findings.clear();
+        docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(docs_only.summary.changed_rust_files, 0);
+        let rendered = render(&docs_only);
+        assert!(
+            rendered.starts_with("::warning title=ripr nothing analyzed::"),
+            "{rendered}"
+        );
+
+        let mut healthy = output_with_unknown_finding();
+        healthy.findings.clear();
+        healthy.summary.changed_rust_files = 1;
+        healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(
+            render(&healthy),
+            "::notice title=ripr::No static exposure findings found\n"
+        );
+        Ok(())
     }
 
     fn revisions(working_tree: bool) -> crate::analysis::AnalyzedRevisions {
@@ -886,6 +1164,34 @@ mod tests {
         // Advisory, not scope-reducing: the incomplete warning must not fire.
         assert!(
             !rendered.contains("title=ripr analysis incomplete"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    /// #13658: a `no_scope` outcome (empty/unparseable --diff) must not emit
+    /// the "No static exposure findings" notice.
+    #[test]
+    fn render_no_scope_outcome_is_a_warning_not_a_clean_notice() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let mut output = output_with_unknown_finding();
+        output.findings = Vec::new();
+        output.analysis_outcome = Some(outcome);
+        let rendered = render(&output);
+        assert!(
+            !rendered.contains("No static exposure findings"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("::warning title=ripr nothing analyzed"),
             "{rendered}"
         );
         Ok(())
@@ -1123,6 +1429,58 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn render_omits_file_placement_for_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"src/a_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("file=") && !rendered.contains("line=13"),
+            "a non-UTF-8 path must not claim a placement: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Location (file name is not valid UTF-8, so not placed): src/a_%25FF.rs:13. "
+            ),
+            "the %XX location must lead the message: {rendered}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_literal_percent_distinct_from_non_utf8_marker() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"a%FF_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        // Wire `%2525FF_%25FF` decodes to `%25FF_%FF`: literal `%` stays `%25`.
+        assert!(
+            rendered.contains("not placed): a%2525FF_%25FF.rs:13. "),
+            "literal percent and byte marker must differ: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_keeps_placement_for_literal_percent_hex_paths() {
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/a%FF.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("file=src/a%25FF.rs,line=13"),
+            "a literal %FF name stays placeable: {rendered}"
+        );
+    }
+
     #[test]
     fn render_omits_file_placement_for_control_character_paths() {
         // #6309: GitHub decodes only %25 %0D %0A %3A %2C in property values,
@@ -1273,9 +1631,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1353,9 +1714,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1384,6 +1748,32 @@ mod tests {
         assert!(rendered.contains(
             "Canonical gap: gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold"
         ));
+    }
+
+    #[test]
+    fn render_caps_a_huge_canonical_gap_id_in_the_annotation() {
+        // #13660: the gap id embeds the changed expression; GitHub rejects
+        // oversized annotations, so the echoed id is capped with a marker.
+        let mut output = output_with_unknown_finding();
+        let long = format!(
+            "gap:rust:src/lib.rs:f:static_unknown:{}",
+            "x+".repeat(50_000)
+        );
+        output.findings[0].canonical_gap = Some(FindingCanonicalGap {
+            id: long.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("… (truncated; full id in --format json)"));
+        assert!(!rendered.contains(&long));
+        assert!(rendered.len() < 5_000, "{}", rendered.len());
     }
 
     #[test]
@@ -1452,7 +1842,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"),
+            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"),
             "{rendered}"
         );
         assert!(rendered.contains("git add -N <paths>"), "{rendered}");
@@ -1580,6 +1970,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&output);
@@ -1606,6 +1997,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&typescript);
@@ -1633,6 +2025,7 @@ mod tests {
             sample_paths: vec!["src/a.js".to_string()],
             javascript_file_count: 1,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&javascript);
@@ -2024,6 +2417,211 @@ mod tests {
         );
     }
 
+    /// The located annotation lines of a rendered stream.
+    fn located_annotations(rendered: &str) -> Vec<&str> {
+        rendered
+            .lines()
+            .filter(|line| line.contains(" file="))
+            .collect()
+    }
+
+    fn with_probe(base: &Finding, id: &str, line: usize, class: ExposureClass) -> Finding {
+        let mut finding = base.clone();
+        finding.id = id.to_string();
+        finding.probe.id = ProbeId(id.to_string());
+        finding.probe.location = SourceLocation::new("src/lib.rs", line, 1);
+        finding.class = class;
+        finding
+    }
+
+    /// #14302: two probes of one class on one line render one annotation that
+    /// says it stands for the other, the group SARIF folds (#11219). Another
+    /// line, or another class on the same line, keeps its own annotation, and
+    /// the kept finding does not depend on the order findings arrive in.
+    #[test]
+    fn same_line_same_class_findings_fold_into_one_annotation() -> Result<(), String> {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        output.findings = vec![
+            with_probe(&base, "probe:b:return_value", 13, unknown.clone()),
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            with_probe(&base, "probe:c:predicate", 14, unknown.clone()),
+            with_probe(&base, "probe:d:predicate", 13, ExposureClass::WeaklyExposed),
+        ];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 3, "{rendered}");
+        let line_13_unknown = located
+            .iter()
+            .filter(|line| line.contains(",line=13,title=ripr static_unknown::"))
+            .collect::<Vec<_>>();
+        assert_eq!(line_13_unknown.len(), 1, "{rendered}");
+        assert!(
+            line_13_unknown[0].contains("Also covers 1 more probe of this change on this line."),
+            "{rendered}"
+        );
+        assert!(
+            located
+                .iter()
+                .any(|line| line.contains(",line=14,title=ripr static_unknown::")
+                    && !line.contains("Also covers")),
+            "{rendered}"
+        );
+        assert!(
+            located
+                .iter()
+                .any(|line| line.contains(",line=13,title=ripr weakly_exposed::")
+                    && !line.contains("Also covers")),
+            "{rendered}"
+        );
+        // Folding alone adds no denominator notice: the kept annotation names it.
+        assert!(!rendered.contains("Annotated "), "{rendered}");
+
+        // Annotations follow the findings' order; which one is kept does not.
+        output.findings.reverse();
+        let reversed = render(&output);
+        let mut forward_lines = rendered.lines().collect::<Vec<_>>();
+        let mut reversed_lines = reversed.lines().collect::<Vec<_>>();
+        forward_lines.sort_unstable();
+        reversed_lines.sort_unstable();
+        assert_eq!(
+            reversed_lines, forward_lines,
+            "the fold must not depend on order"
+        );
+        Ok(())
+    }
+
+    /// The denominator still adds up when it is printed for another reason.
+    #[test]
+    fn the_denominator_counts_folded_findings() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        // On the folded line, so a base-side finding neither keeps nor folds.
+        let mut base_side = with_probe(&base, "probe:0:base", 13, unknown.clone());
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        output.findings = vec![
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            with_probe(&base, "probe:b:return_value", 13, unknown),
+            base_side,
+        ];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "Annotated 1 of 3 static exposure finding(s); 1 not current in this change (base-side or unresolved evidence); 1 folded into an annotation of the same class on the same line."
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #14302 review: a fold must not drop a folded finding's canonical gap.
+    /// Two probes of one edit carry different gap ids; the one annotation
+    /// names both, the kept finding's first.
+    #[test]
+    fn a_fold_keeps_every_folded_canonical_gap_id() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let gap = |id: &str| crate::domain::FindingCanonicalGap {
+            id: id.to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        };
+        // Probe kinds mint different gap ids for one edit (`a.len() == 0`).
+        let mut first = with_probe(&base, "probe:a:predicate", 13, unknown.clone());
+        first.canonical_gap = Some(gap("gap:rust:predicate"));
+        let mut second = with_probe(&base, "probe:b:return_value", 13, unknown);
+        second.canonical_gap = Some(gap("gap:rust:return_value"));
+        output.findings = vec![second, first];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 1, "{rendered}");
+        assert!(
+            located[0].contains("Also covers 1 more probe of this change on this line."),
+            "{rendered}"
+        );
+        assert!(
+            located[0].contains(
+                " Canonical gap: gap:rust:predicate Also canonical gap: gap:rust:return_value"
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #14302 review: the fold groups by the rendered `file=` path, so two
+    /// spellings of one file share a line, and roles follow each finding's
+    /// place, so a repeated id neither blocks a fold nor crosses lines.
+    #[test]
+    fn fold_groups_by_rendered_path_and_finding_place() {
+        let mut output = output_with_unknown_finding();
+        let base = output.findings[0].clone();
+        let unknown = ExposureClass::StaticUnknown;
+        let mut dotted = with_probe(&base, "probe:b:return_value", 13, unknown.clone());
+        dotted.probe.location = SourceLocation::new("./src/lib.rs", 13, 1);
+        output.findings = vec![
+            with_probe(&base, "probe:a:predicate", 13, unknown.clone()),
+            dotted,
+        ];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 1, "{rendered}");
+        assert!(
+            located[0].contains("Also covers 1 more probe"),
+            "{rendered}"
+        );
+
+        // One id on two lines: each line keeps its own annotation.
+        let mut first = with_probe(&base, "probe:same", 13, unknown.clone());
+        let mut second = with_probe(&base, "probe:same", 14, unknown.clone());
+        first.id = "finding:dup".to_string();
+        second.id = "finding:dup".to_string();
+        // One id twice on line 15: they still fold into one annotation.
+        let mut third = with_probe(&base, "probe:x", 15, unknown.clone());
+        let mut fourth = with_probe(&base, "probe:y", 15, unknown);
+        third.id = "finding:twin".to_string();
+        fourth.id = "finding:twin".to_string();
+        output.findings = vec![first, second, third, fourth];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 3, "{rendered}");
+        let covers = |line: usize| {
+            located.iter().any(|text| {
+                text.contains(&format!(",line={line},")) && text.contains("Also covers")
+            })
+        };
+        assert!(!covers(13) && !covers(14) && covers(15), "{rendered}");
+    }
+
+    /// #14302 review: a finding with its own repair card never folds, so two
+    /// same-line, same-class card findings keep one card annotation each.
+    #[test]
+    fn card_findings_on_one_line_never_fold() {
+        let mut output = output_with_perl_preview_card();
+        let first = output.findings[0].clone();
+        assert!(
+            super::perl_preview_card(&first).is_some(),
+            "fixture carries a card"
+        );
+        let mut second = first.clone();
+        second.id = format!("{}:second", first.id);
+        second.probe.id = ProbeId(second.id.clone());
+        output.findings = vec![first, second];
+        let rendered = render(&output);
+        let located = located_annotations(&rendered);
+        assert_eq!(located.len(), 2, "{rendered}");
+        assert!(
+            located
+                .iter()
+                .all(|line| line.contains("Perl preview card:") && !line.contains("Also covers")),
+            "{rendered}"
+        );
+    }
+
     fn output_with_unknown_finding() -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
@@ -2089,9 +2687,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -2139,6 +2740,8 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -2188,6 +2791,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test calls the equality boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.evidence = vec![
             "suggested_test_file: tests/test_pricing.py".to_string(),
@@ -2285,6 +2890,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -2446,9 +3053,12 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 

@@ -182,14 +182,14 @@ official SDK transport:
   evidence resources do not. The field is not part of the snapshot identity,
   and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority on the committed default-branch diff
-  and commits the completed snapshot. Initialize/discover instructions,
-  the refresh tool description, and MCP help disclose before invocation
-  that staged and unstaged tracked edits and untracked files are excluded.
-  Shared authority does not mean identical input: `ripr check` defaults
-  to the working tree when staged or unstaged tracked edits exist, while
-  `ripr check --committed` selects committed input. The response scope
-  disclosure and MCP's runtime input remain unchanged. Status always emits
+  `app::check_workspace` authority on the default-branch diff and commits
+  the completed snapshot. Its input source follows `ripr check` (#13096,
+  below): committed history for a clean tree, the saved working tree when
+  staged or unstaged tracked edits exist. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose that selection, and
+  that unsaved buffers and untracked files are excluded, before invocation.
+  `ripr check --committed` and `source: "committed"` select committed
+  input. Status always emits
   `session.scope`, and refresh always emits top-level `scope`; both output
   schemas require this nullable field. It is null without a snapshot or for a
   clean committed snapshot. A dirty snapshot discloses `analyzed`,
@@ -207,8 +207,15 @@ official SDK transport:
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
 - `ripr_refresh` takes one more optional argument, `source` (#7357), with
-  the closed values `committed` and `worktree`. Omission and `committed`
-  are the same request and keep every behavior and identity above. A value
+  the closed values `committed` and `worktree`. `committed` keeps every
+  committed behavior and identity above. Omission (#13096) is a third
+  request: the server asks the one live-diff selection owner
+  (`app::diff_source::select_live_diff_source`, the decision `ripr check`
+  makes without `--worktree` or `--committed`) and runs `worktree` when the
+  tree holds a staged or unstaged tracked edit, `committed` otherwise
+  (a clean or untracked-only tree, an unborn `HEAD`, or a probe that could
+  not run). The selected attempt is exactly the explicit request of that
+  source: same producer, custody, scope and identity. A value
   outside the closed set, including an empty string, a different case, a
   non-string or an explicit null, is Invalid Params (`-32602`); nothing is
   coerced. `worktree` routes the same attempt through the shared
@@ -227,10 +234,38 @@ official SDK transport:
     (`null` before any snapshot) once a worktree source is requested or
     captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
     `last_known_good`) add `source: "worktree"` for a worktree capture.
+    For an omitted `source`, `requested_source` is `"default"` (never the
+    selected value), so `requested_source: "default"` with
+    `captured_source: "worktree"` says the default selection read the
+    working tree; `session.current_desired_input.source` names the selected
+    `worktree`. A default request that selected committed input on a session
+    with no worktree snapshot keeps the v1 shape.
     A failed attempt keeps the last-known-good snapshot with its own tag: a
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
-    Source-less callers see the unchanged v1 shapes.
+    Callers that pass no `source` on a clean tree see the unchanged v1
+    shapes.
+  - A committed zero-item empty-scope snapshot (`no_scope`,
+    `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
+    its `last_completed_snapshot` summary adds `analysis_status:
+    "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
+    both fields.
+  - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
+    last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
+    `pass_source`. It is present only when the committed zero-item snapshot
+    was captured with no explicit base (`snapshot.base` is absent) and its
+    kind is `no_scope` or `no_changed_lines`, where the default base most
+    often resolved to the analyzed commit. It is omitted for
+    `no_behavioral_candidates` (the diff was non-empty, so a different base is
+    not the likely cause), for a snapshot analyzed against an explicit base
+    (including a retained one after a later failed request), and for a
+    worktree-source snapshot, which carries no `empty_scope_hint` at all. The
+    field is a named suggestion, not an inference: the server does not detect
+    whether the change under review is the last commit, does not run or
+    resolve `HEAD~1`, and never widens the base on its own. A `HEAD~1` that
+    does not exist fails closed with the typed base failure. It changes no
+    outcome kind, verdict or identity.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
@@ -313,7 +348,8 @@ official SDK transport:
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
     to commit the uncommitted Rust source or test files (untracked ones
-    included) and refresh again, or refresh with source `worktree`. No
+    included; a gitignored Rust file needs `git add -f` or removal) and refresh
+    again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
   - Card currentness at request time (#7357). The refresh-time git-status
     probe and custody are not re-run per read, and the server does not watch
@@ -338,11 +374,17 @@ official SDK transport:
     cannot contradict the findings; an untracked (not intent-to-add) Rust file
     is not analyzed as a finding but is read by the inventory, so editing it
     changes the commitment and snapshot identity. In committed mode those same
-    tracked-dirty and untracked files withhold instead (see above). Both
-    modes: gitignored Rust files can be read by the inventory (workspace
-    discovery does not apply `.gitignore`) but are not claimed; committed mode
-    does not list them because their enumeration is capped and would
-    over-withhold clean checkouts. Unsupported, generated,
+    tracked-dirty and untracked files withhold instead (see above). Committed
+    mode: workspace discovery does not apply `.gitignore`, so the inventory
+    reads a gitignored non-generated Rust file that the findings carrier
+    records as an uncaptured observation; `establish_agreement` refuses with
+    that path named (`the findings producer has no captured observation of
+    <path>`) and the card is withheld. A gitignored vendored Rust tree is
+    therefore already withheld, which over-withholds a clean checkout with
+    ignored vendored Rust; a gitignored non-Rust file keeps the card. The
+    remedy is `git add -f` plus a commit, or removing or moving the file out
+    of the workspace. This pin covers committed refresh only; worktree mode
+    is not separately pinned for gitignored Rust files. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A
@@ -381,12 +423,17 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v5`.
   v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
   omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
   a large truncated selection no longer fails the listing with
   `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
   window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
+  Optional `independent_pages: true` instead makes `next_page` set the
+  omission offset to the total omissions and `next_omitted_page` set the item
+  offset to the filtered count. Each keeps snapshot, filters, limit and opt-in.
+  The caller saves and walks both starting routes; each resulting empty
+  other-axis page is truthfully echoed. Default continuations remain unchanged.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -396,8 +443,9 @@ official SDK transport:
 - The tool envelope carries the document once at full fidelity (#6021):
   by default `content[0].text` is the compact JSON serialization of the
   structured document (no pretty-print inflation), and `structuredContent` repeats
-  the same document in every successful response. Every tool advertises an
-  `outputSchema`, so a success whose structured copy is absent is an
+  the same document in every successful response. Every tool has an
+  `outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`; the default
+  listing omits it since #13803), so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
   not measure under the id-aware response budget, the call fails closed
   with `result_too_large` naming both sizes and the caller's recovery
@@ -420,8 +468,16 @@ official SDK transport:
   `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
   top-level field: scalars verbatim (strings over 200 characters clipped with
   a marker pointing back to `structuredContent`), arrays as entry counts plus
-  at most five leading `canonical_id` values, objects as field names. The
-  digest is a projection of the document and adds no fact. The size guard,
+  at most five leading `canonical_id` values, objects as field names except
+  the gap-list `outcome`, which projects its kind, analysis status, clean value, and
+  limitation count and up to five names. Missing values are marked absent.
+  The opt-in `brief` gap list additionally carries its snapshot identity,
+  filtered count, page offset, and any next omission offset. These projections
+  do not replace the full continuation arguments or evidence. The
+  digest is a projection of the document and adds no fact. If a compact
+  companion would make the admitted envelope exceed its cap, retain that JSON
+  copy.
+  The size guard,
   paging and `result_too_large` measure the complete double-carry envelope in
   both modes, so refusal boundaries do not depend on the mode; typed failures
   (`isError: true`) and the status tool's recovery sentence are unchanged. The
@@ -437,8 +493,7 @@ official SDK transport:
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
-  carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. Empty pages obey the same structured-envelope bound: echoed
+  carries `structuredContent`, as the tool's `outputSchema` requires. Empty pages obey the same structured-envelope bound: echoed
   filters can exceed it even when the raw document fits. Such a page fails
   closed with the existing typed `result_too_large` refusal and current
   snapshot identity instead of a text-only success. The generated `next_page`
@@ -557,6 +612,20 @@ near-miss id, as does a slash that would leave the id empty
 `receipt`) stay strict inside the id, and this tolerance never turns an
 unknown route into a recognized one.
 
+### Snapshot URI-template expansion (#13229)
+
+The `ripr://snapshot/{snapshot_id}` template uses RFC 6570 simple expansion,
+which percent-encodes the colons in `snapshot:sha256:<digest>`. The resource
+parser decodes only the captured id, exactly once, accepting either hex case
+and retaining raw URI compatibility. The shared session still checks the
+decoded identity against the current snapshot, and successful contents echo
+the original request URI. A wrong namespace is never decoded into a route.
+Malformed escapes remain literal; a non-UTF-8 decode retains the raw capture.
+Neither those spellings nor double-encoded or stale ids resolve to the current
+snapshot. Encoded slashes remain stale identities; literal interior slashes
+remain invalid routes. Tool `snapshot_id` arguments are plain canonical JSON
+strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -595,10 +664,14 @@ unknown route into a recognized one.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  (#7145). Its #13229 controls compare raw and encoded snapshot documents,
+  preserve the original URI, reject invalid or double-encoded identities
+  with typed recovery, keep namespace routing strict and tool ids exact,
+  and complete a valid pinned read after the refusals. It also pins the
+  #9895 trailing-slash tolerance: one appended slash on
   the snapshot, gap, and repair-card URIs returns the identical document,
-  while a second slash fails closed. Resource payloads are pretty-printed
-  while tool payloads are compact by design, so the control compares
+  while a second slash fails closed. Resource payloads and tool payloads
+  both serialize compact for LLM-facing text, and the control compares
   parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
@@ -666,6 +739,12 @@ unknown route into a recognized one.
    and the same connection can subsequently read the valid status resource.
 
 ## Test Mapping
+
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay` — pinned filtered walks cover the stored selected and omitted identities once, avoid other-axis replay, and reject a stale snapshot.
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
+- `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
+- `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
   — with more omitted identities than one window, each response carries at
@@ -794,6 +873,17 @@ unknown route into a recognized one.
   request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
+- `crates/ripr/src/mcp/server_tests.rs::unknown_argument_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_argument_names_stay_typed_bounded_and_recover`
+  — unknown-name diagnostic prefixes preserve ordinary names, disclose
+  truncation and original UTF-8 byte length, and retain typed recovery for
+  admitted large/escaped/multibyte keys in both protocol lifecycles (#13154).
+- `crates/ripr/src/mcp/server_tests.rs::unknown_method_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_method_names_stay_bounded_and_recover`
+  — unknown methods retain bounded `-32601` errors, exact ordinary messages,
+  Unicode-safe previews and original UTF-8 byte counts. Large/escaped/multibyte
+  names remain correlated in both protocol lifecycles, preserve metadata
+  validation precedence, and allow a valid request after every refusal (#13220).
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including
   `post_initialize_ping_with_handshake_meta_returns_an_empty_result`
@@ -823,6 +913,15 @@ unknown route into a recognized one.
 
 ## Source-preserving recovery follow-up (#10799)
 
+The top-limitation document retains the source-custody owner's recovery (#13127) for
+`worktree_source_not_committed`. This code can describe committed input over
+dirty Rust files as well as an unsettled saved-worktree snapshot; it must not
+choose a default committed refresh solely from the shared refusal code.
+`mcp::gaps::tests::limitation_custody_recovery_preserves_the_source_owner_remedy`
+checks producer-owned remedies for dirty committed input, saved-file movement
+and head movement, their refusal state and restart identity. Recovery keeps an
+explicit base in the next refresh request and requires a read of the new snapshot.
+
 Single-gap overflow recovery is captured with its evidence snapshot and reused
 at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
 renderer binds the captured root, effective base and explicit source; a newer
@@ -830,9 +929,10 @@ failed request cannot relabel it. The route is a bounded current-state rerun,
 not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
 with an explicit non-command limitation rather than truncating executable text.
 
-For failed saved-worktree refresh, MCP retry examples retain the requested
-worktree source when the operator corrects or omits a base. Discovery states
-the committed default separately from opt-in saved tracked edits. Unsaved and
+For a failed refresh, MCP retry examples retain the requested source
+(committed or worktree) when the operator corrects or omits a base. Discovery states
+the `ripr check`-parity default (saved tracked edits when any exist, committed
+otherwise) and the explicit `committed`/`worktree` overrides. Unsaved and
 untracked exclusions remain unchanged. Worktree cards and readiness follow the
 producer-custody rules above: offered only with an established agreement,
 withheld with the cause otherwise.

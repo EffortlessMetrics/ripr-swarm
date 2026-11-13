@@ -13,6 +13,30 @@ pub(crate) const ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 
+/// Recovery texts of the per-file "this file could not be parsed or read"
+/// limitations (Rust syntax/nesting, Rust non-UTF-8, Python syntax). The
+/// editor keys its parse-failure disclosure on these exact producer-owned
+/// texts, so a different per-file `producer_failure` (an internal
+/// classification error, a missing Python identity context) is not named a
+/// parse failure (#11799).
+pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Rust, then re-run the analysis.";
+/// Recovery text of the `rust_nesting_budget` static-limit decline. ripr
+/// declined to parse the file over a static limit, so it must not read as a
+/// syntax error; it does not certify the file as valid Rust either, because
+/// the nesting scan runs before parsing and a syntax error can coexist
+/// (#13660). The editor still marks the file (see
+/// `lsp::diagnostics::limitation_is_file_parse_failure`) with this text.
+pub(crate) const RUST_NESTING_BUDGET_RECOVERY: &str = "ripr declined to parse this file because it exceeds the nesting budget; split or flatten the deeply nested expression, long operator chain or `else if` chain, then re-run the analysis.";
+pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
+pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Python, then re-run the analysis.";
+/// The TypeScript/JavaScript producer reports a parse failure as a
+/// `language_scope_unsupported` limitation (not a `producer_failure`), so the
+/// editor keys on this text together with that kind (#13371).
+pub(crate) const TYPESCRIPT_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the TypeScript or JavaScript parse error, then re-run the analysis.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisOutcomeKind {
@@ -111,7 +135,18 @@ impl AnalysisOutcomeKind {
     /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
     /// MCP-owned surface phrasing housed in the single wording owner so the
     /// hint cannot drift from the shared cause sentence above.
-    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}";
+
+    /// #13096: concrete retry when the default base resolved to the analyzed
+    /// commit and the change under review is the last commit. Named, never
+    /// inferred: the server does not silently widen the base.
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"source\": \"committed\", \"base\": \"HEAD~1\"}; the server does not infer this base";
+
+    /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
+    /// `no_behavioral_candidates`, whose diff was non-empty.
+    pub(crate) const fn is_no_behavioral_candidates(self) -> bool {
+        matches!(self, Self::NoBehavioralCandidates)
+    }
 
     /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
     /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.
@@ -214,6 +249,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect_failure",
             Self::DeclareHandwrittenFiles => "declare_handwritten_files",
+            Self::DeclarePreviewExcludedPatterns => "declare_preview_excluded_patterns",
             Self::RenameGeneratedMarkedSource => "rename_generated_marked_source",
         }
     }
@@ -229,6 +265,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect the failure",
             Self::DeclareHandwrittenFiles => "declare hand-written files",
+            Self::DeclarePreviewExcludedPatterns => "declare preview exclusion patterns",
             Self::RenameGeneratedMarkedSource => "rename the generated-marked source",
         }
     }
@@ -294,6 +331,9 @@ pub(crate) enum AnalysisRecoveryKind {
     /// Admit an exact hand-written path past the built-in excluded-directory
     /// conventions through the language's `handwritten_files` list.
     DeclareHandwrittenFiles,
+    /// Omit fixture or data paths from preview indexing through
+    /// `excluded_file_patterns` (#5380).
+    DeclarePreviewExcludedPatterns,
     /// A file name that marks generated code stays excluded even when its
     /// exact path is declared; the only route is renaming the file.
     RenameGeneratedMarkedSource,
@@ -549,7 +589,63 @@ impl AnalysisOutcome {
         }
         Ok(format!("sha256:{hex}"))
     }
+
+    /// The not-all-clear sentence for an incomplete outcome (`partial_with_limitations`,
+    /// `unsupported_input`, `analysis_failed`), `None` for a complete or
+    /// empty-scope one (#13562). It reuses the plain labels and the producer-owned
+    /// recovery text that the human `check` limitation lines print, so an editor
+    /// marker cannot drift from `ripr check`. At most
+    /// [`MAX_INCOMPLETE_SENTENCE_LIMITATIONS`] scoping limitations are named; an
+    /// advisory disclosure (`eol_only_churn`, `verification_only_change`) does not
+    /// scope the analysis down and is not named.
+    pub(crate) fn incomplete_scope_sentence(&self) -> Option<String> {
+        if self.kind.is_complete() {
+            return None;
+        }
+        let scoping = self
+            .limitations
+            .iter()
+            .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+            .collect::<Vec<_>>();
+        let mut sentence = format!(
+            "the analysis is incomplete ({}), so having no findings here does not mean the changed behavior is clean.",
+            self.kind.plain_label()
+        );
+        for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
+            sentence.push_str(&format!(
+                " Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label()
+            ));
+            if let Some(path) = &limitation.path {
+                sentence.push_str(&format!("; file: {path}"));
+            }
+            if let Some(count) = limitation.affected_items {
+                sentence.push_str(&format!("; affected items: {count}"));
+            }
+            if let Some(detail) = &limitation.bounded_detail {
+                sentence.push_str(&format!("; {}", detail.trim_end_matches('.')));
+            }
+            sentence.push_str(&format!(
+                "; recovery: {} — {}.",
+                limitation.recovery.kind.plain_label(),
+                limitation.recovery.detail.trim_end_matches('.')
+            ));
+        }
+        let unnamed = scoping
+            .len()
+            .saturating_sub(MAX_INCOMPLETE_SENTENCE_LIMITATIONS);
+        if unnamed > 0 {
+            sentence.push_str(&format!(
+                " {unnamed} more limitation(s) are in the full analysis outcome."
+            ));
+        }
+        Some(sentence)
+    }
 }
+
+/// Bound on the limitations one editor marker names (#13562).
+pub(crate) const MAX_INCOMPLETE_SENTENCE_LIMITATIONS: usize = 3;
 
 pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, String> {
     // Paths are filesystem identities, not prose: trimming can name a different
@@ -804,7 +900,7 @@ mod tests {
         assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
-            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
@@ -1082,6 +1178,10 @@ mod tests {
             (
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 "declare_handwritten_files",
+            ),
+            (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                "declare_preview_excluded_patterns",
             ),
             (
                 AnalysisRecoveryKind::RenameGeneratedMarkedSource,

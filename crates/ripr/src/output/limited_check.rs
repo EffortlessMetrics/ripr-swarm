@@ -1,6 +1,7 @@
 use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CHECK_REFUSAL_SCHEMA_VERSION, CheckInput};
 use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
+use crate::output::refusal::RefusalBlock;
 use serde_json::{Value, json};
 
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
@@ -14,15 +15,28 @@ const REPO_SCOPE_REPAIR_ROUTE: &str = "analysis/repo-scope-budget";
 /// diff-scope refusal (Rust line/file guards) keeps `rust_diff_scope_budget`
 /// exactly as before. The `--json` consumer must see the budget it can act
 /// on — a Python refusal reporting a Rust basis would claim more than the
-/// envelope enforces (evidence honesty).
+/// envelope enforces (evidence honesty). A refusal naming several limits
+/// (the #13641 nothing-fits refusal) names the largest file's limit first,
+/// so the basis follows the env named earliest in the message.
 fn diff_scope_basis(error: &str) -> &'static str {
-    if error.contains(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV) {
-        "python_diff_scope_budget"
-    } else if error.contains(crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV) {
-        "typescript_diff_scope_budget"
-    } else {
-        "rust_diff_scope_budget"
-    }
+    [
+        (
+            crate::analysis::DIFF_CHANGED_RUST_LINE_LIMIT_ENV,
+            "rust_diff_scope_budget",
+        ),
+        (
+            crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            "python_diff_scope_budget",
+        ),
+        (
+            crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            "typescript_diff_scope_budget",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(env, basis)| error.find(env).map(|position| (position, basis)))
+    .min_by_key(|(position, _)| *position)
+    .map_or("rust_diff_scope_budget", |(_, basis)| basis)
 }
 
 pub(crate) fn render_diff_scope_limited_check_json(
@@ -93,6 +107,9 @@ pub(crate) fn render_diff_scope_limited_check_json(
     if let Some(base) = &input.base {
         value["base"] = json!(base);
     }
+    // The shared refusal block (#11584) rides beside the frozen scope-guard
+    // keys; `message` stays the guard's own diagnostic verbatim.
+    RefusalBlock::from_prose(run_status, error).insert_into(&mut value);
 
     render_pretty_with_newline(&value, "limited check").map(Some)
 }
@@ -141,7 +158,7 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
 fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     let identity = notice.identity;
     let repair_route = notice.repair_route;
     let remedy = serde_json::to_value(&notice.remedy).unwrap_or(Value::Null);
@@ -226,7 +243,9 @@ pub(crate) fn render_check_failure_json(
     input: &CheckInput,
     error: &CoreError,
 ) -> Result<String, String> {
-    let identity = error.refusal_notice().identity;
+    let identity = error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity;
     let timeout_context = (identity == "analysis_timeout")
         .then(crate::app::timeout_refusal::take_stashed)
         .flatten();
@@ -244,6 +263,11 @@ pub(crate) fn render_check_failure_json(
     if let Some(projection) = timeout_context {
         value["input_context"] = projection.input_context_value();
     }
+    // The shared refusal block (#11584): the typed identity and message the
+    // envelope already carries, plus the one stated next step (or null).
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    RefusalBlock::from_remedy(notice.identity, &notice.message, &notice.remedy)
+        .insert_into(&mut value);
     render_pretty_with_newline(&value, "limited check")
 }
 
@@ -453,6 +477,46 @@ mod tests {
                 if actual != Some("rust_diff_scope_budget") {
                     return Err(format!(
                         "{pointer}: expected rust_diff_scope_budget, got {actual:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn multi_limit_refusal_basis_follows_the_limit_named_first() -> Result<(), String> {
+        // #13641 review: the nothing-fits refusal names the largest file's
+        // limit first and every other enabled limit after it; the basis
+        // follows the first one, never a fixed Python-first preference.
+        for (first, expected) in [
+            (
+                "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
+                "typescript_diff_scope_budget",
+            ),
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "rust_diff_scope_budget"),
+            (
+                "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+                "python_diff_scope_budget",
+            ),
+        ] {
+            let refusal = format!(
+                "diff_scope_oversized: every one of the 3 changed file(s) ripr's enabled \
+                 adapters read exceeds its language's changed-line limit on its own (largest: \
+                 4100 changed lines over the {first} limit (2000)); analysis was not run. \
+                 Repair route: raise the limit via RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=<number> / \
+                 RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=<number> / \
+                 RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>."
+            );
+            let rendered = render_diff_scope_limited_check_json(&input(), &refusal)?
+                .ok_or("expected a limited artifact for the nothing-fits refusal")?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+            for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
+                let actual = value.pointer(pointer).and_then(Value::as_str);
+                if actual != Some(expected) {
+                    return Err(format!(
+                        "{first} first: {pointer}: expected {expected}, got {actual:?}"
                     ));
                 }
             }

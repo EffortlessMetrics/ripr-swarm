@@ -138,6 +138,22 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
         };
+        // #13096: an omitted `source` takes `ripr check`'s default through the
+        // one shared selection owner, so an agent that just edited a tracked
+        // file analyzes that edit instead of an empty committed diff.
+        let source_defaulted = source.is_none();
+        let source = match source {
+            Some(source) => source,
+            None => {
+                let probe_root = root.clone();
+                // A probe that could not finish keeps committed history, the
+                // same fallback the selection owner takes for a failed probe;
+                // `requested_source: "default"` still discloses the choice.
+                tokio::task::spawn_blocking(move || default_refresh_source(&probe_root))
+                    .await
+                    .unwrap_or(workspace::RefreshSource::Committed)
+            }
+        };
         let root_identity = self.root_identity.clone();
         let session = self.session.clone();
         {
@@ -153,6 +169,7 @@ impl McpServer {
             session.in_flight = true;
             session.desired_base = base.clone();
             session.desired_source = source;
+            session.desired_source_defaulted = source_defaulted;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         #[cfg(test)]
@@ -219,6 +236,7 @@ impl McpServer {
                 "snapshot_id",
                 "offset",
                 "omitted_offset",
+                "independent_pages",
                 "limit",
                 "file",
                 "class",
@@ -229,6 +247,7 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
+        let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
@@ -286,6 +305,7 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
                 omitted_offset: omitted_offset.unwrap_or(0),
+                independent_pages: independent_pages.unwrap_or(false),
             },
             &workspace::GapListFilter {
                 file,
@@ -843,17 +863,38 @@ fn optional_string_argument(
     }
 }
 
-/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
-/// meaning of omission) or `worktree`. Any other value, including an empty
-/// string, wrong case or a non-string, is invalid params; nothing coerces.
+/// The source an omitted `ripr_refresh` `source` selects (#13096): the same
+/// `app::diff_source` decision `ripr check` makes with no `--worktree` or
+/// `--committed` flag. A clean or untracked-only tree, or a probe that could
+/// not run, keeps committed history.
+fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let selected = crate::app::diff_source::select_live_diff_source(
+        root,
+        crate::app::diff_source::DiffSourceRequest::Default,
+        Some(crate::app::default_cli_git_timeout()),
+    );
+    if selected.is_working_tree() {
+        workspace::RefreshSource::Worktree
+    } else {
+        workspace::RefreshSource::Committed
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed`, `worktree`, or
+/// omitted (`None`, resolved by [`default_refresh_source`]). Any other value,
+/// including an empty string, wrong case or a non-string, is invalid params;
+/// nothing coerces.
 fn refresh_source_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
-) -> Result<workspace::RefreshSource, ErrorData> {
+) -> Result<Option<workspace::RefreshSource>, ErrorData> {
     match optional_string_argument(arguments, "source")?.as_deref() {
-        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
-            Ok(workspace::RefreshSource::Committed)
+        None => Ok(None),
+        Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(Some(workspace::RefreshSource::Committed))
         }
-        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(workspace::RefreshSource::WORKTREE_NAME) => {
+            Ok(Some(workspace::RefreshSource::Worktree))
+        }
         Some(_other) => Err(ErrorData::invalid_params(
             "source must be one of: committed, worktree",
             Some(serde_json::json!({
@@ -882,7 +923,7 @@ fn optional_nonempty_string_argument(
     }
 }
 
-/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// An optional JSON boolean. Strings, integers and
 /// nulls stay invalid params instead of silently coercing.
 fn optional_bool_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -1138,6 +1179,9 @@ fn resource_id_document<T>(
     }
 }
 
+/// Diagnostic-only bound: validation always compares the complete key.
+const MAX_ARGUMENT_NAME_PREVIEW_CHARS: usize = 128;
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -1150,10 +1194,26 @@ fn reject_unknown_arguments(
     };
     for name in arguments.keys() {
         if !allowed.contains(&name.as_str()) {
-            return Err(ErrorData::invalid_params(
-                format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
-            ));
+            // Validate the full key, but never copy an input-sized key into
+            // failure data: the response cap is smaller than the input cap.
+            // Bound on Unicode scalar boundaries before Debug/JSON escaping.
+            let mut chars = name.chars();
+            let preview: String = chars
+                .by_ref()
+                .take(MAX_ARGUMENT_NAME_PREVIEW_CHARS)
+                .collect();
+            let truncated = chars.next().is_some();
+            let mut data = serde_json::json!({ "argument": preview, "allowed": allowed });
+            let detail = if truncated {
+                data["argument_truncated"] = serde_json::json!(true);
+                data["argument_bytes"] = serde_json::json!(name.len());
+                // Put the remedy before the preview so escaped characters
+                // cannot displace it from the bounded human detail.
+                format!("unknown argument (name truncated; allowed: {allowed:?}): {preview:?}")
+            } else {
+                format!("unknown argument {preview:?}; allowed: {allowed:?}")
+            };
+            return Err(ErrorData::invalid_params(detail, Some(data)));
         }
     }
     Ok(())
@@ -1196,6 +1256,28 @@ fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
         recovery,
     )
     .with_data(data)
+}
+
+/// An unknown method can fit the input cap while its diagnostic exceeds the
+/// response cap. Bound only the echo, after routing the complete method name.
+fn unknown_method_error(method: &str) -> ErrorData {
+    const MAX_METHOD_NAME_PREVIEW_CHARS: usize = 128;
+    let mut chars = method.chars();
+    let preview: String = chars.by_ref().take(MAX_METHOD_NAME_PREVIEW_CHARS).collect();
+    let truncated = chars.next().is_some();
+    let (message, data) = if truncated {
+        (
+            format!("Method not found: {preview} (name truncated)"),
+            Some(serde_json::json!({
+                "method": preview,
+                "method_truncated": true,
+                "method_bytes": method.len(),
+            })),
+        )
+    } else {
+        (format!("Method not found: {preview}"), None)
+    };
+    ErrorData::new(ErrorCode::METHOD_NOT_FOUND, message, data)
 }
 
 /// Failure schema version of each tool whose handler panics are contained at
@@ -1312,11 +1394,7 @@ impl ServerHandler for McpServer {
                 Some(serde_json::json!({ "method": request.method })),
             ));
         }
-        Err(ErrorData::new(
-            ErrorCode::METHOD_NOT_FOUND,
-            format!("Method not found: {}", request.method),
-            None,
-        ))
+        Err(unknown_method_error(&request.method))
     }
     async fn list_tools(
         &self,
@@ -1414,7 +1492,7 @@ impl ServerHandler for McpServer {
         }
         if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.snapshot_document(snapshot_id) {
+            return match session.snapshot_document(snapshot_id.as_ref()) {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -1518,12 +1596,12 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        // Resources pretty-print their document text while tool payloads
-        // serialize compact (`bounded_tool_envelope`): the encodings differ
-        // by design, and tool/resource equivalence (#7145) is pinned over the
-        // parsed document, never over the wire bytes. Do not reformat either
-        // side to match the other.
-        let text = serde_json::to_string_pretty(&document)
+        // Resource payloads serialize compact, the same encoding tool
+        // payloads use (`bounded_tool_envelope`): a resource is LLM-facing
+        // text, and pretty-print inflation spends tokens on whitespace a
+        // JSON parser discards. Tool/resource equivalence (#7145) stays
+        // pinned over the parsed document, never over the wire bytes.
+        let text = serde_json::to_string(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)

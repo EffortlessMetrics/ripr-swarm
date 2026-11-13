@@ -65,6 +65,7 @@ fn gate_decision_records_subject_identity_of_build_and_inputs() -> Result<(), St
             mode: GateMode::VisibleOnly,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         }
     };
 
@@ -213,6 +214,20 @@ fn gate_visible_only_records_pr_guidance_without_blocking() -> Result<(), String
 }
 
 #[test]
+fn gate_unknown_status_fails_closed() -> Result<(), String> {
+    // Fail closed: an unknown producer status must never read as a pass.
+    let (_fixture_input, input) = fixture_input(GateMode::VisibleOnly)?;
+    let mut report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "advisory");
+    assert!(!gate_decision_should_fail(&report));
+    report.status = "future_unknown_status".to_string();
+    assert!(gate_decision_should_fail(&report));
+    report.status = "pass".to_string();
+    assert!(!gate_decision_should_fail(&report));
+    Ok(())
+}
+
+#[test]
 fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), String> {
     let (_fixture_input, input) = fixture_input(GateMode::Acknowledgeable)?;
     let report = build_gate_decision_report(&input)?;
@@ -316,6 +331,102 @@ fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
     assert_eq!(
         report.decisions[0].policy.acknowledgement_label,
         Some("ripr-waive".to_string())
+    );
+    assert_eq!(
+        report.decisions[0].policy.acknowledgement_global_scope,
+        Some(true)
+    );
+    assert_eq!(
+        report.decisions[0]
+            .policy
+            .acknowledgement_match_kind
+            .as_deref(),
+        Some(structured_acknowledgements::MATCH_KIND_LEGACY_LABEL)
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_structured_acknowledgement_scopes_to_matching_canonical_gap() -> Result<(), String> {
+    // Concurrent tests share one hermetic root, so each ledger file name is unique to its test.
+    let (_fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    let root = input.root.clone();
+    let ledger_path = root.join("scoped-match-acknowledgements.toml");
+    if let Some(parent) = ledger_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create policy dir: {err}"))?;
+    }
+    fs::write(
+        &ledger_path,
+        r#"
+schema_version = 1
+[[acknowledgements]]
+acknowledgement_id = "ack-pricing-threshold"
+canonical_gap_id = "gap:dedf923a13a00573"
+reason = "accepted for this PR"
+actor = "reviewer"
+created_at = "2026-01-01"
+"#,
+    )
+    .map_err(|err| format!("write acknowledgements ledger: {err}"))?;
+    input.acknowledgements = Some(PathBuf::from("scoped-match-acknowledgements.toml"));
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "acknowledged");
+    assert_eq!(report.summary.acknowledged, 1);
+    assert_eq!(report.summary.blocking, 0);
+    assert_eq!(
+        report.decisions[0].policy.acknowledgement_id.as_deref(),
+        Some("ack-pricing-threshold")
+    );
+    assert_eq!(
+        report.decisions[0].policy.acknowledgement_global_scope,
+        Some(false)
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_structured_acknowledgement_does_not_ack_unrelated_canonical_gap() -> Result<(), String> {
+    let (_fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    let root = input.root.clone();
+    let ledger_path = root.join("unrelated-gap-acknowledgements.toml");
+    fs::write(
+        &ledger_path,
+        r#"
+schema_version = 1
+[[acknowledgements]]
+acknowledgement_id = "ack-other"
+canonical_gap_id = "gap:unrelated"
+reason = "wrong target"
+actor = "reviewer"
+created_at = "2026-01-01"
+"#,
+    )
+    .map_err(|err| format!("write acknowledgements ledger: {err}"))?;
+    input.acknowledgements = Some(PathBuf::from("unrelated-gap-acknowledgements.toml"));
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "blocked");
+    assert_eq!(report.summary.blocking, 1);
+    assert_eq!(report.summary.acknowledged, 0);
+    Ok(())
+}
+
+#[test]
+fn gate_malformed_structured_acknowledgement_is_config_error() -> Result<(), String> {
+    let (_fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    let root = input.root.clone();
+    let ledger_path = root.join("bad-acknowledgements.toml");
+    fs::write(&ledger_path, "not valid toml [[")
+        .map_err(|err| format!("write bad ledger: {err}"))?;
+    input.acknowledgements = Some(PathBuf::from("bad-acknowledgements.toml"));
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("structured acknowledgements")),
+        "expected structured acknowledgement load failure, got {:?}",
+        report.config_errors
     );
     Ok(())
 }
@@ -2306,6 +2417,7 @@ fn gate_baseline_candidate_without_canonical_id_joins_canonical_fallback_with_di
         mode: GateMode::BaselineCheck,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
     let report = build_gate_decision_report(&input)?;
     assert!(report.decisions[0].canonical_gap_id.is_none());
@@ -2569,6 +2681,7 @@ fn exception_input(dir: &Path, ledger: &str) -> Result<GateEvaluateInput, String
         mode: GateMode::VisibleOnly,
         acknowledgement_labels: Vec::new(),
         exception_policy: Some(policy),
+        acknowledgements: None,
     })
 }
 
@@ -2699,6 +2812,7 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
         mode: GateMode::VisibleOnly,
         acknowledgement_labels: Vec::new(),
         exception_policy: Some(dir.join("missing-ledger.toml")),
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -2750,6 +2864,7 @@ fn gate_config_errors_render_markdown_and_fail_status() -> Result<(), String> {
         mode: GateMode::BaselineCheck,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -2968,6 +3083,7 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3059,6 +3175,7 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3152,6 +3269,7 @@ fn gate_reads_root_planted_canonical_delta_for_causal_decisions() -> Result<(), 
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3208,6 +3326,7 @@ fn gate_acknowledgeable_gap_ledger_block_names_the_expected_label() -> Result<()
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: vec!["ripr-waive".to_string()],
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3260,6 +3379,7 @@ fn conflicting_gap_ledger_seam_identities_fail_closed_as_config_error() -> Resul
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3306,6 +3426,7 @@ fn multiple_legacy_gap_ledger_records_remain_route_limited() -> Result<(), Strin
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3344,6 +3465,7 @@ fn gate_gap_ledger_static_unknown_only_stays_report_only() -> Result<(), String>
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3761,6 +3883,7 @@ fn baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs() -> Resu
             mode: GateMode::BaselineCheck,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
         let mut report = build_gate_decision_report(&input)?;
         report.root = ".".to_string();
@@ -3813,6 +3936,7 @@ fn given_both_pr_guidance_and_gap_ledger_missing_when_evaluated_then_config_erro
         mode: GateMode::VisibleOnly,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3855,6 +3979,7 @@ fn given_invalid_gap_ledger_json_when_evaluated_then_config_error_includes_parse
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -3901,6 +4026,7 @@ fn given_unreadable_gap_ledger_when_evaluated_then_config_error_includes_read_fa
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4311,6 +4437,7 @@ fn given_gap_ledger_record_with_eligible_projection_but_unsafe_predicate_then_re
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4395,6 +4522,7 @@ fn given_gap_ledger_record_with_safe_predicate_but_missing_anchor_then_reason_ci
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4443,6 +4571,7 @@ fn given_gap_ledger_record_without_typed_seam_identity_then_baseline_check_fails
         mode: GateMode::BaselineCheck,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4561,6 +4690,7 @@ fn given_non_guidance_json_object_when_gate_evaluated_then_config_error_not_advi
         mode: GateMode::VisibleOnly,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4641,6 +4771,7 @@ fn given_guidance_without_ripr_producer_marker_or_known_status_when_gate_evaluat
             mode: GateMode::Acknowledgeable,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
 
         let report = build_gate_decision_report(&input)?;
@@ -4701,6 +4832,7 @@ fn given_valid_guidance_doc_with_zero_findings_when_gate_evaluated_then_advisory
         mode: GateMode::VisibleOnly,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4774,6 +4906,7 @@ fn given_well_formed_error_status_packet_when_gate_evaluated_then_config_error_n
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -4905,6 +5038,7 @@ fn given_cap_demoted_summary_only_gap_when_gate_evaluated_then_blocking_not_advi
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
 
     let report = build_gate_decision_report(&input)?;
@@ -5112,6 +5246,7 @@ fn fixture_input(mode: GateMode) -> Result<(Arc<HermeticGateFixture>, GateEvalua
         mode,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
     Ok((fixture, input))
 }
@@ -5150,6 +5285,7 @@ impl GateFixtureCase {
             mode: self.mode,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
         Ok((fixture, input))
     }
@@ -5631,6 +5767,7 @@ fn e2e_review_comments_doc(
         warnings: Vec::new(),
         omitted_by_cap,
         omitted_by_policy: 0,
+        omitted_static_limited: 0,
     };
     let config = crate::config::RiprConfig::default();
     let context = ReviewCommentsRenderContext {
@@ -5710,6 +5847,17 @@ fn e2e_gate_json_with_files(
     project_lib_source: Option<&str>,
     extra_files: &[(&str, &str)],
 ) -> Result<String, String> {
+    let report =
+        e2e_gate_report_with_files(pr_guidance, gap_ledger, project_lib_source, extra_files)?;
+    render_gate_decision_json(&report)
+}
+
+fn e2e_gate_report_with_files(
+    pr_guidance: Option<&str>,
+    gap_ledger: Option<&str>,
+    project_lib_source: Option<&str>,
+    extra_files: &[(&str, &str)],
+) -> Result<GateDecisionReport, String> {
     let dir = if project_lib_source.is_some() {
         e2e_fixed_root()?
     } else {
@@ -5744,11 +5892,11 @@ fn e2e_gate_json_with_files(
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
     let report = build_gate_decision_report(&input)?;
-    let gate_json = render_gate_decision_json(&report)?;
     ignore_remove_dir_all(dir);
-    Ok(gate_json)
+    Ok(report)
 }
 
 fn e2e_delta_and_update_with(
@@ -6153,6 +6301,132 @@ fn e2e_real_markdown_lists_parser_declined_files() -> Result<(), String> {
     Ok(())
 }
 
+/// #14082: a changed file the parser declined yields no gate candidate, and
+/// that absence must not read as a clean `pass`. Real producer and real gate.
+#[test]
+fn e2e_real_parser_declined_file_never_reads_as_pass() -> Result<(), String> {
+    // Control: the file parses and holds no seam, so `pass` is earned and
+    // nothing is disclosed.
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let clean: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&clean_doc), None)?).map_err(|e| e.to_string())?;
+    assert_eq!(clean["status"], "pass", "{clean}");
+    assert_eq!(clean["warnings"], json!([]), "{clean}");
+
+    // Nesting past the parse budget: lexical fallback, no seams, even for the
+    // `>= 10` boundary that the shallow file alone does produce a candidate for.
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let shallow_gate: Value =
+        serde_json::from_str(&e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?)
+            .map_err(|e| e.to_string())?;
+    assert!(
+        shallow_gate["summary"]["evaluated"].as_u64() >= Some(1),
+        "{shallow_gate}"
+    );
+    let declined_doc = e2e_real_review_doc(&format!(
+        "{shallow}pub fn deep() {{ {}{} }}\n",
+        "{".repeat(400),
+        "}".repeat(400)
+    ))?;
+    let report = e2e_gate_report_with_files(Some(&declined_doc), None, None, &[])?;
+    let declined: Value =
+        serde_json::from_str(&render_gate_decision_json(&report)?).map_err(|e| e.to_string())?;
+    assert_eq!(
+        declined["analysis_scope"]["parser_declined_files"],
+        json!(["src/lib.rs"]),
+        "{declined}"
+    );
+    assert_eq!(declined["summary"]["evaluated"], 0, "{declined}");
+    assert_eq!(declined["status"], "advisory", "{declined}");
+    let warnings = declined["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1, "{declined}");
+    let warning = warnings[0].as_str().unwrap_or_default();
+    assert!(
+        warning.contains("parser_declined_files") && warning.contains("`src/lib.rs`"),
+        "{warning}"
+    );
+    let markdown = render_gate_decision_markdown(&report);
+    assert!(markdown.contains("Decision: advisory"), "{markdown}");
+    assert!(
+        markdown.contains("## Warnings") && markdown.contains("src/lib.rs"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+/// #14082: the warning follows the disclosed list only. Empty or absent stays
+/// silent, a malformed value warns, and a declined sibling leaves the parsed
+/// file's decisions as they were.
+#[test]
+fn parser_declined_scope_warning_follows_the_disclosed_list() -> Result<(), String> {
+    let with_declined = |doc: &str, value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["parser_declined_files"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let clean_doc = e2e_real_review_doc("pub fn unrelated() {}\n")?;
+    let empty = with_declined(&clean_doc, json!([]))?;
+    assert_eq!(empty["status"], "pass", "{empty}");
+    assert_eq!(empty["warnings"], json!([]), "{empty}");
+
+    for malformed in [json!("src/lib.rs"), json!([7]), json!({"a": 1})] {
+        let gate = with_declined(&clean_doc, malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed parser_declined_files")),
+            "{gate}"
+        );
+    }
+
+    // The same list rule for the static-limitation count: absent or zero is
+    // silent, a positive count warns with the number, anything else is malformed.
+    let with_limited = |value: Value| -> Result<Value, String> {
+        let mut doc: Value = serde_json::from_str(&clean_doc).map_err(|e| e.to_string())?;
+        doc["analysis_scope"]["static_limited_omitted_seams"] = value;
+        let doc = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+        serde_json::from_str(&e2e_gate_json(Some(&doc), None)?).map_err(|e| e.to_string())
+    };
+    let zero = with_limited(json!(0))?;
+    assert_eq!(zero["status"], "pass", "{zero}");
+    assert_eq!(zero["warnings"], json!([]), "{zero}");
+    let three = with_limited(json!(3))?;
+    assert_eq!(three["status"], "advisory", "{three}");
+    assert!(
+        three["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("static_limited_omitted_seams: 3 seam(s)")),
+        "{three}"
+    );
+    for malformed in [json!("3"), json!(-1), json!(1.5), json!([3])] {
+        let gate = with_limited(malformed)?;
+        assert_eq!(gate["status"], "advisory", "{gate}");
+        assert!(
+            gate["warnings"][0]
+                .as_str()
+                .is_some_and(|w| w.contains("malformed static_limited_omitted_seams")),
+            "{gate}"
+        );
+    }
+
+    let shallow_doc = e2e_real_review_doc("pub fn early(n: i32) -> bool { n >= 10 }\n")?;
+    let plain: Value = serde_json::from_str(&e2e_gate_json(Some(&shallow_doc), None)?)
+        .map_err(|e| e.to_string())?;
+    let sibling = with_declined(&shallow_doc, json!(["src/other.rs", "src/more.rs"]))?;
+    assert!(plain["summary"]["evaluated"].as_u64() >= Some(1), "{plain}");
+    assert_eq!(sibling["decisions"], plain["decisions"]);
+    assert_eq!(sibling["summary"], plain["summary"]);
+    assert!(
+        sibling["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("`src/other.rs`, `src/more.rs`")),
+        "{sibling}"
+    );
+    Ok(())
+}
+
 // ---- #9599: gap-ledger path with a producer coverage disclosure ----
 
 /// Real chain for one project: full Rust inventory -> repo-exposure JSON
@@ -6193,6 +6467,7 @@ fn e2e_real_ledger_at(root: &Path, config: &crate::config::RiprConfig) -> Result
         None,
         None,
         generated_skip.as_ref(),
+        &report.evidence_limitations,
         &context,
         &mut bytes,
     )?;
@@ -6225,6 +6500,7 @@ fn e2e_real_gate_from_ledger_at(root: &Path, ledger: &str) -> Result<String, Str
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     };
     render_gate_decision_json(&build_gate_decision_report(&input)?)
 }
@@ -6922,6 +7198,7 @@ fn guidance_only_input(
         mode: GateMode::Acknowledgeable,
         acknowledgement_labels: Vec::new(),
         exception_policy: None,
+        acknowledgements: None,
     })
 }
 

@@ -49,6 +49,12 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
+    // #13736: a file only an out-of-line `#[cfg(kani)] mod` compiles is
+    // verification source; its changed lines are disclosed through
+    // `changed_verification_only_lines`, never probed as production.
+    if super::verification_erased::in_cfg_kani_module(index, &changed.path) {
+        return Vec::new();
+    }
     let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -745,6 +751,21 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
+            // #14325: a removed bare literal (`1200`, `"v1",`, `true`) carries
+            // no behavior beyond its value. When the added line that the
+            // block pairing names as THIS removed line's replacement already
+            // has a modeled-family probe whose `before` is this text, that
+            // probe judges the replaced value, so a second, base-side
+            // static-unknown catch-all would only keep verification refused
+            // for code no test can reach any more. Pairing is by line
+            // identity, not text: an equal literal deleted elsewhere in the
+            // file keeps its own probe.
+            if family == ProbeFamily::StaticUnknown
+                && let Some(literal) = bare_literal_body(text)
+                && replaced_literal_is_paired(removed, text, literal, changed, &probes)
+            {
+                continue;
+            }
             // #9183: a deleted field declaration with no replacement is type
             // syntax in the old source, not a deleted construction. The
             // replacement checks above ran on the lexical family, so an
@@ -771,6 +792,96 @@ pub(crate) fn probes_for_file_with_relations(
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+/// Whether an added line that `replaced_line_counterpart` pairs with
+/// `removed` carries a non-static-unknown probe whose `before` is the
+/// removed text, or its literal body when the parser cut `before` to the
+/// literal's span (a trailing `,`/`;`). The `nearby_removed_line` fallback
+/// is not a pairing, so an unpaired deletion fails closed.
+fn replaced_literal_is_paired(
+    removed: &ChangedLine,
+    text: &str,
+    literal: &str,
+    changed: &ChangedFile,
+    probes: &[SeededProbe],
+) -> bool {
+    changed.added_lines.iter().any(|added| {
+        changed
+            .replaced_line_counterpart(added.new_side_line)
+            .is_some_and(|counterpart| counterpart.line == removed.line)
+            && probes.iter().any(|seeded| {
+                seeded.probe.family != ProbeFamily::StaticUnknown
+                    && seeded.probe.location.line == added.new_side_line
+                    && seeded
+                        .probe
+                        .before
+                        .as_deref()
+                        .is_some_and(|before| before == text || before == literal)
+            })
+    })
+}
+
+/// True when a trimmed changed line is one literal and nothing else: a
+/// number (sign, digits, `_`, one fractional `.`, type suffix), `true`/`false`,
+/// or one quoted string/char (no raw or byte prefix), optionally followed by
+/// a single `,` or `;`. Anything with an operator, call, path or second
+/// token is not bare, so the removed-side probe stays (fail closed).
+#[cfg(test)]
+fn is_bare_literal_line(text: &str) -> bool {
+    bare_literal_body(text).is_some()
+}
+
+/// The literal of a bare-literal line without its trailing `,`/`;`, or
+/// `None` when the line is not one bare literal (see `is_bare_literal_line`).
+fn bare_literal_body(text: &str) -> Option<&str> {
+    let body = text
+        .strip_suffix(',')
+        .or_else(|| text.strip_suffix(';'))
+        .unwrap_or(text)
+        .trim_end();
+    if body.is_empty() {
+        return None;
+    }
+    if body == "true" || body == "false" {
+        return Some(body);
+    }
+    if let Some(open) = body.chars().next()
+        && (open == '"' || open == '\'')
+    {
+        let mut escaped = false;
+        for (index, character) in body.char_indices().skip(1) {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == open {
+                return (index + character.len_utf8() == body.len()).then_some(body);
+            }
+        }
+        return None;
+    }
+    let digits = body.strip_prefix('-').unwrap_or(body);
+    // At most one `.`, and only before a digit or at the end (`2.5`, `1.`),
+    // so a method on a literal (`1.max`, `1.0.abs`) is not bare.
+    let mut dots = digits.match_indices('.');
+    let fractional = match (dots.next(), dots.next()) {
+        (None, _) => true,
+        (Some((index, _)), None) => digits[index + 1..]
+            .chars()
+            .next()
+            .is_none_or(|next| next.is_ascii_digit()),
+        (Some(_), Some(_)) => false,
+    };
+    let numeric = fractional
+        && digits
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        && digits.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '.'
+        });
+    numeric.then_some(body)
 }
 
 /// Which changed lines of one diff side are structural delimiters
@@ -1803,6 +1914,10 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
+        // Stimulus changes must remain visible as unknown findings (#11545).
+        if function.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator {
+            return false;
+        }
         // Ownership is line-granular: a production fn and a `#[test]` fn
         // opening on one physical line both own it, and the later-listed
         // one wins `find_owner_function`. Without columns the line cannot be
@@ -1828,6 +1943,8 @@ fn changed_line_is_test_evidence(
             && find_file_facts(index, path).is_some_and(|facts| {
                 facts.functions.iter().any(|outer| {
                     outer.source_role.is_evidence_role()
+                        && outer.source_role
+                            != crate::analysis::facts::FunctionSourceRole::TestInputGenerator
                         && function.start_line < outer.end_line
                         && function.end_line <= outer.end_line
                         && (outer.start_line < function.start_line
@@ -2132,6 +2249,18 @@ fn build_probe(
     after: Option<String>,
 ) -> Probe {
     let text = changed_line.text.trim();
+    // Only candidate-side generator subjects have established role identity.
+    // A deleted production body must not borrow its replacement's role.
+    let family = if after.is_some()
+        && crate::analysis::facts::is_generator_subject(
+            context.index,
+            &context.changed.path,
+            changed_line.new_side_line,
+        ) {
+        ProbeFamily::StaticUnknown
+    } else {
+        family
+    };
     // #9080: no value or effect assertion observes a memory-ordering swap, so
     // a call whose only edit is an atomic `Ordering` variant has no honest
     // value/effect family; it stays an explicit unknown.
@@ -2797,14 +2926,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: "fn discounted_total() { if amount >= threshold {} }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -2994,14 +3123,14 @@ mod tests {
             start_line,
             end_line,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3158,16 +3287,34 @@ mod tests {
         shapes: &[(ProbeShapeKind, &str)],
         file_source: &str,
     ) -> Vec<Probe> {
+        shapes_probes_with_deletions(added, removed, &[], shapes, file_source)
+    }
+
+    /// `shapes_probes` plus pure deletions in a separate later hunk, each
+    /// `(old line, text)` with no added counterpart.
+    fn shapes_probes_with_deletions(
+        added: &str,
+        removed: &str,
+        deletions: &[(usize, &str)],
+        shapes: &[(ProbeShapeKind, &str)],
+        file_source: &str,
+    ) -> Vec<Probe> {
         let path = PathBuf::from("src/lib.rs");
         let line = |text: &str| ChangedLine {
             line: 3,
             new_side_line: 3,
             text: text.to_string(),
         };
+        let mut removed_lines = vec![line(removed)];
+        removed_lines.extend(deletions.iter().map(|(old_line, text)| ChangedLine {
+            line: *old_line,
+            new_side_line: *old_line,
+            text: (*text).to_string(),
+        }));
         let changed = ChangedFile {
             path: path.clone(),
             added_lines: vec![line(added)],
-            removed_lines: vec![line(removed)],
+            removed_lines,
         };
         let probe_shapes = shapes
             .iter()
@@ -3199,14 +3346,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: format!("fn format() {{ {added} }}").into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -4179,14 +4326,14 @@ mod tests {
             start_line: 1,
             end_line: 7,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -4837,14 +4984,14 @@ mod tests {
                         start_line: 1,
                         end_line: 3,
                         body: source.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_context: Default::default(),
                         item: Default::default(),
                     }],
@@ -4944,14 +5091,14 @@ mod tests {
                         start_line: 1,
                         end_line: 20,
                         body: expression.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -5161,14 +5308,14 @@ mod tests {
                             start_line: 1,
                             end_line: 5,
                             body: "fn parses() { let config = toml::from_str(text)?; }".into(),
-                            calls: vec![],
+                            calls: crate::analysis::facts::SharedFactSlice::empty(),
                             returns: vec![],
-                            literals: vec![],
+                            literals: crate::analysis::facts::SharedFactSlice::empty(),
                             source_role,
-                            attrs: vec![],
+                            attrs: crate::analysis::facts::SharedFactSlice::empty(),
                             impl_attrs: Vec::new(),
-                            nested_fn_names: Vec::new(),
-                            let_bindings: Vec::new(),
+                            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                             item: Default::default(),
                             impl_context: Default::default(),
                         }],
@@ -5908,14 +6055,14 @@ mod tests {
                         start_line: 1,
                         end_line: 6,
                         body: "fn record_invoice() { }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6049,6 +6196,114 @@ mod tests {
         );
         if let Some(inserted) = inserted {
             assert_eq!(inserted.before, Some("if legacy_flag {".to_string()));
+        }
+    }
+
+    /// #14325: a changed tail literal (`1200` -> `1500`) is judged by the
+    /// added return-value probe, which pairs the removed text as `before`;
+    /// the removed literal adds no base-side static-unknown twin. A removed
+    /// literal with no positional replacement keeps its removed-side probe,
+    /// even when an equal literal is replaced elsewhere in the file.
+    #[test]
+    fn a_replaced_bare_literal_adds_no_base_side_static_unknown_twin() {
+        let head = "pub fn default_timeout_ms() -> u64 {\n    1500\n}\n";
+        // The parser reports the added tail literal as a return shape, as it
+        // does for `fn f() -> u64 { 1500 }` in a real index.
+        let probes = single_shape_probes(
+            "    1500",
+            "    1200",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            head,
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown
+                    && probe.before.as_deref() == Some("1200")),
+            "fixture: the added probe must pair the removed literal: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.expression != "1200"),
+            "a replaced bare literal must not get its own removed-side probe: {probes:?}"
+        );
+        // A trailing `,` on the removed line still pairs with the
+        // span-cut `before` of the added literal's probe.
+        let comma = single_shape_probes(
+            "    1500,",
+            "    1200,",
+            ProbeShapeKind::ReturnValue,
+            "1500",
+            "fn limits() -> [u64; 1] {\n    [\n    1500,\n    ]\n}\n",
+        );
+        assert!(
+            comma
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "fixture: the added literal must get a modeled probe: {comma:?}"
+        );
+        assert!(
+            comma
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown || probe.after.is_some()),
+            "a replaced literal with a trailing comma must not get a removed-side twin: {comma:?}"
+        );
+
+        // Control: the same literal also deleted outright in a later hunk
+        // has no replacement, so it keeps its removed-side probe even though
+        // the first hunk's probe carries the equal text as `before`.
+        let mixed = shapes_probes_with_deletions(
+            "    1500",
+            "    1200",
+            &[(9, "    1200")],
+            &[(ProbeShapeKind::ReturnValue, "1500")],
+            head,
+        );
+        let base_side: Vec<&Probe> = mixed
+            .iter()
+            .filter(|probe| probe.expression == "1200")
+            .collect();
+        assert_eq!(
+            base_side.len(),
+            1,
+            "only the unpaired deletion keeps a removed-side probe: {mixed:?}"
+        );
+        assert!(
+            base_side.iter().all(|probe| probe.location.line == 9),
+            "the kept probe is the deleted line's, not the replaced one's: {mixed:?}"
+        );
+    }
+
+    #[test]
+    fn bare_literal_lines_are_single_literals_only() {
+        for bare in [
+            "1200", "-3", "1_000u64", "2.5f32", "1.", "true", "\"v1\",", "'x';", "0x1F",
+        ] {
+            assert!(is_bare_literal_line(bare), "{bare} must read as bare");
+        }
+        for not_bare in [
+            "1..10",
+            "a | b",
+            "1 + 2",
+            "x",
+            "f(1)",
+            "\"a\" + b",
+            "1.max(2)",
+            "1.max",
+            "1.0.abs",
+            "1.2.3",
+            "Some(1)",
+            "",
+            "\"unterminated",
+            "\"a\" \"b\"",
+            "r\"raw\"",
+            "b'x'",
+            "-",
+        ] {
+            assert!(
+                !is_bare_literal_line(not_bare),
+                "{not_bare} must not read as bare"
+            );
         }
     }
 
@@ -6365,14 +6620,14 @@ mod tests {
                         start_line: 1,
                         end_line: 4,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6439,14 +6694,14 @@ mod tests {
                         start_line: 1,
                         end_line: 9,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6515,14 +6770,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6579,14 +6834,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -7131,6 +7386,121 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #13983: parameter lines of a fn declared in a macro invocation body are
+    /// declarations, never `field_construction`; the fn body keeps its probe,
+    /// the same list outside a macro behaves as before, and a real record
+    /// initializer in a macro body still probes as `field_construction`.
+    #[test]
+    fn macro_body_fn_parameters_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let families = |source: &str, lines: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: lines.iter().map(|(n, t)| line(*n, t)).collect(),
+                removed_lines: Vec::new(),
+            };
+            let index = macro_source_index(&path, source);
+            probes_for_file(Path::new("workspace"), &changed, &index)
+                .iter()
+                .map(|probe| (probe.location.line, probe.family.clone()))
+                .collect::<Vec<_>>()
+        };
+        let params = [
+            (3, "    pub fn mul3("),
+            (4, "        a: u32,"),
+            (5, "        b: u32,"),
+            (6, "        c: u32,"),
+            (7, "    ) -> u32 {"),
+            (8, "        a * b * c"),
+        ];
+        let in_macro = "macro_rules! feature { ($($i:item)*) => { $($i)* } }\nfeature! {\n    pub fn mul3(\n        a: u32,\n        b: u32,\n        c: u32,\n    ) -> u32 {\n        a * b * c\n    }\n}\n";
+        let found = families(in_macro, &params);
+        assert!(
+            !found
+                .iter()
+                .any(|(l, f)| (4..=6).contains(l) && *f == ProbeFamily::FieldConstruction),
+            "macro fn parameter probed as field_construction: {found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, _)| *l == 8),
+            "fn body in the macro keeps a probe: {found:?}"
+        );
+
+        // Control: the same list outside a macro never reads as a field.
+        let plain =
+            "pub fn mul3(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n    a * b * c\n}\n";
+        let found = families(
+            plain,
+            &[(2, "    a: u32,"), (3, "    b: u32,"), (4, "    c: u32,")],
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|(_, f)| *f == ProbeFamily::FieldConstruction),
+            "plain fn parameter probed as field_construction: {found:?}"
+        );
+
+        // Negative control: a record initializer in a macro body still probes.
+        let record = "wrap! {\n    Task {\n        buffered: None,\n    }\n}\n";
+        let found = families(record, &[(3, "        buffered: None,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body construction lost its probe: {found:?}"
+        );
+
+        // A call (not a fn header) in a macro body is not a parameter list.
+        let call = "wrap! {\n    make(\n        a: 1,\n    )\n}\n";
+        let found = families(call, &[(3, "        a: 1,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body call argument lost its probe: {found:?}"
+        );
+    }
+
+    /// #13983 remainder: the same holds behind a generic list with `=`/`->`
+    /// bounds, in a macro-wrapped `impl`/`trait` body and in a nested item
+    /// macro; a call argument in a method body there keeps its probe.
+    #[test]
+    fn macro_body_fn_parameters_in_item_containers_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "feature! {\n    pub fn assoc<I: Iterator<Item = u8>, F: Fn() -> u8>(\n        it: I,\n    ) -> usize {\n        it.count()\n    }\n    impl Foo {\n        pub fn method(\n            n: u32,\n        ) -> u32 {\n            make(\n                n: 1,\n            )\n        }\n    }\n    pub trait Tr {\n        fn req(\n            m: u32,\n        ) -> u32;\n    }\n    feature! {\n        pub fn nested(\n            z: u32,\n        ) -> u32 {\n            z\n        }\n    }\n}\n";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: source
+                .lines()
+                .enumerate()
+                .map(|(index, text)| ChangedLine {
+                    line: index + 1,
+                    new_side_line: index + 1,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: Vec::new(),
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let fields = probes
+            .iter()
+            .filter(|probe| probe.family == ProbeFamily::FieldConstruction)
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        // Lines 3, 9, 18 and 23 are parameters; line 12 is a call argument.
+        assert_eq!(fields, vec![12], "all probes: {probes:?}");
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 5),
+            "fn body in the macro keeps a probe: {probes:?}"
         );
     }
 

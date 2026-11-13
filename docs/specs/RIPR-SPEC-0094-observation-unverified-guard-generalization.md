@@ -16,6 +16,7 @@ Linked issues:
 - #7794
 - #7820
 - #7966
+- #12234
 
 Linked PRs:
 
@@ -544,6 +545,72 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
 above shows a call that reaches the owner is not withheld.
 
+The assertion refusal distinguishes a bare call from a receiver call even
+when their leaf names are equal (#12234). `widget.consume()` does not by
+itself pin free `consume`, and bare `consume()` does not pin an inherent
+method of that name. The actual owner definition supplies the container
+kind. A unique indexed opposite-kind definition is only a candidate: the
+existing free-call binding or inherent receiver authority must establish
+the actual target in the selected source assertion. Every matching call
+in that assertion must agree. Another call elsewhere in the test cannot
+supply this authority; local callable bindings and unindexed receivers
+remain uncertain.
+
+The candidate's actual function and enclosing impl scopes, including the
+associated-item list, must preserve the read source. An unread rewriting
+attribute retains uncertainty even when the source body has no calls.
+Call absence alone is insufficient: a constant, field or local can carry an
+owner-produced value. The refusal therefore requires a closed value grammar.
+The selected assertion's evaluated operands must be direct candidate calls
+with literal inputs, literals, or established enum values; arithmetic around
+calls, conditions, nonliteral inputs and other value reads retain uncertainty.
+Custom assertion messages retain uncertainty because they can carry an
+owner-produced value into an expected panic; this rule has no message resolver.
+The candidate body may read only established primitive parameters, literals,
+built-in primitive expressions and literal/wildcard match arms. Locals, fields,
+globals, indirect values and outgoing callables remain uncertain.
+
+Only actual parsed `Enum::Variant` constructors are treated as non-calling:
+the enum and function must be established in the same file-root scope, no
+indexed callable may compete for the variant name, and the existing declaration
+and rebinding authority must accept the path. The complete asserted value also
+requires primitive comparison or the existing enum value-equality and closed
+Drop authority. Manual equality that reads a constant cannot be dismissed
+because the candidate's source body is independent. The existing closed-scope
+authority establishes standard derive bindings; generic function or impl
+contexts remain uncertain. Its binding scan is memoized by exact source bytes
+and requested names within the analysis index. The general entry-type
+declaration guard is unchanged.
+
+Unrelated wrapper chains intentionally retain uncertainty. Returned-function
+invocation, opaque or unsupported assertion syntax, ambiguous dispatch and
+implicit owner paths also retain uncertainty. Generic, raw and Unicode function
+values inside genuine wrappers retain their previous evidence without a new
+function-value name resolver. Qualified and unread call paths retain their
+previous behavior, including UFCS. This bounded refusal reuses existing binding
+readers and does not broaden the seam kinds to which the per-assertion guard
+applies.
+
+The full and compact repo views and their published related-test oracle
+read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
+`opposite_kind_enum_constructor_admission_preserves_declared_context`,
+`same_named_opposite_kind_wrappers_keep_owner_uncertainty`,
+`opposite_kind_indirect_function_values_keep_owner_uncertainty`,
+`opposite_kind_unrelated_wrappers_keep_call_uncertainty`,
+`opposite_kind_unicode_function_values_keep_owner_uncertainty`,
+`opposite_kind_returned_function_items_keep_owner_uncertainty`,
+`opposite_kind_callback_values_keep_owner_uncertainty`,
+`assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
+`assertion_target_identity_is_local_to_each_oracle`,
+`opposite_kind_value_dependencies_keep_owner_uncertainty`,
+`same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`,
+`same_named_call_kinds_keep_diff_owner_observation_scoped`, and
+`same_named_call_kinds_preserve_real_wrapper_and_binding_paths`. The independent
+honesty case `rust_repo_exposure_same_named_call_kinds_not_promoted` pins
+both wrong-owner published oracles to `none` beside genuine direct-call
+controls. Classified caches use the next allocated generation; the report
+wire schema is unchanged.
+
 The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
 (#12434), gated differently. A related test whose only relation is proximity
 (`same_test_file`, `same_module`, and the other relations that do not establish
@@ -559,6 +626,13 @@ unconditionally (#12132).
 Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle`
 and the `rust_repo_exposure_proximity_other_function` honesty case, whose
 `wait < 5` boundary pin is `none` beside the `same_test_file` relation.
+
+The gate attributes an assertion the way `ripr check` does: a local the
+assertion reads is the function that bound it, so the local's single immutable
+initializer joins the assertion text before the "pins another function"
+decision (#12056, #12264). `let r = reduce(3); assert_eq!(r, ..)` lends the
+owner no oracle, while a local bound to the owner's own call keeps its credit.
+Proof: `proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle`.
 
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
@@ -580,7 +654,9 @@ called functions, methods and constants in the changed expression confirm
 as before. The constructed field's own name confirms even when it is also a
 parameter (`storage` in the shorthand `HirLet { storage }`), and an
 assertion naming a test `let` bound from an owner call counts as calling
-the owner. Effect families keep their existing token rule.
+the owner, but only while the test never rebinds that name: a later `let`, a
+destructuring pattern, a `for` variable or an assignment drops it (#6973), so
+the assertion is not credited. Effect families keep their existing token rule.
 
 The owner-return pin (#4478) is then the path that credits an exact pin
 such as `assert_eq!(sku_family("BOLT-M8"), "BOLT")`. Its return-path gate
@@ -663,6 +739,73 @@ Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
 `a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit` (#12720), the resolver tests in
 `rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
 in the honesty corpus.
+
+## A predicate assertion that discards the owner call's value (#14206)
+
+A predicate probe needs no token confirmation (Part A leaves it out on
+purpose), so any exact assertion in a reaching test confirmed it. That is
+wrong when the assertion calls the changed function and then drops or masks
+the call's value before comparing:
+
+```rust
+assert_eq!(Some(over(10)).is_some(), true);       // shape-only read of a wrapper
+assert_eq!((over(10), 1).1, 1);                   // another tuple element
+assert_eq!({ over(10); true }, true);             // block statement
+assert_eq!(first(true, over(10)), true);          // argument a helper may ignore
+assert_eq!(Some(true).unwrap_or(over(10)), true); // receiver decides
+assert_eq!(false.then(|| over(10)), None);        // closure that may never run
+assert_eq!(if true { true } else { over(10) }, true);
+```
+
+Each passes for either version of `over`. The `return_value` twin on the same
+line already read `weakly_exposed`; the predicate finding read `exposed`.
+
+Rule, for `ProbeFamily::Predicate` only. `owner_value_flow` reads the
+assertion's compared operands (never its message arguments) and answers:
+
+- `Absent`: no operand names a call of the owner, directly or through a name
+  the test body binds exactly once with a plain `let`. Nothing changes; the
+  rule has nothing to say about a test that reaches the owner another way.
+- `Reaches`: the call's value reaches a compared operand. Nothing changes.
+- `Masked`: an operand names the call and no listed shape carries its value.
+  The assertion's strength relative to this probe is capped at weak, its row
+  carries `observation_unconfirmed`, and when it is the selected oracle the
+  discriminate summary says the assertion "discards or masks the call's
+  value" and keeps the `(observation_unverified)` token.
+
+Shapes that carry the value: the call itself and any method or field of its
+result; parentheses, `!`, `-`, `*`, `&`, `as`, `?`, `.await`; a tuple, array,
+`vec!`, struct literal, or uppercase-named constructor payload (`Some(..)`),
+compared whole (also with `eq`, `contains` and the other comparing methods)
+or taken out again with `unwrap` / `expect` / `unwrap_or` /
+`unwrap_or_default` / `into_inner`, or read through `clone`, `iter`,
+`collect`, `first`, `last`, `get`, `pop`, `next` and the like; a selected tuple element (`(over(10), 1).0`); any
+operand of a comparison, arithmetic or `&&` operator; the condition of an
+`if` and the scrutinee of a `match` or `matches!`; a block's tail; a
+`format!` argument; the single argument of a one-argument function call,
+`from`, `black_box`, `identity`, and `Box` / `Rc` / `Arc` / `Cell` /
+`RefCell` `::new`; the argument of `eq`, `ne`, `cmp`, `partial_cmp`,
+`contains`, `starts_with`, `ends_with`.
+
+Everything else that names the call is `Masked`, including either side of
+`||`, a branch or arm body, a closure, an argument of a call with two or more
+arguments, a method argument, and any other macro. The rule is fail-closed
+only for an assertion that names the owner call: such an assertion keeps
+`exposed` only on a listed shape. A masked assertion never removes credit
+another assertion supplies.
+
+Known limit: a helper that does use its second argument
+(`assert_eq!(combine(1, over(10)), 3)`) now reads `weakly_exposed` for the
+predicate finding, as its `return_value` twin already did. Binding the call
+first (`let got = over(10);`) or asserting on it directly restores the
+credit.
+
+Static evidence only: `Reaches` says the syntax carries the value, not that
+the test would fail on a wrong one.
+
+Proof: `crates/ripr/src/analysis/classify/owner_value_sink.rs` unit tests,
+and `crates/ripr/tests/predicate_owner_value_masked.rs` through
+`check_workspace` (every row of the issue's two tables).
 
 ## Test Mapping
 

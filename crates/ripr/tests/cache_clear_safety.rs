@@ -861,10 +861,16 @@ fn cache_root_flag_rejects_missing_repeated_and_unresolvable_values() -> Result<
         ),
         (
             &["cache", "status", "--root", "a", "--root", "b"][..],
-            "repeats --root",
+            "takes --root once",
             &[][..],
         ),
-        (&["cache", "status", "--root=a"][..], "--root", &[][..]),
+        // `--root=a` means `--root a` (#14292): refused because `a` does not
+        // exist, not because of the `=` spelling.
+        (
+            &["cache", "status", "--root=a"][..],
+            "pass an existing directory to `--root`",
+            &[][..],
+        ),
         (
             &["cache", "status", "--root", "/definitely/not/a/dir"][..],
             "/definitely/not/a/dir",
@@ -987,7 +993,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // makes every store fail at create_dir.
     let broken = root.join("broken-cache");
     fs::create_dir_all(broken.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(broken.join("repo-file-facts/1.55"), b"blocker")
+    fs::write(broken.join("repo-file-facts/1.58"), b"blocker")
         .map_err(|error| error.to_string())?;
     let (report, _) = rerun(&broken)?;
     let cache = &report["cache"];
@@ -1005,7 +1011,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // ordinary stderr, without RIPR_REPO_EXPOSURE_LATENCY_TRACE.
     let check_cache = root.join("broken-check-cache");
     fs::create_dir_all(check_cache.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(check_cache.join("repo-file-facts/1.55"), b"blocker")
+    fs::write(check_cache.join("repo-file-facts/1.58"), b"blocker")
         .map_err(|error| error.to_string())?;
     let check = run_ripr_default_cache(
         &root,

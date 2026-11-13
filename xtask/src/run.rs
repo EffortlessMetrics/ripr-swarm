@@ -8,14 +8,21 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "run/command_diagnostic.rs"]
 mod command_diagnostic;
+#[cfg(any(target_os = "linux", test))]
+#[path = "run/proc_stat.rs"]
+mod proc_stat;
+#[cfg(test)]
+use proc_stat::PROC_STAT_ESRCH;
+#[cfg(any(target_os = "linux", test))]
+use proc_stat::proc_stat_error_is_gone;
 #[cfg(all(test, target_os = "linux"))]
+#[path = "run/test_session.rs"]
 mod test_session;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) use test_session::enter_test_session;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
@@ -157,6 +164,64 @@ pub(crate) struct TimedOutput {
     pub(crate) stderr: String,
     pub(crate) duration: Duration,
     pub(crate) timed_out: bool,
+}
+
+/// Preserve the failing stage without requiring report callers to parse or
+/// publish an OS diagnostic (which can include arbitrary child output).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TimedCaptureErrorKind {
+    Launch(std::io::ErrorKind),
+    ProcessControl,
+    Capture,
+    Cleanup,
+}
+
+#[derive(Debug)]
+pub(crate) struct TimedCaptureError {
+    pub(crate) kind: TimedCaptureErrorKind,
+    message: String,
+}
+
+impl TimedCaptureError {
+    fn new(kind: TimedCaptureErrorKind, message: String) -> Self {
+        Self { kind, message }
+    }
+
+    fn into_message(self) -> String {
+        self.message
+    }
+}
+
+fn settle_timed_capture_streams(
+    stdout: Result<String, String>,
+    stderr: Result<String, String>,
+    tree_cleanup: Result<(), String>,
+    require_complete_output: bool,
+    error_context: &str,
+) -> Result<(String, String), TimedCaptureError> {
+    // Cleanup has already run. A descendant that survived it can also make
+    // the drain fail, so typed callers must retain that observed cause.
+    if require_complete_output && let Err(cleanup) = &tree_cleanup {
+        return Err(TimedCaptureError::new(
+            TimedCaptureErrorKind::Cleanup,
+            format!(
+                "{error_context}: incomplete tree cleanup after primary exit: {cleanup}; stdout={stdout:?}; stderr={stderr:?}"
+            ),
+        ));
+    }
+    let stdout = stdout
+        .map_err(|message| TimedCaptureError::new(TimedCaptureErrorKind::Capture, message))?;
+    let stderr = stderr
+        .map_err(|message| TimedCaptureError::new(TimedCaptureErrorKind::Capture, message))?;
+    if let Err(cleanup) = tree_cleanup {
+        return Err(TimedCaptureError::new(
+            TimedCaptureErrorKind::Cleanup,
+            format!(
+                "{error_context}: incomplete tree cleanup after primary exit: {cleanup}; stdout={stdout}; stderr={stderr}"
+            ),
+        ));
+    }
+    Ok((stdout, stderr))
 }
 
 pub(crate) struct TimedBytesOutput {
@@ -569,6 +634,31 @@ pub(crate) fn capture_output_with_timeout(
     capture_output_with_deadline(program, args, envs, Some(timeout), error_context)
 }
 
+/// The same process owner and deadline, with typed failure stages and a
+/// required complete pipe drain. Existing string-error callers retain their
+/// historical diagnostic/truncated-output contract through the adapter below.
+pub(crate) fn capture_output_with_timeout_typed(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+    timeout: Duration,
+    error_context: &str,
+) -> Result<TimedOutput, TimedCaptureError> {
+    capture_output_sampled_owned(
+        program,
+        args,
+        None,
+        envs,
+        &mut CaptureDeadline::FromStart(&Some(timeout)),
+        CaptureMode::Platform {
+            sample_rss: false,
+            require_complete_output: true,
+        },
+        error_context,
+    )
+    .map(|(output, _)| output)
+}
+
 /// `capture_output_with_timeout` in an explicit working directory that also
 /// samples the child's peak resident memory (Linux `VmHWM`, polled with the
 /// deadline loop, so the value is a lower bound). Other platforms report
@@ -753,9 +843,13 @@ fn capture_output_sampled(
         cwd,
         envs,
         deadline,
-        CaptureMode::Platform { sample_rss },
+        CaptureMode::Platform {
+            sample_rss,
+            require_complete_output: false,
+        },
         error_context,
     )
+    .map_err(TimedCaptureError::into_message)
 }
 
 /// The reexecuted test must call `enter_test_session` before launching work.
@@ -778,7 +872,8 @@ pub(crate) fn capture_isolated_test(
         &mut CaptureDeadline::FromStart(&Some(timeout)),
         CaptureMode::TestSession,
         error_context,
-    )?;
+    )
+    .map_err(TimedCaptureError::into_message)?;
     Ok(MeasuredOutput {
         output,
         peak_rss_bytes,
@@ -789,6 +884,7 @@ pub(crate) fn capture_isolated_test(
 enum CaptureMode {
     Platform {
         sample_rss: bool,
+        require_complete_output: bool,
     },
     #[cfg(all(test, target_os = "linux"))]
     TestSession,
@@ -802,12 +898,15 @@ fn capture_output_sampled_owned(
     deadline: &mut CaptureDeadline<'_>,
     mode: CaptureMode,
     error_context: &str,
-) -> Result<(TimedOutput, Option<u64>), String> {
+) -> Result<(TimedOutput, Option<u64>), TimedCaptureError> {
     let started = Instant::now();
-    let (sample_rss, isolated_test) = match mode {
-        CaptureMode::Platform { sample_rss } => (sample_rss, false),
+    let (sample_rss, isolated_test, require_complete_output) = match mode {
+        CaptureMode::Platform {
+            sample_rss,
+            require_complete_output,
+        } => (sample_rss, false, require_complete_output),
         #[cfg(all(test, target_os = "linux"))]
-        CaptureMode::TestSession => (true, true),
+        CaptureMode::TestSession => (true, true, false),
     };
     let mut command = Command::new(program);
     command.args(args);
@@ -826,18 +925,26 @@ fn capture_output_sampled_owned(
     // timeout path below owns the whole tree instead of shelling out to
     // `taskkill /T /F`.
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = OwnedProcess::spawn(command)
-        .map_err(|err| format!("failed to run {error_context}: {err}"))?;
+    let mut child = OwnedProcess::spawn(command).map_err(|err| {
+        TimedCaptureError::new(
+            TimedCaptureErrorKind::Launch(err.kind()),
+            format!("failed to run {error_context}: {err}"),
+        )
+    })?;
     #[cfg(all(test, target_os = "linux"))]
     let mut session = isolated_test.then(|| test_session::TestSession::new(child.id()));
-    let stdout = child
-        .stdout_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
-    let stderr = child
-        .stderr_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
+    let stdout = child.stdout_pipe().take().ok_or_else(|| {
+        TimedCaptureError::new(
+            TimedCaptureErrorKind::Capture,
+            format!("failed to capture stdout for {error_context}"),
+        )
+    })?;
+    let stderr = child.stderr_pipe().take().ok_or_else(|| {
+        TimedCaptureError::new(
+            TimedCaptureErrorKind::Capture,
+            format!("failed to capture stderr for {error_context}"),
+        )
+    })?;
     let echo_latency_trace = envs
         .iter()
         .any(|(name, _)| *name == "RIPR_REPO_EXPOSURE_LATENCY_TRACE");
@@ -853,13 +960,16 @@ fn capture_output_sampled_owned(
 
     #[cfg(all(test, target_os = "linux"))]
     let wait_outcome = if let Some(session) = session.as_mut() {
-        session.wait(&mut child, started, deadline, sample_rss, error_context)?
+        session.wait(&mut child, started, deadline, sample_rss, error_context)
     } else {
-        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?
-    };
+        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)
+    }
+    .map_err(|message| TimedCaptureError::new(TimedCaptureErrorKind::ProcessControl, message))?;
     #[cfg(not(all(test, target_os = "linux")))]
     let wait_outcome =
-        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?;
+        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context).map_err(
+            |message| TimedCaptureError::new(TimedCaptureErrorKind::ProcessControl, message),
+        )?;
 
     let tree_cleanup = end_tree_after_normal_primary_exit(&mut child, wait_outcome.timed_out);
 
@@ -875,19 +985,30 @@ fn capture_output_sampled_owned(
         POST_KILL_DRAIN_GRACE,
         "stdout",
         error_context,
-    )?;
+        require_complete_output,
+    );
+    if !require_complete_output && let Err(message) = &stdout {
+        // Preserve legacy callers' early stdout-error path and exact message.
+        return Err(TimedCaptureError::new(
+            TimedCaptureErrorKind::Capture,
+            message.clone(),
+        ));
+    }
     let stderr = drain_stream_reader_bounded(
         stderr_rx,
         stderr_handle,
         POST_KILL_DRAIN_GRACE,
         "stderr",
         error_context,
+        require_complete_output,
+    );
+    let (stdout, stderr) = settle_timed_capture_streams(
+        stdout,
+        stderr,
+        tree_cleanup,
+        require_complete_output,
+        error_context,
     )?;
-    if let Err(cleanup) = tree_cleanup {
-        return Err(format!(
-            "{error_context}: incomplete tree cleanup after primary exit: {cleanup}; stdout={stdout}; stderr={stderr}"
-        ));
-    }
 
     #[cfg(all(test, target_os = "linux"))]
     if let CaptureDeadline::AfterReadiness(phase) = &*deadline
@@ -898,9 +1019,12 @@ fn capture_output_sampled_owned(
                 .then_some("child exited before readiness was observed")
         })
     {
-        return Err(format!(
-            "{error_context}: {error}; reaped status={}, timed_out={}; stdout={stdout}; stderr={stderr}",
-            wait_outcome.status, wait_outcome.timed_out
+        return Err(TimedCaptureError::new(
+            TimedCaptureErrorKind::ProcessControl,
+            format!(
+                "{error_context}: {error}; reaped status={}, timed_out={}; stdout={stdout}; stderr={stderr}",
+                wait_outcome.status, wait_outcome.timed_out
+            ),
         ));
     }
 
@@ -1002,6 +1126,28 @@ pub(crate) fn capture_bytes_in_dir_with_env_budget(
         program,
         args,
         (cwd, None),
+        envs,
+        env_remove,
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
+/// `capture_bytes_in_dir_with_env_budget` that also writes `input` to the
+/// child's stdin (an MCP stdio session with a configured environment).
+pub(crate) fn capture_bytes_in_dir_with_input_env_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (envs, env_remove) = envs;
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
         envs,
         env_remove,
         (budget.timeout, Some(budget)),
@@ -1676,25 +1822,12 @@ fn classify_group_probe(success: bool, stderr: &str) -> GroupProbe {
     }
 }
 
-/// POSIX ESRCH ("No such process"). Reading `/proc/<pid>/stat` after the
-/// task has exited between `readdir` and the read fails with this code, not
-/// with `ErrorKind::NotFound` (ENOENT).
-#[cfg(any(target_os = "linux", test))]
-const PROC_STAT_ESRCH: i32 = 3;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(any(target_os = "linux", test))]
 enum ProcStatContribution {
     Live,
     Ignore,
     Incomplete,
-}
-
-/// A vanished `/proc/<pid>/stat` is gone. Permission and other failures stay
-/// unreadable so the scan remains fail-closed.
-#[cfg(any(target_os = "linux", test))]
-fn proc_stat_error_is_gone(err: &std::io::Error) -> bool {
-    err.kind() == std::io::ErrorKind::NotFound || err.raw_os_error() == Some(PROC_STAT_ESRCH)
 }
 
 /// One `/proc/<pid>/stat` outcome for a group scan. Matching live members
@@ -1952,7 +2085,7 @@ fn spawn_latency_stream_reader_channel<T: Read + Send + 'static>(
 /// process eventually exits or the OS reclaims the fd) and the function returns
 /// whatever was captured up to the kill, prefixed with a diagnostic message.
 /// The caller should check `timed_out` and propagate the diagnostic
-/// appropriately; it is not an error to abandon the drain.
+/// appropriately. Callers that require complete output reject abandonment.
 fn drain_stream_reader_bounded(
     rx: mpsc::Receiver<Result<String, String>>,
     // The handle is intentionally held until after recv_timeout so the thread
@@ -1962,9 +2095,14 @@ fn drain_stream_reader_bounded(
     grace: Duration,
     stream_name: &str,
     error_context: &str,
+    require_complete: bool,
 ) -> Result<String, String> {
     match rx.recv_timeout(grace) {
         Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) if require_complete => Err(format!(
+            "{stream_name} drain exceeded post-kill grace ({}s) for {error_context}; complete output is not established",
+            grace.as_secs()
+        )),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             // A descendant escaped the process-group kill and still holds the
             // pipe open.  Return an empty string with a diagnostic; the caller
@@ -2100,7 +2238,9 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(unix)]
+    use std::time::Instant;
 
     #[cfg(unix)]
     use std::os::unix::process::CommandExt;
@@ -3673,7 +3813,8 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
         let (handle, rx) = spawn_stream_reader_channel(blocking);
 
         // The reader never unblocks, so returning at all proves the grace fired.
-        let result = drain_stream_reader_bounded(rx, handle, test_grace, "stdout", "test-context")?;
+        let result =
+            drain_stream_reader_bounded(rx, handle, test_grace, "stdout", "test-context", false)?;
 
         // The result must contain the diagnostic message indicating output was
         // truncated due to the escaped-descendant scenario.
@@ -3688,6 +3829,56 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
             ));
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn complete_capture_rejects_a_pipe_that_outlives_the_drain_grace() -> Result<(), String> {
+        let (blocking, _keeper) = BlockingRead::new();
+        let (handle, rx) = spawn_stream_reader_channel(blocking);
+        let result = drain_stream_reader_bounded(
+            rx,
+            handle,
+            Duration::from_millis(50),
+            "stdout",
+            "complete capture control",
+            true,
+        );
+        match result {
+            Err(error) if error.contains("complete output is not established") => Ok(()),
+            other => Err(format!(
+                "an unfinished reader must fail complete capture, got {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn typed_capture_retains_cleanup_failure_when_both_drains_also_fail() -> Result<(), String> {
+        let error = super::settle_timed_capture_streams(
+            Err("stdout drain failed".to_string()),
+            Err("stderr drain failed".to_string()),
+            Err("owned descendant remained live".to_string()),
+            true,
+            "mixed failure control",
+        )
+        .err()
+        .ok_or("mixed cleanup/capture failure was accepted")?;
+        assert_eq!(error.kind, super::TimedCaptureErrorKind::Cleanup);
+        assert!(error.message.contains("owned descendant remained live"));
+        assert!(error.message.contains("stdout drain failed"));
+        assert!(error.message.contains("stderr drain failed"));
+
+        let legacy = super::settle_timed_capture_streams(
+            Ok("version text".to_string()),
+            Err("stderr drain failed".to_string()),
+            Err("owned descendant remained live".to_string()),
+            false,
+            "legacy failure control",
+        )
+        .err()
+        .ok_or("legacy capture failure was accepted")?;
+        assert_eq!(legacy.kind, super::TimedCaptureErrorKind::Capture);
+        assert_eq!(legacy.into_message(), "stderr drain failed");
         Ok(())
     }
 }

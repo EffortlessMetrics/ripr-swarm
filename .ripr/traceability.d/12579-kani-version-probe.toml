@@ -1,9 +1,13 @@
 # Pre-run availability has a distinct timeout and does not establish native proof.
 [[extend]]
 id = "RIPR-SPEC-0371"
-code = ["xtask/src/kani_lane.rs"]
+code = ["xtask/src/kani_lane.rs", "xtask/src/run.rs"]
 tests = [
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_deadline_prevents_a_verification_launch",
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_refuses_nonzero_signal_and_missing_tool",
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_preserves_success_and_the_empty_opt_out",
+  "xtask/tests/kani_version_probe.rs::kani_empty_inventory_cannot_override_unavailable_tooling",
+  "xtask/tests/kani_version_probe.rs::kani_probe_watchdog_stops_a_hung_probe_and_pipe_inheriting_descendant",
+  "xtask/src/run.rs::tests::complete_capture_rejects_a_pipe_that_outlives_the_drain_grace",
+  "xtask/src/run.rs::tests::typed_capture_retains_cleanup_failure_when_both_drains_also_fail",
 ]

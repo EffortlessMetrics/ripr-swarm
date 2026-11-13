@@ -1,12 +1,13 @@
 pub(super) const EVIDENCE_HEALTH_HELP: &str = r#"Summarize how strong the current static evidence looks across the workspace.
 
-Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
+Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH] [--quiet]
 
 Options:
   --root PATH                    Workspace root to summarize. Defaults to current directory.
   --out PATH                     JSON output path. Defaults to target/ripr/reports/evidence-health.json.
   --out-md PATH                  Markdown output path. Defaults to target/ripr/reports/evidence-health.md.
   --mutation-calibration PATH    Optional imported mutation-calibration JSON for calibration availability counts.
+  --quiet                        Silence the stderr progress lines (also RIPR_QUIET).
 
 The evidence-health report is an advisory Lane 1 analyzer-health view. It
 summarizes seam grip classes, missing discriminators, observed values, related
@@ -66,8 +67,33 @@ CI blocking by default.
 pub(super) const GATE_HELP: &str = r#"Evaluate the optional pass/fail gate against existing PR guidance (advisory unless explicitly enabled).
 
 Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH] [further inputs: see Options below]
+       ripr gate check --base REV [--head REV] [--mode MODE] [--label LABEL]... [--labels-json PATH] [check options: see below]
 
-Options:
+`gate check` is the one-command CI gate: it runs `ripr review-comments` for
+--base..--head, then `gate evaluate` over the guidance it wrote, and exits like
+`gate evaluate`: 0 pass/advisory/acknowledged, 3 blocked, 2 config_error. It
+defaults to --mode acknowledgeable, so an eligible new gap blocks unless the PR
+carries the waiver label. If review-comments cannot complete, the previous
+guidance document is not reused: the decision is config_error (exit 2).
+
+Check options:
+  --base REV                          Required. Base revision of the change, for example origin/main.
+  --head REV                          Head revision. Defaults to HEAD.
+  --timeout-ms N                      Passed to review-comments.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+                                      Any existing file there (and its .md) is removed before the
+                                      run, and again if review-comments fails.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
+  --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
+  --acknowledgements, --baseline, --out, --out-md
+                                      As for gate evaluate.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
+
+Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
   --repo-exposure PATH                Optional repo-exposure JSON input.
   --pr-guidance PATH                  Optional PR guidance JSON from `ripr review-comments`.
@@ -88,6 +114,9 @@ Options:
                                       Active exceptions and violations are reported in the
                                       gate-decision JSON and Markdown. A missing or malformed
                                       ledger is a config_error (fail-closed).
+  --acknowledgements PATH             Optional structured acknowledgement ledger (TOML,
+                                      schema_version = 1). Scoped rows bind to canonical_gap_id;
+                                      legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
   --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.

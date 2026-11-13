@@ -40,6 +40,9 @@ The configuration layer should:
 - allow repository config to set oracle-strength policy for supported oracle
   shapes;
 - allow repository config to set finding and seam diagnostic severity policy;
+- allow optional `[[overrides]]` rows to override only severity and oracle
+  policy for one Cargo package name or repository-relative path glob, with
+  the most specific match winning and unknown crate names failing closed;
 - allow repository config to point at a relative suppressions file;
 - allow repository config to set report related-test caps where the command
   supports that cap;
@@ -115,6 +118,20 @@ missing `mcpServers` key), add `--force` to replace a customized `ripr` entry,
 and fix or remove the file first when it is not a JSON object or `mcpServers`
 is not an object, which init refuses. A `.mcp.json` that is a symlink is not
 verified; one over 1 MiB is reported as unreadable.
+
+### Generated MCP registration (#13050)
+
+The `ripr` server entry that `ripr init --mcp` writes to `.mcp.json`, and
+`ripr init --agents cursor --mcp` to `.cursor/mcp.json`, is one shared value:
+command `ripr`, args `mcp`, `--stdio`, and
+`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. The slim listing omits only each tool's
+`outputSchema` (docs/interop/mcp.md), cutting the `tools/list` every agent
+session pays at start; results still carry `structuredContent`. An existing
+`ripr` entry is left alone without `--force`, and doctor ignores `env`. Slim is
+the server default since #13803; the explicit value keeps older ripr builds
+slim, and a host that validates results against `outputSchema` sets it to
+`full`. Acceptance: the init unit tests compare the written entry with
+this value for both files.
 
 ### Suppression manifest declarations
 
@@ -296,7 +313,91 @@ then the human diagnostic explains how to fix or remove the candidate's file
 and rerun with a new candidate-tree identity; editing only the worktree file
 cannot repair that immutable subject. A config-free candidate uses the built-in
 defaults, not a parent or worktree config. The JSON refusal retains its redacted
-first-line message, config_invalid identity and analysis/config-load route.
+first-line message plus the parser's source-free reason (#14441), its
+config_invalid identity and analysis/config-load route.
+```
+
+### Unknown keys name the nearest valid key (#13682)
+
+```text
+Given ripr.toml contains a key that is one small edit (including one adjacent
+swap) from a valid key in the same table, such as `[analysis] modee` or `mdoe`,
+when ripr loads the config,
+then the load fails and the error adds `did you mean `mode`?`, built only from
+the parser's fixed key names; an unrelated key gets no suggestion. The
+source-free summary keeps the hint only when it names a known key.
+The source-free summary also keeps the parser's reason without file content
+(#14441): an unknown key becomes `unknown key, expected one of ...` (the key
+is dropped; the expected list is ripr's schema), and a grammar reason such as
+`unclosed table, expected `]`` keeps its fixed wording only when every
+backticked token is punctuation. Wrong-type and value lines never pass.
+The reason is read only from the parser's own layout (an `invalid ripr.toml:
+TOML parse error at line N, column M` header with no quoted text before it,
+then the gutter, `N | ` excerpt and caret lines) and only when the message
+after it is a single line; a key or value whose newline splits the message,
+or a semantic diagnostic whose echoed value imitates that layout, keeps the
+location alone.
+
+Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
+reference table,
+then their keys, types, enums and integer floors equal what the parser accepts.
+```
+
+### Rejected closed-set values name the nearest accepted value (#14176)
+
+```text
+Given ripr.toml sets analysis.mode, an [oracles] strength, a [severity.*]
+severity or a [languages] enabled entry to a value that is an accepted
+spelling in another case, padded with whitespace, or one small edit away,
+such as `mode = "Draft"` or `enabled = ["Rust"]`,
+when ripr loads the config,
+then the load still fails (values stay case-sensitive) and the error ends
+with `(did you mean `draft`?)`, built only from that key's fixed accepted
+values; an unrelated value such as `mode = "slow"` gets no suggestion, a
+[severity.findings] value is never pointed at `off`, and the typed diagnostic
+keeps the same span, rejected value and accepted-value list.
+```
+
+### Per-crate overrides (#2671)
+
+```text
+Given ripr.toml sets repo-wide severity and two [[overrides]] rows with
+different finding severity for crates/alpha/** and crates/beta/**,
+when check renders findings from those crates,
+then each crate uses its override; unmatched paths keep the repo-wide value.
+
+Given ripr.toml omits [[overrides]] or sets overrides = [],
+when check renders the same findings,
+then the output is identical to the repo-wide policy.
+
+Given an [[overrides]] row names crate = "missing",
+when load_for_root binds workspace packages,
+then loading fails with a diagnostic that names the unknown crate and known
+packages rather than silently ignoring the row.
+
+Given one row selects crate = "alpha" and another selects a broader path glob,
+when both match a file in that package,
+then the crate-name selector wins.
+
+Given two equally specific path rows set opposite snapshot_strength values,
+when their document order is reversed,
+then the later row wins and the check-artifact config identity changes.
+
+Given ripr.toml at the workspace root names crate = "beta",
+when load_for_root starts from crates/alpha,
+then the sibling package binds instead of being reported unknown.
+
+Given members = ["crates/*/plugins/*"] and crate = "parser",
+when that nested package exists,
+then the crate selector binds rather than failing as unknown.
+
+Given crate = "alpha" and a nested workspace package under that directory,
+when a file belongs to the nested package,
+then the parent crate overlay does not apply.
+
+Given --candidate-tree and a crate selector,
+when the candidate tree's manifests are bound,
+then a matching package name applies and an unknown name fails closed.
 ```
 
 ### Duplicate suppression declarations fail closed
@@ -393,6 +494,16 @@ renders `!`, exits 3, and emits a `doctor_recovery` canonical action naming
 genuine unborn branch retains the advisory and first-commit guidance, with
 exit 0 when the other checks pass. An unanswered probe never claims unborn.
 
+When `HEAD` resolves but RIPR-SPEC-0084's default-base search finds no
+candidate (a depth-1 CI checkout that fetched only its own commit, a
+repository whose branch is neither `main` nor `master` with no `origin/HEAD`),
+a bare `ripr check` stops with that search's message. Doctor records an
+advisory `git_default_base` check whose evidence ends with that same message,
+keeps exit 0 when the other checks pass, and recommends
+`ripr check --base REF` bound to the diagnosed root instead of a bare
+`ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
+never produces the advisory, and a failed prerequisite still outranks it.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -433,6 +544,20 @@ keep source-free parser reasons and the allowlisted misplaced-key hint.
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
+
+Given explicit compiler environment values and --profile source-build,
+when doctor evaluates tool_rustc,
+then RUSTC takes precedence over CARGO_BUILD_RUSTC and otherwise PATH rustc;
+and a bare executable name uses PATH while a relative path containing a
+separator resolves from the selected root, with spaces kept literally;
+and a missing, malformed, below-minimum or failing selected compiler fails
+without retrying a lower-priority compiler;
+and an empty or non-Unicode selected value fails with its variable named;
+and the bounded probe, no-auto-install policy and MSRV check remain in force.
+The analysis profile keeps its existing PATH behavior. Cargo configuration
+files, compiler wrappers and successful build qualification are outside this
+prerequisite check. Non-Unicode overrides are conservatively refused, not a
+claim to duplicate Cargo's invalid-Unicode fallback behavior.
 
 Given a git root whose Cargo workspace lives in a subdirectory (for example
 `rust/Cargo.toml` with `[workspace]` and no Cargo.toml at the git top level),
@@ -512,12 +637,22 @@ not the symlink spelling.
 
 ## Test Mapping
 
+- `crates/ripr/src/config/schema_parity_tests.rs` (#13682) pins nearest-key
+  suggestions, the source-free summary allowlist, and schema/parser/docs parity.
+- `crates/ripr/src/config/value_hint_tests.rs` (#14176) pins nearest-value
+  suggestions for closed-set values, the unrelated-value and oversized-value
+  negatives, and the unchanged typed diagnostic.
+
 - `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
 - `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
 - `hostile_repos::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
 - `hostile_repos::looping_ref_without_base_is_not_reported_as_unborn`
 - `hostile_repos::unreadable_ref_without_base_is_not_reported_as_unborn`
 - `output::doctor::tests::unborn_head_verdict_claims_nothing_when_the_probe_never_answered`
+- `output::doctor::tests::unresolvable_default_base_is_advised_and_not_sent_to_bare_ripr_check`
+- `output::doctor::tests::shallow_checkout_without_a_base_branch_is_advised`
+- `output::doctor::tests::no_default_base_recommendation_names_explicit_base_bound_to_root`
+- `generated_review_workflow::doctor_packet_refresh_and_first_check_preserve_physical_root_identity`
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.
@@ -634,6 +769,11 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_overrides_precede_path_without_shell_splitting`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_failure_never_borrows_a_healthy_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_empty_override_is_an_error_before_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_non_unicode_override_is_disclosed`
+- `crates/ripr/tests/doctor_json_schema.rs::source_build_doctor_json_refuses_missing_explicit_compiler`
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
 - `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`
