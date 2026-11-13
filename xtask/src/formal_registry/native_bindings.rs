@@ -389,7 +389,7 @@ fn validate_binding(loaded: &LoadedClaim, binding: &ClaimBinding) -> RegistryRes
         !binding.limitations.is_empty(),
         "native binding limitations must be explicit",
     )?;
-    super::unique_strings(&binding.limitations, "native binding limitations")?;
+    super::unique_strings(&binding.limitations, "native binding limitations", true)?;
     let mut subjects = BTreeSet::new();
     for subject in &binding.subjects {
         require(
