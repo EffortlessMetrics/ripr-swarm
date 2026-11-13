@@ -19,20 +19,42 @@ fn root() -> Result<Root, String> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(Root(path))
 }
+#[cfg(target_os = "linux")]
+fn require_reaped(pid: &str) -> Result<(), String> {
+    use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+    let value = pid
+        .trim()
+        .parse::<i32>()
+        .map_err(|error| error.to_string())?;
+    let pid = Pid::from_raw(value).ok_or("invalid recorded child pid")?;
+    // Observation only: ECHILD records that our original primary is no longer
+    // waitable. Do not send kill-0 to a number whose custody has been released.
+    match waitid(
+        WaitId::Pid(pid),
+        WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+    ) {
+        Err(rustix::io::Errno::CHILD) => Ok(()),
+        Err(error) => Err(format!("owned primary reap observation failed: {error}")),
+        Ok(state) => Err(format!("owned primary remains waitable: {state:?}")),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 fn require_reaped(pid: &str) -> Result<(), String> {
     let output = capture_bytes_in_dir_with_timeout(
-        Path::new("kill"),
-        &["-0".to_string(), pid.trim().to_string()],
+        Path::new("ps"),
+        &["-p".into(), pid.trim().into(), "-o".into(), "pid=".into()],
         Path::new("."),
         &[],
         &[],
         Duration::from_secs(5),
-        "observe owned child cleanup",
+        "read-only primary observation",
     )?;
-    if output.timed_out || output.status.is_none_or(|status| status.success()) {
-        return Err(format!(
-            "owned child {pid:?} is still live or cleanup observation failed"
-        ));
+    if output.timed_out
+        || output.status.is_none_or(|status| status.success())
+        || !output.stdout.is_empty()
+    {
+        return Err("owned primary remains visible or read-only observation failed".into());
     }
     Ok(())
 }
@@ -99,6 +121,14 @@ fn byte_input_nonreader_timeout_and_early_exit_are_bounded_and_reaped() -> Resul
                     && output.timed_out
                     && output.status.is_some_and(|status| !status.success()) => {}
             Err(error) if !timeout_expected && error.contains("write stdin") => (),
+            #[cfg(not(target_os = "linux"))]
+            Err(error)
+                if timeout_expected
+                    && error.contains("read-only cleanup observation")
+                    && error.contains("unavailable on this platform") =>
+            {
+                ()
+            }
             Err(error) => {
                 return Err(format!(
                     "{label} lost its actual timeout/early-exit classification: {error}"
@@ -185,6 +215,13 @@ fn bounded_byte_capture_rejects_stdout_and_stderr_overflow_and_reaps_child() -> 
         }
         match result {
             Err(error) if error.contains(&format!("{stream} exceeds its 4-byte output budget")) => {
+            }
+            #[cfg(not(target_os = "linux"))]
+            Err(error)
+                if error.contains("read-only cleanup observation")
+                    && error.contains("unavailable on this platform") =>
+            {
+                ()
             }
             Err(error) => return Err(format!("wrong overflow refusal: {error}")),
             Ok(_) => return Err(format!("{stream} overflow was accepted")),

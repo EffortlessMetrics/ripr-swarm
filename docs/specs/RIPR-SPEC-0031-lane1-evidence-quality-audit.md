@@ -456,7 +456,10 @@ movement remains static evidence movement rather than mutation proof.
   for generated repo-exposure inputs.
 - `xtask::run::tests::stdout_file_capture_incomplete_stdout_cleans_owned_descendant`
   and `xtask::run::tests::stdout_file_capture_incomplete_stderr_cleans_owned_descendant`
-  refuse early-parent-exit capture with resistant owned Linux descendants.
+  settle resistant contained Linux descendants before reaping an early-exiting
+  parent, then publish only after both streams report complete capture. An
+  escaped or otherwise incomplete drain still refuses publication; post-reap
+  observation never sends another signal to the released numeric group.
 - `xtask::run::tests::stdout_file_capture_stderr_error_preserves_prior_artifact`
   pins publication after the real latency-reader stderr error boundary.
 - `xtask::run::tests::stdout_file_capture_timeout_retains_actual_observation`

@@ -8,6 +8,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "run/byte_capture.rs"]
+pub(crate) mod byte_capture;
+pub(crate) use byte_capture::ObservedByteCapture;
 #[path = "run/command_diagnostic.rs"]
 mod command_diagnostic;
 #[cfg(any(target_os = "linux", test))]
@@ -17,6 +20,9 @@ mod proc_stat;
 use proc_stat::PROC_STAT_ESRCH;
 #[cfg(any(target_os = "linux", test))]
 use proc_stat::proc_stat_error_is_gone;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "run/test_cleanup.rs"]
+mod test_cleanup;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "run/test_session.rs"]
 mod test_session;
@@ -43,11 +49,10 @@ const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// A recorded `timed_out` result is not proof that descendants died: the first
 /// `kill -KILL -- -<pgid>` can race a fork (GNU `time` starting `ripr` is the
 /// motivating case). After reaping the direct child, the timeout path polls
-/// until the group is empty, re-sending SIGKILL each round, and refuses to
-/// return `timed_out: true` if the group is still populated when this budget
-/// expires. Two seconds is long enough for SIGKILL and a missed-fork retry,
-/// and short enough that an unkillable leftover becomes an explicit error
-/// instead of a silent timeout.
+/// until a read-only observation finds the group empty, and refuses to return
+/// `timed_out: true` if the observation is incomplete or still populated.
+/// Reaping releases numeric identity custody: confirmation must never signal
+/// that number again. Two seconds bounds observation, not another kill attempt.
 #[cfg(unix)]
 const POST_KILL_GROUP_CONFIRM_GRACE: Duration = Duration::from_secs(2);
 
@@ -1123,16 +1128,25 @@ pub(crate) fn capture_bytes_in_dir_with_env_budget(
     budget: ByteCaptureBudget,
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
-    let (envs, env_remove) = envs;
-    capture_bytes_with_input(
-        program,
-        args,
-        (cwd, None),
-        envs,
-        env_remove,
-        (budget.timeout, Some(budget)),
-        error_context,
-    )
+    capture_bytes_in_dir_with_env_budget_observed(program, args, cwd, envs, budget, error_context)
+        // Ordinary callers keep their data result and deliberately discard the
+        // non-deserializable local-execution observation.
+        .map(|observed| observed.consume(|_, output, _, _, _| output))
+        .map_err(TimedCaptureError::into_message)
+}
+
+/// Observe one actual bounded invocation. The returned capability can only be
+/// produced by the owned capture path, never by deserializing retained files.
+/// It records requested identity and local outcomes, not protected provenance.
+pub(crate) fn capture_bytes_in_dir_with_env_budget_observed(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    envs: (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<ObservedByteCapture, TimedCaptureError> {
+    byte_capture::capture_observed(program, args, cwd, envs, budget, error_context)
 }
 
 /// `capture_bytes_in_dir_with_env_budget` that also writes `input` to the
@@ -1166,97 +1180,15 @@ fn capture_bytes_with_input(
     deadline: (Duration, Option<ByteCaptureBudget>),
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
-    let (cwd, input) = source;
-    let (timeout, budget) = deadline;
-    let started = Instant::now();
-    let mut command = Command::new(program);
-    command.args(args).current_dir(cwd);
-    configure_timed_child_command(&mut command);
-    for name in env_remove {
-        command.env_remove(name);
-    }
-    for (name, value) in envs {
-        command.env(name, value);
-    }
-    // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    if input.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = OwnedProcess::spawn(command)
-        .map_err(|err| format!("failed to run {error_context}: {err}"))?;
-    let stdout = child
-        .stdout_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stdout for {error_context}"))?;
-    let stderr = child
-        .stderr_pipe()
-        .take()
-        .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
-    let (stdout_handle, stdout_rx) =
-        spawn_byte_reader_channel(stdout, budget.map(|v| ("stdout", v.stdout_bytes)));
-    let (stderr_handle, stderr_rx) =
-        spawn_byte_reader_channel(stderr, budget.map(|v| ("stderr", v.stderr_bytes)));
-    let input_completion = if let Some(bytes) = input {
-        let mut stdin = child
-            .stdin_pipe()
-            .take()
-            .ok_or_else(|| format!("failed to capture stdin for {error_context}"))?;
-        let bytes = bytes.to_vec();
-        let (sender, receiver) = mpsc::channel();
-        // Closing stdin after the write supplies batch EOF. No join can hold the
-        // caller past the owned process deadline/drain grace.
-        let _input_writer = thread::Builder::new()
-            .name("bounded-process-stdin".to_string())
-            .spawn(move || {
-                let result = stdin.write_all(&bytes);
-                drop(stdin);
-                let _ = sender.send(result);
-            })
-            .map_err(|error| format!("start stdin writer for {error_context}: {error}"))?;
-        Some(receiver)
-    } else {
-        None
-    };
-    let wait_outcome =
-        wait_for_child_with_deadline(&mut child, started, Some(timeout), error_context)?;
-    let stdout = drain_byte_reader_bounded(
-        stdout_rx,
-        stdout_handle,
-        POST_KILL_DRAIN_GRACE,
-        "stdout",
+    byte_capture::capture_legacy(
+        program,
+        args,
+        source,
+        (envs, env_remove),
+        deadline,
         error_context,
-        budget.is_some(),
-    )?;
-    let stderr = drain_byte_reader_bounded(
-        stderr_rx,
-        stderr_handle,
-        POST_KILL_DRAIN_GRACE,
-        "stderr",
-        error_context,
-        budget.is_some(),
-    )?;
-    if let Some(receiver) = input_completion {
-        let result = receiver
-            .recv_timeout(POST_KILL_DRAIN_GRACE)
-            .map_err(|error| format!("stdin completion for {error_context}: {error}"))?;
-        if let Err(error) = result {
-            // A deadline kill closes the reader while a large stdin write may
-            // still be blocked. Preserve that observed timeout, rather than
-            // replacing it with its expected BrokenPipe consequence. Early
-            // exit and every other writer/drain failure still refuse.
-            if !wait_outcome.timed_out || error.kind() != std::io::ErrorKind::BrokenPipe {
-                return Err(format!("write stdin for {error_context}: {error}"));
-            }
-        }
-    }
-    Ok(TimedBytesOutput {
-        status: Some(wait_outcome.status),
-        stdout,
-        stderr,
-        duration: wait_outcome.duration,
-        timed_out: wait_outcome.timed_out,
-    })
+    )
+    .map_err(TimedCaptureError::into_message)
 }
 
 pub(crate) fn capture_stdout_to_file_with_timeout(
@@ -1281,9 +1213,10 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
     for (name, value) in envs {
         command.env(name, value);
     }
-    // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
+    // File capture needs explicit prereap containment even outside a scoped
+    // analysis attempt. A prepared numeric process group alone is not custody.
     command.stderr(Stdio::piped());
-    let mut child = match OwnedProcess::spawn(command) {
+    let mut child = match OwnedProcess::spawn_isolated(command) {
         Ok(child) => child,
         Err(err) => {
             drop(stdout_file);
@@ -1345,11 +1278,15 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
             }
         };
 
+    let tree_cleanup = end_tree_after_normal_primary_exit(&mut child, wait_outcome.timed_out);
     // A zero primary exit is not a complete capture: a descendant can retain
     // either pipe. Both workers must finish before the staging file is published.
     // Unlike diagnostic string capture, file capture cannot replace missing
     // completion evidence with an empty byte count or a truncation note.
     let captured = (|| {
+        tree_cleanup.map_err(|error| {
+            format!("{error_context}: incomplete tree cleanup after primary exit: {error}")
+        })?;
         let stdout_bytes = drain_file_capture_bounded(
             &stdout_writer_rx,
             POST_KILL_DRAIN_GRACE,
@@ -1358,6 +1295,8 @@ pub(crate) fn capture_stdout_to_file_with_timeout(
         )?;
         let stderr =
             drain_file_capture_bounded(&stderr_rx, POST_KILL_DRAIN_GRACE, "stderr", error_context)?;
+        #[cfg(target_os = "linux")]
+        confirm_timed_process_group_gone(child.id(), error_context)?;
         publish_stdout_capture(&stdout_tmp_path, stdout_path, error_context)?;
         Ok(TimedFileOutput {
             status: Some(wait_outcome.status),
@@ -1412,9 +1351,8 @@ fn discard_failed_stdout_capture(
     error_context: &str,
     mut error: String,
 ) -> String {
-    // Primary cleanup alone cannot stop a Unix descendant after its parent has
-    // exited. This command already owns a fresh process group; use its existing
-    // confirmation/termination authority even when no timeout was recorded.
+    // Termination is delegated to the retained owner. After reap, the numeric
+    // group is only an observation target: it must never be signaled again.
     if let Err(cleanup) = child.terminate_tree() {
         error.push_str(&format!("; primary/tree cleanup failed: {cleanup}"));
     }
@@ -1714,7 +1652,8 @@ fn confirm_process_group_gone(
 ) -> Result<(), String> {
     let deadline = Instant::now() + budget;
     loop {
-        let members = process_group_live_members(pgid)?;
+        let members = process_group_live_members(pgid)
+            .map_err(|error| format!("{error_context}: {error}"))?;
         if members.is_empty() {
             return Ok(());
         }
@@ -1723,36 +1662,26 @@ fn confirm_process_group_gone(
                 "{error_context}: could not confirm process group {pgid} is gone during cleanup; still running: {members:?}"
             ));
         }
-        let _ = signal_process_group(pgid, "-KILL");
         thread::sleep(Duration::from_millis(50));
     }
 }
 
-/// Live members of `pgid`, fail-closed: a probe that cannot run is an error,
-/// not an empty group. A complete Linux `/proc` scan of every readable
-/// numeric pid is the authority for *which* PIDs are live, so SIGKILL
-/// zombies are omitted and a live other-uid descendant is not hidden behind
-/// a same-uid zombie. An empty complete scan still consults `kill -0`:
-/// ESRCH or a successful probe (zombie) may confirm gone, but EPERM/unknown
-/// must not. An incomplete scan (unreadable or unparseable `stat`) uses the
-/// probe alone. The `kill` probe runs under `LC_ALL=C` so ESRCH text is
-/// stable across caller locales.
+/// Read-only live-group observation after settlement. A complete Linux `/proc`
+/// scan omits zombies and includes readable other-uid members. An incomplete or
+/// unavailable scan cannot establish absence. Numeric signaling, including
+/// `kill -0`, must not be revived after the primary's identity was released.
+/// This observes group membership at a point in time, not escaped descendants.
 #[cfg(unix)]
 fn process_group_live_members(pgid: u32) -> Result<Vec<u32>, String> {
     #[cfg(target_os = "linux")]
     {
-        let scan = scan_proc_pgrp(pgid);
-        let probe = match &scan {
-            Some(ProcGroupScan::Complete { live }) if !live.is_empty() => {
-                Ok(GroupProbe::SignaledAlive)
-            }
-            _ => probe_process_group_alive(pgid),
-        };
-        members_from_group_scan(pgid, scan, probe)
+        members_from_group_scan(pgid, scan_proc_pgrp(pgid))
     }
     #[cfg(not(target_os = "linux"))]
     {
-        members_from_group_probe(pgid, probe_process_group_alive(pgid))
+        Err(format!(
+            "read-only cleanup observation for process group {pgid} is unavailable on this platform"
+        ))
     }
 }
 
@@ -1763,64 +1692,16 @@ enum ProcGroupScan {
     Incomplete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(any(unix, test))]
-enum GroupProbe {
-    SignaledAlive,
-    Gone,
-    Inaccessible,
-}
-
 #[cfg(any(target_os = "linux", test))]
-fn members_from_group_scan(
-    pgid: u32,
-    scan: Option<ProcGroupScan>,
-    probe: Result<GroupProbe, String>,
-) -> Result<Vec<u32>, String> {
+fn members_from_group_scan(pgid: u32, scan: Option<ProcGroupScan>) -> Result<Vec<u32>, String> {
     match scan {
-        Some(ProcGroupScan::Complete { live }) if !live.is_empty() => Ok(live),
-        Some(ProcGroupScan::Complete { .. }) => match probe {
-            Ok(GroupProbe::Gone | GroupProbe::SignaledAlive) => Ok(Vec::new()),
-            Ok(GroupProbe::Inaccessible) => Ok(vec![pgid]),
-            Err(err) => Err(err),
-        },
-        Some(ProcGroupScan::Incomplete) | None => members_from_group_probe(pgid, probe),
-    }
-}
-
-/// Without a complete `/proc` scan, only ESRCH can confirm the group is gone.
-/// This is also the production decision on Unix hosts without Linux `/proc`.
-#[cfg(any(unix, test))]
-fn members_from_group_probe(
-    pgid: u32,
-    probe: Result<GroupProbe, String>,
-) -> Result<Vec<u32>, String> {
-    match probe {
-        Ok(GroupProbe::Gone) => Ok(Vec::new()),
-        Ok(GroupProbe::SignaledAlive | GroupProbe::Inaccessible) => Ok(vec![pgid]),
-        Err(err) => Err(err),
-    }
-}
-
-#[cfg(unix)]
-fn probe_process_group_alive(pgid: u32) -> Result<GroupProbe, String> {
-    let output = run_kill_on_group(pgid, "-0")
-        .map_err(|err| format!("could not probe process group {pgid}: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(classify_group_probe(output.status.success(), &stderr))
-}
-
-#[cfg(any(unix, test))]
-fn classify_group_probe(success: bool, stderr: &str) -> GroupProbe {
-    if success {
-        return GroupProbe::SignaledAlive;
-    }
-    // Fail closed: only ESRCH is an empty group. EPERM and unknown kill
-    // diagnostics mean a member may still exist.
-    if stderr.contains("No such process") {
-        GroupProbe::Gone
-    } else {
-        GroupProbe::Inaccessible
+        Some(ProcGroupScan::Complete { live }) => Ok(live),
+        Some(ProcGroupScan::Incomplete) => Err(format!(
+            "read-only cleanup observation for process group {pgid} is incomplete"
+        )),
+        None => Err(format!(
+            "read-only cleanup observation for process group {pgid} is unavailable"
+        )),
     }
 }
 
@@ -2441,11 +2322,19 @@ mod tests {
             }
             Err(err) => err,
         };
-        for expected in [
+        #[cfg(not(all(unix, not(target_os = "linux"))))]
+        let expected_parts = [
             "bounded build probe",
             "timed out after 1 second;",
             "process tree was terminated",
-        ] {
+        ];
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let expected_parts = [
+            "bounded build probe",
+            "read-only cleanup observation",
+            "unavailable on this platform",
+        ];
+        for expected in expected_parts {
             if !err.contains(expected) {
                 return Err(format!("timeout message should name {expected:?}: {err}"));
             }
@@ -2528,6 +2417,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(any(target_os = "linux", windows))]
     #[test]
     fn capture_output_with_timeout_reports_timed_out_process() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
@@ -2574,6 +2464,30 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(all(unix, not(target_os = "linux")))]
+    #[test]
+    fn timeout_without_a_read_only_group_observer_refuses_confirmation() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let result = capture_output_with_timeout(
+            "sh",
+            &["-c".into(), "sleep 30".into()],
+            &[],
+            Duration::from_millis(100),
+            "unobserved cleanup fixture",
+        );
+        match result {
+            Err(error)
+                if error.contains("unobserved cleanup fixture")
+                    && error.contains("read-only cleanup observation")
+                    && error.contains("unavailable on this platform") =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(format!("wrong unobserved-cleanup refusal: {error}")),
+            Ok(_) => Err("timeout invented process-group cleanup evidence".into()),
+        }
+    }
+
     #[cfg(unix)]
     fn long_running_command() -> Result<TestCommand, String> {
         Ok((
@@ -2596,7 +2510,7 @@ mod tests {
         ))
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn capture_output_with_timeout_terminates_pipe_inheriting_descendants() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
@@ -2631,7 +2545,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn capture_output_with_timeout_confirms_gnu_time_descendant_group_gone() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
@@ -2790,9 +2704,30 @@ mod tests {
         // so the no-deadline runner must still return bounded by the post-exit
         // drain grace instead of waiting for the descendant (#4150 review
         // control), and it must not report a step timeout.
+        #[cfg(target_os = "linux")]
+        let marker = unique_pgid_marker("legacy-lingering-pipe");
+        #[cfg(target_os = "linux")]
+        let args = vec![
+            "-c".to_string(),
+            r#"sh -c 'cat /proc/$$/stat > "$1"; exec sleep 60' descendant "$1" & exit 0"#
+                .to_string(),
+            "legacy-capture".to_string(),
+            marker.display().to_string(),
+        ];
+        #[cfg(not(target_os = "linux"))]
         let args = vec!["-c".to_string(), "sleep 60 & exit 0".to_string()];
-        let output =
-            capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain")?;
+        let captured =
+            capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain");
+        #[cfg(target_os = "linux")]
+        {
+            // Preserve the capture result before fixture cleanup. The legacy
+            // truncation oracle must not leave a running child behind the test.
+            let recorded = fs::read_to_string(&marker)
+                .map_err(|error| format!("missing legacy descendant identity: {error}"))?;
+            super::test_cleanup::finish_recorded_member(&recorded)?;
+            fs::remove_file(&marker).map_err(|error| error.to_string())?;
+        }
+        let output = captured?;
 
         assert!(
             output.status.is_some_and(|status| status.success()),
@@ -2948,9 +2883,9 @@ mod tests {
         let script = r#"
 printf '%s' "$$" > "$RIPR_CAPTURE_FIXTURE/primary"
 if [ "$RIPR_CAPTURE_STREAM" = stdout ]; then
-    sh -c 'trap "" TERM; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' 2>/dev/null &
+    sh -c 'trap "" TERM; cat /proc/$$/stat > "$RIPR_CAPTURE_FIXTURE/ready.stat"; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' 2>/dev/null &
 else
-    sh -c 'trap "" TERM; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' >/dev/null &
+    sh -c 'trap "" TERM; cat /proc/$$/stat > "$RIPR_CAPTURE_FIXTURE/ready.stat"; printf "%s" "$$" > "$RIPR_CAPTURE_FIXTURE/ready"; exec sleep 30' >/dev/null &
 fi
 attempt=0
 while [ ! -s "$RIPR_CAPTURE_FIXTURE/ready" ]; do
@@ -3005,13 +2940,11 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
             })
             .map(|entry| entry.path())
             .collect::<Vec<_>>();
-        // The test owns this exact group and scratch root. On a red witness,
-        // terminate it before reporting the failure; never use a name filter.
-        let fallback_cleanup = super::confirm_process_group_gone(
-            primary,
-            Duration::from_secs(2),
-            "owned fixture fallback cleanup",
-        );
+        // Snapshot first, then clean a red witness through a revalidated pidfd.
+        // The primary has been reaped, so the numeric group has no signal authority.
+        let recorded = fs::read_to_string(root.join("ready.stat"))
+            .map_err(|error| format!("read fixture descendant identity: {error}"))?;
+        let fallback_cleanup = super::test_cleanup::finish_recorded_member(&recorded);
         let result = (|| {
             fallback_cleanup?;
             let members = members_at_return?;
@@ -3040,38 +2973,18 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
                     "attempt cleanup damaged sibling or left staging: {staging:?}"
                 ));
             }
-            if wait_primary {
-                let output = capture?;
-                if !output.timed_out || output.status.is_none_or(|status| status.success()) {
-                    return Err(
-                        "physical timeout must retain its actual flag and terminated status".into(),
-                    );
-                }
-                if output.stdout_bytes != 18
-                    || artifact.map_err(|error| error.to_string())? != b"{\"complete\":true}\n"
-                {
-                    return Err(
-                        "settled timeout capture must retain the 18 literal fixture bytes".into(),
-                    );
-                }
-            } else {
-                let error = match capture {
-                    Ok(output) => {
-                        return Err(format!(
-                            "unfinished {stream} must refuse, got success={} timed_out={} bytes={}",
-                            output.status.is_some_and(|status| status.success()),
-                            output.timed_out,
-                            output.stdout_bytes
-                        ));
-                    }
-                    Err(error) => error,
-                };
-                if !error.contains(stream) || !error.contains("capture incomplete") {
-                    return Err(format!("incomplete capture must name its stream: {error}"));
-                }
-                if artifact.map_err(|error| error.to_string())? != b"prior-good-artifact" {
-                    return Err("incomplete capture overwrote the prior artifact".into());
-                }
+            let output = capture?;
+            if output.timed_out != wait_primary
+                || output
+                    .status
+                    .is_none_or(|status| status.success() == wait_primary)
+            {
+                return Err("capture lost its actual primary exit/timeout disposition".into());
+            }
+            if output.stdout_bytes != 18
+                || artifact.map_err(|error| error.to_string())? != b"{\"complete\":true}\n"
+            {
+                return Err("settled capture must retain the 18 literal fixture bytes".into());
             }
             Ok(())
         })();
@@ -3296,171 +3209,25 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
     }
 
     #[test]
-    fn members_from_group_scan_fails_closed_on_incomplete_readable_probe() -> Result<(), String> {
-        let live = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: vec![9] }),
-            Ok(super::GroupProbe::Gone),
-        )?;
-        if live != vec![9] {
-            return Err(format!("complete live scan should win: {live:?}"));
+    fn members_from_group_scan_requires_complete_read_only_observation() -> Result<(), String> {
+        for live in [Vec::new(), vec![9, 12]] {
+            let found = super::members_from_group_scan(
+                1234,
+                Some(super::ProcGroupScan::Complete { live: live.clone() }),
+            )?;
+            assert_eq!(found, live);
         }
-        let empty_zombie = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
-            Ok(super::GroupProbe::SignaledAlive),
-        )?;
-        if !empty_zombie.is_empty() {
-            return Err(
-                "complete empty scan must ignore kill -0 zombies and not invent members"
-                    .to_string(),
-            );
-        }
-        let empty_gone = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
-            Ok(super::GroupProbe::Gone),
-        )?;
-        if !empty_gone.is_empty() {
-            return Err("complete empty scan plus ESRCH must confirm gone".to_string());
-        }
-        let setuid = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
-            Ok(super::GroupProbe::Inaccessible),
-        )?;
-        if setuid != vec![1234] {
-            return Err(format!(
-                "complete empty scan plus EPERM must not confirm gone: {setuid:?}"
-            ));
-        }
-        let unread = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Incomplete),
-            Ok(super::GroupProbe::SignaledAlive),
-        )?;
-        if unread != vec![1234] {
-            return Err(format!(
-                "incomplete scan plus a live probe must not confirm gone: {unread:?}"
-            ));
-        }
-        let unread_gone = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Incomplete),
-            Ok(super::GroupProbe::Gone),
-        )?;
-        if !unread_gone.is_empty() {
-            return Err("incomplete scan plus ESRCH may confirm gone".to_string());
-        }
-        let unread_eperm = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Incomplete),
-            Ok(super::GroupProbe::Inaccessible),
-        )?;
-        if unread_eperm != vec![1234] {
-            return Err(format!(
-                "incomplete scan plus EPERM must not confirm gone: {unread_eperm:?}"
-            ));
-        }
-        let missing =
-            super::members_from_group_scan(7, None, Ok(super::GroupProbe::SignaledAlive))?;
-        if missing != vec![7] {
-            return Err(format!(
-                "unavailable /proc must use the group probe: {missing:?}"
-            ));
-        }
-        let complete_ignores_probe_on_live = super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: vec![9] }),
-            Err("probe failed".to_string()),
-        )?;
-        if complete_ignores_probe_on_live != vec![9] {
-            return Err("complete live scan must not surface a skipped probe error".to_string());
-        }
-        if super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Complete { live: Vec::new() }),
-            Err("could not probe process group 1234: e".to_string()),
-        )
-        .is_ok()
-        {
-            return Err("empty complete scan plus probe failure must fail closed".to_string());
-        }
-        if super::members_from_group_scan(
-            1234,
-            Some(super::ProcGroupScan::Incomplete),
-            Err("could not probe process group 1234: e".to_string()),
-        )
-        .is_ok()
-        {
-            return Err("incomplete scan plus probe failure must fail closed".to_string());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn members_from_group_probe_requires_esrch_to_confirm_gone() {
-        // #8055: the non-Linux Unix production path and Linux's incomplete
-        // or unavailable scan must share this fail-closed decision.
-        for (probe, expected) in [
-            (Ok(super::GroupProbe::Gone), Ok(Vec::new())),
-            (Ok(super::GroupProbe::SignaledAlive), Ok(vec![7])),
-            (Ok(super::GroupProbe::Inaccessible), Ok(vec![7])),
-            (
-                Err("probe failed".to_string()),
-                Err("probe failed".to_string()),
-            ),
+        for (scan, expected) in [
+            (Some(super::ProcGroupScan::Incomplete), "incomplete"),
+            (None, "unavailable"),
         ] {
-            assert_eq!(super::members_from_group_probe(7, probe.clone()), expected);
-            assert_eq!(
-                super::members_from_group_scan(7, None, probe.clone()),
-                expected
-            );
-            assert_eq!(
-                super::members_from_group_scan(7, Some(super::ProcGroupScan::Incomplete), probe),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn classify_group_probe_treats_non_esrch_as_populated() -> Result<(), String> {
-        if super::classify_group_probe(true, "") != super::GroupProbe::SignaledAlive {
-            return Err("successful kill -0 means the group is populated".to_string());
-        }
-        if super::classify_group_probe(false, "kill: (-9): No such process\n")
-            != super::GroupProbe::Gone
-        {
-            return Err("ESRCH must mean the group is gone".to_string());
-        }
-        if super::classify_group_probe(false, "kill: (-9): Operation not permitted\n")
-            != super::GroupProbe::Inaccessible
-        {
-            return Err("EPERM must not confirm the group is gone".to_string());
-        }
-        if super::classify_group_probe(false, "") != super::GroupProbe::Inaccessible {
-            return Err("unknown nonzero kill status must not confirm gone".to_string());
-        }
-        if super::classify_group_probe(false, "kill: (-9): Aucun processus de ce type\n")
-            != super::GroupProbe::Inaccessible
-        {
-            return Err(
-                "translated ESRCH must not confirm gone; the kill probe must use LC_ALL=C"
-                    .to_string(),
-            );
+            match super::members_from_group_scan(1234, scan) {
+                Err(error) if error.contains(expected) && error.contains("1234") => {}
+                Err(error) => return Err(format!("wrong cleanup refusal: {error}")),
+                Ok(members) => return Err(format!("unobserved absence was accepted: {members:?}")),
+            }
         }
         Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn probe_process_group_alive_classifies_a_missing_group_as_gone() -> Result<(), String> {
-        match super::probe_process_group_alive(i32::MAX as u32) {
-            Ok(super::GroupProbe::Gone) => Ok(()),
-            other => Err(format!(
-                "LC_ALL=C kill -0 of a missing group should be ESRCH, got {other:?}"
-            )),
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -3616,70 +3383,63 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
-    fn confirm_process_group_gone_kills_a_live_group_within_budget() -> Result<(), String> {
+    fn confirm_process_group_gone_never_signals_a_live_observation_target() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
         let (mut child, pgid) = spawn_sleep_in_own_group()?;
         wait_until_process_group_has_members(pgid)?;
-        if let Err(err) =
-            super::confirm_process_group_gone(pgid, Duration::from_secs(2), "live-group")
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(err);
+        let result = super::confirm_process_group_gone(
+            pgid,
+            Duration::from_millis(100),
+            "read-only confirmation",
+        );
+        let survived = child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none();
+        // This handle still owns the waitable primary. Confirmation itself has
+        // no termination authority, even though the test owns this child.
+        child.terminate_tree()?;
+        if !survived {
+            return Err("read-only confirmation terminated its observation target".into());
         }
-        let leftover = super::process_group_live_members(pgid)?;
-        let _ = child.wait();
-        if !leftover.is_empty() {
-            return Err(format!(
-                "confirm_process_group_gone should leave group {pgid} empty, still running: {leftover:?}"
-            ));
+        match result {
+            Err(error)
+                if error.contains("could not confirm") && error.contains("still running") =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(format!("wrong live-group refusal: {error}")),
+            Ok(()) => Err("read-only confirmation claimed a live group was absent".into()),
         }
-        Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn confirm_process_group_gone_reports_when_a_live_group_outlives_zero_budget()
     -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
         let (mut child, pgid) = spawn_sleep_in_own_group()?;
-        if let Err(err) = wait_until_process_group_has_members(pgid) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(err);
-        }
-        let err = match super::confirm_process_group_gone(pgid, Duration::ZERO, "zero-budget") {
-            Ok(()) => {
-                let _ = super::signal_process_group(pgid, "-KILL");
-                let _ = child.wait();
-                return Err(
-                    "zero-budget confirmation must not claim a live group is gone".to_string(),
-                );
-            }
-            Err(err) => err,
-        };
+        wait_until_process_group_has_members(pgid)?;
+        let result = super::confirm_process_group_gone(pgid, Duration::ZERO, "zero-budget");
         let still_live = super::process_group_live_members(pgid);
-        let _ = super::signal_process_group(pgid, "-KILL");
-        let _ = child.wait();
+        child.terminate_tree()?;
+        let error = match result {
+            Err(error) => error,
+            Ok(()) => return Err("zero-budget confirmation accepted a live group".into()),
+        };
         for expected in ["could not confirm", "zero-budget", &pgid.to_string()] {
-            if !err.contains(expected) {
+            if !error.contains(expected) {
                 return Err(format!(
-                    "unconfirmed timeout should name {expected:?}; got {err}"
+                    "unconfirmed cleanup must name {expected:?}: {error}"
                 ));
             }
         }
-        match still_live {
-            Ok(members) if members.is_empty() => Err(
-                "zero-budget path should not kill the live group before reporting unconfirmed"
-                    .to_string(),
-            ),
-            Ok(_) => Ok(()),
-            Err(err) => Err(format!(
-                "live group should still be probeable after an unconfirmed report: {err}"
-            )),
+        if still_live?.is_empty() {
+            return Err("zero-budget confirmation terminated its observation target".into());
         }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -3694,7 +3454,7 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
         ))
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn assert_recorded_timeout_left_process_group_gone(marker: &Path) -> Result<(), String> {
         let pgid_text = fs::read_to_string(marker).map_err(|err| {
             format!(
@@ -3709,7 +3469,6 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
             .map_err(|err| format!("pgid marker should contain a pid, got {pgid_text:?}: {err}"))?;
         let members = super::process_group_live_members(pgid)?;
         if !members.is_empty() {
-            let _ = super::signal_process_group(pgid, "-KILL");
             return Err(format!(
                 "recorded timeout coexisted with live process group {pgid} members {members:?}"
             ));
@@ -3717,20 +3476,19 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
         Ok(())
     }
 
-    #[cfg(unix)]
-    fn spawn_sleep_in_own_group() -> Result<(std::process::Child, u32), String> {
+    #[cfg(target_os = "linux")]
+    fn spawn_sleep_in_own_group() -> Result<(super::OwnedProcess, u32), String> {
         let mut command = Command::new("sleep");
         command.arg("30");
         command.stdout(Stdio::null()).stderr(Stdio::null());
         command.process_group(0);
-        let child = command
-            .spawn()
+        let child = super::OwnedProcess::spawn_isolated(command)
             .map_err(|err| format!("spawn sleep in its own process group: {err}"))?;
         let pgid = child.id();
         Ok((child, pgid))
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn wait_until_process_group_has_members(pgid: u32) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
@@ -3739,7 +3497,7 @@ if [ "$RIPR_CAPTURE_WAIT" = yes ]; then wait; fi
                 Ok(_) => {
                     if Instant::now() >= deadline {
                         return Err(format!(
-                            "sleep process group {pgid} did not appear in /proc or kill -0"
+                            "sleep process group {pgid} did not appear in /proc"
                         ));
                     }
                     thread::sleep(Duration::from_millis(10));
