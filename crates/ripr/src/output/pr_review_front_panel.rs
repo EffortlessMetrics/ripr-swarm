@@ -51,6 +51,15 @@ const MARKDOWN_LIMITS: &[&str] = &[
     "Gate evaluator remains pass/fail authority.",
 ];
 
+/// A read failure for one panel input, with the not-found case kept separate
+/// from every other cause so the panel can say "missing" only when the path is
+/// really absent (#14553).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PanelInputError {
+    pub(crate) not_found: bool,
+    pub(crate) message: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PrReviewFrontPanelInput {
     pub(crate) root: String,
@@ -70,7 +79,7 @@ pub(crate) struct PrReviewFrontPanelInput {
     pub(crate) receipt_path: Option<String>,
     pub(crate) pr_guidance_json: Option<Result<String, String>>,
     pub(crate) first_action_json: Option<Result<String, String>>,
-    pub(crate) assistant_proof_json: Option<Result<String, String>>,
+    pub(crate) assistant_proof_json: Option<Result<String, PanelInputError>>,
     pub(crate) assistant_health_json: Option<Result<String, String>>,
     pub(crate) ledger_json: Option<Result<String, String>>,
     pub(crate) baseline_delta_json: Option<Result<String, String>>,
@@ -307,7 +316,19 @@ pub(crate) fn build_pr_review_front_panel_report(
                     .as_deref()
                     .is_some_and(|path| path.ends_with("test-oracle-assistant-proof.json"))
         });
-        if !warnings
+        // #14553: an unreadable proof keeps its read cause. Promote that
+        // warning to the required-input kind instead of replacing it with the
+        // generic "missing" sentence, which is only true for a not-found path.
+        let unreadable = warnings.iter_mut().find(|warning| {
+            warning.kind == "unreadable_input"
+                && warning
+                    .source_artifact
+                    .as_deref()
+                    .is_some_and(|path| path.ends_with("test-oracle-assistant-proof.json"))
+        });
+        if let Some(warning) = unreadable {
+            warning.kind = "missing_required_input".to_string();
+        } else if !warnings
             .iter()
             .any(|warning| warning.kind == "missing_required_input")
         {
@@ -742,7 +763,7 @@ fn parse_panel_sources(input: &PrReviewFrontPanelInput) -> ParsedPanelSources {
         &input.first_action_json,
         &mut parsed,
     );
-    parsed.assistant_proof = parse_optional_json(
+    parsed.assistant_proof = parse_optional_json_typed(
         "assistant proof",
         input.assistant_proof_path.as_deref(),
         &input.assistant_proof_json,
@@ -826,6 +847,55 @@ fn parse_optional_json(
             parsed.warnings.push(PanelWarning {
                 kind: "missing_optional_input".to_string(),
                 message: format!("Optional {label} input is unreadable: {error}"),
+                source_artifact: Some(path.to_string()),
+            });
+            return None;
+        }
+    };
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            parsed.warnings.push(PanelWarning {
+                kind: "malformed_input".to_string(),
+                message: format!("Optional {label} input is malformed: {error}"),
+                source_artifact: Some(path.to_string()),
+            });
+            None
+        }
+    }
+}
+
+/// [`parse_optional_json`] for the assistant proof, whose read failure keeps
+/// the not-found case separate from every other cause (#14553).
+fn parse_optional_json_typed(
+    label: &str,
+    path: Option<&str>,
+    text: &Option<Result<String, PanelInputError>>,
+    parsed: &mut ParsedPanelSources,
+) -> Option<Value> {
+    let path = path?;
+    let Some(text) = text else {
+        parsed.warnings.push(PanelWarning {
+            kind: "missing_optional_input".to_string(),
+            message: format!("{label} path {path} was supplied but no input text was loaded."),
+            source_artifact: Some(path.to_string()),
+        });
+        return None;
+    };
+    let text = match text {
+        Ok(text) => text,
+        Err(error) if error.not_found => {
+            parsed.warnings.push(PanelWarning {
+                kind: "missing_optional_input".to_string(),
+                message: format!("Optional {label} input is unreadable: {}", error.message),
+                source_artifact: Some(path.to_string()),
+            });
+            return None;
+        }
+        Err(error) => {
+            parsed.warnings.push(PanelWarning {
+                kind: "unreadable_input".to_string(),
+                message: format!("Assistant proof artifact is unreadable: {}", error.message),
                 source_artifact: Some(path.to_string()),
             });
             return None;
@@ -1026,7 +1096,8 @@ fn is_missing_required(parsed: &ParsedPanelSources) -> bool {
         || parsed.warnings.iter().any(|warning| {
             warning.source_artifact.as_deref().is_some_and(|path| {
                 path.ends_with("test-oracle-assistant-proof.json")
-                    && warning.kind == "missing_optional_input"
+                    && (warning.kind == "missing_optional_input"
+                        || warning.kind == "unreadable_input")
             })
         })
 }

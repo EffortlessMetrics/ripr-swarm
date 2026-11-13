@@ -6737,6 +6737,46 @@ fn pr_review_front_panel_names_unusable_inputs_on_stderr() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// #14553: an explicit `--assistant-proof` that exists but cannot be read (a
+/// directory here) keeps its read cause instead of the generic "missing"
+/// sentence, and the cause carries no raw `os error` text.
+#[test]
+fn pr_review_front_panel_names_an_unreadable_assistant_proof()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("front-panel-unreadable-proof");
+    std::fs::create_dir_all(&workspace)?;
+    let proof_dir = workspace.join("test-oracle-assistant-proof.json");
+    std::fs::create_dir_all(&proof_dir)?;
+    let out = workspace.join("panel.json");
+    let out_md = workspace.join("panel.md");
+    let proof_arg = proof_dir.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "pr-review",
+        "front-panel",
+        "--assistant-proof",
+        &proof_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Assistant proof artifact is unreadable: "),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("test-oracle-assistant-proof.json"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
 #[test]
 fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("first-action");
