@@ -357,8 +357,7 @@ pub(in crate::app) fn location_miss_hint(
         // The same "same file" rule selection uses (#14077's shared helper).
         let matches = locator_paths_match(file.as_ref(), &wanted);
         // #14416: the same rule ignoring ASCII case, for the hint only.
-        let matches_folded =
-            locator_paths_match(&file.as_ref().to_ascii_lowercase(), &wanted_folded);
+        let matches_folded = locator_paths_match(&file.to_ascii_lowercase(), &wanted_folded);
         // Shown root-relative through the shared location projector: a
         // fresh run stores absolute paths (verbatim `\\?\` ones on Windows),
         // and the suffix match accepts the relative form the user types.
