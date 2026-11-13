@@ -562,6 +562,32 @@ fn unreadable_ripr_toml_fails_the_refresh_closed_with_config_invalid() -> Result
         ));
     }
 
+    // #14451: the detail is the source-free summary the CLI JSON uses: the
+    // location and the parser's reason, never the TOML source excerpt, the
+    // CLI-only "fix the error above" trailer, or a mid-word cut.
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14451]\nmode = 1\n")
+        .map_err(|error| error.to_string())?;
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    refresh_attempt_failure_code(&refresh, "ripr_refresh unknown table")?;
+    let detail = refresh
+        .pointer("/result/structuredContent/attempt/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !detail.contains("TOML parse error at line 1, column 2")
+        || !detail.contains("; unknown key, expected one of `analysis`")
+        || detail.contains("canary_table_14451")
+        || detail.contains('\n')
+        || detail.contains("Fix the error above")
+        || detail.ends_with('\u{2026}')
+    {
+        return Err(format!(
+            "config_invalid detail must be the source-free summary: {detail:?}"
+        ));
+    }
+
     Ok(())
 }
 
@@ -789,6 +815,206 @@ fn refresh_cuts_git_at_the_configured_ripr_git_timeout() -> Result<(), String> {
     if elapsed >= Duration::from_secs(30) {
         return Err(format!(
             "a 1 s git deadline must end the refresh promptly, took {elapsed:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14347: a Rust crate whose changed predicate is only tested from an
+/// unchanged integration test file. With unchanged tests indexed (the
+/// default) the boundary is `exposed`; with
+/// `[analysis] include_unchanged_tests = false` the test is out of the index
+/// and the same predicate reads `no_static_path`.
+/// The guard is installed before any fallible setup, so a failed write or
+/// commit still removes the fixture.
+fn write_unchanged_test_workspace() -> Result<(PathBuf, FixtureGuard), String> {
+    let root = workspace_name("analysis-table");
+    let _ = std::fs::remove_dir_all(&root);
+    let guard = FixtureGuard { root: root.clone() };
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn above(amount: u32, limit: u32) -> bool {\n    amount > limit\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/above.rs"),
+        "use gate::above;\n\n#[test]\nfn boundary_is_exclusive() {\n    assert!(!above(2, 2));\n    assert!(above(3, 2));\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["init", "--quiet", "--initial-branch=main"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "candidate"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn above(amount: u32, limit: u32) -> bool {\n    amount >= limit\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "candidate")?;
+    Ok((root, guard))
+}
+
+/// The sorted exposure classes `ripr_list_gaps` reports after one refresh,
+/// with the session's disclosed profile and desired-input modes.
+fn mcp_classes_and_modes(root: &Path) -> Result<(Vec<String>, String, String), String> {
+    let mut session = Session::spawn(root)?;
+    initialize_session(&mut session)?;
+    let status = session.call(
+        "tools/call",
+        json!({ "name": "ripr_workspace_status", "arguments": {} }),
+    )?;
+    let status = structured_tool_result(&status, "workspace_status")?;
+    let profile_mode = status
+        .pointer("/session/profile/mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("status lost the profile mode: {status}"))?
+        .to_string();
+    let desired_mode = status
+        .pointer("/session/current_desired_input/mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("status lost the desired-input mode: {status}"))?
+        .to_string();
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    structured_tool_result(&refresh, "ripr_refresh")?;
+    let list = session.call(
+        "tools/call",
+        json!({ "name": "ripr_list_gaps", "arguments": {} }),
+    )?;
+    let list = structured_tool_result(&list, "ripr_list_gaps")?;
+    let mut classes = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("list_gaps lost its items: {list}"))?
+        .iter()
+        .map(|item| {
+            item.get("class")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("a listed gap lost its class: {item}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    classes.sort();
+    Ok((classes, profile_mode, desired_mode))
+}
+
+/// The sorted finding classifications `ripr check --format json` reports
+/// on the same root, the CLI side of the parity oracle.
+fn cli_classes(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--format", "json", "--root"])
+        .arg(root)
+        .output()
+        .map_err(|error| format!("spawn ripr check: {error}"))?;
+    let document: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "ripr check did not print JSON ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    let mut classes = document
+        .pointer("/findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr check lost its findings: {document}"))?
+        .iter()
+        .map(|finding| {
+            finding
+                .get("classification")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("a CLI finding lost its classification: {finding}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    classes.sort();
+    Ok(classes)
+}
+
+#[test]
+fn refresh_honors_the_analysis_table_like_ripr_check() -> Result<(), String> {
+    let (root, _guard) = write_unchanged_test_workspace()?;
+
+    // Control, no ripr.toml: the unchanged test is indexed, so the boundary
+    // is exposed, the session runs draft, and MCP agrees with the CLI.
+    let (default_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if !default_classes.iter().any(|class| class == "exposed") {
+        return Err(format!(
+            "with unchanged tests indexed the boundary must read exposed: {default_classes:?}"
+        ));
+    }
+    if profile_mode != "draft" || desired_mode != "draft" {
+        return Err(format!(
+            "a config-less session must run draft: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_default = cli_classes(&root)?;
+    if cli_default != default_classes {
+        return Err(format!(
+            "MCP and ripr check must agree with defaults: {default_classes:?} vs {cli_default:?}"
+        ));
+    }
+
+    // The repo's [analysis] table now drops unchanged tests and picks a
+    // non-draft mode; a fresh session must apply both, exactly as the CLI.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[analysis]\nmode = \"fast\"\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let (configured_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if configured_classes.is_empty()
+        || configured_classes
+            .iter()
+            .any(|class| class != "no_static_path")
+    {
+        return Err(format!(
+            "include_unchanged_tests = false must drop the unchanged test's reach over MCP: {configured_classes:?}"
+        ));
+    }
+    if profile_mode != "fast" || desired_mode != "fast" {
+        return Err(format!(
+            "the session must disclose the configured mode: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_configured = cli_classes(&root)?;
+    if cli_configured != configured_classes {
+        return Err(format!(
+            "MCP and ripr check must agree under ripr.toml: {configured_classes:?} vs {cli_configured:?}"
+        ));
+    }
+
+    // The mode alone must reach the analysis, not only the disclosed label:
+    // `instant` indexes changed files only, so with unchanged tests still
+    // included the unchanged test drops out and the boundary reads
+    // `no_static_path` again.
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"instant\"\n")
+        .map_err(|error| error.to_string())?;
+    let (instant_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if instant_classes.is_empty()
+        || instant_classes
+            .iter()
+            .any(|class| class != "no_static_path")
+    {
+        return Err(format!(
+            "mode = instant must index changed files only over MCP: {instant_classes:?}"
+        ));
+    }
+    if profile_mode != "instant" || desired_mode != "instant" {
+        return Err(format!(
+            "the session must disclose instant: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_instant = cli_classes(&root)?;
+    if cli_instant != instant_classes {
+        return Err(format!(
+            "MCP and ripr check must agree under mode = instant: {instant_classes:?} vs {cli_instant:?}"
         ));
     }
     Ok(())

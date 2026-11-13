@@ -705,6 +705,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             ));
         }
     }
+    // The partition lists come from the prepared binaries before the run. Taken after
+    // it, one shard spent four to six minutes in the listing on every run (#12915).
+    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
+        (Some(list), Some(test)) if list < test => {}
+        _ => findings.push("shards: the partition list must precede the test run".to_string()),
+    }
     if shards
         .lines()
         .filter(|line| line.trim() == "tool: nextest@0.9.149")
@@ -738,11 +745,13 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             findings.push(format!("shards: verify lost `{required}`"));
         }
     }
-    // The hosted route must run the shards behind its gates job and may not report
-    // the required result green without them.
+    // The hosted route must start the shards on the hosted gates job's own
+    // condition (alongside it, so the required context fits the merge queue's
+    // status-check timeout, #4838) and may not report the required result green
+    // without them.
     for required in [
         "      test-shards: 4\n",
-        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
+        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n    if: >-\n      !cancelled() &&\n      needs.admission.result == 'success' &&\n      needs.detect-docs-only.result == 'success' &&\n      needs.admission.outputs.docs_only != 'true' &&\n      (needs.route.outputs.router_target == 'github' ||\n      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||\n      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml\n",
         "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
@@ -801,6 +810,22 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             )));
         }
     }
+}
+
+#[test]
+fn sharded_hosted_tests_list_the_partition_before_the_run() {
+    let expected = "shards: the partition list must precede the test run".to_string();
+    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    // Swap the two commands: the run then precedes the listing again.
+    let swapped = SHARDS
+        .replace(SHARDED_LIST_COMMAND, "\u{0}")
+        .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
+        .replace('\u{0}', SHARDED_TEST_COMMAND);
+    assert_ne!(swapped, SHARDS);
+    assert!(
+        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        "a listing after the run was not rejected"
+    );
 }
 
 #[test]
@@ -900,8 +925,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "rust-github, docs-gate,",
         ),
         (
-            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
-            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail'))\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "scratch_status == 'tempfail')) || always()\n    uses: ./.github/workflows/rust-test-shards.yml",
         ),
     ] {
         let changed = ROUTED.replace(from, to);

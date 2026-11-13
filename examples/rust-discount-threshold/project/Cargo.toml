@@ -1,0 +1,8 @@
+[package]
+name = "discount_threshold"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: this example is not a member of the ripr workspace.
+[workspace]

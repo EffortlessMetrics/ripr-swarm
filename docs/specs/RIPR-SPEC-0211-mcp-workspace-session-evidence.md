@@ -151,8 +151,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
@@ -182,14 +184,14 @@ official SDK transport:
   evidence resources do not. The field is not part of the snapshot identity,
   and no existing field changes.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority on the committed default-branch diff
-  and commits the completed snapshot. Initialize/discover instructions,
-  the refresh tool description, and MCP help disclose before invocation
-  that staged and unstaged tracked edits and untracked files are excluded.
-  Shared authority does not mean identical input: `ripr check` defaults
-  to the working tree when staged or unstaged tracked edits exist, while
-  `ripr check --committed` selects committed input. The response scope
-  disclosure and MCP's runtime input remain unchanged. Status always emits
+  `app::check_workspace` authority on the default-branch diff and commits
+  the completed snapshot. Its input source follows `ripr check` (#13096,
+  below): committed history for a clean tree, the saved working tree when
+  staged or unstaged tracked edits exist. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose that selection, and
+  that unsaved buffers and untracked files are excluded, before invocation.
+  `ripr check --committed` and `source: "committed"` select committed
+  input. Status always emits
   `session.scope`, and refresh always emits top-level `scope`; both output
   schemas require this nullable field. It is null without a snapshot or for a
   clean committed snapshot. A dirty snapshot discloses `analyzed`,
@@ -207,8 +209,15 @@ official SDK transport:
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
 - `ripr_refresh` takes one more optional argument, `source` (#7357), with
-  the closed values `committed` and `worktree`. Omission and `committed`
-  are the same request and keep every behavior and identity above. A value
+  the closed values `committed` and `worktree`. `committed` keeps every
+  committed behavior and identity above. Omission (#13096) is a third
+  request: the server asks the one live-diff selection owner
+  (`app::diff_source::select_live_diff_source`, the decision `ripr check`
+  makes without `--worktree` or `--committed`) and runs `worktree` when the
+  tree holds a staged or unstaged tracked edit, `committed` otherwise
+  (a clean or untracked-only tree, an unborn `HEAD`, or a probe that could
+  not run). The selected attempt is exactly the explicit request of that
+  source: same producer, custody, scope and identity. A value
   outside the closed set, including an empty string, a different case, a
   non-string or an explicit null, is Invalid Params (`-32602`); nothing is
   coerced. `worktree` routes the same attempt through the shared
@@ -227,10 +236,17 @@ official SDK transport:
     (`null` before any snapshot) once a worktree source is requested or
     captured, and snapshot summaries (`snapshot`, `last_completed_snapshot`,
     `last_known_good`) add `source: "worktree"` for a worktree capture.
+    For an omitted `source`, `requested_source` is `"default"` (never the
+    selected value), so `requested_source: "default"` with
+    `captured_source: "worktree"` says the default selection read the
+    working tree; `session.current_desired_input.source` names the selected
+    `worktree`. A default request that selected committed input on a session
+    with no worktree snapshot keeps the v1 shape.
     A failed attempt keeps the last-known-good snapshot with its own tag: a
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
-    Source-less callers see the unchanged v1 shapes.
+    Callers that pass no `source` on a clean tree see the unchanged v1
+    shapes.
   - A committed zero-item empty-scope snapshot (`no_scope`,
     `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
     its `last_completed_snapshot` summary adds `analysis_status:
@@ -238,7 +254,7 @@ official SDK transport:
     same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
     both fields.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
-    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
     was captured with no explicit base (`snapshot.base` is absent) and its
     kind is `no_scope` or `no_changed_lines`, where the default base most
@@ -923,9 +939,10 @@ failed request cannot relabel it. The route is a bounded current-state rerun,
 not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
 with an explicit non-command limitation rather than truncating executable text.
 
-For failed saved-worktree refresh, MCP retry examples retain the requested
-worktree source when the operator corrects or omits a base. Discovery states
-the committed default separately from opt-in saved tracked edits. Unsaved and
+For a failed refresh, MCP retry examples retain the requested source
+(committed or worktree) when the operator corrects or omits a base. Discovery states
+the `ripr check`-parity default (saved tracked edits when any exist, committed
+otherwise) and the explicit `committed`/`worktree` overrides. Unsaved and
 untracked exclusions remain unchanged. Worktree cards and readiness follow the
 producer-custody rules above: offered only with an established agreement,
 withheld with the cause otherwise.

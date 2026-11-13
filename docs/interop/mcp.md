@@ -93,11 +93,13 @@ runs no tests; run them yourself. A refresh whose attempt failed returns
 after a related test's line first) and reports `observed_values_total` and
 `observed_values_omitted`.
 
-An agent edits the worktree, but by default `ripr_refresh` analyzes only the
-committed default-branch diff. To analyze saved staged and unstaged tracked
-edits without committing them, call `ripr_refresh` with `{"source":
-"worktree"}`; omitting `source` (or `"committed"`) keeps the committed
-default. A worktree snapshot is tagged `source: "worktree"` and discloses that
+An agent edits the worktree, so `ripr_refresh` with no `source` makes the
+same choice as `ripr check` (#13096): it analyzes saved staged and unstaged
+tracked edits when any exist, and the committed default-branch diff when the
+tree is clean or has only untracked files. The result then reports
+`requested_source: "default"` beside `captured_source` so the choice is
+visible. `{"source": "worktree"}` or `{"source": "committed"}` forces one
+input. A worktree snapshot is tagged `source: "worktree"` and discloses that
 unsaved editor buffers are outside. The findings producer and the seam
 inventory each record the raw Rust bytes they read; when they agree
 (`scope.consumed_source_commitment: "established"`, `repair_cards:
@@ -133,7 +135,8 @@ outside-MCP route.
 When the repository's default branch is not `main` or `master` (for example
 `trunk`) and there is no `origin/main`, the default base cannot be resolved and
 `ripr_refresh` fails with `analysis_failed` naming candidate branches. Retry
-`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
+`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`, plus
+`"source": "committed"` to keep committed input on a dirty tree): it is
 the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
 flag. Each refresh states its own base, so omitting `base` returns to the
 default branch. The additions are explicit-base-only so a base-less caller
@@ -159,7 +162,7 @@ may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
 and `base` or `source: "worktree"` widen the diff. The hint never changes the
 outcome kind and an empty result is not an all-clear. For a base-less
 `no_scope` or `no_changed_lines` snapshot the hint also carries
-`pass_base_last_commit`, which names `{"base": "HEAD~1"}` as the retry when the
+`pass_base_last_commit`, which names `{"source": "committed", "base": "HEAD~1"}` as the retry when the
 change under review is the last commit (#13096); the server names it but never
 infers it.
 
@@ -326,7 +329,8 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
   diff against the resolved default branch or the explicit `ripr_refresh`
-  `base` with `base_revision` when present, draft mode, the workspace's own
+  `base` with `base_revision` when present, the analysis mode from `ripr.toml`
+  `[analysis] mode` (`draft` when unset), the workspace's own
   configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
@@ -342,16 +346,15 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
 
-`ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority, then commits the completed snapshot into the session.
-Staged and unstaged tracked edits and untracked files are outside this scope.
-The initialize/discover instructions, refresh tool description, and MCP help
-disclose this before invocation. `ripr check` defaults to the working tree
-when staged or unstaged tracked edits exist; sharing the authority does not
-mean identical input. `ripr check --committed` selects committed input;
-`ripr check --worktree --format json` analyzes staged and unstaged tracked
-edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
-(RIPR-SPEC-0211, #7357: repair cards and readiness only with an
+`ripr_refresh` analyzes the default-branch diff through the shared check
+authority, then commits the completed snapshot into the session. Like
+`ripr check`, an omitted `source` reads saved staged and unstaged tracked
+edits when any exist and committed input otherwise; untracked files are
+outside either way. The initialize/discover instructions, refresh tool
+description, and MCP help disclose this before invocation.
+`ripr check --committed` and `source: "committed"` select committed input;
+`ripr check --worktree --format json` and `source: "worktree"` select staged
+and unstaged tracked edits (RIPR-SPEC-0211, #7357, #13096: repair cards and readiness only with an
 established producer-custody agreement, withheld with the cause
 otherwise). `ripr_get_repair_card` re-verifies, on every read, the captured
 digests of the files the card's evidence is bound to: an edit or commit after
@@ -636,10 +639,11 @@ omit findings. If the complete recovery exceeds its 4096-byte recovery-text budg
 the refusal explains that literal recovery is unavailable; it never emits a
 truncated command.
 
-Failed worktree refreshes preserve `source: "worktree"` in their MCP retry
-examples, including default-base, explicit invalid-base and configuration-repair recovery. Correct
-the base without silently changing the source. Ordinary committed requests
-retain omission semantics.
+Failed refreshes preserve the requested source (`source: "committed"` or
+`source: "worktree"`) in their MCP retry examples, including default-base,
+explicit invalid-base and configuration-repair recovery. Correct the base
+without silently changing the source: an omitted `source` takes the default
+input selection, which reads saved tracked edits on a dirty tree.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot

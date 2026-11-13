@@ -367,11 +367,12 @@ fn recovery_check_command(root: &Path, base: Option<&str>, source: RefreshSource
     .list_command()
 }
 
+/// The literal `ripr_refresh` arguments that repeat a failed attempt. The
+/// source is always named: an omitted `source` follows the current tree
+/// (#13096), so a retry of a committed attempt on a since-dirtied tree would
+/// otherwise read different input.
 fn refresh_retry_arguments(base: Option<&str>, source: RefreshSource) -> String {
-    let mut arguments = json!({});
-    if source == RefreshSource::Worktree {
-        arguments["source"] = json!("worktree");
-    }
+    let mut arguments = json!({ "source": source.as_str() });
     if let Some(base) = base {
         arguments["base"] = json!(base);
     }
@@ -394,8 +395,10 @@ fn gap_item_recovery(output: &crate::app::CheckOutput, source: RefreshSource) ->
 }
 
 /// Which input a `ripr_refresh` analyzes (#7357). `Committed` is the
-/// default and the only behavior of an omitted argument; `Worktree` is the
-/// opt-in saved tracked-worktree diff (staged and unstaged tracked edits).
+/// committed diff; `Worktree` is the saved tracked-worktree diff (staged and
+/// unstaged tracked edits). An omitted argument takes `ripr check`'s default
+/// (#13096): the working tree when it holds uncommitted tracked edits,
+/// committed history otherwise, decided by `app::diff_source`.
 /// The requested source (session) and the captured source (snapshot) are
 /// distinct facts: a failed worktree request never relabels a retained
 /// committed snapshot.
@@ -409,6 +412,9 @@ pub(crate) enum RefreshSource {
 impl RefreshSource {
     pub(crate) const COMMITTED_NAME: &'static str = "committed";
     pub(crate) const WORKTREE_NAME: &'static str = "worktree";
+    /// The `requested_source` value for a request that omitted `source` and
+    /// let the shared live-diff selection choose.
+    pub(crate) const DEFAULT_REQUEST_NAME: &'static str = "default";
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -622,9 +628,13 @@ impl Snapshot {
             })?
             .as_str()
             .to_string();
+        // The profile identity names the mode the analysis actually ran
+        // (`[analysis] mode`, #14347), so a draft and a deep selection never
+        // share one identity; default runs keep `profile:diff:draft`.
         let profile_identity = format!(
-            "mcp:{}:profile:diff:draft",
-            root_identity.unwrap_or("root:unavailable")
+            "mcp:{}:profile:diff:{}",
+            root_identity.unwrap_or("root:unavailable"),
+            output.mode.as_str()
         );
         let evidence_identity = evidence_identity(&items).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
@@ -783,6 +793,10 @@ pub(crate) struct WorkspaceSession {
     /// the retained snapshot's captured `source`: a failed worktree request
     /// leaves a committed last-good tagged committed.
     pub(crate) desired_source: RefreshSource,
+    /// `true` when the most recent refresh request omitted `source` and the
+    /// shared live-diff selection (`app::diff_source`, the same owner as
+    /// `ripr check`) chose `desired_source`; `false` for an explicit value.
+    pub(crate) desired_source_defaulted: bool,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -1421,7 +1435,7 @@ impl WorkspaceSession {
         let mut desired_input = json!({
             "kind": "workspace_diff",
             "base": "default_branch",
-            "mode": "draft",
+            "mode": profile.mode,
             "scope": "diff",
         });
         if let Some(base) = &self.desired_base {
@@ -1927,7 +1941,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         .as_ref()
         .is_some_and(|snapshot| snapshot.source == RefreshSource::Worktree);
     if session.desired_source == RefreshSource::Worktree || captured_worktree {
-        document["requested_source"] = json!(session.desired_source.as_str());
+        document["requested_source"] = if session.desired_source_defaulted {
+            json!(RefreshSource::DEFAULT_REQUEST_NAME)
+        } else {
+            json!(session.desired_source.as_str())
+        };
         document["captured_source"] = session
             .last_good
             .as_ref()
@@ -1982,8 +2000,14 @@ impl SessionProfile {
                     Some(identity) => SessionConfigPosture::Loaded { identity },
                     None => SessionConfigPosture::BuiltInDefaults,
                 };
+                // The effective mode the refresh runs, through the same
+                // `[analysis] mode` the check input applies (#14347).
+                let mode = config
+                    .analysis()
+                    .mode()
+                    .map_or(crate::app::Mode::Draft.as_str(), |mode| mode.as_str());
                 Self {
-                    mode: "draft",
+                    mode,
                     languages,
                     posture,
                 }
@@ -2045,9 +2069,9 @@ impl SessionProfile {
             SessionConfigPosture::DetectedNotLoaded => Some(
                 "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
             ),
-            SessionConfigPosture::BuiltInDefaults => {
-                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
-            }
+            SessionConfigPosture::BuiltInDefaults => Some(
+                "no workspace ripr.toml was loaded at server startup; each ripr_refresh re-resolves it, so a ripr.toml added after startup applies to the next refresh before it is visible here",
+            ),
         }
     }
 }
@@ -2080,11 +2104,19 @@ pub(crate) fn run_check(
     // loading configuration so a pending signal cannot poison later retries.
     let attempt = || -> Result<Snapshot, AttemptFailure> {
         let config = crate::config::load_for_root(root).map_err(|error| {
+            // #14451: the source-free summary every other machine surface
+            // uses (location plus the parser's reason, #14441). The raw
+            // message carries the TOML source excerpt and a CLI-only
+            // "fix the error above" trailer, and was cut mid-word by the
+            // detail bound.
             AttemptFailure::new(
                 CODE_CONFIG_INVALID,
-                format!("the workspace configuration could not be loaded: {error}"),
                 format!(
-                    "address the configuration error above (the detail names the cause), then {}",
+                    "the workspace configuration could not be loaded: {}",
+                    crate::config::config_error_summary(&error)
+                ),
+                format!(
+                    "fix ripr.toml at the location the detail names (the detail gives the cause), then {}",
                     check_retry_recovery(root, base, source)
                 ),
             )
@@ -2096,12 +2128,20 @@ pub(crate) fn run_check(
         let git_timeout = mcp_git_timeout().map_err(|error| {
             AttemptFailure::new(CODE_CONFIG_INVALID, error, MCP_GIT_TIMEOUT_RECOVERY)
         })?;
-        let input = crate::app::CheckInput {
+        let mut input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
             git_timeout,
             ..Default::default()
         };
+        // The repo's `[analysis]` table (mode, include_unchanged_tests) goes
+        // through the same owner `ripr check` and the LSP use (#14347). A
+        // refresh takes no per-call mode, so nothing here is explicit.
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }
@@ -2459,7 +2499,7 @@ pub(crate) mod after_worktree_findings_hook {
 /// repair card when its source custody is not established (#7357).
 pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
     format!(
-        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh without `source` for committed repair cards"
+        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh with source `committed` for committed repair cards"
     )
 }
 
@@ -2475,43 +2515,26 @@ fn check_failure(
     source: RefreshSource,
 ) -> AttemptFailure {
     let detail = format!("shared check authority failed: {error}");
+    // #13096: every retry names the source it was refused under. A
+    // base-only retry would re-run the default input selection, which reads
+    // saved tracked edits on a dirty tree even after an explicit committed
+    // request, so committed and worktree recoveries share one builder.
     let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
-    if source == RefreshSource::Worktree {
-        let recovery = match (error.check_refusal().identity, base) {
-            ("base_unresolvable", None) => format!(
-                "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
-                retry(Some("<ref>"))
-            ),
-            ("base_unresolvable", Some(_)) => format!(
-                "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
-                retry(Some("<ref>")),
-                retry(None)
-            ),
-            ("repository_root_unusable", _) => format!(
-                "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
-                retry(base)
-            ),
-            _ => check_retry_recovery(root, base, source),
-        };
-        return AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery);
-    }
     let recovery = match (error.check_refusal().identity, base) {
-        ("base_unresolvable", None) => {
-            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
-        }
-        ("base_unresolvable", Some(_)) => {
-            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, or omit `base` to use the default branch"
-        }
-        ("repository_root_unusable", _) => {
-            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
-        }
-        _ => {
-            return AttemptFailure::new(
-                CODE_ANALYSIS_FAILED,
-                detail,
-                check_retry_recovery(root, base, source),
-            );
-        }
+        ("base_unresolvable", None) => format!(
+            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
+            retry(Some("<ref>"))
+        ),
+        ("base_unresolvable", Some(_)) => format!(
+            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
+            retry(Some("<ref>")),
+            retry(None)
+        ),
+        ("repository_root_unusable", _) => format!(
+            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
+            retry(base)
+        ),
+        _ => check_retry_recovery(root, base, source),
     };
     AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
 }
@@ -2676,6 +2699,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2893,6 +2917,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -3141,6 +3166,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3225,6 +3251,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -3785,10 +3812,42 @@ mod tests {
             let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                 .map_err(|error| format!("invalid retry JSON: {error}"))?;
             assert_eq!(arguments["base"], "captured-base");
-            if source == RefreshSource::Worktree {
-                assert_eq!(arguments["source"], "worktree");
-            } else {
-                assert!(arguments.get("source").is_none());
+            // #13096: the retry always names its source, because an omitted
+            // source follows the tree's current state.
+            assert_eq!(arguments["source"], source.as_str());
+        }
+        Ok(())
+    }
+
+    /// #13096: a base refusal under an explicit committed request names
+    /// `source: "committed"` in every retry it prints. A base-only retry would
+    /// take the default input selection, which reads saved tracked edits on a
+    /// dirty tree and so analyzes different input than the refused request.
+    #[test]
+    fn base_refusal_retries_keep_the_requested_source() -> Result<(), String> {
+        let root = std::env::temp_dir().join("base refusal root");
+        for source in [RefreshSource::Committed, RefreshSource::Worktree] {
+            for base in [None, Some("missing-base")] {
+                let failure = check_failure(
+                    &crate::core_error::CoreError::base_unresolvable("no such ref"),
+                    &root,
+                    base,
+                    source,
+                );
+                let retries: Vec<Value> = failure
+                    .recovery
+                    .match_indices('{')
+                    .filter_map(|(begin, _)| {
+                        let end = failure.recovery[begin..].find('}')? + begin + 1;
+                        serde_json::from_str(&failure.recovery[begin..end]).ok()
+                    })
+                    .collect();
+                if retries.is_empty() {
+                    return Err(format!("no JSON retry: {}", failure.recovery));
+                }
+                for retry in retries {
+                    assert_eq!(retry["source"], source.as_str(), "{}", failure.recovery);
+                }
             }
         }
         Ok(())
@@ -3841,11 +3900,7 @@ mod tests {
                     .ok_or("unfinished MCP retry")?;
                 let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
                     .map_err(|error| error.to_string())?;
-                if source == RefreshSource::Worktree {
-                    assert_eq!(arguments["source"], "worktree");
-                } else {
-                    assert!(arguments.get("source").is_none());
-                }
+                assert_eq!(arguments["source"], source.as_str());
                 if kind == AnalysisOutcomeKind::AnalysisFailed {
                     assert_eq!(arguments["base"], "refused-output-base");
                 } else {
@@ -5098,6 +5153,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -5181,6 +5237,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: RefreshSource::Committed,
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -5590,6 +5647,7 @@ mod tests {
                 superseded_attempts: std::collections::BTreeMap::new(),
                 desired_base: None,
                 desired_source: RefreshSource::Committed,
+                desired_source_defaulted: false,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items
