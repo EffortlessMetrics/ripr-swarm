@@ -51,21 +51,25 @@ jobs:
 
           path = Path(".github/workflows/rust-1.100-review-repair.yml")
           text = path.read_text(encoding="utf-8")
-          old = '''          for path in ["docs/swarm-development.md", "docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:
-              replace_exact(path, "runner_image_unavailable", "runner_capacity_unavailable")
-'''
-          new = '''          replace_exact(
-              "docs/swarm-development.md",
-              "runner_image_unavailable",
-              "runner_capacity_unavailable",
+          old = (
+              '          for path in ["docs/swarm-development.md", '
+              '"docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:\n'
+              '              replace_exact(path, "runner_image_unavailable", '
+              '"runner_capacity_unavailable")\n'
           )
-          replace_exact(
-              "docs/SWARM_RUNNER_ROLLOUT_PLAN.md",
-              "runner_image_unavailable",
-              "runner_capacity_unavailable",
-              count=3,
+          new = (
+              '          replace_exact(\n'
+              '              "docs/swarm-development.md",\n'
+              '              "runner_image_unavailable",\n'
+              '              "runner_capacity_unavailable",\n'
+              '          )\n'
+              '          replace_exact(\n'
+              '              "docs/SWARM_RUNNER_ROLLOUT_PLAN.md",\n'
+              '              "runner_image_unavailable",\n'
+              '              "runner_capacity_unavailable",\n'
+              '              count=3,\n'
+              '          )\n'
           )
-'''
           if text.count(old) != 1:
               raise SystemExit("Rust 1.100 applicator documentation loop drifted")
           path.write_text(text.replace(old, new), encoding="utf-8")
