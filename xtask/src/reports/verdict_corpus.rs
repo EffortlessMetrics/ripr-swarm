@@ -2654,8 +2654,8 @@ pub(crate) fn run_case_expecting(
     Ok((check, anchor_line))
 }
 
-/// Parent Rayon workers already parallelize cases. Pin each analyzer child to
-/// one Rayon worker without changing the parent pool or another case's cache.
+/// Parent workers already parallelize cases. Pin each child Rayon pool to one
+/// worker without changing the parent pool or another case's cache.
 fn run_case_output(binary: &str, args: &[String], cache: &str) -> Result<String, String> {
     run_output_owned_with_envs(
         binary,

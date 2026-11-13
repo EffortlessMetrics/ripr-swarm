@@ -186,7 +186,7 @@ a reaching row ranked below the window goes uncounted.
   diff with a strict patch reader that refuses drifted context, runs
   `ripr check --json` on the cases in parallel, and writes `report.json` and
   `report.md`. Parent workers parallelize cases; each analyzer child uses one
-  Rayon worker and its own cache through a child-only environment overlay.
+  worker per Rayon pool and its own cache through a child-only environment overlay.
   This does not change the parent pool or interactive CLI defaults.
   It refuses an `--out` inside the expected directory.
 - `check [--cases <id,...>] [--out <dir>]` does the same and fails, naming
