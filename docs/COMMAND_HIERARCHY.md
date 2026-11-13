@@ -18,7 +18,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Record result usefulness | `ripr feedback record --snapshot ID --reason CODE` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
-| Serve MCP | `ripr mcp --stdio` | [Read-only workspace status and static analysis session](interop/mcp.md): an explicit `ripr_refresh` analyzes committed input; uncommitted input needs the opt-in `source: "worktree"`. No edit or project-test authority. |
+| Serve MCP | `ripr mcp --stdio` | [Read-only workspace status and static analysis session](interop/mcp.md): `ripr_refresh` reads saved tracked edits when any exist, else committed input, like `ripr check`; `source` forces `committed` or `worktree`. No edit or project-test authority. |
 | Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,

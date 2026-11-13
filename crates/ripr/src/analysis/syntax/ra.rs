@@ -1302,6 +1302,20 @@ pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBin
     collect_body_shadow_facts(&function, &|offset| line_index.line(offset), 1)
 }
 
+/// The `#[path]` target shapes of `source`'s top-level out-of-line
+/// `mod name;` declarations, through the producer the index uses. `None`
+/// when the source is not parser-valid.
+pub(crate) fn module_path_targets(source: &str) -> Option<Vec<ModulePathTarget>> {
+    let parse = parse_clean_source_file(source)?;
+    let line_index = LineIndex::new(source);
+    Some(
+        module_declaration_facts(&parse.tree(), &line_index)
+            .into_iter()
+            .map(|declaration| declaration.path_target)
+            .collect(),
+    )
+}
+
 /// Classifies the `#[path]` attributes of one declaration into the bounded
 /// target shape. Exactly one plain string-literal attribute resolves; absence
 /// falls back to default name resolution; anything else (multiple `path`

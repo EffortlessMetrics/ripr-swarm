@@ -89,6 +89,10 @@ files, and ripr says so. A result with no findings or limited evidence is not a
 clean bill of health. If a check cannot complete, run `ripr doctor` (standalone;
 it exits 3 when a check fails).
 
+No change of your own to try it on? The [starter examples](examples/README.md)
+are three small projects (Rust, Python and TypeScript) with a known gap and the
+one added assertion that closes it.
+
 The example output above and `--worktree` come from the 0.11 development build,
 which is not yet the published release. In it, `ripr check` uses uncommitted
 tracked edits when present, otherwise committed history against the default

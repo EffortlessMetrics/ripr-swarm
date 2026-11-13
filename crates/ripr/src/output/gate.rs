@@ -39,6 +39,9 @@ pub(crate) const GATE_STATUS_CONFIG_ERROR: &str = "config_error";
 /// maps this token to process exit 3 (`docs/EXIT_CODES.md`); `help --json`
 /// uses the same bytes as the `gate_evaluate` serde key.
 pub(crate) const GATE_STATUS_BLOCKED: &str = "blocked";
+/// The warning that marks a calibrated-gate block caused by a changed file the
+/// parser declined (#14485). The inline CLI detail looks for it.
+pub(crate) const UNPARSED_BLOCK_WARNING: &str = "gate mode calibrated-gate blocks while a changed file was not parsed: no seam was judged for it, so the absence of a gate candidate is not evidence that the change is tested; make the file parse, or run in a mode that does not block on unjudged changes";
 /// The closed top-level `status` set a gate decision may carry
 /// (`schemas/ripr/gate-decision.schema.json`, in schema order), mirrored
 /// from the `top_level_status` producer. Consumers validating an unknown
@@ -323,8 +326,20 @@ pub(crate) fn build_gate_decision_report(
     // withheld as a static limitation never becomes a candidate, so zero
     // candidates from either is not a clean result. The warnings keep the
     // top-level status off `pass` and reach the Markdown warnings section.
+    let mut unjudged_blocking = 0usize;
     if let Some(scope) = analysis_scope.as_ref() {
-        warnings.extend(parser_declined_scope_warning(scope));
+        let declined = parser_declined_scope_warning(scope);
+        // #14485: calibrated-gate is the mode whose job is to stop a merge, so
+        // a changed file nobody judged blocks there instead of only warning.
+        // baseline-check keeps the advisory outcome: its contract is that
+        // only new debt blocks, and the baseline delta already tracks debt in
+        // a declined file (#9598). The malformed case blocks too, because
+        // coverage of the changed files is then not established.
+        if declined.is_some() && input.mode == GateMode::CalibratedGate {
+            unjudged_blocking = 1;
+            warnings.push(UNPARSED_BLOCK_WARNING.to_string());
+        }
+        warnings.extend(declined);
         warnings.extend(static_limited_scope_warning(scope));
     }
     let policy = GatePolicy {
@@ -403,7 +418,7 @@ pub(crate) fn build_gate_decision_report(
         &warnings,
         &config_errors,
         input.mode,
-        exception_blocking,
+        exception_blocking + unjudged_blocking,
     )
     .to_string();
     Ok(GateDecisionReport {
@@ -1564,11 +1579,11 @@ fn top_level_status(
     warnings: &[String],
     config_errors: &[String],
     mode: GateMode,
-    exception_blocking: usize,
+    non_candidate_blocking: usize,
 ) -> &'static str {
     if !config_errors.is_empty() {
         GATE_STATUS_CONFIG_ERROR
-    } else if summary.blocking > 0 || exception_blocking > 0 {
+    } else if summary.blocking > 0 || non_candidate_blocking > 0 {
         GATE_STATUS_BLOCKED
     } else if summary.acknowledged > 0 {
         "acknowledged"

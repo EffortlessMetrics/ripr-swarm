@@ -639,6 +639,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) packet_path: String,
     pub(crate) baseline_ambiguous: bool,
     pub(crate) typescript_test_cache_guidance: bool,
+    /// The native command that runs the suggested Rust test after the edit
+    /// (#14320), from `app::test_stub::focused_test_run_command`. Human
+    /// summary only; the `--json` continuation is unchanged. `None` when no
+    /// exact command can be established.
+    pub(crate) focused_test_command: Option<String>,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
