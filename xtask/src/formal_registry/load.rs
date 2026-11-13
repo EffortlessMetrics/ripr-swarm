@@ -113,6 +113,19 @@ fn read_bounded(path: &Path, remaining: &mut u64) -> RegistryResult<Vec<u8>> {
     Ok(bytes)
 }
 
+pub(super) fn require_stable_document(
+    document: &str,
+    before: &[u8],
+    after: &[u8],
+) -> RegistryResult<()> {
+    require(
+        before == after,
+        format!(
+            "claim document {document} changed while semantic admission was in progress"
+        ),
+    )
+}
+
 fn normalized_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -150,7 +163,8 @@ fn discover_claim_documents(root: &Path) -> RegistryResult<BTreeSet<String>> {
         let entry = entry.map_err(|error| error.to_string())?;
         let file_type = entry.file_type().map_err(|error| error.to_string())?;
         require(
-            file_type.is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("json"),
+            file_type.is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("json"),
             format!(
                 "{}: claim registry directory accepts only regular .json files",
                 entry.path().display()
@@ -198,7 +212,10 @@ fn validate_manifest(manifest: &Manifest) -> RegistryResult<()> {
         stable_id(&entry.claim_id, "manifest claim_id")?;
         require(
             entry.claim_generation > 0,
-            format!("{}: manifest claim_generation must be positive", entry.claim_id),
+            format!(
+                "{}: manifest claim_generation must be positive",
+                entry.claim_id
+            ),
         )?;
         unique_paths(&entry.authority_paths, "authority_paths", true)?;
         digest_field(
@@ -225,7 +242,10 @@ fn validate_manifest(manifest: &Manifest) -> RegistryResult<()> {
         stable_id(&retirement.claim_id, "retirement claim_id")?;
         require(
             retirement.final_generation > 0,
-            format!("{}: retirement final_generation must be positive", retirement.claim_id),
+            format!(
+                "{}: retirement final_generation must be positive",
+                retirement.claim_id
+            ),
         )?;
         text(&retirement.reason, "retirement reason")?;
         require(
@@ -274,6 +294,24 @@ pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
         ),
     )?;
 
+    // Snapshot each claim before invoking the shared path-based semantic
+    // auditor. The same bytes are parsed below, and a bounded post-audit read
+    // must match. This prevents an ordinary concurrent edit or path swap from
+    // making the semantic validator inspect one document while the registry
+    // consumes another. It is a stability observation, not atomic filesystem
+    // custody or proof of bytes consumed by an external verifier.
+    let mut claim_documents = BTreeMap::new();
+    for entry in &manifest.claims {
+        let claim_path = root.join(&entry.document);
+        let bytes = read_bounded(&claim_path, &mut remaining)?;
+        require(
+            claim_documents
+                .insert(entry.document.clone(), bytes)
+                .is_none(),
+            format!("duplicate snapshotted claim document {}", entry.document),
+        )?;
+    }
+
     let mut audit_args = Vec::with_capacity(manifest.claims.len() * 2);
     for entry in &manifest.claims {
         audit_args.push("--claim".to_string());
@@ -285,10 +323,15 @@ pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
 
     let mut claims = Vec::with_capacity(manifest.claims.len());
     let mut critical = 0usize;
+    let mut recheck_remaining = MAX_TOTAL_INPUT_BYTES;
     for entry in &manifest.claims {
         let claim_path = root.join(&entry.document);
-        let bytes = read_bounded(&claim_path, &mut remaining)?;
-        let claim: ClaimDocument = parse_unique(&bytes)
+        let after = read_bounded(&claim_path, &mut recheck_remaining)?;
+        let bytes = claim_documents
+            .get(&entry.document)
+            .ok_or_else(|| format!("missing snapshotted claim document {}", entry.document))?;
+        require_stable_document(&entry.document, bytes, &after)?;
+        let claim: ClaimDocument = parse_unique(bytes)
             .map_err(|error| format!("parse {}: {error}", claim_path.display()))?;
         require(
             claim.schema == "ripr.formal-claim.v1",
