@@ -3306,9 +3306,85 @@ fn same_test_file(probe_file: &Path, probe_path: Option<&str>, test_file: &Path)
     else {
         return false;
     };
-    test_stem == probe_stem
+    (test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
-        || test_stem == format!("{probe_stem}_tests")
+        || test_stem == format!("{probe_stem}_tests"))
+        && probe_path
+            .or(probe_file.to_str())
+            .is_some_and(|probe| companion_scope_admits(probe, test_text))
+}
+
+/// Whether a test file whose module stem matches a changed source file can
+/// be that file's companion (#7527). A shared leaf name is not module
+/// identity: `src/foo.rs` and `src/bar/foo.rs` are different modules, and a
+/// root crate's `src/serialize.rs` is not a member crate's
+/// `crates/b/tests/serialize.rs`.
+///
+/// The changed file's crate is everything before its last `src/` segment.
+/// A test under that crate's `src/` must sit beside the changed module (its
+/// parent module path, ignoring `tests`/`test` directories) or directly
+/// inside it. A test elsewhere in the crate (`tests/foo.rs`,
+/// `tests/foo/mod.rs`) keeps the leaf-name match unless its path shape puts
+/// it in a nested package. A test outside the crate does not pair.
+///
+/// A changed file with no `src/` segment, and an absolute path on either
+/// side, cannot be scoped; those keep the leaf-name match. The test-grip
+/// relation applies the same rule.
+pub(in crate::analysis) fn companion_scope_admits(probe_file: &str, test_file: &str) -> bool {
+    let probe = normalize_path(Path::new(probe_file));
+    let test = normalize_path(Path::new(test_file));
+    if path_is_absolute_form(Path::new(&probe)) || path_is_absolute_form(Path::new(&test)) {
+        return true;
+    }
+    let Some((crate_prefix, probe_module)) = split_at_last_src(&probe) else {
+        return true;
+    };
+    let Some(rest) = test.strip_prefix(crate_prefix) else {
+        return false;
+    };
+    let Some(test_module) = rest.strip_prefix("src/") else {
+        return package_prefix(Path::new(rest)).is_none();
+    };
+    let probe_module = module_components(probe_module);
+    let test_module = module_components(test_module);
+    let (Some((probe_leaf, probe_parent)), Some((test_leaf, test_parent))) =
+        (probe_module.split_last(), test_module.split_last())
+    else {
+        return false;
+    };
+    let beside: Vec<&str> = test_parent
+        .iter()
+        .copied()
+        .filter(|segment| !matches!(*segment, "tests" | "test"))
+        .collect();
+    beside == probe_parent
+        || (beside == probe_module
+            && (test_leaf != probe_leaf || beside.len() != test_parent.len()))
+}
+
+/// Split a normalized relative path at its last `src/` directory segment:
+/// the crate prefix (empty, or ending in `/`) and the path under `src/`.
+fn split_at_last_src(path: &str) -> Option<(&str, &str)> {
+    if let Some(at) = path.rfind("/src/") {
+        return Some((&path[..=at], &path[at + "/src/".len()..]));
+    }
+    path.strip_prefix("src/").map(|under| ("", under))
+}
+
+/// The module path a file under `src/` names: its directories, then its
+/// stem, with `mod.rs` standing for its directory.
+fn module_components(under_src: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = under_src.split('/').collect();
+    if let Some(last) = parts.last_mut() {
+        *last = match last.rfind('.') {
+            Some(0) | None => last,
+            Some(extension) => &last[..extension],
+        };
+    }
+    if parts.len() > 1 && parts.last() == Some(&"mod") {
+        parts.pop();
+    }
+    parts
 }
 
 /// The changed file's path in the index's root-relative form (#6791).
@@ -7381,6 +7457,13 @@ fn owner_call_relation_reason_gated(
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
+            return RelationReason::WeakTokenSubstring;
+        }
+        // #14069: a renaming import can bind the owner's bare name to
+        // another function (`use super::other as discount;`). When every
+        // spelling in the test is that bare name, the test calls the other
+        // function and the owner never runs.
+        if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
             return RelationReason::WeakTokenSubstring;
         }
         // RIPR-SPEC-0005: a free function whose name another module also
@@ -12854,6 +12937,86 @@ fn crate_c_score_test() {
         assert!(!same("src/main.rs", "crates/x/src/main.rs"));
         // An unnormalized `..` parent names no module.
         assert!(!same("a/../mod.rs", "b/../mod.rs"));
+    }
+
+    #[test]
+    fn same_leaf_name_in_another_module_or_crate_is_not_a_companion() {
+        // #7527: module identity is the module path within the owning crate,
+        // not the leaf name.
+        let index = RustIndex::default();
+        let same = |probe: &str, test: &str| {
+            let probe_path = super::probe_index_path(Path::new(probe), None, None, &index);
+            super::same_test_file(Path::new(probe), probe_path.as_deref(), Path::new(test))
+        };
+        // Same-named modules in different branches of one crate.
+        assert!(!same("src/foo.rs", "src/bar/foo.rs"));
+        assert!(!same("src/foo.rs", "src/bar/foo/mod.rs"));
+        assert!(!same("src/bar/foo.rs", "src/foo.rs"));
+        assert!(!same("src/foo/mod.rs", "src/bar/foo_tests.rs"));
+        assert!(!same("crates/a/src/foo.rs", "crates/a/src/bar/foo.rs"));
+        // A root crate's module is not a member crate's test, either way.
+        assert!(!same("src/serialize.rs", "crates/b/tests/serialize.rs"));
+        assert!(!same("src/serialize/mod.rs", "crates/b/tests/serialize.rs"));
+        assert!(!same("src/serialize.rs", "crates/b/src/serialize.rs"));
+        assert!(!same("crates/a/src/serialize.rs", "tests/serialize.rs"));
+        assert!(!same(
+            "crates/a/src/serialize.rs",
+            "crates/b/tests/serialize.rs"
+        ));
+        // A member crate kept under `src/` is its own crate.
+        assert!(same("src/tools/x/src/foo.rs", "src/tools/x/tests/foo.rs"));
+        assert!(!same("src/foo.rs", "src/tools/x/tests/foo.rs"));
+        // Deliberate companions keep pairing: beside the module, in a
+        // `tests` directory beside it, inside it, and in the crate's `tests/`.
+        assert!(same("src/bar/foo.rs", "src/bar/foo_tests.rs"));
+        assert!(same("src/bar/foo.rs", "src/bar/tests/foo.rs"));
+        assert!(same("src/foo.rs", "src/tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "src/bar/foo/foo_tests.rs"));
+        assert!(same("src/bar/foo/mod.rs", "src/bar/foo/tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "tests/foo.rs"));
+        assert!(same("src/bar/foo.rs", "tests/foo_test.rs"));
+        assert!(same("crates/a/src/bar/foo.rs", "crates/a/tests/foo/mod.rs"));
+        // A nested module of the same name is a child, not a companion.
+        assert!(!same("src/foo.rs", "src/foo/foo.rs"));
+        // Unscopable paths keep the leaf-name match.
+        assert!(same("/abs/ws/src/foo.rs", "tests/foo.rs"));
+        assert!(same("lib/foo.rs", "lib/foo_tests.rs"));
+    }
+
+    #[test]
+    fn root_crate_change_does_not_relate_a_member_crates_same_named_test_file() {
+        // #7527: a root-package owner has no package prefix, so the package
+        // guard never ran and `crates/b/tests/serialize.rs` paired with the
+        // root crate's `src/serialize.rs` on the leaf name. The same-named
+        // module in another branch of the crate paired the same way.
+        let owner = function("src/serialize.rs", "write_escaped");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "crates/b/tests/serialize.rs",
+                    "member_case",
+                    "assert!(true);",
+                ),
+                test(
+                    "src/wire/serialize.rs",
+                    "other_module_case",
+                    "assert!(true);",
+                ),
+                test("tests/serialize.rs", "companion_case", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        let probe = probe("src/serialize.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        let same_file: Vec<&str> = related
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::SameTestFile)
+            .map(|(test, _)| test.name.as_str())
+            .collect();
+
+        assert_eq!(same_file, ["companion_case"], "{related:?}");
     }
 
     #[test]

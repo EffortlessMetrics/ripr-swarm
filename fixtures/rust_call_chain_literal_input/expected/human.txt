@@ -38,8 +38,8 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_adult: adults_are_adults
-    - infection unknown: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so…
-    - 8 more detail line(s) in --format human-full
+    - propagation yes: Changed behavior appears to influence returned value: age >= 18
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
