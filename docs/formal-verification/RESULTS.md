@@ -7,6 +7,23 @@ registered claim satisfaction, source applicability, and trust separately.
 The draft schema is
 [`schema/native-proof-run-v1.schema.json`](schema/native-proof-run-v1.schema.json).
 
+## Mandatory semantic admission
+
+Schema validation checks structure; it is necessary but insufficient for claim
+admission. A semantic validator must also compare claim generation, subject,
+source/provider/configuration identity, exact selected inventory and cover
+counts. An `ESTABLISHED` row requires `covers.satisfied == covers.required`;
+`covers.unreachable == 0` alone is insufficient. For example, two required
+covers with zero satisfied and zero unreachable must be rejected even though
+that record is structurally valid JSON Schema.
+
+[PR #14478](https://github.com/EffortlessMetrics/ripr-swarm/pull/14478) owns the
+existing offline semantic auditor and its incomplete-cover negative control.
+#14472 must reuse that admission law in the native producer. The documentation
+and draft schemas here do not provide a runtime admission implementation.
+Even a successful semantic audit establishes document consistency only; it
+does not authenticate execution or establish source currentness by itself.
+
 ## Run identity
 
 A native run binds at least:
@@ -42,7 +59,7 @@ assumption and bound digest
 duration/resource telemetry
 semantic claim status
 currentness
-rejection reasons
+status explanations and rejection reasons where applicable
 raw output block reference
 limitations and nonclaims
 ```
@@ -50,6 +67,19 @@ limitations and nonclaims
 One successful native block cannot satisfy two ambiguous source declarations.
 Duplicate source identities, duplicate result blocks, missing expected rows,
 and neighboring same-name results are not first-match-wins.
+
+Every `ESTABLISHED` or `FAILED` row requires a non-null `assumptions_digest`.
+Compute it as `sha256:` plus the lowercase SHA-256 of the compact UTF-8 JSON
+encoding of the exact registered `assumptions` array, preserving array order.
+The shared Rust DTO uses `serde_json::to_vec(&claim.assumptions)` for these bytes.
+The empty array uses the digest of the two bytes `[]`; it does not use `null`.
+The semantic validator must compare the digest with the registered claim;
+the schema only checks its presence and shape. Unobserved rows may use `null`.
+
+`reasons` contains status explanations. An `ESTABLISHED` row may use `[]` or
+retain useful success diagnostics. Every other status requires at least one
+nonempty explanation; successful evidence does not need an invented rejection
+reason.
 
 ## Status law
 
@@ -59,12 +89,19 @@ All of the following hold:
 
 - exact current claim generation;
 - exact current source closure and provider/configuration identity;
-- complete expected inventory;
-- normal native process completion;
+- exact expected claim-to-subject mapping;
+- a complete successful native proof block for that subject;
 - provider reports the required successful outcome;
 - all required covers are reachable;
 - no ambiguity, duplicate, stale input, unsupported status, or result-parser
   mismatch.
+
+This is a per-row law. Successful run admission additionally requires complete
+expected inventory and normal, zero-exit aggregate process completion. A
+completed positive row may remain visible after a later process failure or
+timeout, but it cannot qualify that failed or incomplete run. Consumers must
+check the aggregate law rather than treating one `ESTABLISHED` row as a green
+run.
 
 ### `FAILED`
 

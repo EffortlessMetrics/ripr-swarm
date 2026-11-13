@@ -6,29 +6,15 @@ It is not a second programme or claim registry.
 
 ## Immediate dependency order
 
-```text
-#12581 bounded Kani version preflight
-    │
-    ├── #14469 positive-cover admission
-    │
-    ├── #14472 machine native-result contract
-    │       │
-    │       └── #14473 stable critical claims + assurance scoreboard
-    │               │
-    │               └── #14474 affected critical selection + advisory lane
-    │
-    └── #11517 declared Kani context/source/cache/public inventory
-            │
-            └── #12596 owner/domain/asserted observable
-                    │
-                    ├── #12512/#10749 guard-only transitions
-                    │       │
-                    │       └── #10687 bounded weakness findings
-                    │
-                    └── #12597/#10689 native observation correlation
-                            │
-                            └── #12598 stages B/C + #10746 corpus
-```
+| Claim | Prerequisite or composition | Result |
+| --- | --- | --- |
+| #12579 / #12581 | Preserve delivered attribution and process-completion owners | Bounded, diagnosable version preflight |
+| #14460 / #14469 | Independent collector repair; retain native controls | Complete positive cover evidence |
+| #14472 / #12470 | Compose the two runner repairs and reuse #14478 admission predicates | Native JSON/Markdown, raw custody and exact inventory |
+| #14473 | Consume current #14472 results | Stable critical claims and assurance scoreboard |
+| #14474 | Consume #14473; retain #6452/#6456 protection | Conservative affected plan on admitted qualification subject |
+| #10686 / #11517 | Separate #10745 product track | Declared Kani context/source/cache/public inventory |
+| #12596 and product successors | Consume #11517 without crediting it as self-proof | Exact owner/domain/observable and public native correlation |
 
 Verification-authority transition work (#6452 then #6456/#5224) must complete
 before any required-check promotion under #12904.
@@ -37,8 +23,9 @@ before any required-check promotion under #12904.
 
 | Owner | Current result | Required next transition |
 | --- | --- | --- |
-| #12579 / PR #12581 | Bounded preflight implementation exists; branch was behind/nonmergeable at the November 11 reconciliation | Reconcile the existing candidate onto current main, preserve its delayed-probe and positive evidence, qualify exact head, then merge |
-| #13768 / draft PR #14469 | Positive-cover admission candidate | Distinguish claim-required covers from harness-local/advisory covers; retain native negative evidence; compose with #14472 |
+| #12579 / PR #12581 | Bounded preflight implementation; current repair requires distinct sanitized failure classes and an independent test deadline | Resolve actual conflicts, preserve native process controls, qualify the repaired head and its integration |
+| #14460 / PR #14469 | Positive-cover admission; historical hosted run reported 73 VERIFIED rows and 29,346 complete workspace test subjects; the candidate now includes the missing provenance-fixture policy entry | Retain exact historical source identities and qualify the repaired integration; registered/advisory cover policy belongs to #14472/#14473 |
+| #14472 / PR #14478 | Native-tested offline document auditor; exit zero means consistent documents and always retains native assurance as not assessed | Reuse its DTO/admission owner in the native producer; source/configuration/custody must be measured, not declared into existence |
 | #10686 / draft PR #11517 | Large context/source/cache/public-inventory candidate | Keep owner/domain semantics out; split producer/context and projections if needed; qualify current head instead of recreating work |
 
 ## Newly split infrastructure leaves
@@ -93,20 +80,12 @@ remain separate axes.
 
 ### TLA+ repair-lifecycle pilot
 
-The pilot branch `codex/repair-lifecycle-model-20261106` has
-[direct native TLC evidence](https://github.com/EffortlessMetrics/ripr-swarm/issues/12109#issuecomment-6813436649)
-at source `30ec9ac187025985314858ff9ba9d72bf1ad02e9`: the positive model run
-explored 199 distinct states with an empty frontier, and all three original
-negative configurations failed their named invariants. These are model-only
-observations, not Rust adapter or implementation-conformance evidence.
-
-Remaining qualification includes:
-
-- Rust adapter compilation/tests;
-- producer-integrated model/config/tool/source commitments and retained native results;
-- state/action-to-Rust mapping;
-- six-case bounded conformance comparison;
-- current-main integration.
+The pilot at `30ec9ac187025985314858ff9ba9d72bf1ad02e9` has a
+[positive native TLC observation and three expected counterexamples](https://github.com/EffortlessMetrics/ripr-swarm/issues/12109#issuecomment-6813436649).
+It still requires Rust adapter compilation/tests, typed raw-artifact custody,
+state/action-to-Rust mapping, six-case bounded conformance, refusal controls
+and current-main integration. Retain the one-attempt/two-finisher finite scope
+and abstract atomic-commit assumption.
 
 Model safety does not establish Rust implementation conformance by itself.
 

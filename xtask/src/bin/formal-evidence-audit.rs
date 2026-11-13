@@ -4,6 +4,7 @@
 //! Exit zero means the supplied documents are consistent, never proof success.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
@@ -15,6 +16,24 @@ const MAX_TOTAL_INPUT_BYTES: u64 = 16 * MAX_INPUT_BYTES;
 const USAGE: &str = "usage: formal-evidence-audit --claim FILE [--claim FILE ...] [--run FILE]\nExit 0: documents consistent; 2: invalid input. Native assurance is never assessed.";
 
 type AuditResult<T> = Result<T, String>;
+
+fn sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut value = String::with_capacity(71);
+    value.push_str("sha256:");
+    for byte in digest {
+        value.push_str(&format!("{byte:02x}"));
+    }
+    value
+}
+
+/// Exact claim-array commitment: compact UTF-8 JSON, preserving assumption
+/// order. An empty assumption set is the committed bytes `[]`, not absence.
+fn assumptions_digest(assumptions: &[String]) -> AuditResult<String> {
+    serde_json::to_vec(assumptions)
+        .map(|bytes| sha256(&bytes))
+        .map_err(|error| error.to_string())
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -356,7 +375,7 @@ fn validate_claim(claim: &Claim) -> AuditResult<()> {
         (
             "required_covers",
             &claim.required_covers,
-            claim.criticality == Criticality::Critical && claim.provider == "kani",
+            claim.criticality == Criticality::Critical,
         ),
         ("negative_controls", &claim.negative_controls, true),
         ("currentness_inputs", &claim.currentness_inputs, true),
@@ -402,7 +421,11 @@ fn validate_row(row: &Row, claim: &Claim, run: &Run) -> AuditResult<()> {
         claim.subjects.contains(&row.subject),
         "result subject is not registered for its claim",
     )?;
-    strings(&row.reasons, "result reasons", true)?;
+    strings(
+        &row.reasons,
+        "result reasons",
+        row.status != Status::Established,
+    )?;
     strings(&row.non_claims, "result non_claims", true)?;
     digest(&row.source_digest, "result source_digest")?;
     digest(&row.bounds_digest, "result bounds_digest")?;
@@ -451,6 +474,10 @@ fn validate_row(row: &Row, claim: &Claim, run: &Run) -> AuditResult<()> {
     // stale observations and success-looking output cannot become a failed
     // proposition merely because the input labels them FAILED.
     if matches!(row.status, Status::Established | Status::Failed) {
+        require(
+            row.assumptions_digest.as_ref() == Some(&assumptions_digest(&claim.assumptions)?),
+            "ESTABLISHED/FAILED requires the exact claim assumption commitment",
+        )?;
         require(row.current, "ESTABLISHED/FAILED requires current evidence")?;
         require(
             run.inventory.discovered_subjects.contains(&row.subject),
@@ -892,7 +919,7 @@ mod tests {
             "process":{"state":"completed","exit_code":0,"timed_out":false,"raw_output_digest":hash,"cleanup_state":"complete"},
             "results":[{"claim_id":claim.claim_id,"claim_generation":1,"subject":claim.subjects.first().ok_or("missing test subject")?,
                 "source_digest":hash,"status":"ESTABLISHED","native_verdict":"verified","covers":{"required":2,"satisfied":2,"unreachable":0},
-                "bounds_digest":hash,"duration_ms":1,"raw_block_digest":hash,"current":true,"reasons":["synthetic test input"],"non_claims":["not a native receipt"]}]
+                "bounds_digest":hash,"assumptions_digest":assumptions_digest(&claim.assumptions)?,"duration_ms":1,"raw_block_digest":hash,"current":true,"reasons":["synthetic test input"],"non_claims":["not a native receipt"]}]
         })).map_err(|e| e.to_string())?;
         Ok((claim, run))
     }
@@ -1351,5 +1378,55 @@ mod tests {
         assert_eq!(summary.cleanup_complete, Some(false));
         assert_eq!(summary.native_assurance, "not_assessed");
         Ok(())
+    }
+    #[test]
+    fn observed_assumptions_are_exact_and_empty_set_is_committed() -> AuditResult<()> {
+        let (mut claim, mut run) = fixtures()?;
+        run.results[0].reasons.clear();
+        audit(std::slice::from_ref(&claim), Some(&run))?;
+        for invalid in [None, Some(sha256(b"wrong"))] {
+            let mut changed = run.clone();
+            changed.results[0].assumptions_digest = invalid;
+            assert!(audit(std::slice::from_ref(&claim), Some(&changed)).is_err());
+        }
+        claim.assumptions = vec!["A".to_string(), "B".to_string()];
+        // Independent SHA-256 of the exact bytes ["A","B"], not the helper
+        // under test. Reordering the declaration must invalidate that result.
+        run.results[0].assumptions_digest = Some(
+            "sha256:b64e3448a83a5b86466465080361c1a7e1157a27ddccd4b68069cb18caffb74a".to_string(),
+        );
+        audit(std::slice::from_ref(&claim), Some(&run))?;
+        claim.assumptions.reverse();
+        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        claim.assumptions.clear();
+        run.results[0].assumptions_digest = Some(assumptions_digest(&claim.assumptions)?);
+        assert_eq!(
+            run.results[0].assumptions_digest.as_deref(),
+            Some(sha256(b"[]").as_str())
+        );
+        audit(std::slice::from_ref(&claim), Some(&run))?;
+        run.results[0].status = Status::Failed;
+        run.results[0].native_verdict = Verdict::Counterexample;
+        run.process.state = ProcessState::Failed;
+        run.process.exit_code = Some(10);
+        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        run.results[0]
+            .reasons
+            .push("observed synthetic counterexample".to_string());
+        audit(&[claim], Some(&run))?;
+        Ok(())
+    }
+
+    #[test]
+    fn every_critical_provider_needs_reachability_obligations() -> AuditResult<()> {
+        let (mut claim, _) = fixtures()?;
+        claim.provider = "tlc".to_string();
+        claim.family = Family::StateMachineModel;
+        claim.required_covers.clear();
+        assert!(validate_claim(&claim).is_err());
+        claim
+            .required_covers
+            .push("finite terminal-state reachability".to_string());
+        validate_claim(&claim)
     }
 }

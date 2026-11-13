@@ -52,7 +52,7 @@ automation = [
     "dep:rustix",
 ]
 # Pure document admission can be tested without compiling the product library.
-formal-evidence-audit = ["dep:serde"]
+formal-evidence-audit = ["dep:serde", "dep:sha2"]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.

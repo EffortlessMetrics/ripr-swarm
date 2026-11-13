@@ -25,7 +25,8 @@ The repository already has:
 - scheduled property and metamorphic fuzzing;
 - bounded static Kani and Verus source facts for user-facing analysis;
 - an unattested Kani result importer;
-- a source-only TLA+ repair-lifecycle pilot.
+- a TLA+ repair-lifecycle pilot with retained finite native model checks;
+  production correspondence and Rust adapter qualification remain separate.
 
 The missing durable layer is a maintained chain from an exact proposition to
 its production owner, proof/model, native result, base/head transition, and CI
@@ -109,6 +110,8 @@ owner where scope has become too large.
   checks, adversarial controls and the boundary to native assurance.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
   implementation programme using the current issue and PR owners.
+- [WORK_ITEMS.md](WORK_ITEMS.md) — existing executable implementation owners
+  and remaining acceptance.
 - [`schema/`](schema/) — draft machine contracts.
 - [`examples/`](examples/) — non-authoritative examples conforming to those
   draft contracts.
@@ -134,20 +137,36 @@ Not acceptable:
 - “A successful tool process establishes the proposition.”
 - “The head proof passed, therefore removing the base proof is safe.”
 
-## Completion boundary
+## Self-assurance completion boundary
 
-The first maintained formal-verification milestone is complete only when:
+The self-assurance milestone under #12109 and #12904 is complete only when:
 
 1. RIPR-SPEC-0371 matches the implemented lane.
 2. Tool preflight, execution, and result collection are bounded.
 3. Critical self-claims have stable IDs, exact domains, bounds, covers,
    nonclaims, negative controls, and current machine-readable results.
-4. One installed Kani journey joins changed behavior, owner, domain,
-   observable, static guard state, and exact native result.
-5. Guard-only changes remain affected.
-6. A generated assurance scoreboard joins registered claims to current
+4. Changes to proofs, assumptions, trust, bounds, covers and effective
+   configuration invalidate affected evidence and retain applicable base
+   protection until a replacement or retirement is accepted.
+5. A generated assurance scoreboard joins registered claims to current
    results.
-7. A critical Kani lane runs advisably with complete selection/fallback
-   evidence.
-8. Required status is admitted separately under #12904.
-9. Every unsupported or not-established state remains visible.
+6. A critical Kani route runs advisably on the admitted qualification subject
+   with complete selection/fallback evidence; it adds no development-event
+   subscription.
+7. Model results have explicit production correspondence evidence before
+   contributing to an implementation claim.
+8. Every unsupported, stale or not-established obligation remains visible.
+
+Required-check admission is a separate decision under #12904 after measured
+advisory operation and transition protection. A maintainer must be able to
+reproduce a positive result and the named negative controls from retained
+source, configuration, commands and artifacts.
+
+## Formal-guard product completion boundary
+
+The separate #10745 product programme additionally requires an installed
+Kani journey joining changed behavior, owner, domain, observable, static guard
+state and exact native result; guard-only changes must remain affected and
+the adversarial corpus must qualify the user-facing claims. That product
+journey does not establish RIPR's own correctness, and implementing it is not
+a prerequisite for the self-assurance milestone above.
