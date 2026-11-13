@@ -1,0 +1,80 @@
+{
+  "schema": "ripr.formal-claim-registry.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "registry_generation": 1,
+  "global_authority_paths": [
+    "docs/formal-verification/CLAIMS.md",
+    "docs/formal-verification/RESULTS.md",
+    "docs/formal-verification/REGISTRY.md",
+    "docs/formal-verification/schema/formal-claim-v1.schema.json",
+    "docs/formal-verification/schema/formal-claim-registry-v1.schema.json"
+  ],
+  "claims": [
+    {
+      "document": "policy/formal-claims.d/ripr.classification.actionable-only-with-evidence.v1.json",
+      "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+      "claim_generation": 1,
+      "route": "native",
+      "authority_paths": [
+        "docs/formal-verification/CLAIMS.md",
+        "docs/formal-verification/RESULTS.md",
+        "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "policy/formal-claims.d/ripr.classification.actionable-only-with-evidence.v1.json"
+      ],
+      "expected_decision_digest": "sha256:851a7aa2b660e8e21556447919a576cb09886cf46956cf8a9b70d07ded471be1"
+    },
+    {
+      "document": "policy/formal-claims.d/ripr.currentness.candidate-action-requires-current.v1.json",
+      "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
+      "claim_generation": 1,
+      "route": "native",
+      "authority_paths": [
+        "docs/formal-verification/CLAIMS.md",
+        "docs/formal-verification/RESULTS.md",
+        "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "policy/formal-claims.d/ripr.currentness.candidate-action-requires-current.v1.json"
+      ],
+      "expected_decision_digest": "sha256:99bfd57aa74f52062506fb299eed32b51c921c3702a357e6a47af3007e87d972"
+    },
+    {
+      "document": "policy/formal-claims.d/ripr.gate.top-level-status-fails-closed.v1.json",
+      "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
+      "claim_generation": 1,
+      "route": "native",
+      "authority_paths": [
+        "docs/formal-verification/CLAIMS.md",
+        "docs/formal-verification/RESULTS.md",
+        "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "policy/formal-claims.d/ripr.gate.top-level-status-fails-closed.v1.json"
+      ],
+      "expected_decision_digest": "sha256:0f9237acc311e6e588d89cc570953a284f8f8739cc1fd49ce3a3cdea57310ae4"
+    },
+    {
+      "document": "policy/formal-claims.d/ripr.repair.route-requires-ready-current-instruction.v1.json",
+      "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
+      "claim_generation": 1,
+      "route": "native",
+      "authority_paths": [
+        "docs/formal-verification/CLAIMS.md",
+        "docs/formal-verification/RESULTS.md",
+        "docs/specs/RIPR-SPEC-0192-repair-card-v1.md",
+        "policy/formal-claims.d/ripr.repair.route-requires-ready-current-instruction.v1.json"
+      ],
+      "expected_decision_digest": "sha256:1a1847cf2122ddb24eb8656f5b6946e00b6782b3404d39fdacf9df924aed0935"
+    },
+    {
+      "document": "policy/formal-claims.d/ripr.resource.input-cap-is-exact.v1.json",
+      "claim_id": "ripr.resource.input-cap-is-exact.v1",
+      "claim_generation": 1,
+      "route": "native",
+      "authority_paths": [
+        "docs/formal-verification/CLAIMS.md",
+        "docs/formal-verification/RESULTS.md",
+        "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "policy/formal-claims.d/ripr.resource.input-cap-is-exact.v1.json"
+      ],
+      "expected_decision_digest": "sha256:6270c3458d0b3062f1629d86a0c089b4dddfab037ca8266e34eb06755fc47716"
+    }
+  ],
+  "retirements": []
+}

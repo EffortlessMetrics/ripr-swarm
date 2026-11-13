@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/formal-claim-index-v1.schema.json",
+  "title": "RIPR generated formal claim index v1",
+  "description": "Deterministic projection consumed by passive affected-claim planning. It grants neither execution authority nor native assurance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "claim_index",
+    "execution_authority",
+    "native_assurance"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.formal-claim-index.v1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "claim_index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "global_authority_paths",
+        "claims"
+      ],
+      "properties": {
+        "generation": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*:sha256:[a-f0-9]{64}$"
+        },
+        "global_authority_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+          }
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "claim_id",
+              "claim_generation",
+              "criticality",
+              "phase",
+              "provider",
+              "route",
+              "owners",
+              "source_closure",
+              "authority_paths",
+              "subjects",
+              "limitations"
+            ],
+            "properties": {
+              "claim_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]+$"
+              },
+              "claim_generation": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "criticality": {
+                "enum": [
+                  "critical",
+                  "important",
+                  "advisory",
+                  "scheduled",
+                  "manual"
+                ]
+              },
+              "phase": {
+                "enum": [
+                  "admitted_merge_group",
+                  "ordinary_pr_critical",
+                  "merge_ready",
+                  "scheduled",
+                  "release",
+                  "manual"
+                ]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "route": {
+                "enum": [
+                  "native",
+                  "manual",
+                  "unsupported"
+                ]
+              },
+              "owners": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "source_closure": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+                }
+              },
+              "authority_paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+                }
+              },
+              "subjects": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "limitations": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution_authority": {
+      "const": "not_granted"
+    },
+    "native_assurance": {
+      "const": "not_assessed"
+    }
+  }
+}

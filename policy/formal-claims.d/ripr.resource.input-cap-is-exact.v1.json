@@ -1,0 +1,58 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.resource.input-cap-is-exact.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "admitted_merge_group",
+  "proposition": "read_cap never overflows and exceeds_limit accepts exactly inputs at or below the configured byte limit.",
+  "non_claims": [
+    "This claim does not establish allocation success, I/O liveness, or behavior of arbitrary Read implementations.",
+    "This claim does not establish every higher-level CLI input policy."
+  ],
+  "owners": [
+    "ripr::bounded_input::read_cap",
+    "ripr::bounded_input::exceeds_limit"
+  ],
+  "source_closure": [
+    "crates/ripr/src/bounded_input.rs",
+    "crates/ripr/src/bounded_input_kani.rs"
+  ],
+  "domain": "Every u64 limit and every usize read length within the take(read_cap) delivery bound.",
+  "assumptions": [
+    "A take(read_cap) reader does not deliver more than read_cap bytes."
+  ],
+  "trust_dependencies": [
+    "Kani 0.68.0 frontend and transformation semantics",
+    "CBMC solver execution and result reporting",
+    "the pinned Rust verifier toolchain and target configuration"
+  ],
+  "observable": "The read_cap result and exceeds_limit acceptance predicate.",
+  "bounds": {
+    "limit": "all u64 values",
+    "read_len": "all usize values constrained by read_len <= read_cap(limit)"
+  },
+  "subjects": [
+    "read_cap_and_exceeds_limit_are_exact"
+  ],
+  "required_covers": [
+    "one byte above a zero limit is rejected",
+    "u64::MAX saturation is explored",
+    "an exact-limit input is accepted"
+  ],
+  "negative_controls": [
+    "Mutation control: accept limit + 1 bytes or overflow read_cap at u64::MAX."
+  ],
+  "result_satisfaction": "One current verified row for the registered subject with all boundary covers satisfied.",
+  "currentness_inputs": [
+    "claim document decision digest",
+    "complete registered source-closure digest",
+    "provider, solver and Rust toolchain identity",
+    "runner generation and effective verifier configuration",
+    "actual admitted merge-group and ordered member heads"
+  ],
+  "transition_policy": "base_and_head_remain_protected_until_an_explicit_generation-bumped replacement or recorded retirement is accepted",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

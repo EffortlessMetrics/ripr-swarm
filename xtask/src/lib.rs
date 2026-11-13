@@ -3,3 +3,6 @@
 
 #[cfg(feature = "formal-evidence-audit")]
 pub mod formal_evidence;
+
+#[cfg(feature = "formal-claim-registry")]
+pub mod formal_registry;

@@ -1,0 +1,63 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "admitted_merge_group",
+  "proposition": "The top-level gate status fails exactly when configuration errors, blocking findings, or exception-policy blockers require failure.",
+  "non_claims": [
+    "This claim does not establish that upstream findings, acknowledgements, or configuration errors are themselves classified correctly.",
+    "This claim does not establish availability or latency of the gate command."
+  ],
+  "owners": [
+    "ripr::output::gate::top_level_status",
+    "ripr::output::gate::presentation::status_fails_gate"
+  ],
+  "source_closure": [
+    "crates/ripr/src/output/gate.rs",
+    "crates/ripr/src/output/gate/presentation.rs",
+    "crates/ripr/src/output/gate/gate_kani.rs"
+  ],
+  "domain": "All GateMode variants, symbolic GateSummary counters, bounded warning/configuration-error presence, and symbolic exception blockers.",
+  "assumptions": [
+    "The symbolic mode index is constrained below the four registered GateMode variants."
+  ],
+  "trust_dependencies": [
+    "Kani 0.68.0 frontend and transformation semantics",
+    "CBMC solver execution and result reporting",
+    "the pinned Rust verifier toolchain and target configuration"
+  ],
+  "observable": "The closed top-level status token and status_fails_gate decision.",
+  "bounds": {
+    "gate_mode_variants": 4,
+    "warnings_entries_max": 1,
+    "config_errors_entries_max": 1,
+    "unwind": 16
+  },
+  "subjects": [
+    "top_level_status_fails_closed"
+  ],
+  "required_covers": [
+    "pass",
+    "blocked",
+    "config_error",
+    "acknowledged",
+    "advisory"
+  ],
+  "negative_controls": [
+    "Mutation control: allow a blocking or configuration-error state to produce a non-failing status."
+  ],
+  "result_satisfaction": "One current verified row for the registered subject with every required status cover satisfied.",
+  "currentness_inputs": [
+    "claim document decision digest",
+    "complete registered source-closure digest",
+    "provider, solver and Rust toolchain identity",
+    "runner generation and effective verifier configuration",
+    "actual admitted merge-group and ordered member heads"
+  ],
+  "transition_policy": "base_and_head_remain_protected_until_an_explicit_generation-bumped replacement or recorded retirement is accepted",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

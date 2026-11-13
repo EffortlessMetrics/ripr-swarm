@@ -1,0 +1,57 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "admitted_merge_group",
+  "proposition": "EvidenceState::is_actionable returns true exactly for EvidenceState::Actionable.",
+  "non_claims": [
+    "This claim does not establish correctness of evidence production, severity assignment, or downstream command execution.",
+    "This claim does not establish whole-program correctness or specification adequacy."
+  ],
+  "owners": [
+    "ripr_contract::domain::EvidenceState::is_actionable"
+  ],
+  "source_closure": [
+    "crates/ripr-contract/src/domain/evidence_state.rs",
+    "crates/ripr/src/domain.rs",
+    "crates/ripr/src/kani_smoke.rs"
+  ],
+  "domain": "All five registered EvidenceState variants selected by a bounded symbolic index.",
+  "assumptions": [
+    "The symbolic index is constrained below the five registered EvidenceState variants."
+  ],
+  "trust_dependencies": [
+    "Kani 0.68.0 frontend and transformation semantics",
+    "CBMC solver execution and result reporting",
+    "the pinned Rust verifier toolchain and target configuration"
+  ],
+  "observable": "The boolean returned by EvidenceState::is_actionable.",
+  "bounds": {
+    "evidence_state_variants": 5,
+    "symbolic_index": "u8 constrained to index < 5"
+  },
+  "subjects": [
+    "evidence_state_actionable_only_for_actionable"
+  ],
+  "required_covers": [
+    "an actionable state is explored",
+    "a non-actionable state is explored"
+  ],
+  "negative_controls": [
+    "Mutation control: make a non-Actionable variant return true and require the harness to fail."
+  ],
+  "result_satisfaction": "One current verified row for the registered subject with both required covers satisfied and no unreachable cover.",
+  "currentness_inputs": [
+    "claim document decision digest",
+    "complete registered source-closure digest",
+    "provider, solver and Rust toolchain identity",
+    "runner generation and effective verifier configuration",
+    "actual admitted merge-group and ordered member heads"
+  ],
+  "transition_policy": "base_and_head_remain_protected_until_an_explicit_generation-bumped replacement or recorded retirement is accepted",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

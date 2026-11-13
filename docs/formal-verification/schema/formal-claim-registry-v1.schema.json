@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/formal-claim-registry-v1.schema.json",
+  "title": "RIPR governed formal claim registry v1",
+  "description": "Canonical active-claim membership and transition metadata. Validation does not execute a provider or establish native assurance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "registry_generation",
+    "global_authority_paths",
+    "claims",
+    "retirements"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.formal-claim-registry.v1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "registry_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "global_authority_paths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "retirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/retirement"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document",
+        "claim_id",
+        "claim_generation",
+        "route",
+        "authority_paths",
+        "expected_decision_digest"
+      ],
+      "properties": {
+        "document": {
+          "type": "string",
+          "pattern": "^policy/formal-claims\\.d/(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+\\.json$"
+        },
+        "claim_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]+$"
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "route": {
+          "enum": [
+            "native",
+            "manual",
+            "unsupported"
+          ]
+        },
+        "authority_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+          }
+        },
+        "expected_decision_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "retirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "final_generation",
+        "replacement_claim_id",
+        "reason"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]+$"
+        },
+        "final_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replacement_claim_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    }
+  }
+}

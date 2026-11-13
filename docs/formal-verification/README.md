@@ -22,6 +22,9 @@ The repository already has:
   remains with #14469 and bounded tool preflight remains with #12581;
 - bounded Kani proofs over production decision cores;
 - a generated source census of ordinary Kani harnesses;
+- a governed claim-registry candidate with five initial critical claims,
+  deterministic planner projection, generation transitions, and a registry-only
+  scoreboard that keeps every claim non-established until an exact result join;
 - scheduled property and metamorphic fuzzing;
 - bounded static Kani and Verus source facts for user-facing analysis;
 - an unattested Kani result importer;
@@ -42,9 +45,11 @@ production behavior
 → product and CI projection
 ```
 
-Until the claim registry and native-result contract are implemented, the
-schemas and examples in this directory are design contracts. They are not
-runtime authority and do not promote any existing result.
+The governed registry in `policy/formal-claims.json` is the candidate
+membership and generation authority for #14473. Its registry-only scoreboard
+does not promote any existing result. The #14472 native-result producer,
+admitted lifecycle join, and proof-authority transitions remain separate
+runtime obligations.
 
 ## Non-cross-credit law
 
@@ -84,6 +89,7 @@ configuration, model, provider, denominator, and result law match.
 | Kani runner | `xtask/src/kani_lane.rs` |
 | Kani workflow | `.github/workflows/kani.yml` |
 | Self-proof claim boundaries | #12109 |
+| Governed claim registry and scoreboard | #14473 / `policy/formal-claims.json` |
 | Required-check and scoreboard decision | #12904 |
 | User-facing FV integration | #10745 |
 | Kani source/context inventory | #10686 / draft PR #11517 |
@@ -108,6 +114,9 @@ owner where scope has become too large.
 - [MAINTENANCE.md](MAINTENANCE.md) — operator and maintainer runbook.
 - [ADMISSION_AUDIT.md](ADMISSION_AUDIT.md) — isolated document-consistency
   checks, adversarial controls and the boundary to native assurance.
+- [REGISTRY.md](REGISTRY.md) — governed membership, decision and registry
+  generations, planner projection, registry-only scoreboard, transitions, and
+  the boundary to admitted native results.
 - [CLAIM_PLAN.md](CLAIM_PLAN.md) — passive affected-critical-claim selection,
   fail-closed fallback, queue-subject identity, and the boundary to execution.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
