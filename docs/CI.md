@@ -775,6 +775,11 @@ normalization behavior surfaced only on a maintainer's local run.
 
 ### Advisory Kani Lane
 
+The maintained [formal-verification guide](formal-verification/README.md)
+defines claim/result identity, evidence retention, admitted qualification and
+the maintainer runbook. Its design contracts and implementation work index
+distinguish current source from candidates and planned assurance.
+
 `.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
@@ -786,18 +791,33 @@ check and does not run on ordinary pushes or PR updates.
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
   (`~/.kani` and the cargo bin directory).
 - **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
-  `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
-  (counterexample, or an unreachable `kani::cover!` that makes the proof
-  vacuous) or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout, no verdict). Anything
-  but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
-  (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
+  `VERIFIED` (native success within the harness's documented bounds and
+  verification policy, with one positive-total complete cover summary),
+  `FAILED` (native verification failure or a known unsatisfied required cover)
+  or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout,
+  no verdict, or missing/zero/malformed/repeated/inconsistent/undetermined cover
+  evidence). Regular property statuses of `UNDETERMINED`, `ERROR` or an
+  unrecognized word cannot be overridden by a complete cover count. An
+  unsatisfied cover fails the lane's reachability policy; it does not establish
+  that every assertion is vacuous. Anything but `VERIFIED` fails the job, and so
+  does a missing tool or zero harnesses (`--allow-empty` is a local-only opt-out
+  for empty selections, not incomplete evidence). Nothing passes by absence.
 - **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
-- **Selection.** A daily schedule and explicit `workflow_dispatch` only;
-  the PR/label subscription is retired. Kani runs once per owning package
-  (`ripr`, then `ripr-contract`) under one whole-run deadline and compiles each
-  whole library, so a run takes minutes and several GB of memory.
+- **Selection.** A daily schedule and explicit `workflow_dispatch` only. The
+  ordinary PR/label subscription is retired. Compiled inventory and verification
+  run per owning package under the shared whole-run deadline; this compiles the
+  libraries and is a measured native lane, not a cheap source census.
+- **Evidence.** The versioned `target/ripr/reports/kani.json` DTO is the shared
+  machine contract. Markdown projects the same admitted record. The workflow
+  uploads only its fresh `kani-evidence/<run-id>-<attempt>` directory, including
+  JSON, Markdown, bounded native streams and inventory/source commitments.
+  Missing artifacts fail the upload. Fourteen-day retention supports diagnosis
+  and replay; expired bytes cannot support durable assurance. Registered claims
+  remain separately governed and unregistered harnesses do not increase them.
+  See [native custody](formal-verification/RESULTS.md#native-capture-implementation-14472--12470).
+
 
 ### Advisory Printed-Command Paste Lane
 

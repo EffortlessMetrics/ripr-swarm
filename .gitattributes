@@ -45,6 +45,10 @@ xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.c
 # The captured LF fixture is pinned by SHA-256 in its adjacent README.
 xtask/tests/windows_advisory_identity/owner_pin_execution-39023007917.log whitespace=-blank-at-eol
 
+# #14460 retains native compiler diagnostic blanks as captured; their hashes
+# are recorded with the Kani cover-evidence fixtures.
+xtask/tests/fixtures/kani-cover-evidence/*.stderr.txt whitespace=-blank-at-eof
+
 # Labeled verdict corpus (RIPR-SPEC-0219): case diffs carry patch-syntax
 # context spaces, and retained subjects are byte-identical upstream files
 # pinned by sha256, so whitespace rules cannot rewrite either.
@@ -116,3 +120,8 @@ fixtures/ts_trailing_whitespace_in_template/diff.patch whitespace=-blank-at-eol
 # Rewriting these bytes would falsify the byte counts pinned in
 # benchmarks/agent-discrimination/scenarios/<scenario>/scenario.json.
 benchmarks/agent-discrimination/contexts/** whitespace=-blank-at-eol,-blank-at-eof
+
+# Exact native Kani 0.68.0 captures: preserve bytes committed by the fixture
+# receipt. The help and compiler output contain native trailing spaces.
+xtask/tests/fixtures/kani-native-inventory/list-help.stdout.txt whitespace=-blank-at-eol
+xtask/tests/fixtures/kani-native-inventory/stdout.txt whitespace=-blank-at-eol

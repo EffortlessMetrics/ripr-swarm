@@ -8,17 +8,15 @@ on:
 permissions:
   contents: read
 
-# Only a `merge-ready` labeled request shares this group, so a re-applied label
-# supersedes the older run for the same PR. Every other pull_request event gets
-# a unique group: its jobs are skipped and it can neither cancel nor replace a
-# pending merge-ready run.
+# The existing scheduled/manual advisory route serializes each ref without
+# cancelling an in-flight verifier or changing the retired PR event perimeter.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
-  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
+  group: ${{ github.workflow }}-${{ github.ref }}-run
+  cancel-in-progress: false
 
 # Kani lane (RIPR-SPEC-0371): bounded model checking of pure cores.
 #
-# "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
+# "Lighter, later, tighter" (docs/CI.md): this is not a required check and
 # runs only nightly and on explicit dispatch; the PR/label subscription is
 # retired. Kani compiles each owning library for verification, so a run is
 # minutes, not seconds.
@@ -30,7 +28,6 @@ concurrency:
 jobs:
   kani:
     name: kani
-    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -65,14 +62,90 @@ jobs:
           echo "::error::kani install/setup failed after 4 attempts"
           exit 1
 
-      - name: Run Kani harnesses
+      - name: Build maintained native evidence frontdoors
+        env:
+          CARGO_BUILD_JOBS: "1"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: >-
+          cargo build --locked -p xtask --no-default-features
+          --features formal-runner --bin formal-kani --bin formal-assurance
+
+      - name: Capture registered currentness pilot
+        timeout-minutes: 5
+        run: >-
+          timeout --kill-after=5s 180s target/debug/formal-kani
+          --package ripr-contract
+          --harness domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint
+          --default-unwind 32
+          --claim-registry .ripr/formal-claims.json
+          --registered-claim ripr.currentness.candidate-action
+          --timeout-secs 120 --harness-timeout-secs 60
+
+      - name: Bind the exact registered evidence directory
+        id: registered
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+
+          reports = Path("target/ripr/reports")
+          encoded = (reports / "kani.json").read_bytes()
+          report = json.loads(encoded)
+          execution = report["execution"]
+          claim = "ripr.currentness.candidate-action"
+          assert report["inventory"]["expected_claim_ids"] == [claim]
+          assert len(report["results"]) == 1
+          row = report["results"][0]
+          assert row["claim_id"] == claim and row["status"] == "ESTABLISHED"
+          assert row["native_verdict"] == "verified" and row["current"] is True
+          assert execution["source_current"] and execution["lane_success"]
+          assert execution["github_run_id"] == os.environ["GITHUB_RUN_ID"]
+          assert execution["github_run_attempt"] == os.environ["GITHUB_RUN_ATTEMPT"]
+          assert execution["github_job"] == os.environ["GITHUB_JOB"]
+          group = f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+          relative = PurePosixPath(execution["artifact_directory"])
+          assert not relative.is_absolute() and len(relative.parts) == 3
+          assert relative.parts[:2] == ("kani-evidence", group)
+          assert all(c in "0123456789-" for c in relative.parts[2])
+          directory = reports.joinpath(*relative.parts)
+          assert (directory / "kani.json").read_bytes() == encoded
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"artifacts={directory.as_posix()}\n")
+
+      - name: Project the registered pilot from retained bytes
+        timeout-minutes: 5
+        env:
+          RIPR_NATIVE_ARTIFACTS: ${{ steps.registered.outputs.artifacts }}
+        run: |
+          timeout --kill-after=5s 180s target/debug/formal-assurance --root . \
+            --run "$RIPR_NATIVE_ARTIFACTS/kani.json" --artifacts "$RIPR_NATIVE_ARTIFACTS" \
+            --format json > "$RIPR_NATIVE_ARTIFACTS/assurance.json"
+          timeout --kill-after=5s 180s target/debug/formal-assurance --root . \
+            --run "$RIPR_NATIVE_ARTIFACTS/kani.json" --artifacts "$RIPR_NATIVE_ARTIFACTS" \
+            --format markdown > "$RIPR_NATIVE_ARTIFACTS/assurance.md"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          directory = Path(os.environ["RIPR_NATIVE_ARTIFACTS"])
+          board = json.loads((directory / "assurance.json").read_bytes())
+          rows = [row for row in board["claims"] if row["claim_id"] == "ripr.currentness.candidate-action"]
+          assert len(rows) == 1 and rows[0]["status"] == "ESTABLISHED"
+          assert rows[0]["provenance"] == "local_retained_bytes_checked_not_authenticated"
+          PY
+
+      - name: Run existing broad Kani harness lane
         run: cargo xtask kani
 
-      - name: Upload Kani report
+      # Exact run/attempt directory: never upload a cached previous report.
+      - name: Upload Kani evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-kani
-          path: target/ripr/reports/kani.md
-          if-no-files-found: warn
+          path: target/ripr/reports/kani-evidence/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+
           retention-days: 14

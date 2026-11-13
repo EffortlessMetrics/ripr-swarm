@@ -1,0 +1,608 @@
+{
+  "schema": "ripr.critical-claim-registry.v1",
+  "generation": 2,
+  "claims": [
+    {
+      "semantic_family": "classification_actionability",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.classification.exposed-gating",
+        "claim_generation": 1,
+        "family": "bounded_model_check",
+        "provider": "kani",
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "proposition": "Exposed is emitted exactly when the probe is not static_unknown, reach/infect/propagate/discriminate are Yes and observation is not No.",
+        "non_claims": ["No proof of stage extraction, receiver/call identity, end-to-end actionability or arbitrary source-language behavior.", "The existing tag-selected stage domain still needs its own enum-drift guard; this registry does not invent one."],
+        "owners": ["crates/ripr/src/analysis/classify/decision.rs::classify"],
+        "source_closure": ["crates/ripr/src/analysis/classify/decision.rs", "crates/ripr/src/analysis/classify/decision/kani_proofs.rs"],
+        "domain": "Five independently selected six-state stages; probe family is Predicate or StaticUnknown; other probe fields are fixed.",
+        "assumptions": ["The registered harness directly invokes the normal production implementation; fixed text/metadata fields are irrelevant to the named observable."],
+        "trust_dependencies": ["Kani 0.68.0 bundled rustc and CBMC 6.11.0, observed locally rather than authenticated.", "Rust standard/dependency semantics admitted by the pinned Cargo.lock; no registered body replacement or trusted stub.", "Source correspondence and semantic cover names are reviewed registrations; source anchors alone do not prove correspondence."],
+        "observable": "Exposed is emitted exactly when the probe is not static_unknown, reach/infect/propagate/discriminate are Yes and observation is not No.",
+        "bounds": {
+          "unwind": 2,
+          "stage_states": 6,
+          "probe_partitions": 2,
+          "default_unwind": 32
+        },
+        "subjects": ["ripr:crates/ripr/src/analysis/classify/decision/kani_proofs.rs::analysis::classify::decision::kani_proofs::exposed_iff_all_gating_stages_yes"],
+        "required_covers": ["ripr.classification.exposed-gating.exposed", "ripr.classification.exposed-gating.weak"],
+        "negative_controls": ["ripr.classification.exposed-gating.wrong-implementation"],
+        "result_satisfaction": "all_registered_subjects_verified_with_complete_required_covers",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "owner_issue": 12109
+      },
+      "closure_rule": "kani_workspace_sources_v1",
+      "authority_paths": ["crates/ripr/src/analysis/classify/decision/kani_proofs.rs"],
+      "subject": {
+        "file": "crates/ripr/src/analysis/classify/decision/kani_proofs.rs",
+        "symbol": "analysis::classify::decision::kani_proofs::exposed_iff_all_gating_stages_yes",
+        "anchor": "fn exposed_iff_all_gating_stages_yes() {"
+      },
+      "package": "ripr",
+      "provider_profile": {
+        "version": "0.68.0",
+        "solver_version": "6.11.0",
+        "configuration_policy": "kani-0.68-defaults-v1",
+        "default_unwind": 32,
+        "target": "x86_64-unknown-linux-gnu",
+        "compiler_trust": "kani-bundled-observed"
+      },
+      "cover_requirements": [
+        {
+          "id": "ripr.classification.exposed-gating.exposed",
+          "file": "crates/ripr/src/analysis/classify/decision/kani_proofs.rs",
+          "anchor": "kani::cover!(expect, \"exposed path\");"
+        },
+        {
+          "id": "ripr.classification.exposed-gating.weak",
+          "file": "crates/ripr/src/analysis/classify/decision/kani_proofs.rs",
+          "anchor": "!expect && class == ExposureClass::WeaklyExposed,"
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.classification.exposed-gating.wrong-implementation",
+          "file": "crates/ripr/src/analysis/classify/decision.rs",
+          "before": "if reach.state == StageState::Yes\n        && discriminate.state == StageState::Yes",
+          "after": "if reach.state == StageState::Yes\n        && discriminate.state != StageState::No",
+          "expected_failed_claim": "ripr.classification.exposed-gating",
+          "expected_subject": "ripr:crates/ripr/src/analysis/classify/decision/kani_proofs.rs::analysis::classify::decision::kani_proofs::exposed_iff_all_gating_stages_yes",
+          "effect": "The mutation admits the forbidden case named by this claim; the named exact harness must report its assertion counterexample, not a compile failure or timeout."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr/src/analysis/classify/decision.rs",
+            "symbol": "classify",
+            "anchor": "pub(in crate::analysis) fn classify("
+          }
+        ],
+        "verification_only_paths": ["crates/ripr/src/analysis/classify/decision/kani_proofs.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["No proof of stage extraction, receiver/call identity, end-to-end actionability or arbitrary source-language behavior.", "The existing tag-selected stage domain still needs its own enum-drift guard; this registry does not invent one."]
+      },
+      "alternative_evidence_owner": null
+    },
+    {
+      "semantic_family": "gate_exit_aggregation",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.gate.command-error-exit",
+        "claim_generation": 1,
+        "family": "bounded_model_check",
+        "provider": "kani",
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "proposition": "CommandError Failure, Decision and Interrupted map exactly to 2, 3 and 130; none of these three variants maps to successful exit zero.",
+        "non_claims": ["No proof of CLI dispatch, process cleanup, arbitrary gate tokens or aggregation of independent result rows.", "The hand-written three-variant symbolic domain needs an independent enum-drift guard."],
+        "owners": ["crates/ripr/src/cli/mod.rs::CommandError::exit_code"],
+        "source_closure": ["crates/ripr/src/cli/exit_kani.rs", "crates/ripr/src/cli/mod.rs"],
+        "domain": "The three current error variants with empty messages; string contents are irrelevant to exit_code.",
+        "assumptions": ["The registered harness directly invokes the normal production implementation; fixed text/metadata fields are irrelevant to the named observable."],
+        "trust_dependencies": ["Kani 0.68.0 bundled rustc and CBMC 6.11.0, observed locally rather than authenticated.", "Rust standard/dependency semantics admitted by the pinned Cargo.lock; no registered body replacement or trusted stub.", "Source correspondence and semantic cover names are reviewed registrations; source anchors alone do not prove correspondence."],
+        "observable": "CommandError Failure, Decision and Interrupted map exactly to 2, 3 and 130; none of these three variants maps to successful exit zero.",
+        "bounds": {
+          "default_unwind": 32,
+          "error_variants": 3,
+          "loops": "none in exit_code"
+        },
+        "subjects": ["ripr:crates/ripr/src/cli/exit_kani.rs::cli::exit_kani::command_error_exit_code_total_and_matches_table"],
+        "required_covers": ["ripr.gate.command-error-exit.failure", "ripr.gate.command-error-exit.decision", "ripr.gate.command-error-exit.interrupted"],
+        "negative_controls": ["ripr.gate.command-error-exit.wrong-implementation"],
+        "result_satisfaction": "all_registered_subjects_verified_with_complete_required_covers",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "owner_issue": 12109
+      },
+      "closure_rule": "kani_workspace_sources_v1",
+      "authority_paths": ["crates/ripr/src/cli/exit_kani.rs"],
+      "subject": {
+        "file": "crates/ripr/src/cli/exit_kani.rs",
+        "symbol": "cli::exit_kani::command_error_exit_code_total_and_matches_table",
+        "anchor": "fn command_error_exit_code_total_and_matches_table() {"
+      },
+      "package": "ripr",
+      "provider_profile": {
+        "version": "0.68.0",
+        "solver_version": "6.11.0",
+        "configuration_policy": "kani-0.68-defaults-v1",
+        "default_unwind": 32,
+        "target": "x86_64-unknown-linux-gnu",
+        "compiler_trust": "kani-bundled-observed"
+      },
+      "cover_requirements": [
+        {
+          "id": "ripr.gate.command-error-exit.failure",
+          "file": "crates/ripr/src/cli/exit_kani.rs",
+          "anchor": "kani::cover!(code == 2);"
+        },
+        {
+          "id": "ripr.gate.command-error-exit.decision",
+          "file": "crates/ripr/src/cli/exit_kani.rs",
+          "anchor": "kani::cover!(code == 3);"
+        },
+        {
+          "id": "ripr.gate.command-error-exit.interrupted",
+          "file": "crates/ripr/src/cli/exit_kani.rs",
+          "anchor": "kani::cover!(code == 130);"
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.gate.command-error-exit.wrong-implementation",
+          "file": "crates/ripr/src/cli/mod.rs",
+          "before": "Self::Failure(_) => EXIT_COULD_NOT_COMPLETE,",
+          "after": "Self::Failure(_) => EXIT_COMPLETED,",
+          "expected_failed_claim": "ripr.gate.command-error-exit",
+          "expected_subject": "ripr:crates/ripr/src/cli/exit_kani.rs::cli::exit_kani::command_error_exit_code_total_and_matches_table",
+          "effect": "The mutation admits the forbidden case named by this claim; the named exact harness must report its assertion counterexample, not a compile failure or timeout."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr/src/cli/mod.rs",
+            "symbol": "CommandError::exit_code",
+            "anchor": "pub const fn exit_code(&self) -> i32 {"
+          }
+        ],
+        "verification_only_paths": ["crates/ripr/src/cli/exit_kani.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["No proof of CLI dispatch, process cleanup, arbitrary gate tokens or aggregation of independent result rows.", "The hand-written three-variant symbolic domain needs an independent enum-drift guard."]
+      },
+      "alternative_evidence_owner": null
+    },
+    {
+      "semantic_family": "currentness_identity_causality",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.currentness.candidate-action",
+        "claim_generation": 2,
+        "family": "bounded_model_check",
+        "provider": "kani",
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "proposition": "Candidate action is permitted exactly for CandidateCurrent; base-side predicates never overlap it, and UnresolvedSubject permits neither action nor base-side attribution.",
+        "non_claims": ["No proof that an upstream producer correctly identifies source currentness, compares repository snapshots or binds a candidate identity.", "The enum helper proof does not establish end-to-end repair readiness or causal comparison."],
+        "owners": ["crates/ripr-contract/src/domain/probe.rs::SourceCurrentness::permits_candidate_action", "crates/ripr-contract/src/domain/probe.rs::SourceCurrentness::is_base_side"],
+        "source_closure": ["crates/ripr-contract/src/domain/probe.rs", "crates/ripr-contract/src/domain/probe_kani.rs", "crates/ripr-contract/src/domain/proof_domains.rs"],
+        "domain": "All four SourceCurrentness constructors selected through the compiler-checked exhaustive CURRENTNESS domain.",
+        "assumptions": ["The registered harness directly invokes the normal production implementation; fixed text/metadata fields are irrelevant to the named observable."],
+        "trust_dependencies": ["Kani 0.68.0 bundled rustc and CBMC 6.11.0, observed locally rather than authenticated.", "Rust standard/dependency semantics admitted by the pinned Cargo.lock; no registered body replacement or trusted stub.", "Source correspondence and semantic cover names are reviewed registrations; source anchors alone do not prove correspondence."],
+        "observable": "Candidate action is permitted exactly for CandidateCurrent; base-side predicates never overlap it, and UnresolvedSubject permits neither action nor base-side attribution.",
+        "bounds": {
+          "default_unwind": 32,
+          "constructors": 4,
+          "usize_width": 64,
+          "loops": "none; guarded constructor lookup only"
+        },
+        "subjects": ["ripr-contract:crates/ripr-contract/src/domain/probe_kani.rs::domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint"],
+        "required_covers": ["ripr.currentness.candidate-action.candidate", "ripr.currentness.candidate-action.deleted", "ripr.currentness.candidate-action.moved", "ripr.currentness.candidate-action.unresolved", "ripr.currentness.candidate-action.base-side", "ripr.currentness.candidate-action.action"],
+        "negative_controls": ["ripr.currentness.candidate-action.wrong-implementation"],
+        "result_satisfaction": "all_registered_subjects_verified_with_complete_required_covers",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0151-source-currentness.md",
+        "owner_issue": 11912
+      },
+      "closure_rule": "kani_workspace_sources_v1",
+      "authority_paths": ["crates/ripr-contract/src/domain/probe_kani.rs", "crates/ripr-contract/src/domain/proof_domains.rs"],
+      "subject": {
+        "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+        "symbol": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+        "anchor": "fn currentness_action_and_base_side_are_disjoint() {"
+      },
+      "package": "ripr-contract",
+      "provider_profile": {
+        "version": "0.68.0",
+        "solver_version": "6.11.0",
+        "configuration_policy": "kani-0.68-defaults-v1",
+        "default_unwind": 32,
+        "target": "x86_64-unknown-linux-gnu",
+        "compiler_trust": "kani-bundled-observed"
+      },
+      "cover_requirements": [
+        {
+          "id": "ripr.currentness.candidate-action.candidate",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::CandidateCurrent",
+          "native": {
+            "description": "\"cover condition: * value == SourceCurrentness::CandidateCurrent\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1
+          }
+        },
+        {
+          "id": "ripr.currentness.candidate-action.deleted",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::BaseDeleted",
+          "native": {
+            "description": "\"cover condition: * value == SourceCurrentness::BaseDeleted\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1
+          }
+        },
+        {
+          "id": "ripr.currentness.candidate-action.moved",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::MovedOrRenamed",
+          "native": {
+            "description": "\"cover condition: * value == SourceCurrentness::MovedOrRenamed\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1
+          }
+        },
+        {
+          "id": "ripr.currentness.candidate-action.unresolved",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::UnresolvedSubject",
+          "native": {
+            "description": "\"cover condition: * value == SourceCurrentness::UnresolvedSubject\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1
+          }
+        },
+        {
+          "id": "ripr.currentness.candidate-action.base-side",
+          "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+          "anchor": "kani::cover!(value.is_base_side());",
+          "native": {
+            "description": "\"cover condition: value.is_base_side()\"",
+            "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+            "function": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+            "line": 40,
+            "column": 5
+          }
+        },
+        {
+          "id": "ripr.currentness.candidate-action.action",
+          "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+          "anchor": "kani::cover!(value.permits_candidate_action());",
+          "native": {
+            "description": "\"cover condition: value.permits_candidate_action()\"",
+            "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+            "function": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+            "line": 41,
+            "column": 5
+          }
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.currentness.candidate-action.wrong-implementation",
+          "file": "crates/ripr-contract/src/domain/probe.rs",
+          "before": "matches!(self, Self::CandidateCurrent)",
+          "after": "!matches!(self, Self::BaseDeleted)",
+          "expected_failed_claim": "ripr.currentness.candidate-action",
+          "expected_subject": "ripr-contract:crates/ripr-contract/src/domain/probe_kani.rs::domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+          "expected_failures": [
+            {
+              "property": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.assertion.1",
+              "presentation": {
+                "description": "\"assertion failed: value.permits_candidate_action() ==\nvalue == SourceCurrentness::CandidateCurrent\"",
+                "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+                "function": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+                "line": 32,
+                "column": 5
+              }
+            }
+          ],
+          "effect": "The mutation admits the forbidden case named by this claim; the named exact harness must report its assertion counterexample, not a compile failure or timeout."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr-contract/src/domain/probe.rs",
+            "symbol": "SourceCurrentness::permits_candidate_action",
+            "anchor": "pub fn permits_candidate_action(&self) -> bool {"
+          },
+          {
+            "file": "crates/ripr-contract/src/domain/probe.rs",
+            "symbol": "SourceCurrentness::is_base_side",
+            "anchor": "pub fn is_base_side(&self) -> bool {"
+          }
+        ],
+        "verification_only_paths": ["crates/ripr-contract/src/domain/probe_kani.rs", "crates/ripr-contract/src/domain/proof_domains.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["No proof that an upstream producer correctly identifies source currentness, compares repository snapshots or binds a candidate identity.", "The enum helper proof does not establish end-to-end repair readiness or causal comparison."]
+      },
+      "alternative_evidence_owner": null
+    },
+    {
+      "semantic_family": "resource_budget_safety",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.resources.bounded-input",
+        "claim_generation": 1,
+        "family": "bounded_model_check",
+        "provider": "kani",
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "proposition": "read_cap saturates at u64::MAX and otherwise permits one extra byte; exceeds_limit accepts the equality boundary and refuses an observed byte beyond the limit.",
+        "non_claims": ["The std::io reader, allocator, UTF-8 conversion and complete process memory usage are outside this scalar claim.", "The harness assumes a take(cap) reader never supplies more than cap bytes; that I/O premise is not checked by Kani."],
+        "owners": ["crates/ripr/src/bounded_input.rs::exceeds_limit", "crates/ripr/src/bounded_input.rs::read_cap"],
+        "source_closure": ["crates/ripr/src/bounded_input.rs", "crates/ripr/src/bounded_input_kani.rs"],
+        "domain": "Arbitrary u64 limit and usize read length, under read_len as u64 <= read_cap(limit) on the registered 64-bit target.",
+        "assumptions": ["The registered harness directly invokes the normal production implementation; fixed text/metadata fields are irrelevant to the named observable."],
+        "trust_dependencies": ["Kani 0.68.0 bundled rustc and CBMC 6.11.0, observed locally rather than authenticated.", "Rust standard/dependency semantics admitted by the pinned Cargo.lock; no registered body replacement or trusted stub.", "Source correspondence and semantic cover names are reviewed registrations; source anchors alone do not prove correspondence."],
+        "observable": "read_cap saturates at u64::MAX and otherwise permits one extra byte; exceeds_limit accepts the equality boundary and refuses an observed byte beyond the limit.",
+        "bounds": {
+          "default_unwind": 32,
+          "usize_width": 64,
+          "u64_width": 64,
+          "loops": "none in the three scalar limit helpers"
+        },
+        "subjects": ["ripr:crates/ripr/src/bounded_input_kani.rs::bounded_input::kani_proofs::read_cap_and_exceeds_limit_are_exact"],
+        "required_covers": ["ripr.resources.bounded-input.zero-limit", "ripr.resources.bounded-input.saturation", "ripr.resources.bounded-input.equality"],
+        "negative_controls": ["ripr.resources.bounded-input.wrong-implementation"],
+        "result_satisfaction": "all_registered_subjects_verified_with_complete_required_covers",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "owner_issue": 12109
+      },
+      "closure_rule": "kani_workspace_sources_v1",
+      "authority_paths": ["crates/ripr/src/bounded_input_kani.rs"],
+      "subject": {
+        "file": "crates/ripr/src/bounded_input_kani.rs",
+        "symbol": "bounded_input::kani_proofs::read_cap_and_exceeds_limit_are_exact",
+        "anchor": "fn read_cap_and_exceeds_limit_are_exact() {"
+      },
+      "package": "ripr",
+      "provider_profile": {
+        "version": "0.68.0",
+        "solver_version": "6.11.0",
+        "configuration_policy": "kani-0.68-defaults-v1",
+        "default_unwind": 32,
+        "target": "x86_64-unknown-linux-gnu",
+        "compiler_trust": "kani-bundled-observed"
+      },
+      "cover_requirements": [
+        {
+          "id": "ripr.resources.bounded-input.zero-limit",
+          "file": "crates/ripr/src/bounded_input_kani.rs",
+          "anchor": "kani::cover!(limit == 0 && read_len == 1 && exceeds_limit(read_len, limit));"
+        },
+        {
+          "id": "ripr.resources.bounded-input.saturation",
+          "file": "crates/ripr/src/bounded_input_kani.rs",
+          "anchor": "kani::cover!(limit == u64::MAX && !exceeds_limit(read_len, limit));"
+        },
+        {
+          "id": "ripr.resources.bounded-input.equality",
+          "file": "crates/ripr/src/bounded_input_kani.rs",
+          "anchor": "kani::cover!(read_len as u64 == limit && !exceeds_limit(read_len, limit));"
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.resources.bounded-input.wrong-implementation",
+          "file": "crates/ripr/src/bounded_input.rs",
+          "before": "read_len as u64 > limit",
+          "after": "read_len as u64 > limit && read_len == 0",
+          "expected_failed_claim": "ripr.resources.bounded-input",
+          "expected_subject": "ripr:crates/ripr/src/bounded_input_kani.rs::bounded_input::kani_proofs::read_cap_and_exceeds_limit_are_exact",
+          "effect": "The mutation admits the forbidden case named by this claim; the named exact harness must report its assertion counterexample, not a compile failure or timeout."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr/src/bounded_input.rs",
+            "symbol": "exceeds_limit",
+            "anchor": "fn exceeds_limit(read_len: usize, limit: u64) -> bool {"
+          },
+          {
+            "file": "crates/ripr/src/bounded_input.rs",
+            "symbol": "read_cap",
+            "anchor": "fn read_cap(limit: u64) -> u64 {"
+          }
+        ],
+        "verification_only_paths": ["crates/ripr/src/bounded_input_kani.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["The std::io reader, allocator, UTF-8 conversion and complete process memory usage are outside this scalar claim.", "The harness assumes a take(cap) reader never supplies more than cap bytes; that I/O premise is not checked by Kani."]
+      },
+      "alternative_evidence_owner": null
+    },
+    {
+      "semantic_family": "edit_repair_disposition",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.edit-cage.path-boundary",
+        "claim_generation": 1,
+        "family": "bounded_model_check",
+        "provider": "kani",
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "proposition": "An exact rule matches only the same normalized path; a subtree rule additionally matches slash-separated descendants and never a sibling sharing a prefix.",
+        "non_claims": ["No proof of arbitrary Unicode/operating-system paths, path normalization, symlinks or filesystem containment.", "This bounded matching claim does not establish complete edit-cage precedence, readiness or final repair disposition."],
+        "owners": ["crates/ripr/src/edit_cage/mod.rs::CagePathRule::matches"],
+        "source_closure": ["crates/ripr/src/edit_cage/kani_proofs.rs", "crates/ripr/src/edit_cage/mod.rs"],
+        "domain": "Rule and candidate from the closed corpus a, a/b, ab, a/, c; rule scope is Exact or Subtree.",
+        "assumptions": ["The registered harness directly invokes the normal production implementation; fixed text/metadata fields are irrelevant to the named observable."],
+        "trust_dependencies": ["Kani 0.68.0 bundled rustc and CBMC 6.11.0, observed locally rather than authenticated.", "Rust standard/dependency semantics admitted by the pinned Cargo.lock; no registered body replacement or trusted stub.", "Source correspondence and semantic cover names are reviewed registrations; source anchors alone do not prove correspondence."],
+        "observable": "An exact rule matches only the same normalized path; a subtree rule additionally matches slash-separated descendants and never a sibling sharing a prefix.",
+        "bounds": {
+          "unwind": 8,
+          "default_unwind": 32,
+          "path_corpus": "a, a/b, ab, a/, c",
+          "corpus_size": 5,
+          "scope_count": 2
+        },
+        "subjects": ["ripr:crates/ripr/src/edit_cage/kani_proofs.rs::edit_cage::kani_proofs::rule_match_respects_path_boundaries"],
+        "required_covers": ["ripr.edit-cage.path-boundary.descendant", "ripr.edit-cage.path-boundary.sibling-refused", "ripr.edit-cage.path-boundary.exact-refused"],
+        "negative_controls": ["ripr.edit-cage.path-boundary.wrong-implementation"],
+        "result_satisfaction": "all_registered_subjects_verified_with_complete_required_covers",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
+        "owner_issue": 12109
+      },
+      "closure_rule": "kani_workspace_sources_v1",
+      "authority_paths": ["crates/ripr/src/edit_cage/kani_proofs.rs"],
+      "subject": {
+        "file": "crates/ripr/src/edit_cage/kani_proofs.rs",
+        "symbol": "edit_cage::kani_proofs::rule_match_respects_path_boundaries",
+        "anchor": "fn rule_match_respects_path_boundaries() {"
+      },
+      "package": "ripr",
+      "provider_profile": {
+        "version": "0.68.0",
+        "solver_version": "6.11.0",
+        "configuration_policy": "kani-0.68-defaults-v1",
+        "default_unwind": 32,
+        "target": "x86_64-unknown-linux-gnu",
+        "compiler_trust": "kani-bundled-observed"
+      },
+      "cover_requirements": [
+        {
+          "id": "ripr.edit-cage.path-boundary.descendant",
+          "file": "crates/ripr/src/edit_cage/kani_proofs.rs",
+          "anchor": "kani::cover!(rule.scope == CagePathScope::Subtree && rule.path == \"a\" && candidate == \"a/b\");"
+        },
+        {
+          "id": "ripr.edit-cage.path-boundary.sibling-refused",
+          "file": "crates/ripr/src/edit_cage/kani_proofs.rs",
+          "anchor": "kani::cover!(rule.scope == CagePathScope::Subtree && rule.path == \"a\" && candidate == \"ab\");"
+        },
+        {
+          "id": "ripr.edit-cage.path-boundary.exact-refused",
+          "file": "crates/ripr/src/edit_cage/kani_proofs.rs",
+          "anchor": "kani::cover!(rule.scope == CagePathScope::Exact && rule.path == \"a\" && candidate == \"a/b\");"
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.edit-cage.path-boundary.wrong-implementation",
+          "file": "crates/ripr/src/edit_cage/mod.rs",
+          "before": "candidate == self.path\n                    || candidate\n                        .strip_prefix(&self.path)\n                        .is_some_and(|tail| tail.starts_with('/'))",
+          "after": "candidate.starts_with(&self.path)",
+          "expected_failed_claim": "ripr.edit-cage.path-boundary",
+          "expected_subject": "ripr:crates/ripr/src/edit_cage/kani_proofs.rs::edit_cage::kani_proofs::rule_match_respects_path_boundaries",
+          "effect": "The mutation admits the forbidden case named by this claim; the named exact harness must report its assertion counterexample, not a compile failure or timeout."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr/src/edit_cage/mod.rs",
+            "symbol": "CagePathRule::matches",
+            "anchor": "pub(crate) fn matches(&self, candidate: &str) -> bool {"
+          }
+        ],
+        "verification_only_paths": ["crates/ripr/src/edit_cage/kani_proofs.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["No proof of arbitrary Unicode/operating-system paths, path normalization, symlinks or filesystem containment.", "This bounded matching claim does not establish complete edit-cage precedence, readiness or final repair disposition."]
+      },
+      "alternative_evidence_owner": null
+    },
+    {
+      "semantic_family": "edit_repair_disposition",
+      "claim": {
+        "schema": "ripr.formal-claim.v1",
+        "claim_id": "ripr.repair.readiness-producer-conformance",
+        "claim_generation": 1,
+        "family": "manual_or_external",
+        "provider": "manual",
+        "criticality": "critical",
+        "phase": "manual",
+        "proposition": "Repair-card producer routes remain closed unless packet eligibility, edit-cage admission, instruction state and the shared readiness authority all permit them; broader final-disposition review remains owned manually.",
+        "non_claims": ["No native proof of complete readiness production, all renderers, external execution or final repair receipt exists for this registration.", "The scalar repair_card_route_exposable Kani proof is a separate narrower obligation and cannot authenticate producer inputs."],
+        "owners": ["crates/ripr/src/app/repair_card.rs::canonical_next_action_for_card"],
+        "source_closure": ["crates/ripr/src/app/repair_card.rs", "crates/ripr/src/domain/repair_card.rs", "crates/ripr/src/app/repair_card_handoff.rs"],
+        "domain": "Production repair-card inputs and the manually reviewed readiness/packet/cage ownership chain.",
+        "assumptions": ["Manual review must include producer input provenance and downstream callers, not only the scalar boolean helper."],
+        "trust_dependencies": ["Named owner review of SPEC-0192 and its caller/route evidence."],
+        "observable": "Whether a current edit/execution route is offered in the assembled repair card.",
+        "bounds": {
+          "scope": "Manual producer/caller conformance review; no native search bound claimed."
+        },
+        "subjects": ["crates/ripr/src/app/repair_card.rs::canonical_next_action_for_card"],
+        "required_covers": ["ripr.repair.readiness-producer-conformance.ready-route", "ripr.repair.readiness-producer-conformance.cage-refusal"],
+        "negative_controls": ["ripr.repair.readiness-producer-conformance.bypass-readiness"],
+        "result_satisfaction": "manual_review_no_native_assurance",
+        "currentness_inputs": ["source_closure", "registry_generation", "claim_generation", "provider_profile", "bounds", "assumptions", "native_inventory", "raw_output", "producer_generation"],
+        "transition_policy": "generation_on_decision_change_no_automatic_retirement",
+        "owner_spec": "docs/specs/RIPR-SPEC-0192-repair-card-v1.md",
+        "owner_issue": 12109
+      },
+      "closure_rule": "explicit_manual_v1",
+      "authority_paths": ["crates/ripr/src/app/repair_card.rs", "crates/ripr/src/domain/repair_card.rs"],
+      "subject": null,
+      "package": null,
+      "provider_profile": null,
+      "cover_requirements": [
+        {
+          "id": "ripr.repair.readiness-producer-conformance.ready-route",
+          "file": "crates/ripr/src/app/repair_card.rs",
+          "anchor": "let route_admitted = input.packet_eligible"
+        },
+        {
+          "id": "ripr.repair.readiness-producer-conformance.cage-refusal",
+          "file": "crates/ripr/src/app/repair_card.rs",
+          "anchor": "&& input.edit_cage_refusal.is_none()\n        && repair_card_route_exposable"
+        }
+      ],
+      "negative_controls": [
+        {
+          "id": "ripr.repair.readiness-producer-conformance.bypass-readiness",
+          "file": "crates/ripr/src/app/repair_card.rs",
+          "before": "&& repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready());",
+          "after": "&& (repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready()) || true);",
+          "expected_failed_claim": "ripr.repair.readiness-producer-conformance",
+          "expected_subject": "crates/ripr/src/app/repair_card.rs::canonical_next_action_for_card",
+          "effect": "Offer a route while the shared readiness/instruction stop is false; requires the manual owner to retain the actual rejected-route regression result."
+        }
+      ],
+      "correspondence_review": {
+        "production": [
+          {
+            "file": "crates/ripr/src/app/repair_card.rs",
+            "symbol": "canonical_next_action_for_card",
+            "anchor": "fn canonical_next_action_for_card("
+          }
+        ],
+        "verification_only_paths": ["crates/ripr/src/domain/repair_card.rs"],
+        "rule": "normal_production_bodies_reviewed_no_replacements",
+        "limitations": ["No native proof of complete readiness production, all renderers, external execution or final repair receipt exists for this registration.", "The scalar repair_card_route_exposable Kani proof is a separate narrower obligation and cannot authenticate producer inputs."]
+      },
+      "alternative_evidence_owner": "SPEC-0192 / #12109: review the actual readiness producer, cage, packet identity and final disposition; no admitted native route for this broader conformance claim."
+    }
+  ],
+  "compatible_relocations": []
+}

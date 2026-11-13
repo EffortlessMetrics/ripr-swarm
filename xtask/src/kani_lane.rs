@@ -5,27 +5,37 @@
 //! one result block per discovered `#[kani::proof]` harness:
 //!
 //! - `VERIFIED` (within the harness's documented bounds), or
-//! - `FAILED` (counterexample, or a `cover!` that is unreachable and so makes
-//!   the proof vacuous), or
-//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict in the output).
+//! - `FAILED` (native verification failure or an unsatisfied required cover), or
+//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict or no complete
+//!   positive cover evidence in the output).
 //!
 //! Absence never passes: a missing tool, zero harnesses (unless the operator
 //! passes `--allow-empty`) and every `NOT-ESTABLISHED` harness exit nonzero.
 
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+pub(crate) use crate::formal_evidence::kani_output::{
+    Harness, HarnessResult, HarnessStatus, discover_harnesses, render_report,
+};
+#[cfg(test)]
+use crate::formal_evidence::kani_output::{
+    classify_output, results_from_output, split_harness_blocks,
+};
 use crate::run;
 
+#[cfg(test)]
 const HARNESS_PACKAGES: [(&str, &str); 2] = [
     ("ripr", "crates/ripr/src"),
     ("ripr-contract", "crates/ripr-contract/src"),
 ];
-const REPORT_DIR: &str = "target/ripr/reports";
-const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+/// An independent upper bound on the pre-run cargo-kani availability probe.
+/// The caller's smaller requested run timeout also caps this preliminary step.
+const MAX_KANI_VERSION_PROBE_SECS: u64 = 10;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
 /// `NOT-ESTABLISHED` for itself and the rest of the lane still reports. The
 /// slowest verified harness runs about four minutes; this leaves headroom
@@ -36,25 +46,54 @@ const DEFAULT_HARNESS_TIMEOUT_SECS: u64 = 900;
 pub(crate) struct KaniArgs {
     pub(crate) allow_empty: bool,
     pub(crate) harness: Option<String>,
+    pub(crate) package: Option<String>,
+    pub(crate) claim_registry: Option<String>,
+    pub(crate) registered_claims: Vec<String>,
     pub(crate) default_unwind: Option<u32>,
     pub(crate) timeout_secs: u64,
     pub(crate) harness_timeout_secs: u64,
 }
 
+impl Default for KaniArgs {
+    fn default() -> Self {
+        Self {
+            allow_empty: false,
+            harness: None,
+            package: None,
+            claim_registry: None,
+            registered_claims: Vec::new(),
+            default_unwind: None,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
+        }
+    }
+}
+
 pub(crate) fn parse_args(args: &[String]) -> Result<KaniArgs, String> {
-    let mut parsed = KaniArgs {
-        allow_empty: false,
-        harness: None,
-        default_unwind: None,
-        timeout_secs: DEFAULT_TIMEOUT_SECS,
-        harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
-    };
+    let mut parsed = KaniArgs::default();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--allow-empty" => parsed.allow_empty = true,
+            "--package" => {
+                let package = next_value(&mut iter, "--package")?;
+                if !matches!(package.as_str(), "ripr" | "ripr-contract") {
+                    return Err("--package must be ripr or ripr-contract".to_string());
+                }
+                parsed.package = Some(package);
+            }
             "--harness" => {
                 parsed.harness = Some(next_value(&mut iter, "--harness")?);
+            }
+            "--claim-registry" => {
+                parsed.claim_registry = Some(next_value(&mut iter, "--claim-registry")?);
+            }
+            "--registered-claim" => {
+                let id = next_value(&mut iter, "--registered-claim")?;
+                if parsed.registered_claims.contains(&id) {
+                    return Err("--registered-claim must not repeat a claim ID".to_string());
+                }
+                parsed.registered_claims.push(id);
             }
             "--default-unwind" => {
                 let value = next_value(&mut iter, "--default-unwind")?;
@@ -71,11 +110,18 @@ pub(crate) fn parse_args(args: &[String]) -> Result<KaniArgs, String> {
             }
             other => {
                 return Err(format!(
-                    "unknown kani argument `{other}`; usage: cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>] [--timeout-secs <n>] [--harness-timeout-secs <n>]"
+                    "unknown kani argument `{other}`; usage: cargo xtask kani [--allow-empty] [--package ripr|ripr-contract] [--harness <name>] [--claim-registry <path> --registered-claim <id> ...] [--default-unwind <n>] [--timeout-secs <n>] [--harness-timeout-secs <n>]"
                 ));
             }
         }
     }
+    if parsed.claim_registry.is_some() == parsed.registered_claims.is_empty() {
+        return Err(
+            "--claim-registry and at least one --registered-claim must be supplied together"
+                .to_string(),
+        );
+    }
+    parsed.registered_claims.sort();
     Ok(parsed)
 }
 
@@ -95,153 +141,7 @@ fn parse_positive(value: &str, flag: &str) -> Result<u32, String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Harness {
-    pub(crate) file: String,
-    pub(crate) name: String,
-}
-
-/// Finds `#[kani::proof]` harnesses in `(path, source)` pairs: the attribute
-/// line followed (after any further attributes or doc comments) by `fn name`.
-pub(crate) fn discover_harnesses(files: &[(String, String)]) -> Vec<Harness> {
-    let mut found = Vec::new();
-    for (file, text) in files {
-        let mut pending = false;
-        let mut in_raw_string = false;
-        for line in text.lines() {
-            let trimmed = line.trim();
-            // Text inside a `r#"..."#` literal is fixture data (for example the
-            // test-style fixtures that mention `#[kani::proof]`), not a harness.
-            if in_raw_string {
-                if trimmed.contains("\"#") {
-                    in_raw_string = false;
-                }
-                continue;
-            }
-            if let Some(open) = trimmed.find("r#\"")
-                && !trimmed[open + 3..].contains("\"#")
-            {
-                in_raw_string = true;
-                pending = false;
-                continue;
-            }
-            if trimmed.starts_with("#[kani::proof") {
-                pending = true;
-                continue;
-            }
-            if !pending {
-                continue;
-            }
-            if trimmed.starts_with("#[") || trimmed.starts_with("//") || trimmed.is_empty() {
-                continue;
-            }
-            pending = false;
-            if let Some(name) = function_name(trimmed) {
-                found.push(Harness {
-                    file: file.clone(),
-                    name,
-                });
-            }
-        }
-    }
-    found.sort_by(|left, right| (&left.file, &left.name).cmp(&(&right.file, &right.name)));
-    found
-}
-
-fn function_name(line: &str) -> Option<String> {
-    let rest = line.split("fn ").nth(1)?;
-    let name: String = rest
-        .chars()
-        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-        .collect();
-    if name.is_empty() { None } else { Some(name) }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum HarnessStatus {
-    Verified,
-    Failed(String),
-    NotEstablished(String),
-}
-
-impl HarnessStatus {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Verified => "VERIFIED",
-            Self::Failed(_) => "FAILED",
-            Self::NotEstablished(_) => "NOT-ESTABLISHED",
-        }
-    }
-
-    fn detail(&self) -> &str {
-        match self {
-            Self::Verified => "within the harness bounds",
-            Self::Failed(detail) | Self::NotEstablished(detail) => detail,
-        }
-    }
-}
-
-/// Classifies one harness result block from Kani's output.
-/// Only an explicit success verdict with every `cover!` satisfied is
-/// `Verified`; a missing verdict is never a pass.
-pub(crate) fn classify_output(output: &str) -> HarnessStatus {
-    // Kani prints `VERIFICATION:- FAILED` for a solver timeout too; that is no
-    // counterexample, so it is checked first and stays `NOT-ESTABLISHED`.
-    if output.contains("CBMC timed out") {
-        return HarnessStatus::NotEstablished(
-            "CBMC exceeded the per-harness timeout; no verdict".to_string(),
-        );
-    }
-    if output.contains("VERIFICATION:- FAILED") {
-        return HarnessStatus::Failed("verification failed (counterexample)".to_string());
-    }
-    if output.contains("No proof harnesses") {
-        return HarnessStatus::NotEstablished(
-            "kani found no proof harness with this name".to_string(),
-        );
-    }
-    if output.contains("VERIFICATION:- SUCCESSFUL") {
-        if output.contains("Status: UNSATISFIABLE") || cover_shortfall(output) {
-            return HarnessStatus::Failed(
-                "a cover! property is unreachable, so the proof is vacuous".to_string(),
-            );
-        }
-        return HarnessStatus::Verified;
-    }
-    HarnessStatus::NotEstablished(
-        "no successful verification verdict in the kani output".to_string(),
-    )
-}
-
-/// True when kani's summary reports fewer satisfied covers than declared
-/// (`** 1 of 2 cover properties satisfied`).
-fn cover_shortfall(output: &str) -> bool {
-    output.lines().any(|line| {
-        let Some((head, _)) = line.split_once(" cover properties satisfied") else {
-            return false;
-        };
-        let words: Vec<&str> = head.split_whitespace().collect();
-        let Some(split) = words.iter().position(|word| *word == "of") else {
-            return false;
-        };
-        let satisfied = split
-            .checked_sub(1)
-            .and_then(|index| words.get(index))
-            .and_then(|word| word.parse::<u32>().ok());
-        let declared = words
-            .get(split + 1)
-            .and_then(|word| word.parse::<u32>().ok());
-        matches!((satisfied, declared), (Some(done), Some(total)) if done < total)
-    })
-}
-
-pub(crate) struct HarnessResult {
-    pub(crate) harness: Harness,
-    pub(crate) status: HarnessStatus,
-    pub(crate) time: String,
-}
-
-/// Whether the lane as a whole is acceptable.
+#[cfg(test)]
 pub(crate) fn lane_verdict(
     results: &[HarnessResult],
     tool_available: bool,
@@ -277,28 +177,7 @@ pub(crate) fn lane_verdict(
     Ok(())
 }
 
-pub(crate) fn render_report(results: &[HarnessResult], note: &str) -> String {
-    let mut out = String::from("# Kani lane (RIPR-SPEC-0371)\n\n");
-    out.push_str("Bounded model checking of pure cores. A VERIFIED row means no violation within the harness bounds, not a full-program or runtime-mutation claim.\n\n");
-    if !note.is_empty() {
-        out.push_str(&format!("{note}\n\n"));
-    }
-    out.push_str(
-        "| Harness | File | Status | Detail | Kani time |\n| --- | --- | --- | --- | ---: |\n",
-    );
-    for result in results {
-        out.push_str(&format!(
-            "| `{}` | `{}` | {} | {} | {} |\n",
-            result.harness.name,
-            result.harness.file,
-            result.status.label(),
-            result.status.detail(),
-            result.time
-        ));
-    }
-    out
-}
-
+#[cfg(test)]
 fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(), String> {
     let entries =
         fs::read_dir(root).map_err(|err| format!("failed to read {}: {err}", root.display()))?;
@@ -319,129 +198,110 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
     Ok(())
 }
 
-fn tool_available() -> bool {
-    run::capture_output("cargo", &["kani", "--version"], "cargo kani --version")
-        .map(|captured| captured.status.success())
-        .unwrap_or(false)
+/// The existing availability decision owns one bounded raw-byte capture. Even
+/// native nonzero/timeout outcomes carry their captured streams to the receipt.
+pub(crate) struct ProbeObservation {
+    pub(crate) output: Option<run::TimedBytesOutput>,
+    pub(crate) failure: Option<String>,
 }
-
-/// Splits Kani's output into `(qualified harness name, block text)` pairs at
-/// each `Checking harness <name>...` header.
-pub(crate) fn split_harness_blocks(output: &str) -> Vec<(String, String)> {
-    let mut blocks: Vec<(String, String)> = Vec::new();
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("Checking harness ") {
-            let name = rest.trim_end().trim_end_matches("...").to_string();
-            blocks.push((name, String::new()));
-        } else if let Some((_, text)) = blocks.last_mut() {
-            text.push_str(line);
-            text.push('\n');
-        }
-    }
-    blocks
-}
-
-fn verification_time(block: &str) -> String {
-    block
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("Verification Time:"))
-        .map_or_else(|| "n/a".to_string(), |time| time.trim().to_string())
-}
-
-fn matches_harness(qualified: &str, harness: &Harness) -> bool {
-    qualified == harness.name || qualified.ends_with(&format!("::{}", harness.name))
-}
-
-/// Joins discovered harnesses to Kani's result blocks. A missing or ambiguous
-/// name-based relationship is `NOT-ESTABLISHED`, never assumed verified.
-/// Source paths do not establish native module identity.
-pub(crate) fn results_from_output(harnesses: &[Harness], output: &str) -> Vec<HarnessResult> {
-    let blocks = split_harness_blocks(output);
-    harnesses
-        .iter()
-        .map(|harness| {
-            let duplicate_name = harnesses
-                .iter()
-                .filter(|other| other.name == harness.name)
-                .nth(1)
-                .is_some();
-            let mut matching = blocks
-                .iter()
-                .filter(|(name, _)| matches_harness(name, harness));
-            let first = matching.next();
-            let (status, time) = if duplicate_name {
-                (
-                    HarnessStatus::NotEstablished(
-                        "multiple discovered harnesses share this name; result identity is ambiguous"
-                            .to_string(),
-                    ),
-                    "n/a".to_string(),
-                )
-            } else if matching.next().is_some() {
-                (
-                    HarnessStatus::NotEstablished(
-                        "kani printed multiple matching result blocks; result identity is ambiguous"
-                            .to_string(),
-                    ),
-                    "n/a".to_string(),
-                )
-            } else {
-                match first {
-                    Some((_, text)) => (classify_output(text), verification_time(text)),
-                    None => (
-                        HarnessStatus::NotEstablished(
-                            "kani printed no result block for this harness".to_string(),
-                        ),
-                        "n/a".to_string(),
-                    ),
-                }
+fn tool_available(remaining: Duration) -> ProbeObservation {
+    let budget = remaining.min(Duration::from_secs(MAX_KANI_VERSION_PROBE_SECS));
+    let output = match std::env::current_dir()
+        .map_err(|error| format!("preflight working directory unavailable: {error}"))
+        .and_then(|cwd| {
+            run::capture_bytes_in_dir_with_env_budget_typed(
+                Path::new("cargo"),
+                &["kani".to_string(), "--version".to_string()],
+                &cwd,
+                (&[("CARGO_TERM_COLOR", "never")], &[]),
+                run::ByteCaptureBudget {
+                    timeout: budget,
+                    stdout_bytes: 1024 * 1024,
+                    stderr_bytes: 1024 * 1024,
+                },
+                "cargo kani --version",
+            )
+            .map_err(|error| probe_capture_failure_reason(error.kind).to_string())
+        }) {
+        Ok(output) => output,
+        Err(failure) => {
+            return ProbeObservation {
+                output: None,
+                failure: Some(failure),
             };
-            HarnessResult {
-                harness: harness.clone(),
-                status,
-                time,
+        }
+    };
+    let failure = if output.timed_out {
+        Some(format!(
+            "cargo kani --version timed out after {} milliseconds",
+            budget.as_millis()
+        ))
+    } else if std::str::from_utf8(&output.stdout).is_err()
+        || std::str::from_utf8(&output.stderr).is_err()
+    {
+        Some("cargo kani --version output is not strict UTF-8".to_string())
+    } else {
+        match output.status {
+            Some(status) if status.success() => None,
+            Some(status)
+                if status.code() == Some(101)
+                    && std::str::from_utf8(&output.stderr).is_ok_and(|stderr| {
+                        stderr
+                            .lines()
+                            .any(|line| line.trim() == "error: no such command: `kani`")
+                    }) =>
+            {
+                Some("cargo is installed but the kani subcommand is unavailable".to_string())
             }
-        })
-        .collect()
+            Some(status) => Some(format!("cargo kani --version failed with {status}")),
+            None => Some("cargo kani --version returned without a process exit status".to_string()),
+        }
+    };
+    ProbeObservation {
+        output: Some(output),
+        failure,
+    }
 }
 
-fn all_not_established(harnesses: &[Harness], reason: &str) -> Vec<HarnessResult> {
-    harnesses
-        .iter()
-        .map(|harness| HarnessResult {
-            harness: harness.clone(),
-            status: HarnessStatus::NotEstablished(reason.to_string()),
-            time: "n/a".to_string(),
-        })
-        .collect()
+fn probe_capture_failure_reason(kind: run::TimedCaptureErrorKind) -> &'static str {
+    use run::TimedCaptureErrorKind;
+    match kind {
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::NotFound) => {
+            "cargo could not be launched: executable or interpreter not found"
+        }
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::PermissionDenied) => {
+            "cargo could not be launched: permission denied"
+        }
+        TimedCaptureErrorKind::Launch(_) => "cargo could not be launched: other launch failure",
+        TimedCaptureErrorKind::ProcessControl => {
+            "cargo kani --version process observation or termination failed"
+        }
+        TimedCaptureErrorKind::Capture => {
+            "cargo kani --version output capture failed or was incomplete"
+        }
+        TimedCaptureErrorKind::Cleanup => "cargo kani --version descendant cleanup failed",
+    }
 }
 
 /// The exact `cargo` arguments for the lane, kept separate so a test can pin
 /// what Kani actually receives.
-fn kani_command(args: &KaniArgs, package: &str) -> Vec<String> {
-    let mut command = vec!["kani".to_string(), "-p".to_string(), package.to_string()];
-    if let Some(wanted) = &args.harness {
-        command.push("--harness".to_string());
-        command.push(wanted.clone());
-    }
-    if let Some(unwind) = args.default_unwind {
-        command.push("--default-unwind".to_string());
-        command.push(unwind.to_string());
-    }
-    // `--harness-timeout` is gated behind `-Z unstable-options` in Kani 0.68.
-    command.push("-Z".to_string());
-    command.push("unstable-options".to_string());
-    command.push("--harness-timeout".to_string());
-    command.push(format!("{}s", args.harness_timeout_secs));
-    command
+pub(crate) fn kani_command(args: &KaniArgs, package: &str) -> Vec<String> {
+    crate::formal_evidence::native::verification_arguments(
+        package,
+        args.harness.as_deref(),
+        args.default_unwind,
+        args.harness_timeout_secs,
+    )
 }
 
 /// A process outcome is not an individual harness verdict.
+#[cfg(test)]
 struct KaniRun {
     results: Vec<HarnessResult>,
     process_problem: Option<String>,
 }
 
+#[cfg(test)]
 fn process_completion_problem(
     timed_out: bool,
     exit_success: Option<bool>,
@@ -461,6 +321,7 @@ fn process_completion_problem(
 }
 
 /// Keep independently observed rows even when a run fails or is incomplete.
+#[cfg(test)]
 fn reconcile_kani_output(
     harnesses: &[Harness],
     output: &str,
@@ -473,6 +334,7 @@ fn reconcile_kani_output(
 }
 
 /// A failed or incomplete native process cannot be hidden by success-looking rows.
+#[cfg(test)]
 fn complete_lane_verdict(
     results: &[HarnessResult],
     tool_available: bool,
@@ -488,107 +350,22 @@ fn complete_lane_verdict(
     }
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Duration) -> KaniRun {
-    let command = kani_command(args, package);
-    let output =
-        match run::capture_output_with_timeout("cargo", &command, &[], timeout, "cargo kani") {
-            Err(error) => {
-                return KaniRun {
-                    results: all_not_established(harnesses, &error),
-                    process_problem: Some(error),
-                };
-            }
-            Ok(output) => output,
-        };
-    let exit_success = output.status.as_ref().map(|status| status.success());
-    let exit_label = output
-        .status
-        .as_ref()
-        .map_or_else(String::new, ToString::to_string);
-    let problem = process_completion_problem(
-        output.timed_out,
-        exit_success,
-        &exit_label,
-        // The budget this invocation actually received, not the whole-run total.
-        timeout.as_secs(),
-    );
-    let combined = format!("{}\n{}", output.stdout, output.stderr);
-    reconcile_kani_output(harnesses, &combined, problem)
-}
-
 pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
-    let args = parse_args(args)?;
-    let mut packages = Vec::new();
-    for (package, root) in HARNESS_PACKAGES {
-        let mut files = Vec::new();
-        collect_sources(Path::new(root), &mut files)?;
-        let mut harnesses = discover_harnesses(&files);
-        if let Some(wanted) = &args.harness {
-            harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
+    if args.first().is_some_and(|arg| arg == "--replay") {
+        if args.len() != 2 {
+            return Err("usage: cargo xtask kani --replay <kani.json>".to_string());
         }
-        packages.push((package, harnesses));
+        return crate::kani_evidence::replay(Path::new(&args[1]));
     }
-    let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
-    let available = tool_available();
-    let run = if available && count > 0 {
-        eprintln!("kani: checking {count} harness(es)");
-        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
-        let mut results = Vec::new();
-        let mut problems = Vec::new();
-        for (package, harnesses) in &packages {
-            if harnesses.is_empty() {
-                continue;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let run = if remaining.is_zero() {
-                KaniRun {
-                    results: all_not_established(harnesses, "whole-run deadline exhausted"),
-                    process_problem: Some("whole-run deadline exhausted".to_string()),
-                }
-            } else {
-                run_kani(harnesses, &args, package, remaining)
-            };
-            results.extend(run.results);
-            if let Some(problem) = run.process_problem {
-                problems.push(format!("{package}: {problem}"));
-            }
-        }
-        KaniRun {
-            results,
-            process_problem: if problems.is_empty() {
-                None
-            } else {
-                Some(problems.join("; "))
-            },
-        }
-    } else {
-        KaniRun {
-            results: Vec::new(),
-            process_problem: None,
+    crate::kani_evidence::invalidate_current_attempt()?;
+    let args = match parse_args(args) {
+        Ok(args) => args,
+        Err(error) => {
+            crate::kani_evidence::record_argument_refusal(&error)?;
+            return Err(error);
         }
     };
-    let note = if !available {
-        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run.".to_string()
-    } else if let Some(problem) = &run.process_problem {
-        format!("NOT-ESTABLISHED: {problem}")
-    } else if run.results.is_empty() {
-        "NOT-ESTABLISHED: zero harnesses found.".to_string()
-    } else {
-        String::new()
-    };
-    let report = render_report(&run.results, &note);
-    fs::create_dir_all(REPORT_DIR)
-        .map_err(|err| format!("failed to create {REPORT_DIR}: {err}"))?;
-    let report_path = Path::new(REPORT_DIR).join(REPORT_FILE);
-    fs::write(&report_path, &report)
-        .map_err(|err| format!("failed to write {}: {err}", report_path.display()))?;
-    println!("{report}");
-    complete_lane_verdict(
-        &run.results,
-        available,
-        args.allow_empty,
-        run.process_problem.as_deref(),
-    )
+    crate::kani_evidence::run_lane(args, tool_available)
 }
 
 #[cfg(test)]
@@ -691,6 +468,151 @@ mod tests {
     }
 
     #[test]
+    fn classification_requires_positive_complete_cover_evidence() {
+        for summary in [
+            "",
+            " ** 0 of 0 cover properties satisfied\n",
+            " ** invalid of 1 cover properties satisfied\n",
+            " ** 1 of invalid cover properties satisfied\n",
+            " ** 2 of 1 cover properties satisfied\n",
+            " ** 1 / 1 cover properties satisfied\n",
+            " ** +1 of 1 cover properties satisfied\n",
+            " ** 18446744073709551616 of 18446744073709551616 cover properties satisfied\n",
+            " ** 1 of 1 cover properties satisfied (1 undetermined)\n",
+            " ** 1 of 1 cover properties satisfied (1 unreachable)\n",
+            " ** 1 of 1 cover properties satisfied (0 undetermined)\n",
+            " ** 1 of 1 cover properties satisfied (unknown)\n",
+            " ** 1 of 1 cover properties satisfied unexpectedly\n",
+            " ** 0 of 2 cover properties satisfied (1 unreachable,1 undetermined)\n",
+            " ** 0 of 2 cover properties satisfied (1 unreachable,1 unreachable)\n",
+            " ** 0 of 2 cover properties satisfied (1 undetermined,1 undetermined)\n",
+            " ** 0 of 18446744073709551615 cover properties satisfied (18446744073709551615 undetermined,1 unreachable)\n",
+            " ** 1 of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+            " ** 1 of 1 cover properties satisfied\n ** 0 of 1 cover properties satisfied\n",
+            " ** invalid of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+        ] {
+            let output = format!("{summary}VERIFICATION:- SUCCESSFUL\n");
+            assert!(
+                matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                "missing or ambiguous cover evidence was accepted: {output:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn undetermined_properties_never_become_verified() {
+        for evidence in [
+            " ** 1 of 2 cover properties satisfied (1 undetermined)\n",
+            " ** 1 of 3 cover properties satisfied (1 undetermined,1 unreachable)\n",
+            "Check 1: proof.cover.1\n\t - Status: UNDETERMINED\n ** 1 of 1 cover properties satisfied\n",
+            "Check 1: proof.cover.1\n\t - Status: ERROR\n ** 1 of 1 cover properties satisfied\n",
+            "Check 1: proof.cover.1\n\t - Status: UNRECOGNIZED\n ** 1 of 1 cover properties satisfied\n",
+        ] {
+            let output = format!("{evidence}VERIFICATION:- SUCCESSFUL\n");
+            assert!(
+                matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                "undetermined property evidence was accepted: {output:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn complete_cover_evidence_allows_unreachable_ordinary_assertions() {
+        for properties in [
+            "Check 1: proof.assertion.1\n\t - Status: UNREACHABLE\nCheck 2: proof.cover.1\n\t - Status: SATISFIED\n",
+            "Check 1: proof.cover.1\n\t - Status: SATISFIED\nCheck 2: proof.assertion.1\n\t - Status: UNREACHABLE\n",
+            "Check 1: proof.cover.1\n\t - Status: SATISFIED\nCheck 2: proof.cover.1.assertion.2\n\t - Status: UNREACHABLE\n",
+        ] {
+            let output = format!(
+                "{properties} ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+            );
+            assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        }
+    }
+
+    #[test]
+    fn complete_cover_evidence_preserves_expected_panic_success() {
+        let output = "Check 1: proof.assertion.1\n\t - Status: FAILURE\nCheck 2: proof.cover.1\n\t - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL (encountered one or more panics as expected)\n";
+        assert_eq!(classify_output(output), HarnessStatus::Verified);
+    }
+
+    #[test]
+    fn cover_property_and_summary_must_not_contradict() {
+        for property in ["proof.cover.1", "module::proof.cover.2", "cover.1"] {
+            for status in [
+                "UNSATISFIABLE",
+                "UNREACHABLE",
+                "SUCCESS",
+                "FAILURE",
+                "COVERED",
+                "UNCOVERED",
+            ] {
+                let output = format!(
+                    "Check 1: {property}\n\t - Status: {status}\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+                );
+                assert!(
+                    matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                    "a cover status cannot be overridden by a complete summary: {output:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_native_cover_captures_keep_distinct_lane_dispositions() {
+        // Unmodified output captured from the pinned native Kani 0.68.0. This
+        // test replays bytes, not the verifier; see the fixture provenance.
+        for (name, stdout, stderr, expected) in [
+            (
+                "cover_pass_compact",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-pass-compact.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-pass-compact.stderr.txt"),
+                "VERIFIED",
+            ),
+            (
+                "cover_overconstrained",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-fail.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-fail.stderr.txt"),
+                "FAILED",
+            ),
+            (
+                "cover_unreachable",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-unreachable.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-unreachable.stderr.txt"),
+                "FAILED",
+            ),
+            (
+                "cover_undetermined_compact",
+                include_str!(
+                    "../tests/fixtures/kani-cover-evidence/cover-undetermined-compact.stdout.txt"
+                ),
+                include_str!(
+                    "../tests/fixtures/kani-cover-evidence/cover-undetermined-compact.stderr.txt"
+                ),
+                // This native run fails verification before cover admission;
+                // success-looking undetermined output has separate controls.
+                "FAILED",
+            ),
+            (
+                "no_cover_control",
+                include_str!("../tests/fixtures/kani-cover-evidence/no-cover.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/no-cover.stderr.txt"),
+                "NOT-ESTABLISHED",
+            ),
+        ] {
+            let output = format!("{stdout}\n{stderr}");
+            let harnesses = [Harness {
+                file: "native-fixture.rs".to_string(),
+                name: name.to_string(),
+            }];
+            assert_eq!(split_harness_blocks(&output).len(), 1, "{name}");
+            let rows = results_from_output(&harnesses, &output);
+            assert_eq!(rows.len(), 1, "{name}");
+            assert_eq!(rows[0].status.label(), expected, "{name}");
+        }
+    }
+
+    #[test]
     fn a_solver_timeout_is_not_a_counterexample() {
         // Kani reports a timed-out harness as FAILED; it has no verdict.
         let timed_out = "CBMC failed\nVERIFICATION:- FAILED\nCBMC timed out. You may want to rerun your proof with a larger timeout\n";
@@ -735,12 +657,17 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_cover_makes_the_proof_vacuous() {
-        let vacuous =
-            "** 1 of 2 cover properties satisfied (1 unreachable)\nVERIFICATION:- SUCCESSFUL\n";
-        assert!(matches!(classify_output(vacuous), HarnessStatus::Failed(_)));
-        let unsat = "Status: UNSATISFIABLE\nVERIFICATION:- SUCCESSFUL\n";
-        assert!(matches!(classify_output(unsat), HarnessStatus::Failed(_)));
+    fn unsatisfied_cover_fails_the_reachability_policy() {
+        for output in [
+            " ** 1 of 2 cover properties satisfied (1 unreachable)\nVERIFICATION:- SUCCESSFUL\n",
+            "Check 1: proof.cover.1\n\t - Status: UNSATISFIABLE\n ** 0 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+            " ** 1 of 2 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+        ] {
+            assert_eq!(
+                classify_output(output),
+                HarnessStatus::Failed("a required cover property was not satisfied".to_string()),
+            );
+        }
     }
 
     #[test]
@@ -766,6 +693,9 @@ mod tests {
             Ok(KaniArgs {
                 allow_empty: true,
                 harness: None,
+                package: None,
+                claim_registry: None,
+                registered_claims: Vec::new(),
                 default_unwind: Some(8),
                 timeout_secs: DEFAULT_TIMEOUT_SECS,
                 harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
@@ -782,7 +712,7 @@ mod tests {
 
     #[test]
     fn blocks_join_to_harnesses_and_a_missing_block_is_not_established() {
-        let output = "Checking harness m::one...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\nChecking harness m::two...\nVERIFICATION:- FAILED\n";
+        let output = "Checking harness m::one...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\nChecking harness m::two...\nVERIFICATION:- FAILED\n";
         let harness = |name: &str| Harness {
             file: "f.rs".to_string(),
             name: name.to_string(),
@@ -801,10 +731,9 @@ mod tests {
 
     #[test]
     fn duplicate_source_names_never_share_a_native_result() {
-        let success =
-            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
-        let unique = "Checking harness m::unique...\nVERIFICATION:- SUCCESSFUL\n";
+        let unique = "Checking harness m::unique...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
         // Duplicate names in separate files and in one file are both ambiguous:
         // the current discovery model does not carry native module identities.
         for second_file in ["a.rs", "b.rs"] {
@@ -864,8 +793,7 @@ mod tests {
             file: "one.rs".to_string(),
             name: "same".to_string(),
         }];
-        let success =
-            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let other_failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let repeated_failure = "Checking harness a::same...\nVERIFICATION:- FAILED\n";
         for output in [
@@ -897,7 +825,7 @@ mod tests {
         }];
         for selector in ["same", "m::same"] {
             let output = format!(
-                "Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n"
+                "Checking harness {selector}...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n"
             );
             let results = results_from_output(&harnesses, &output);
             assert_eq!(results.len(), 1);
@@ -909,7 +837,9 @@ mod tests {
             assert_eq!(lane_verdict(&results, true, false).err(), None);
         }
         for selector in ["not_same", "m::notsame", "same::nested"] {
-            let output = format!("Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\n");
+            let output = format!(
+                "Checking harness {selector}...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+            );
             let results = results_from_output(&harnesses, &output);
             assert!(matches!(
                 results.first().map(|row| &row.status),
@@ -932,8 +862,7 @@ mod tests {
             file: "proof.rs".to_string(),
             name: "proof".to_string(),
         }];
-        let output =
-            "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
+        let output = "Checking harness m::proof...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
         let success = reconcile_kani_output(&harnesses, output, None);
         assert_eq!(
             complete_lane_verdict(&success.results, true, false, None).err(),
@@ -985,7 +914,7 @@ mod tests {
                 name: "second".to_string(),
             },
         ];
-        let text = "Checking harness a::first...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
+        let text = "Checking harness a::first...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
         let problem = process_completion_problem(true, None, "", 10);
         let run = reconcile_kani_output(&harnesses, text, problem);
         assert_eq!(run.results.len(), 2);
@@ -1021,7 +950,7 @@ mod tests {
         ];
         let mixed = reconcile_kani_output(
             &harnesses,
-            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\nVERIFICATION:- SUCCESSFUL\n",
+            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
             Some("cargo kani exited with exit status: 1".to_string()),
         );
         assert!(matches!(&mixed.results[0].status, HarnessStatus::Failed(_)));

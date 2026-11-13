@@ -1,0 +1,31 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  ".ripr/formal-claims.json",
+  "xtask/src/formal_registry.rs",
+  "xtask/src/formal_registry/prepare.rs",
+  "xtask/src/formal_registry/transition.rs",
+  "xtask/src/formal_registry/scoreboard.rs",
+  "xtask/src/formal_registry/control_pair.rs",
+  "xtask/src/bin/formal-assurance.rs",
+]
+tests = [
+  "xtask/src/formal_registry/tests.rs::initial_registry_binds_six_claims_and_all_five_families_to_real_source",
+  "xtask/src/formal_registry/tests.rs::preparation_refuses_undeclared_unwind_and_transforming_harness_attributes",
+  "xtask/src/formal_registry/tests.rs::invalid_vocabulary_duplicate_ids_and_missing_critical_fields_are_refused",
+  "xtask/src/formal_registry/tests.rs::passive_input_rejects_commands_unknown_keys_and_duplicate_keys",
+  "xtask/src/formal_registry/tests.rs::registry_ordering_does_not_change_scoreboard_or_selection_projection",
+  "xtask/src/formal_registry/tests.rs::missing_proofs_manual_obligations_and_changed_owners_stay_visible",
+  "xtask/src/formal_registry/tests.rs::unsupported_alternative_provider_remains_a_registered_obligation",
+  "xtask/src/formal_registry/tests.rs::consistent_success_document_never_authenticates_execution",
+  "xtask/src/formal_registry/tests.rs::wrong_generation_source_provider_and_bounds_are_stale_or_refused",
+  "xtask/src/formal_registry/tests.rs::same_generation_metadata_weakening_and_proof_input_narrowing_are_refused",
+  "xtask/src/formal_registry/tests.rs::closure_omissions_missing_anchors_and_silent_retirement_are_refused",
+  "xtask/src/formal_registry/tests.rs::assumption_commitment_is_compact_utf8_json_including_empty_domain_assumptions",
+  "xtask/src/formal_registry/tests.rs::native_cover_mapping_refuses_equal_counts_from_different_properties",
+  "xtask/src/formal_registry/tests.rs::exact_relocation_needs_retained_equal_bytes_and_cannot_hide_an_assertion_edit",
+  "xtask/src/formal_registry/control_pair.rs::tests::control_pair_rejects_extra_mutations_missing_inputs_and_wrong_source_bytes",
+  "xtask/src/formal_registry/control_pair.rs::tests::control_pair_configuration_ignores_only_the_one_governed_source_difference",
+  "xtask/src/formal_registry/control_pair.rs::tests::control_pair_requires_exact_native_failure_identity_and_no_unrelated_failure",
+  "xtask/src/formal_registry/control_pair.rs::tests::registered_failure_mapping_matches_the_measured_native_format",
+]

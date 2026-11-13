@@ -1,11 +1,22 @@
-# Process integration of the existing Kani lane; synthetic child, no solver claim.
+# Process integration of the maintained native entry; synthetic provider, no solver claim.
+# Automation: --test kani_lane_process. Narrow Linux: --test formal_runner native_controls::.
 [[extend]]
 id = "RIPR-SPEC-0371"
-code = ["xtask/src/kani_lane.rs"]
+code = ["xtask/src/kani_lane.rs", "xtask/src/kani_evidence.rs", "xtask/src/bin/formal-kani.rs", "xtask/src/run.rs"]
 tests = [
   "xtask/tests/kani_lane_process.rs::kani_runner_retains_unique_success_and_explicit_failure",
+  "xtask/tests/kani_lane_process.rs::kani_runner_requires_observed_complete_cover_evidence",
   "xtask/tests/kani_lane_process.rs::kani_runner_refuses_success_text_after_nonzero_or_signal",
-  "xtask/tests/kani_lane_process.rs::kani_runner_refuses_ambiguous_sources_in_either_native_order",
+  "xtask/tests/kani_lane_process.rs::kani_runner_uses_compiled_identity_for_same_named_sources",
   "xtask/tests/kani_lane_process.rs::kani_runner_refuses_repeated_blocks_and_absent_results",
   "xtask/tests/kani_lane_process.rs::kani_runner_preserves_completed_rows_after_a_real_timeout",
+  "xtask/tests/kani_lane_process.rs::kani_runner_requires_contract_package_results",
+  "xtask/tests/kani_lane_process.rs::kani_runner_invalid_arguments_replace_prior_success_with_an_initial_checkpoint",
+  "xtask/tests/kani_lane_process.rs::kani_runner_midrun_publication_error_cannot_republish_prior_success",
+  "xtask/tests/kani_lane_process.rs::kani_runner_source_drift_retains_native_bytes_without_current_success",
+  "xtask/tests/kani_lane_process.rs::kani_runner_accepts_a_legitimate_git_inventory_larger_than_one_mebibyte",
+  "xtask/tests/kani_lane_process.rs::kani_runner_rejects_malformed_native_inventory_before_verification",
+  "xtask/tests/kani_lane_process.rs::kani_runner_retains_non_utf8_bytes_without_a_successful_native_row",
+  "xtask/tests/kani_lane_process.rs::kani_runner_rejects_cargo_alias_override_before_verification",
+  "xtask/tests/kani_lane_process.rs::kani_runner_refuses_partial_source_capture_without_borrowing_scopes",
 ]

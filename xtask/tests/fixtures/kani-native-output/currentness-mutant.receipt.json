@@ -1,0 +1,32 @@
+{
+  "source_head": "92adea4c668798aa607ce0755b0f1a3bc7bc742b",
+  "argv": [
+    "/workspace/scratch/cbdfae970a24/fv-target-probe/debug/formal-kani",
+    "--package",
+    "ripr-contract",
+    "--harness",
+    "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+    "--default-unwind",
+    "32",
+    "--timeout-secs",
+    "120",
+    "--harness-timeout-secs",
+    "60"
+  ],
+  "original_source": "sha256:2aaa7327b669fa5b8aeb431a3e80e634044d094cb8c93f1efbbd572be90d9382",
+  "mutant_source": "sha256:3dbd18a3071527861b2c9d50d1212ecace0b59dd18568e98f0a625e331123700",
+  "binary_sha256": "sha256:69ddafa296e18eb8a349133352670d135e1c869f44b1aebf4f5d95914604a9ca",
+  "purpose": "Actual wrong-implementation assertion presentation; not a final registered pair.",
+  "exit_code": 1,
+  "elapsed_seconds": 37.063424516999476,
+  "process": {
+    "state": "failed",
+    "exit_code": 1,
+    "timed_out": false,
+    "raw_output_digest": "sha256:e740c23ff306a4ca3bec28625009b50d4d1bdd1b115deff8063ef844453a39a6",
+    "cleanup_state": "complete"
+  },
+  "source_current": true,
+  "inventory_complete": true,
+  "restored": true
+}

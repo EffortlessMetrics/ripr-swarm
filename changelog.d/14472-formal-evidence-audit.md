@@ -1,0 +1,8 @@
+<!-- section: Internal / CI -->
+- Add an isolated, non-executing formal-evidence document auditor for the draft claim/run contracts. It rejects contradictory identity, cover, inventory and process declarations, including behavioral-failure labels without current counterexample or unreachable-cover observations, while reporting native assurance as not assessed; the Kani producer and required checks are unchanged (#14472).
+- Keep selected native inventory complete in both directions, reject observations from unstarted runs, and align draft critical-claim metadata with the admitted merge-group lifecycle without adding workflow triggers (#14472, #14500).
+- Bind observed rows to the exact compact assumption array, require every
+  critical provider to declare reachability obligations, and permit empty
+  success explanations while retaining refusal reasons (#14471, #14472).
+- Keep the document types, admission laws and tests in one shared module;
+  the command retains its existing arguments, output and exit contract (#14472).

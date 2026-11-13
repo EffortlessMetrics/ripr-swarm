@@ -1,0 +1,31 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/bin/formal-kani.rs",
+  "xtask/src/kani_evidence.rs",
+  "xtask/src/kani_evidence/capture.rs",
+  "xtask/src/kani_evidence/configuration.rs",
+  "xtask/src/kani_evidence/publication.rs",
+  "xtask/src/formal_evidence/native.rs",
+  "xtask/src/formal_evidence/native/source_inputs.rs",
+  "xtask/src/formal_evidence/native/replay.rs",
+  "xtask/src/formal_evidence/native/registered.rs",
+  "xtask/src/formal_evidence/native_inventory.rs",
+  "xtask/src/formal_evidence/kani_output.rs",
+]
+tests = [
+  "xtask/src/kani_evidence/tests.rs::native_inventory_uses_qualified_file_identity_and_refuses_duplicate_or_missing_scope",
+  "xtask/src/kani_evidence/tests.rs::declared_and_native_denominators_are_symmetric",
+  "xtask/src/kani_evidence/tests.rs::exact_native_result_identity_cannot_borrow_a_neighbor_or_hide_an_extra",
+  "xtask/src/kani_evidence/tests.rs::weakening_verifier_configuration_is_not_admitted_even_when_hashable",
+  "xtask/src/kani_evidence/tests.rs::real_stub_and_verification_only_bodies_refuse_while_fixture_strings_do_not",
+  "xtask/src/kani_evidence/tests.rs::source_currentness_requires_equal_observed_manifests_and_revisions",
+  "xtask/src/kani_evidence/tests.rs::artifact_commitment_refuses_modified_or_missing_bytes",
+  "xtask/src/formal_evidence/native/tests.rs::native_document_status_and_complete_subject_cannot_borrow_success",
+  "xtask/src/formal_evidence/native/tests.rs::native_failed_assertion_is_distinct_from_unwind_expected_panic_and_false_success",
+  "xtask/src/formal_evidence/native/source_inputs.rs::tests::production_test_named_file_and_qualified_include_remain_in_the_closure",
+  "xtask/src/formal_evidence/native/source_inputs.rs::tests::external_test_ancestry_is_followed_and_a_production_edge_defeats_it",
+  "xtask/src/formal_evidence/native/source_inputs.rs::tests::package_and_runner_build_scripts_close_literal_inputs",
+  "xtask/src/formal_evidence/native/source_inputs.rs::tests::unsupported_inline_module_paths_refuse_instead_of_borrowing_a_physical_base",
+  "xtask/src/run.rs::tests::strict_byte_capture_stops_closed_pipe_descendant_after_normal_exit",
+]
