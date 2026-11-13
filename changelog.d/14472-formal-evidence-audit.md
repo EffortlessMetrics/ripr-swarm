@@ -6,3 +6,5 @@
   success explanations while retaining refusal reasons (#14471, #14472).
 - Keep the document types, admission laws and tests in one shared module;
   the command retains its existing arguments, output and exit contract (#14472).
+
+- Preserve diagnostic-bearing negative controls while making the shared auditor tests comply with test-inclusive strict Clippy; document consistency remains separate from native assurance (#14472).
