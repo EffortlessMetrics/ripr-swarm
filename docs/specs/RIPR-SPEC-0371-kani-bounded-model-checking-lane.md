@@ -208,6 +208,11 @@ It does not claim:
 
 ## Test Mapping
 
+- `xtask/src/formal_evidence/native/tests.rs`:
+  `native_document_audit_refuses_duplicate_observations_with_complete_inventory`
+  requires the document audit consumer to refuse repeated observations even when
+  the unique subject set still matches the complete inventory. This is supplied
+  document consistency, not native execution assurance.
 - `xtask/src/formal_evidence/kani_output.rs`:
   `discovery_finds_named_harnesses_past_attributes_and_docs`,
   `discovery_ignores_harness_text_inside_raw_string_fixtures`,
