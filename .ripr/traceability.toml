@@ -20501,6 +20501,8 @@ id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
 spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
+  "xtask/src/tests.rs::windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode",
+  "xtask/src/tests.rs::windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths",
   "xtask/src/precommit_v2.rs::tests::composition_discloses_external_formatting_only_for_ci_policy",
   "xtask/src/tests.rs::ci_policy_publication_preserves_local_report_and_local_io_failures",
   "xtask/tests/policy_all.rs::ci_policy_collects_real_cheap_failures_before_expensive_work",
@@ -20515,6 +20517,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "xtask/src/main.rs::windows_absolute_path_tokens",
   "xtask/src/main.rs::publish_precommit_policy_report",
   "xtask/src/precommit_v2.rs",
   "xtask/src/policy/all.rs::check_policy_all",

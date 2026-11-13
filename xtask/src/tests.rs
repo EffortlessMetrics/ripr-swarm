@@ -7904,6 +7904,35 @@ fn windows_absolute_path_tokens_find_tokens_without_trailing_punctuation() {
 }
 
 #[test]
+fn windows_absolute_path_tokens_preserve_separator_boundaries_and_unicode() {
+    let first = concat!("C:", "/café:stream/雪");
+    let second = concat!("d:", "\\資料");
+    let line = format!(":: Type::member é:/ignored αC:/ignored `{first}`; '{second}' :z");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![first.to_string(), second.to_string()]
+    );
+    for line in ["", ":", "::", "x:", "α:", "Type::member", "wordC:/ignored"] {
+        assert!(windows_absolute_path_tokens(line).is_empty(), "{line}");
+    }
+}
+
+#[test]
+fn windows_absolute_path_tokens_keep_empty_roots_and_distinct_paths() {
+    let first = concat!("C:", "/");
+    let second = concat!("Z:", "\\");
+    let line = format!("`{first}`,\"{second}\" {first}{second}");
+    assert_eq!(
+        windows_absolute_path_tokens(&line),
+        vec![
+            first.to_string(),
+            second.to_string(),
+            format!("{first}{second}")
+        ]
+    );
+}
+
+#[test]
 fn workflow_run_extraction_handles_step_shorthand_and_blocks() {
     let workflow = r#"
 jobs:

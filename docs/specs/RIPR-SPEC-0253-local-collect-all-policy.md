@@ -63,6 +63,11 @@ nonzero when any leaf returns an error or when aggregate report publication
 fails. If both happen, the returned error retains the leaf failures and adds
 the aggregate write error. Successful leaves cannot mask a reporting error.
 
+The local-context leaf searches possible drive separators directly. It retains
+its existing ASCII drive-letter and token-boundary rules, consumes colons inside
+an accepted path as part of that path, and preserves Unicode path text and
+ordered findings. A colon without a complete drive root is not a match.
+
 The selected leaves inspect filesystem, policy, or Git-index inputs
 independently. They do not consume earlier leaf reports, invoke Cargo
 build/test/Clippy children, or run the compilation-bearing `check-file-policy`.
