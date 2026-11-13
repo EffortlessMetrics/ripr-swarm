@@ -20377,6 +20377,10 @@ tests = [
   "crates/ripr/src/output/badge/tests.rs::refusal_badge_summary_applies_the_degraded_state_convention",
   "crates/ripr/src/output/repo_exposure.rs::refusal_document_keeps_the_format_contract_with_zeroed_metrics",
   "crates/ripr/src/output/agent_seam_packets.rs::refusal_document_keeps_the_packet_envelope_with_no_packets",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::json_family_refusals_keep_the_scope_guard_identity",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::refused_exposure_summary_keeps_the_normal_summary_shape",
+  "crates/ripr/src/output/repo_seams.rs::refusal_tests::refusal_json_escapes_the_message",
+  "crates/ripr/tests/cli_smoke.rs::check_refusal_sweep_every_machine_format_prints_a_document",
 ]
 fixtures = []
 code = [
