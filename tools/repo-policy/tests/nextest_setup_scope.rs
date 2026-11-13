@@ -28,7 +28,7 @@ fn installer_guard_is_complete_and_fail_closed() {
 
 // A deliberately small evaluator for the pinned, typed workflow_call condition.
 // Reject unfamiliar syntax rather than claiming general Actions compatibility.
-fn install_selected(scratch: bool, shards: i64) -> bool {
+fn install_selected(scratch: bool, shards: f64) -> bool {
     let install = step(GATES, "Install CI tools");
     let guards = field(install, "        if: ");
     assert_eq!(guards.len(), 1);
@@ -36,13 +36,13 @@ fn install_selected(scratch: bool, shards: i64) -> bool {
     for clause in guards[0].split(" || ") {
         selected |= match clause {
             "inputs.use-scratch" => scratch,
-            "inputs.test-shards != 4" => shards != 4,
+            "inputs.test-shards != 4" => shards != 4.0,
             unexpected => {
                 assert_eq!(
                     unexpected, "inputs.test-shards != 4",
                     "unsupported predicate"
                 );
-                shards != 4
+                shards != 4.0
             }
         };
     }
@@ -52,16 +52,18 @@ fn install_selected(scratch: bool, shards: i64) -> bool {
 #[test]
 fn only_four_shard_hosted_setup_is_omitted() {
     for (scratch, shards, expected) in [
-        (false, 4, false),
-        (false, 1, true),
-        (true, 1, true),
-        (true, 4, true),
-        (false, 0, true),
-        (false, 2, true),
-        (false, -1, true),
-        (false, 8, true),
-        (true, 0, true),
-        (true, 8, true),
+        (false, 4.0, false),
+        (false, 1.0, true),
+        (true, 1.0, true),
+        (true, 4.0, true),
+        (false, 0.0, true),
+        (false, 2.0, true),
+        (false, -1.0, true),
+        (false, 8.0, true),
+        (false, 4.5, true),
+        (false, 3.5, true),
+        (true, 0.0, true),
+        (true, 8.0, true),
     ] {
         assert_eq!(
             install_selected(scratch, shards),
