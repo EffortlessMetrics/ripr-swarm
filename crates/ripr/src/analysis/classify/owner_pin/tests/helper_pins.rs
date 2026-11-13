@@ -19,6 +19,22 @@ const HELPER: &str = "    fn check_tip(b: u64, t: u64, want: u64) {\n        ass
 
 const CALLS: &str = "check_tip(40, 6, 46);\n        check_tip(10, 0, 10);";
 
+/// The shared fixture index plus one resolved `include!` parent, so the
+/// role-composition pass can build the Include edge the include-fragment
+/// tests need (#14537).
+fn index_with_include(files: &[(&str, &str)], child: &str, parent: &str) -> RustIndex {
+    let mut index = super::index(files);
+    index.include_parents.insert(
+        PathBuf::from(child),
+        crate::analysis::facts::ResolvedIncludeParent {
+            parent: PathBuf::from(parent),
+            requires_test: true,
+        },
+    );
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
+    index
+}
+
 fn module(helper: &str, body: &str) -> String {
     format!(
         "{TIP_LIB}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helper}\n    #[test]\n    fn tip_is_added() {{\n        {body}\n    }}\n}}\n"
@@ -770,5 +786,81 @@ fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<
         !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
         "a shadowed predicate assert_eq! is not admitted"
     );
+    Ok(())
+}
+
+/// #14537 repair: the gated `mod` exception skips only that Module edge. An
+/// include fragment further up the chain still refuses as `IncludedFile`, so
+/// the exception cannot admit a fragment whose execution context is unknown.
+#[test]
+fn a_gated_predicate_assert_eq_in_an_include_fragment_is_still_refused() -> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "include!(\"frag.rs\");\n";
+    let frag = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index_with_include(
+        &[(LIB, lib), ("src/python.rs", python), ("src/frag.rs", frag)],
+        "src/frag.rs",
+        "src/python.rs",
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let skip = syntax.module_edge_child_for_test(test, &index);
+    let refusal =
+        syntax.context_refusal_without_provenance(test, &assertion, &index, false, skip.as_deref());
+    assert!(
+        matches!(refusal, Some(AssertionRefusal::IncludedFile { .. })),
+        "an include-fragment predicate assert_eq! is still refused as IncludedFile (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        "an include-fragment predicate assert_eq! is not admitted"
+    );
+    Ok(())
+}
+
+/// #14537 repair: the gated `mod` exception is only about build availability.
+/// A dead `if false` branch and an `#[ignore]` test inside the same gated
+/// module still refuse, so the new arm is exercised by all three shapes.
+#[test]
+fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused()
+-> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        if false {\n            assert_eq!(gate(10), true);\n        }\n    }\n\n    #[test]\n    #[ignore]\n    fn ignored() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let syntax = OwnerPinSyntax::default();
+    for name in ["pins", "ignored"] {
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == name)
+            .ok_or_else(|| format!("premise: `{name}` is indexed"))?;
+        let assertion = parser_oracles_for_function(&test.body, test.start_line)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+            .ok_or_else(|| format!("premise: `{name}`'s assert_eq! parses"))?;
+        let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+        assert!(
+            refusal.is_some(),
+            "{name}: a dead or ignored predicate assert_eq! is still refused (refusal={refusal:?})"
+        );
+        assert!(
+            !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+            "{name}: a dead or ignored predicate assert_eq! is not admitted"
+        );
+    }
     Ok(())
 }

@@ -1085,14 +1085,23 @@ impl OwnerPinSyntax {
         // #14537: a predicate equality whose test file is composed through a
         // gated `mod` declaration shares the bare `assert!`'s admission for
         // that build-availability step only. Re-answer the execution context
-        // with the provenance step skipped: shadowing, an uncalled closure, a
-        // conditional path and a non-standard macro binding still withhold
-        // credit, and the RIPR-SPEC-0197 predicate fixtures pin those.
+        // with only that Module edge skipped: shadowing, an uncalled closure,
+        // a conditional path and a non-standard macro binding still withhold
+        // credit. The RIPR-SPEC-0197 predicate fixtures pin the round-1
+        // deletion (they are inline `#[cfg(test)] mod tests`, so this arm does
+        // not fire for them); the gated-module tests below pin this arm.
         let refusal = match refusal {
             Some(AssertionRefusal::ModuleDeclaration { .. })
                 if family == ProbeFamily::Predicate =>
             {
-                self.context_refusal_without_provenance(test, assertion, index, matches_context)
+                let skip = self.module_edge_child_for_test(test, index);
+                self.context_refusal_without_provenance(
+                    test,
+                    assertion,
+                    index,
+                    matches_context,
+                    skip.as_deref(),
+                )
             }
             refusal => refusal,
         };
@@ -1372,7 +1381,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.context_ambiguities(test, assertion.line, index, true)
+        self.context_ambiguities(test, assertion.line, index, None)
             .is_ok_and(|ambiguous| {
                 !["assert", "assert_ne", "matches"]
                     .iter()
@@ -1420,7 +1429,7 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         index: &RustIndex,
     ) -> bool {
-        if self.source_provenance_refusal(test, index).is_some() {
+        if self.source_provenance_refusal(test, index, None).is_some() {
             return false;
         }
         let Some(_facts) = index.files().get(&test.file) else {
@@ -1935,6 +1944,7 @@ impl OwnerPinSyntax {
         &self,
         test: &TestSummary,
         index: &RustIndex,
+        skip_module_child: Option<&Path>,
     ) -> Option<AssertionRefusal> {
         let Some(facts) = index
             .files()
@@ -1952,6 +1962,14 @@ impl OwnerPinSyntax {
             .as_ref()
             .map_or(&facts.role_provenance.edges, |context| &context.edges);
         for edge in edges {
+            // #14537: a caller that has already accounted for the gated `mod`
+            // that composes the test file skips only that Module edge, so an
+            // Include edge further up the chain is still evaluated.
+            if edge.kind == SourceRoleProvenanceEdgeKind::Module
+                && skip_module_child.is_some_and(|child| edge.child == child)
+            {
+                continue;
+            }
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
@@ -2002,12 +2020,10 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         line: usize,
         index: &RustIndex,
-        provenance: bool,
+        skip_module_child: Option<&Path>,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
-        if provenance {
-            if let Some(refusal) = self.source_provenance_refusal(test, index) {
-                return Err(Box::new(refusal));
-            }
+        if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
+            return Err(Box::new(refusal));
         }
         if index.proptest_source(test).is_some() {
             // These ordinary assertion spellings are a checked interpretation
@@ -2099,7 +2115,7 @@ impl OwnerPinSyntax {
             .clone()
         };
         let ambiguous = self
-            .context_ambiguities(test, assertion.line, index, true)
+            .context_ambiguities(test, assertion.line, index, None)
             .ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
@@ -2174,7 +2190,7 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
-        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index, true) else {
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index, None) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
         self.by_file
@@ -2221,20 +2237,43 @@ impl OwnerPinSyntax {
         index: &RustIndex,
         matches_context: bool,
     ) -> Option<AssertionRefusal> {
-        self.context_refusal_inner(test, assertion, index, matches_context, true)
+        self.context_refusal_inner(test, assertion, index, matches_context, None)
     }
 
-    /// [`Self::context_refusal`] with the module-composition provenance step
-    /// skipped, so a caller that has already accounted for that step can read
-    /// the rest of the execution context (#14537).
+    /// [`Self::context_refusal`] with only the Module edge that composes the
+    /// test file skipped, so a caller that has already accounted for that
+    /// build-availability step can read the rest of the execution context
+    /// (#14537). An Include edge further up the chain is still evaluated.
     fn context_refusal_without_provenance(
         &self,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
         matches_context: bool,
+        skip_module_child: Option<&Path>,
     ) -> Option<AssertionRefusal> {
-        self.context_refusal_inner(test, assertion, index, matches_context, false)
+        self.context_refusal_inner(test, assertion, index, matches_context, skip_module_child)
+    }
+
+    /// The Module edge child to skip for a predicate equality whose test file
+    /// is composed through a gated `mod`: the file that includes the test
+    /// fragment, or the test file itself when it is the module child. The
+    /// Include edge further up the chain is left in place, so an include
+    /// fragment still refuses as `IncludedFile` (#14537).
+    fn module_edge_child_for_test(&self, test: &TestSummary, index: &RustIndex) -> Option<PathBuf> {
+        let facts = index.files().get(&test.file)?;
+        let context = self.execution_context(&test.file, index);
+        let edges = context
+            .as_ref()
+            .as_ref()
+            .map_or(&facts.role_provenance.edges, |context| &context.edges);
+        edges
+            .iter()
+            .find(|edge| {
+                edge.kind == SourceRoleProvenanceEdgeKind::Include && edge.child == test.file
+            })
+            .map(|edge| edge.parent.clone())
+            .or_else(|| Some(test.file.clone()))
     }
 
     fn context_refusal_inner(
@@ -2243,10 +2282,10 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
         matches_context: bool,
-        provenance: bool,
+        skip_module_child: Option<&Path>,
     ) -> Option<AssertionRefusal> {
         if let Some((source, offset)) = index.proptest_source(test) {
-            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index, skip_module_child) {
                 return Some(refusal);
             }
             let (Some(start), Some(end), Some(line)) = (
@@ -2271,11 +2310,11 @@ impl OwnerPinSyntax {
                 )
                 .map(AssertionRefusal::Syntax);
         }
-        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index, provenance)
-        {
-            Ok(ambiguous) => ambiguous,
-            Err(refusal) => return Some(*refusal),
-        };
+        let mut ambiguous =
+            match self.context_ambiguities(test, assertion.line, index, skip_module_child) {
+                Ok(ambiguous) => ambiguous,
+                Err(refusal) => return Some(*refusal),
+            };
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionRefusal::LexicalFallback);
         };
