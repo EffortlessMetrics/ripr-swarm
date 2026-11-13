@@ -326,6 +326,7 @@ tests = [
   "crates/ripr/tests/range_bound_edit.rs::a_literal_only_the_old_range_returns_does_not_supply_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::an_ignored_test_does_not_supply_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::a_single_use_expected_binding_keeps_a_separating_input",
+  "crates/ripr/tests/range_bound_edit.rs::a_range_passed_to_get_keeps_the_slicing_reading",
   "crates/ripr/tests/range_bound_edit.rs::a_dead_assertion_does_not_supply_a_separating_input",
   "crates/ripr/tests/range_bound_edit.rs::a_range_passed_to_an_associated_sum_is_gated",
   "crates/ripr/tests/range_bound_edit.rs::a_nested_match_arm_sharing_the_head_is_still_gated",

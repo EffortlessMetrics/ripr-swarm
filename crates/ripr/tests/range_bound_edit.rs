@@ -607,6 +607,24 @@ fn a_cfg_gated_match_arm_is_not_folded_or_contradicted() -> Result<(), String> {
 }
 
 #[test]
+fn a_range_passed_to_get_keeps_the_slicing_reading() -> Result<(), String> {
+    // `v.get(..n)` slices like `v[..n]`: one element more shows at every
+    // non-empty input, so the ordinary reading stays.
+    let lib = "/// The first n values.\npub fn head(v: &[u32], n: usize) -> Option<&[u32]> {\n    v.get(..=n)\n}\n";
+    let findings = findings_on_changed_line(
+        lib,
+        "    v.get(..=n)",
+        "    v.get(..n)",
+        &test_calling("assert_eq!(head(&[1, 2, 3], 1), Some(&[1, 2][..]));"),
+    )?;
+    assert!(
+        infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_single_use_expected_binding_keeps_a_separating_input() -> Result<(), String> {
     // Control: `let expected = 10;` read once is the literal 10.
     let findings = findings_on_changed_line(

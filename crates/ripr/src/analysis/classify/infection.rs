@@ -1313,6 +1313,9 @@ enum RangeConsumer {
     Preserving,
 }
 
+/// Methods that take one range and slice by it, as `v[a..b]` does.
+const SLICING_METHODS: [&str; 4] = ["get", "get_mut", "get_unchecked", "get_unchecked_mut"];
+
 /// Adaptors after which one element more or fewer still shows up in the
 /// result. Any other method on the range's chain is read as absorbing.
 const LENGTH_PRESERVING_METHODS: [&str; 25] = [
@@ -1425,6 +1428,18 @@ fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsu
                 return Some(RangeConsumer::Absorbing);
             }
             node = parent;
+            continue;
+        }
+        // `v.get(a..b)` and its unchecked or mutable forms slice like an
+        // index expression.
+        if ast::ArgList::can_cast(parent.kind())
+            && let Some(call) = parent.parent().and_then(ast::MethodCallExpr::cast)
+            && ast::ArgList::cast(parent.clone()).is_some_and(|args| args.args().count() == 1)
+            && call
+                .name_ref()
+                .is_some_and(|name| SLICING_METHODS.contains(&name.text().to_string().as_str()))
+        {
+            node = call.syntax().clone();
             continue;
         }
         // A `for` header, or a range handed to a call (`Iterator::sum(0..n)`,
