@@ -1049,6 +1049,26 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
             "compound verdict",
         ),
         (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKING",
+            false,
+            "BLOCKING verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n1. Verdict: BLOCK",
+            false,
+            "numbered-list verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n_Verdict:_ BLOCK",
+            false,
+            "underscore-emphasis verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.",
+            true,
+            "negated block in an approving verdict",
+        ),
+        (
             "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
             true,
             "recalled verdict in prose",
