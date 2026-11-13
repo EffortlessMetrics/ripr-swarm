@@ -928,6 +928,15 @@ reason = "Pinned upstream Kani contract examples and an authored no-promotion re
 covered_by = ["cargo test -p ripr --test kani_report_cli"]
 
 [[allow]]
+glob = "xtask/tests/fixtures/kani-cover-evidence/provenance.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Authored provenance for retained native cover-evidence fixtures replayed by the lane tests; the capture record is not authenticated execution."
+covered_by = ["cargo test -p xtask kani_lane::tests::pinned_native_cover_captures_keep_distinct_lane_dispositions", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"
 kind = "kani_native_conformance_fixture"
 owner = "verification/kani-import"
