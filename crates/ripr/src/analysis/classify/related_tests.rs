@@ -2164,7 +2164,7 @@ fn type_reexported_from_owner_dependency(
         || use_statement_paths(stripped_file)
             .iter()
             .any(|statement| statement.contains('*'))
-        || stripped_file.contains("extern crate")
+        || has_reexport_token_pair(stripped_file, "extern", "crate")
         || super::reveal::flattened_use_paths(stripped_file)
             .iter()
             .any(|other| {
@@ -2197,7 +2197,8 @@ fn type_reexported_from_owner_dependency(
         let stripped = strip_comments_and_strings(&facts.source);
         // Share the path-remapping authority with call identity. Literal
         // spelling misses whitespace, comments and conditional attributes.
-        if super::call_identity::has_path_attribute(&stripped) || facts.source.contains("include!")
+        if super::call_identity::has_path_attribute(&stripped)
+            || has_reexport_token_pair(&stripped, "include", "!")
         {
             return false;
         }
@@ -2218,7 +2219,7 @@ fn type_reexported_from_owner_dependency(
         let library_imports = super::reveal::flattened_use_paths(&stripped);
         // A library-local binding of a dependency key (`use x::y as crate_a;`,
         // `mod crate_a`, `extern crate`) would rebind the terminal hop's root.
-        if stripped.contains("extern crate")
+        if has_reexport_token_pair(&stripped, "extern", "crate")
             || reexport.library_dependency_names.iter().any(|dependency| {
                 file_may_bind_name(&stripped, dependency)
                     || library_imports.iter().any(|import| {
@@ -2581,6 +2582,32 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         previous_is_mod = word == "mod";
         found
     })
+}
+
+/// Adjacent code tokens for the re-export refusals (`extern crate` or
+/// `include!`), independent of trivia. Masking can leave holes where strings
+/// were removed, so inspect parser tokens without requiring a clean AST.
+fn has_reexport_token_pair(stripped: &str, first: &str, second: &str) -> bool {
+    use ra_ap_syntax::{Edition, SourceFile, SyntaxToken};
+    if !stripped.contains(first) {
+        return false;
+    }
+    if crate::analysis::syntax::rust_nesting_refusal(stripped).is_some() {
+        return true;
+    }
+    let file = SourceFile::parse(stripped, Edition::CURRENT).tree();
+    let mut previous: Option<SyntaxToken> = None;
+    file.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .any(|token| {
+            let found = previous.as_ref().is_some_and(|previous| {
+                previous.text() == first || first == "include" && previous.text() == "r#include"
+            }) && token.text() == second;
+            previous = Some(token);
+            found
+        })
 }
 
 /// Whether comment-and-string-stripped `source` may bind `name` to something
@@ -14033,11 +14060,14 @@ fn crate_c_score_test() {
         Ok(related)
     }
 
-    /// The unrelated free `current` forces the dependency-edge route rather
-    /// than the unique-name shortcut. The remapped file is indexed, while the external
-    /// dependency supplying its type is outside the workspace inventory.
-    #[test]
-    fn reexport_hop_refuses_path_remaps_with_complete_index() -> Result<(), String> {
+    /// A real, complete parsed workspace. The unrelated free `current` forces
+    /// the dependency-edge route; the external dependency stays outside the index.
+    fn assert_parsed_reexport_case(
+        library_source: &str,
+        test_prefix: &str,
+        foreign_source: &str,
+        admits: bool,
+    ) -> Result<(), String> {
         struct RemoveOnDrop(PathBuf);
         impl Drop for RemoveOnDrop {
             fn drop(&mut self) {
@@ -14056,7 +14086,7 @@ fn crate_c_score_test() {
         write(
             &scratch,
             "foreign_dep/src/lib.rs",
-            "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 7 } }\n",
+            "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 7 } }\npub mod filter { pub use crate::LevelFilter; }\npub mod metadata { pub use crate::LevelFilter; }\n",
         )?;
         write(
             &root,
@@ -14078,6 +14108,9 @@ fn crate_c_score_test() {
             "crates/crate_b/Cargo.toml",
             "[package]\nname='crate-b'\nversion='0.1.0'\nedition='2024'\n",
         )?;
+        let test_source = format!(
+            "{test_prefix}\nuse crate_c::filter::LevelFilter;\n#[test]\nfn observes_current() {{ std::assert_eq!(LevelFilter::current(), 7); }}\n"
+        );
         let mut files = vec![
             write(
                 &root,
@@ -14095,19 +14128,12 @@ fn crate_c_score_test() {
                 "crates/crate_c/src/filter.rs",
                 "pub use crate_a::metadata::LevelFilter;\n",
             )?,
-            write(
-                &root,
-                "crates/crate_c/foreign.rs",
-                "pub use foreign_dep::*;\n",
-            )?,
-            write(
-                &root,
-                "crates/crate_c/tests/check.rs",
-                "use crate_c::filter::LevelFilter;\n#[test]\nfn observes_current() { std::assert_eq!(LevelFilter::current(), 7); }\n",
-            )?,
+            write(&root, "crates/crate_c/foreign.rs", foreign_source)?,
+            write(&root, "crates/crate_c/tests/check.rs", &test_source)?,
         ];
         let lib = PathBuf::from("crates/crate_c/src/lib.rs");
-        files.push(lib.clone());
+        write(&root, &lib.to_string_lossy(), library_source)?;
+        files.push(lib);
         let prefixes = crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&root);
         let adjacency = PathDependencyAdjacency::build(
             &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(&root),
@@ -14121,6 +14147,92 @@ fn crate_c_score_test() {
                 )
                 .is_some()
         );
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert_eq!(index.files().len(), files.len());
+        assert!(
+            index
+                .files()
+                .contains_key(&PathBuf::from("crates/crate_c/foreign.rs"))
+        );
+        let indexed_files: Vec<_> = index.files().iter().map(|(path, _)| path.clone()).collect();
+        let unindexed = manifests_with_unindexed_files(&prefixes, &files, &indexed_files);
+        assert!(unindexed.is_empty());
+        assert_eq!(index.tests().len(), 1);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| {
+                function.name == "current"
+                    && function.file == PathBuf::from("crates/crate_a/src/metadata.rs")
+            })
+            .ok_or("missing owner")?;
+        assert!(matches!(
+            owner.item.container,
+            FunctionContainer::Inherent { .. }
+        ));
+        assert_eq!(
+            index
+                .functions()
+                .iter()
+                .filter(|function| function.name == "current")
+                .count(),
+            2
+        );
+        let context = DependencyEdgeContext {
+            adjacency: &adjacency,
+            manifest_dir_prefixes: &prefixes,
+            index: &index,
+            unindexed_manifests: &unindexed,
+            root: &root,
+        };
+        let test = &index.tests()[0];
+        let source = strip_comments_and_strings(
+            &index
+                .files()
+                .get(&test.file)
+                .ok_or("missing test source")?
+                .source,
+        );
+        let dependencies = BTreeSet::from(["crate_a".to_string()]);
+        let reexport = ReexportChain {
+            owner_manifest: "crates/crate_a/Cargo.toml",
+            test_manifest: "crates/crate_c/Cargo.toml",
+            library_dependency_names: &dependencies,
+        };
+        // Assert the guard itself before the full relation, so an unrelated
+        // refusal cannot make a negative vacuously pass.
+        assert_eq!(
+            type_reexported_from_owner_dependency(
+                &context,
+                &reexport,
+                &file_level_use_text(&source),
+                &source,
+                "LevelFilter",
+            ),
+            admits,
+            "guard: library={library_source:?}, test={test_prefix:?}"
+        );
+        let related = find_related_tests(
+            &probe("crates/crate_a/src/metadata.rs", "2"),
+            Some(owner),
+            &index,
+            true,
+            None,
+            Some(&context),
+        );
+        assert_eq!(
+            !related.is_empty(),
+            admits,
+            "relation: library={library_source:?}, test={test_prefix:?}"
+        );
+        if admits {
+            assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_path_remaps_with_complete_index() -> Result<(), String> {
         for (attribute, admits) in [
             ("", true),
             ("#[path = \"../foreign.rs\"]", false),
@@ -14132,89 +14244,91 @@ fn crate_c_score_test() {
                 false,
             ),
         ] {
-            write(
-                &root,
-                &lib.to_string_lossy(),
-                &format!("{attribute}\npub mod filter;\n"),
-            )?;
-            let index = crate::analysis::facts::build_index(&root, &files)?;
-            assert_eq!(index.files().len(), files.len());
-            assert!(
-                index
-                    .files()
-                    .contains_key(&PathBuf::from("crates/crate_c/foreign.rs"))
-            );
-            let unindexed = manifests_with_unindexed_files(&prefixes, &files, &files);
-            assert!(unindexed.is_empty());
-            assert_eq!(index.tests().len(), 1);
-            let owner = index
-                .functions()
-                .iter()
-                .find(|function| {
-                    function.name == "current"
-                        && function.file == PathBuf::from("crates/crate_a/src/metadata.rs")
-                })
-                .ok_or("missing owner")?;
-            assert!(matches!(
-                owner.item.container,
-                FunctionContainer::Inherent { .. }
-            ));
-            assert_eq!(
-                index
-                    .functions()
-                    .iter()
-                    .filter(|function| function.name == "current")
-                    .count(),
-                2
-            );
-            let context = DependencyEdgeContext {
-                adjacency: &adjacency,
-                manifest_dir_prefixes: &prefixes,
-                index: &index,
-                unindexed_manifests: &unindexed,
-                root: &root,
-            };
-            let test = &index.tests()[0];
-            let source = strip_comments_and_strings(
-                &index
-                    .files()
-                    .get(&test.file)
-                    .ok_or("missing test source")?
-                    .source,
-            );
-            let dependencies = BTreeSet::from(["crate_a".to_string()]);
-            let reexport = ReexportChain {
-                owner_manifest: "crates/crate_a/Cargo.toml",
-                test_manifest: "crates/crate_c/Cargo.toml",
-                library_dependency_names: &dependencies,
-            };
-            // Direct guard receipt prevents a different upstream refusal from
-            // making the relation control vacuously pass.
-            assert_eq!(
-                type_reexported_from_owner_dependency(
-                    &context,
-                    &reexport,
-                    &file_level_use_text(&source),
-                    &source,
-                    "LevelFilter"
-                ),
+            assert_parsed_reexport_case(
+                &format!("{attribute}\n pub mod filter;\n"),
+                "",
+                "pub use foreign_dep::*;\n",
                 admits,
-                "guard: {attribute}"
-            );
-            let related = find_related_tests(
-                &probe("crates/crate_a/src/metadata.rs", "2"),
-                Some(owner),
-                &index,
-                true,
-                None,
-                Some(&context),
-            );
-            assert_eq!(!related.is_empty(), admits, "relation: {attribute}");
-            if admits {
-                assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
-            }
+            )?;
         }
         Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_include_token_spacing_with_complete_index() -> Result<(), String> {
+        assert_parsed_reexport_case("pub mod filter;", "", "pub use foreign_dep::*;", true)?;
+        for invocation in ["include!", "include !", "include /*gap*/ !", "include\n!"] {
+            assert_parsed_reexport_case(
+                &format!("#[cfg(any())] pub mod filter;\n{invocation}(\"../foreign.rs\");"),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        assert_parsed_reexport_case(
+            "macro_rules! mount { () => { include !(\"../foreign.rs\"); }; }\n#[cfg(any())] pub mod filter;\nmount!();",
+            "",
+            "pub mod filter { pub use foreign_dep::*; }",
+            false,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_extern_crate_token_spacing_with_complete_index() -> Result<(), String> {
+        assert_parsed_reexport_case("pub mod filter;", "", "pub use foreign_dep::*;", true)?;
+        for keywords in [
+            "extern crate",
+            "extern\ncrate",
+            "extern\tcrate",
+            "extern /*gap*/ crate",
+        ] {
+            assert_parsed_reexport_case(
+                "pub mod filter;",
+                &format!("{keywords} foreign_dep as crate_c;"),
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_library_extern_crate_token_spacing() -> Result<(), String> {
+        for keywords in [
+            "extern crate",
+            "extern\ncrate",
+            "extern\tcrate",
+            "extern /*gap*/ crate",
+        ] {
+            assert_parsed_reexport_case(
+                &format!("{keywords} foreign_dep as crate_a;\npub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_ignores_quoted_lexical_guard_text() -> Result<(), String> {
+        assert_parsed_reexport_case(
+            "const NOTE: &str = \"include !\"; /* include ! */ pub mod filter;",
+            "const NOTE: &str = \"extern\ncrate\"; // extern crate",
+            "pub use foreign_dep::*;",
+            true,
+        )
+    }
+
+    #[test]
+    fn reexport_hop_preserves_unrelated_macro_definitions() -> Result<(), String> {
+        assert_parsed_reexport_case(
+            "macro_rules! marker { () => {} }\npub mod filter;",
+            "",
+            "pub use foreign_dep::*;",
+            true,
+        )
     }
 
     const CRATE_C_MANIFEST: &str = "[package]\nname='crate-c'\nversion='0.1.0'\n";

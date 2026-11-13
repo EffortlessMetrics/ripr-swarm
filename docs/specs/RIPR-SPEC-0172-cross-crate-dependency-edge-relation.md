@@ -290,6 +290,11 @@ hold, or the route refuses:
   rebinds a dependency key (`use .. as key;`, an import ending in the key,
   `mod key`, `extern crate`).
 
+The `extern crate` and `include!` refusals read adjacent Rust parser tokens
+after masking comments and strings, so whitespace or comments between tokens
+do not bypass them. An include invocation inside a macro token tree also
+refuses; an unrelated macro definition does not.
+
 The competitor and owner-crate foreign-import rules above still apply.
 
 ## Test Mapping
@@ -329,6 +334,11 @@ The competitor and owner-crate foreign-import rules above still apply.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_follows_one_crate_local_hop_to_the_dependency`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_unresolved_crate_local_chains`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_path_remaps_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_include_token_spacing_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_extern_crate_token_spacing_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_library_extern_crate_token_spacing`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_ignores_quoted_lexical_guard_text`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_preserves_unrelated_macro_definitions`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
