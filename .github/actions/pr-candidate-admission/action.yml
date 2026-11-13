@@ -156,7 +156,7 @@ runs:
         python3 "$action_root/release_cut_admission.py" --self-test
         # Generated declarations must name data files only (see docs/CI.md).
         python3 "$action_root/candidate_admission.py" --check-attributes "${GITHUB_WORKSPACE}/.gitattributes" \
-          || refuse_early "generated_declaration_invalid" "a linguist-generated declaration in .gitattributes is outside the declarable generated shapes in candidate_admission.py"
+          || refuse_early "generated_declaration_invalid" "a linguist-generated declaration in .gitattributes is outside the declarable generated shapes in candidate_admission.py; remove it, or add the exact data-only family and producer there, then rerun candidate_admission.py --check-attributes on the updated file"
 
         validate_candidate_result() {
           local file="$1" rc="$2" allowed="$3"
