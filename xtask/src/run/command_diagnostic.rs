@@ -141,7 +141,7 @@ impl CargoProgress {
             let count = stderr
                 .lines()
                 .filter(|line| {
-                    crate::windows_advisory::strip_ansi(line)
+                    crate::ansi::strip_ansi(line)
                         .trim_start()
                         .starts_with(prefix)
                 })

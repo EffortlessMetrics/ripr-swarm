@@ -22,6 +22,7 @@ Linked issues:
 
 - #12109: internal Kani claim boundaries.
 - #12468: ambiguous harness-to-result joins.
+- #12579: bounded pre-run Kani availability discovery.
 
 Linked PRs:
 
@@ -140,6 +141,27 @@ failure does not convert a failed harness into an unobserved timeout or upgrade
 a successful-looking row into complete-run assurance. This does not establish
 native-source provenance or inventory completeness.
 
+The `cargo kani --version` availability probe uses the shared bounded child
+owner and requires both output streams to finish. Its separate deadline is the
+smaller of 10 seconds and the requested `--timeout-secs` verification budget
+(with a one-second minimum). A failed, signaled, status-less or timed-out probe
+reports an explicit NOT-ESTABLISHED reason and never starts verification.
+This preliminary allowance is **in addition to** the subsequent
+`--timeout-secs` verification deadline. Process cleanup and bounded pipe drains
+can add their own grace periods; the probe budget is not a whole-command
+deadline. `--allow-empty` never overrides unavailable tooling.
+
+Discovery retains distinct safe failure classes: executable/interpreter not
+found, permission-denied launch, other launch failure, process observation or
+termination failure, incomplete/failed capture, descendant-cleanup failure,
+missing Kani subcommand, and unsuccessful exit. The missing-subcommand class
+requires Cargo's exact uncolored stderr line `` error: no such command: `kani` ``
+and exit code 101. Other nonzero exits stay ordinary unsuccessful exits.
+Reports contain fixed diagnostic vocabulary and process exit status, never
+arbitrary version stdout, stderr or low-level error text. Successful discovery
+retains its text capture for callers; it does not authenticate native proof or
+provide byte-exact artifact custody.
+
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
 `--allow-empty` is passed. `--allow-empty` is a local opt-out for sparse
@@ -223,6 +245,51 @@ It does not claim:
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,
   `report_names_every_status_word`.
+
+The Linux synthetic-process integration controls in
+`xtask/tests/kani_version_probe.rs` exercise normal and unavailable discovery,
+the failure classes above that can be induced at the real command boundary,
+both owning packages, persisted reports and the empty opt-out. An independent
+watchdog reexecutes the test in an owned session, uses file-backed captures and
+retains the primary's wait identity until all live session members are stopped.
+Its clock does not call the probe's deadline implementation. A controlled hung
+probe with an inherited-pipe descendant proves this watchdog fires before the
+probe deadline and confirms both descendant identities are no longer live.
+The existing isolated-session controls continue to cover normal completion,
+cleanup failures and unrelated-session preservation. These controls do not run
+Kani and make no non-Linux process-tree claim.
+
+For focused maintenance, `cargo test -p xtask --test formal_runner` compiles the
+actual `kani_lane.rs` and `run.rs` modules with their existing tests and the
+same `automation` dependencies as the CLI. Shared ANSI normalization and the
+test CWD gate are included from their production/test owners. This target
+does not compile the unrelated `main.rs` test suite. The command controls run
+separately through `cargo test -p xtask --test kani_version_probe` against the
+actual CLI binary.
+
+On Linux, a host that cannot code-generate the full analyzer facade can execute
+the same runner source and lane API with a smaller dependency graph:
+
+```sh
+cargo test -p xtask --no-default-features --features formal-runner --test formal_runner
+```
+
+This mode includes the original `crates/ripr/src/process_owner.rs` source with
+`cfg(test)` and reexports the actual `ripr-contract` cancellation module, just
+as the facade does. It uses the same timeout, cleanup and capture code, with
+the owner's existing test-only observation/failure-injection fields enabled.
+It runs the availability fixtures under `probe_controls::`, calling the real
+`kani_lane::run_lane` in the isolated child. API errors use libtest's exit code
+101 and its wrapped stdout; full CLI errors use exit code 1 and exact report
+stdout. These are distinct proof boundaries. Narrow-mode success does not
+establish the full xtask dispatcher, facade artifact, non-Linux behavior or
+native Kani proof. Automation/default production imports remain unchanged.
+
+Useful focused selectors include
+`run::tests::complete_capture_rejects_a_pipe_that_outlives_the_drain_grace`,
+`run::tests::typed_capture_retains_cleanup_failure_when_both_drains_also_fail`
+and the `run::test_session::tests::` group. Native Kani execution and hosted
+platform coverage remain separate evidence.
 
 ## Implementation Mapping
 

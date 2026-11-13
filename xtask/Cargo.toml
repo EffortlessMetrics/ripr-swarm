@@ -12,6 +12,7 @@ home = { version = "=0.5.12", optional = true }
 num-bigint = { version = "0.4", optional = true }
 repo-policy = { path = "../tools/repo-policy", optional = true }
 ripr = { path = "../crates/ripr", optional = true }
+ripr-contract = { path = "../crates/ripr-contract", default-features = false, optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -31,6 +32,7 @@ proptest = "1"
 # The UB receipt reporter can disable it without changing its source or tests.
 default = ["automation"]
 automation = [
+    "formal-runner",
     "dep:bigdecimal",
     "dep:home",
     "dep:num-bigint",
@@ -47,6 +49,10 @@ automation = [
     "dep:roxmltree",
     "dep:rustix",
 ]
+# Linux source-module controls execute the real owner and lane API without
+# code-generating the unrelated analyzer facade or xtask dispatcher.
+formal-runner = ["dep:ripr-contract", "dep:serde", "dep:rustix"]
+
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.
@@ -63,6 +69,16 @@ required-features = ["automation"]
 
 [[example]]
 name = "mandatory_partitions"
+required-features = ["automation"]
+
+[[test]]
+name = "formal_runner"
+path = "tests/formal_runner.rs"
+required-features = ["formal-runner"]
+
+[[test]]
+name = "kani_version_probe"
+path = "tests/kani_version_probe.rs"
 required-features = ["automation"]
 
 [target.'cfg(target_os = "linux")'.dependencies]

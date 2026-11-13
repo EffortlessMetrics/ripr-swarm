@@ -2886,6 +2886,7 @@ dependencies = [
  "rayon",
  "repo-policy",
  "ripr",
+ "ripr-contract",
  "roxmltree",
  "rustix",
  "serde",

@@ -26,6 +26,9 @@ const REPORT_DIR: &str = "target/ripr/reports";
 const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+/// An independent upper bound on the pre-run cargo-kani availability probe.
+/// The caller's smaller requested run timeout also caps this preliminary step.
+const MAX_KANI_VERSION_PROBE_SECS: u64 = 10;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
 /// `NOT-ESTABLISHED` for itself and the rest of the lane still reports. The
 /// slowest verified harness runs about four minutes; this leaves headroom
@@ -319,10 +322,66 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
     Ok(())
 }
 
-fn tool_available() -> bool {
-    run::capture_output("cargo", &["kani", "--version"], "cargo kani --version")
-        .map(|captured| captured.status.success())
-        .unwrap_or(false)
+/// Availability is a separate subprocess and must never wait without a bound.
+/// Reuse the shared timed capture's descendant cancellation and status checks.
+fn tool_available(timeout_secs: u64) -> Result<run::TimedOutput, String> {
+    let budget = Duration::from_secs(timeout_secs.clamp(1, MAX_KANI_VERSION_PROBE_SECS));
+    let output = run::capture_output_with_timeout_typed(
+        "cargo",
+        &["kani".to_string(), "--version".to_string()],
+        &[("CARGO_TERM_COLOR", "never")],
+        budget,
+        "cargo kani --version",
+    )
+    // A low-level capture error may itself contain unsanitized child output.
+    // Report the failure class, not arbitrary subprocess text as trusted Markdown.
+    .map_err(|error| probe_capture_failure_reason(error.kind).to_string())?;
+    if output.timed_out {
+        let units = if budget.as_secs() == 1 {
+            "second"
+        } else {
+            "seconds"
+        };
+        return Err(format!(
+            "cargo kani --version timed out after {} {units}",
+            budget.as_secs()
+        ));
+    }
+    // Do not echo untrusted version stdout/stderr into the Markdown report.
+    match output.status {
+        Some(status) if status.success() => Ok(output),
+        Some(status)
+            if status.code() == Some(101)
+                && output
+                    .stderr
+                    .lines()
+                    .any(|line| line.trim() == "error: no such command: `kani`") =>
+        {
+            Err("cargo is installed but the kani subcommand is unavailable".to_string())
+        }
+        Some(status) => Err(format!("cargo kani --version failed with {status}")),
+        None => Err("cargo kani --version returned without a process exit status".to_string()),
+    }
+}
+
+fn probe_capture_failure_reason(kind: run::TimedCaptureErrorKind) -> &'static str {
+    use run::TimedCaptureErrorKind;
+    match kind {
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::NotFound) => {
+            "cargo could not be launched: executable or interpreter not found"
+        }
+        TimedCaptureErrorKind::Launch(std::io::ErrorKind::PermissionDenied) => {
+            "cargo could not be launched: permission denied"
+        }
+        TimedCaptureErrorKind::Launch(_) => "cargo could not be launched: other launch failure",
+        TimedCaptureErrorKind::ProcessControl => {
+            "cargo kani --version process observation or termination failed"
+        }
+        TimedCaptureErrorKind::Capture => {
+            "cargo kani --version output capture failed or was incomplete"
+        }
+        TimedCaptureErrorKind::Cleanup => "cargo kani --version descendant cleanup failed",
+    }
 }
 
 /// Splits Kani's output into `(qualified harness name, block text)` pairs at
@@ -529,7 +588,8 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
         packages.push((package, harnesses));
     }
     let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
-    let available = tool_available();
+    let availability = tool_available(args.timeout_secs);
+    let available = availability.is_ok();
     let run = if available && count > 0 {
         eprintln!("kani: checking {count} harness(es)");
         let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
@@ -567,8 +627,8 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
             process_problem: None,
         }
     };
-    let note = if !available {
-        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run.".to_string()
+    let note = if let Err(reason) = &availability {
+        format!("NOT-ESTABLISHED: cargo-kani unavailable: {reason}; no harness was run.")
     } else if let Some(problem) = &run.process_problem {
         format!("NOT-ESTABLISHED: {problem}")
     } else if run.results.is_empty() {
