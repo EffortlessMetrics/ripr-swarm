@@ -14,6 +14,7 @@ mod exit_kani;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
+mod help_leaf;
 pub(crate) mod interrupt;
 mod parse;
 pub(crate) mod progress;
