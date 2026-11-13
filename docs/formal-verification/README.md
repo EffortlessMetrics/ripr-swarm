@@ -108,6 +108,8 @@ owner where scope has become too large.
 - [MAINTENANCE.md](MAINTENANCE.md) — operator and maintainer runbook.
 - [ADMISSION_AUDIT.md](ADMISSION_AUDIT.md) — isolated document-consistency
   checks, adversarial controls and the boundary to native assurance.
+- [SOURCE_INPUTS.md](SOURCE_INPUTS.md) — shared passive source prerequisites,
+  supported syntax, conservative refusal and caller obligations.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
   implementation programme using the current issue and PR owners.
 - [WORK_ITEMS.md](WORK_ITEMS.md) — existing executable implementation owners

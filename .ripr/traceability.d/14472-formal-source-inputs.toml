@@ -1,0 +1,21 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = ["xtask/src/formal_source_inputs.rs"]
+tests = [
+  "xtask/src/formal_source_inputs/tests.rs::production_test_named_file_and_qualified_include_remain_in_the_closure",
+  "xtask/src/formal_source_inputs/tests.rs::dynamic_or_macro_generated_inputs_are_refused_but_test_ancestry_is_explicit",
+  "xtask/src/formal_source_inputs/tests.rs::source_include_refuses_a_symlink_even_when_it_targets_a_local_file",
+  "xtask/src/formal_source_inputs/tests.rs::external_test_ancestry_is_followed_and_a_production_edge_defeats_it",
+  "xtask/src/formal_source_inputs/tests.rs::package_and_runner_build_scripts_close_literal_inputs",
+  "xtask/src/formal_source_inputs/tests.rs::unsupported_inline_module_paths_refuse_instead_of_borrowing_a_physical_base",
+  "xtask/src/formal_source_inputs/tests.rs::commented_and_raw_path_attributes_preserve_literal_spaces",
+  "xtask/src/formal_source_inputs/tests.rs::include_trivia_and_raw_names_do_not_hide_inputs",
+  "xtask/src/formal_source_inputs/tests.rs::commented_conditional_module_paths_are_explicitly_refused",
+  "xtask/src/formal_source_inputs/tests.rs::commented_production_edge_defeats_test_only_exclusion",
+  "xtask/src/formal_source_inputs/tests.rs::ordinary_harness_attributes_are_trivia_insensitive",
+  "xtask/src/formal_source_inputs/tests.rs::doc_prefix_lookalikes_cannot_authorize_transforming_attributes",
+  "xtask/src/formal_source_inputs/tests.rs::malformed_module_ancestry_is_not_admitted",
+  "xtask/src/formal_source_inputs/tests.rs::initial_source_inventory_cannot_bypass_the_file_budget",
+  "xtask/src/formal_source_inputs/tests.rs::raw_macro_generated_include_is_not_silently_omitted",
+  "xtask/src/formal_source_inputs/tests.rs::production_only_owner_cannot_hide_a_commented_module_edge",
+]
