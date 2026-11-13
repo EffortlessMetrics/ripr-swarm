@@ -1327,6 +1327,41 @@ fn deleted_guard_block_reads_a_parameter_conjunct_beside_a_local() -> Result<(),
     Ok(())
 }
 
+#[test]
+fn deleted_guard_block_refuses_a_walrus_that_can_rebind_a_kept_parameter() -> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if (total := 2000) and result is not None and total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "walrus-rebinds-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_refuses_a_mutating_call_beside_a_parameter_truthiness_check()
+-> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if fill(total) and total:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "call-mutates-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
 // What the parameter-only reading must not exclude on: a guard over locals or
 // module constants alone, a parameter conjunct that holds, and `or` or a
 // conditional expression, where dropping an operand can turn a true guard
@@ -1418,6 +1453,9 @@ fn parameter_only_guard_keeps_what_an_old_side_read_may_evaluate() {
         ("(seq_index or start < 0) and total > 1", None),
         ("seq_index and start < 0 or total > 1", None),
         ("(seq_index if start < 0 else total) and start < 0", None),
+        ("fill(total) and total > 1000", None),
+        ("fill(total) and total", None),
+        ("(total := 2000) and total > 1000", None),
         ("any(x for x in total) and start < 0", None),
         ("(lambda: seq_index)() and start < 0", None),
     ] {

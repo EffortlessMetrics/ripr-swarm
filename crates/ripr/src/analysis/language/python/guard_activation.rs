@@ -104,6 +104,13 @@ pub(super) fn python_old_side_guarded_arm_gap(
 /// conjuncts, else nothing.
 pub(super) fn parameter_only_guard(condition: &str, parameters: &[String]) -> Option<String> {
     use super::deleted_lines::guard_names_only_parameters;
+    let conjuncts = super::guard_atoms::split_top_level(condition, " and ");
+    // A dropped call or walrus can rebind a parameter used by a kept
+    // conjunct. Evaluating only the kept text would then use the call-time
+    // value for a different runtime value (#14273).
+    if conjuncts.iter().any(|conjunct| conjunct_has_call_or_walrus(conjunct)) {
+        return None;
+    }
     if guard_names_only_parameters(condition, parameters) {
         return Some(condition.to_string());
     }
@@ -113,7 +120,7 @@ pub(super) fn parameter_only_guard(condition: &str, parameters: &[String]) -> Op
     {
         return None;
     }
-    let kept: Vec<&str> = super::guard_atoms::split_top_level(condition, " and ")
+    let kept: Vec<&str> = conjuncts
         .into_iter()
         .map(str::trim)
         .filter(|conjunct| guard_names_only_parameters(conjunct, parameters))
@@ -966,6 +973,20 @@ pub(super) fn condition_holds(
         }
     }
     (!unreadable).then_some(true)
+}
+
+/// Whether a dropped conjunct has call or walrus syntax that can change a kept
+/// parameter. Plain grouping parentheses are not calls (`(x is None)`), while
+/// named, method, indexed, and immediately invoked forms are (#14273).
+pub(super) fn conjunct_has_call_or_walrus(text: &str) -> bool {
+    text.contains(":=")
+        || text.match_indices('(').any(|(index, _)| {
+            text[..index]
+                .trim_end()
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| matches!(*byte, b')' | b']') || is_identifier_byte(*byte))
+        })
 }
 
 /// True when `text` applies `or`, `not` or a conditional expression
