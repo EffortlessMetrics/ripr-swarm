@@ -1997,6 +1997,8 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
   "crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt",
+  "crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works",
+  "crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason",
   "crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses",
   "crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts",
   "crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory",
@@ -11254,6 +11256,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::bounded_human_output_speaks_plain_language_only",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_exposed_production_over_unknown_test_file",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_weak_production_over_unknown_test_file",
+  "crates/ripr/src/output/human/triage.rs::tests::start_here_breaks_an_evidence_tie_by_class_before_path",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_keeps_static_limited_when_all_probes_are_unknown",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_demote_production_unknown_below_test_decisive",
   "crates/ripr/src/output/human/triage.rs::tests::start_here_prefers_same_owner_exposed_over_production_static_unknown",
@@ -11746,6 +11749,10 @@ id = "RIPR-SPEC-0127"
 name = "LSP diagnostic code catalog"
 spec = "docs/specs/RIPR-SPEC-0127-lsp-diagnostic-code-catalog.md"
 tests = [
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one",
+  "crates/ripr/src/lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis",
+  "crates/ripr/src/lsp/tests.rs::framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis",
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::every_entry_has_a_nonempty_code",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::codes_and_aliases_are_globally_unique",
   "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::every_code_resolves_to_exactly_one_entry",

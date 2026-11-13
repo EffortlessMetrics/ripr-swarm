@@ -19,7 +19,7 @@
         },
         "static_limit_kind": "mocked_module"
       },
-      "message": "typescript preview evidence (syntax-first, advisory): TypeScript preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value. Static limit: mocked_module.",
+      "message": "TypeScript preview (advisory): changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value. Static limit: mocked_module.",
       "range": {
         "end": {
           "character": 32,

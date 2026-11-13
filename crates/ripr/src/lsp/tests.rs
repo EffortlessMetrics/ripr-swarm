@@ -2913,6 +2913,13 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("PricingError::Boundary"));
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
+    // #14464: the fix instruction is its own paragraph, not a lazy
+    // continuation of the last witness bullet.
+    assert!(
+        markup.value.contains("\n\n**Fix instruction:** "),
+        "fix instruction must follow a blank line: {}",
+        markup.value
+    );
 
     let context_packet = crate::output::json::render_context_packet(
         &finding,
@@ -9162,6 +9169,142 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
     assert_eq!(args[0]["uri"], "file:///workspace/tests/high.rs");
     assert_eq!(args[0]["test_name"], "high_confidence_weak_assertion");
+    Ok(())
+}
+
+/// #5354: the seam "open best related test" action never opens a test linked
+/// only by proximity, even a strong one, over a test that calls the owner;
+/// with only proximity-linked tests it opens nothing.
+#[test]
+fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
+    use crate::analysis::test_grip_evidence::{
+        RelatedTestGrip, RelationConfidence, RelationReason,
+    };
+
+    let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "same_file_strong_neighbour".to_string(),
+        file: PathBuf::from("tests/neighbour.rs"),
+        line: 4,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::SameTestFile,
+        relation_confidence: RelationConfidence::High,
+    });
+    let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "token_substring_strong".to_string(),
+        file: PathBuf::from("tests/token.rs"),
+        line: 6,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::WeakTokenSubstring,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+
+    let commands_for = |related: Vec<std::sync::Arc<RelatedTestGrip>>| {
+        let mut seam = sample_classified_seam();
+        seam.evidence.related_tests = related;
+        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?;
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut snapshot = sample_analysis_snapshot(
+            PathBuf::from("/workspace"),
+            uri,
+            vec![diagnostic.clone()],
+            Vec::new(),
+        );
+        snapshot.classified_seams = vec![seam];
+        let actions = code_action_response(
+            &code_action_params(vec![diagnostic])?,
+            Some(&snapshot),
+            &vscode_client_features()?,
+        );
+        code_action_commands(&actions)
+    };
+
+    let commands = commands_for(vec![
+        same_file_strong.clone(),
+        token_strong.clone(),
+        calling_weak,
+    ])?;
+    let Some((_, command, args)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {commands:?}"
+        ));
+    };
+    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
+    assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+
+    // A strong test that only carries the owner's name ranks after the weak
+    // test that calls the owner.
+    let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "owner_named_strong".to_string(),
+        file: PathBuf::from("tests/named.rs"),
+        line: 2,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion on other code".to_string(),
+        relation_reason: RelationReason::OwnerNamedTest,
+        relation_confidence: RelationConfidence::High,
+    });
+    let calling = std::sync::Arc::new(RelatedTestGrip {
+        test_name: "calls_owner_weakly".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        test_target: None,
+        oracle_kind: OracleKind::RelationalCheck,
+        oracle_strength: OracleStrength::Weak,
+        evidence_summary: "weak oracle".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::Low,
+    });
+    let named_first = commands_for(vec![name_strong.clone(), calling])?;
+    let Some((_, _, args)) = named_first
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "expected open related test action, got {named_first:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "calls_owner_weakly");
+    let named_only = commands_for(vec![name_strong])?;
+    let Some((_, _, args)) = named_only
+        .iter()
+        .find(|(title, _, _)| title == "Write targeted test: open best related test")
+    else {
+        return Err(format!(
+            "a name-matched test stays a fallback target, got {named_only:?}"
+        ));
+    };
+    assert_eq!(args[0]["test_name"], "owner_named_strong");
+
+    let proximity_only = commands_for(vec![same_file_strong, token_strong])?;
+    assert!(
+        !proximity_only
+            .iter()
+            .any(|(title, _, _)| title == "Write targeted test: open best related test"),
+        "a proximity-only related test must not be opened: {proximity_only:?}"
+    );
     Ok(())
 }
 
@@ -17476,6 +17619,33 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }
 }
 
+/// The TypeScript producer also serves JavaScript findings, so their step
+/// opens with "TypeScript preview advisory:"; the Problems row still says
+/// "preview" once, under the finding's own language (#14353).
+#[test]
+fn javascript_preview_diagnostic_strips_the_typescript_producer_prefix() {
+    let mut finding = sample_finding();
+    finding.language = Some(LanguageId::JavaScript);
+    finding.language_status = Some(LanguageStatus::Preview);
+    finding.recommended_next_step =
+        Some("TypeScript preview advisory: add or strengthen a focused assertion.".to_string());
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert!(
+        diagnostic
+            .message
+            .starts_with("JavaScript preview (advisory): add or strengthen"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
+    );
+}
+
 #[test]
 fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String> {
     let mut finding = sample_finding();
@@ -17485,10 +17655,19 @@ fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String
     finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
 
+    // "preview" is said once, with product casing (#14353).
     assert!(
         diagnostic
             .message
-            .contains("python preview evidence (syntax-first, advisory)")
+            .starts_with("Python preview (advisory): "),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.message.matches("preview").count(),
+        1,
+        "{}",
+        diagnostic.message
     );
     assert!(
         diagnostic
@@ -18018,18 +18197,28 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
             for needle in [
                 "Language: typescript",
                 "Status: preview",
-                "Repair instructions for an AI agent: not ready",
-                "State: unknown",
-                "Category: missing_context",
-                "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
-                "Repair route: add strict TypeScript repair-packet actionability proof",
-                "Missing fields: verify_command, receipt_command, must_not_change",
-                "Evidence needed: complete repair packet with verify and receipt commands",
-                "Authority: preview advisory only",
+                "Action: advisory only",
+                "Repair instructions for an AI agent: not ready \u{2014} verify command and receipt command are not inferred for TypeScript preview",
             ] {
                 assert!(
                     markup.value.contains(needle),
                     "missing {needle:?} in:\n{}",
+                    markup.value
+                );
+            }
+            // A not-ready packet's contract fields stay in diagnostic data,
+            // not in the hover a person reads.
+            for absent in [
+                "State: unknown",
+                "Category: missing_context",
+                "Repair route:",
+                "Missing fields:",
+                "Evidence needed:",
+                "Authority: preview advisory only",
+            ] {
+                assert!(
+                    !markup.value.contains(absent),
+                    "unexpected {absent:?} in:\n{}",
                     markup.value
                 );
             }
@@ -27094,6 +27283,241 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
 
         shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
         drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Result<(), String> {
+    // #14447: the didOpen refresh is about to analyze, so the pre-snapshot
+    // marker must say analysis is in progress instead of asking the user to
+    // save or run `ripr.refresh` to start it, and still retract on commit.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-pending-running")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let published = params.first().ok_or_else(|| {
+            "push client received no publication for the opened document".to_string()
+        })?;
+        let marker = published["diagnostics"]
+            .as_array()
+            .and_then(|items| items.first())
+            .ok_or_else(|| format!("first publication carried no marker: {published}"))?;
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!(
+                "first publication must be the pending marker: {published}"
+            ));
+        }
+        if marker["data"]["recovery"] != "analysis_running" {
+            return Err(format!(
+                "an unblocked didOpen refresh must name the running analysis: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if !message.contains("analysis is in progress") || message.contains("ripr.refresh") {
+            return Err(format!(
+                "the marker must not ask to start analysis that is already starting: {message}"
+            ));
+        }
+
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("refresh published nothing for the tracked URI: {notifications:?}")
+        })?;
+        let still_pending = last["diagnostics"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["code"]
+                    == serde_json::json!(
+                        crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
+                    )
+            })
+        });
+        if still_pending {
+            return Err(format!(
+                "the first commit must retract the pending marker: {last}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+-> Result<(), String> {
+    // #14447 review: "in progress" must not outlive the attempt. When the
+    // first analysis fails without a snapshot and nothing follows it, the
+    // push marker returns to the save/refresh route that starts analysis.
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn same() {}\n")
+            .map_err(|error| format!("write fixture: {error}"))?;
+        let uri = file_uri_for_path(&file)?.as_str().to_string();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+                    // An unresolvable base makes the attempt fail fast.
+                    "initializationOptions": {"baseRef": "ripr-lsp-pending-revert-missing-base"},
+                    "capabilities": {
+                        "textDocument": {"publishDiagnostics": {"versionSupport": true}}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": uri, "languageId": "rust", "version": 1,
+                    "text": "fn same() {}\n"
+                }}
+            }),
+        )
+        .await?;
+        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+            let mut recoveries = Vec::new();
+            loop {
+                let message = read_lsp_message(&mut client_read).await?;
+                if message["method"] != "textDocument/publishDiagnostics"
+                    || message["params"]["uri"] != uri.as_str()
+                {
+                    continue;
+                }
+                let recovery = message["params"]["diagnostics"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|marker| marker["data"]["recovery"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let done = recovery == "save_or_refresh";
+                recoveries.push(recovery);
+                if done {
+                    return Ok::<_, String>(recoveries);
+                }
+            }
+        })
+        .await
+        .map_err(|elapsed| {
+            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+        })??;
+        if recoveries.first().map(String::as_str) != Some("analysis_running") {
+            return Err(format!(
+                "the didOpen marker must name the running analysis first: {recoveries:?}"
+            ));
+        }
+        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+            return Err(format!(
+                "a failed attempt must restore the start route: {recoveries:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(root);
         Ok(())
     })
 }

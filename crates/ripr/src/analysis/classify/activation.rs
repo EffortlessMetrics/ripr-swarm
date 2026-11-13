@@ -7137,6 +7137,27 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
         .collect()
 }
 
+/// The declared type text of the one parameter of `function` whose whole
+/// pattern is exactly `name` (`flag: &str` gives `&str`), or `None` when no
+/// parameter or more than one has that pattern, or it has no type.
+pub(crate) fn parameter_type(function: &FunctionSummary, name: &str) -> Option<String> {
+    let arguments = signature_arguments(function)?;
+    let mut found = split_top_level_args(&arguments)
+        .into_iter()
+        .filter_map(|argument| {
+            let pattern = top_level_pattern(&argument);
+            (pattern.trim() == name)
+                .then(|| {
+                    argument
+                        .get(pattern.len() + 1..)
+                        .map(|ty| ty.trim().to_string())
+                })
+                .flatten()
+        });
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// The contents of `function`'s parameter list with comments and strings
 /// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
 /// signature cannot add, split or shift parameter names (#7840).
