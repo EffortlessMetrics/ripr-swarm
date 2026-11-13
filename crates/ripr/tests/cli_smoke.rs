@@ -36461,6 +36461,51 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
     Ok(())
 }
 
+/// `--out` pointed at a device, FIFO or socket used to have the finished file
+/// renamed over the node: run as root, `--out /dev/null` turned the null
+/// device into a regular report file. A Unix-domain socket stands in for the
+/// device here because std can create one without `mknod`. The real binary
+/// must refuse with exit 2 and leave the node as it was.
+#[cfg(unix)]
+#[test]
+fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io::Error> {
+    use std::os::unix::fs::FileTypeExt as _;
+    // A socket path must stay under the ~104 byte address limit, and the
+    // checkout forces `TMPDIR` into its own `target` directory, so this
+    // fixture uses a short absolute path; `create_dir` is exclusive.
+    let root = std::path::PathBuf::from(format!(
+        "/tmp/ripr-sock-cli-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir(&root)?;
+    let node = root.join("node");
+    let listener = std::os::unix::net::UnixListener::bind(&node)?;
+    let output = run_ripr(&[
+        "feedback",
+        "export",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &node.display().to_string(),
+    ]);
+    let still_socket = std::fs::symlink_metadata(&node).map(|meta| meta.file_type().is_socket());
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&root);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("refusing to replace usefulness-feedback join")
+            && stderr.contains("is a device, FIFO or socket, not a regular file"),
+        "the refusal must say why:\n{stderr}"
+    );
+    assert!(still_socket?, "the socket was replaced by a regular file");
+    Ok(())
+}
+
 /// #14222: `reports ci-packet` and `feedback export` used to create a mistyped
 /// `--root` as a new directory tree and exit 0, and `feedback record` shared
 /// the same unvalidated root. A missing path and a file path must both be
