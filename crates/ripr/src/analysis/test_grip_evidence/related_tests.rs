@@ -444,6 +444,10 @@ pub(super) fn match_direct_owner_call(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the alias spelling, the owner's module identity and the test crate unit are separate inputs; a struct would only rename them"
+)]
 fn direct_owner_alias_module_matches(
     alias_module: &str,
     alias_crate_relative: bool,
