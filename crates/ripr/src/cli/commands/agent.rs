@@ -2580,6 +2580,7 @@ fn run_agent_repair_phase(
         store,
         json,
         quiet,
+        facade_start,
     } = options;
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
     // and `wrote <path>` lines. Refusal prose, the attempt id and the next
@@ -2635,6 +2636,7 @@ fn run_agent_repair_phase(
                     &seam_id,
                     &root,
                     store_ref,
+                    facade_start,
                     &preflight_violations,
                 ));
             }
@@ -2770,6 +2772,7 @@ fn run_agent_repair_phase(
                     &seam_id,
                     &root,
                     store_ref,
+                    facade_start,
                     &premise_violations,
                 ));
             }
@@ -4459,11 +4462,14 @@ fn repair_after_trusted_surface_recovery_lines(
 /// outside the allowed test surface (#5262). Names the paths, states the
 /// production-vs-test boundary, and gives the commit-first route the late
 /// receipt refusal cannot offer because the attempt no longer exists. The
-/// caller has written nothing yet, so the tail says so explicitly.
+/// caller has written nothing yet, so the tail says so explicitly. A start
+/// through the `ripr repair <item>` façade is told to rerun that command, not
+/// the advanced `ripr agent repair` route it never typed (#14394).
 fn before_phase_dirty_premise_refusal(
     seam_id: &str,
     root: &Path,
     store: Option<&Path>,
+    facade_start: bool,
     violations: &[String],
 ) -> String {
     use crate::agent::loop_commands::{bound_root, shell_arg};
@@ -4471,9 +4477,13 @@ fn before_phase_dirty_premise_refusal(
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
-    let restart = format!(
-        "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
-    );
+    let restart = if facade_start && store.is_none() {
+        format!("ripr repair {seam_arg} --root {root_arg}")
+    } else {
+        format!(
+            "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
+        )
+    };
     before_phase_dirty_premise_refusal_with_restart(&restart, violations)
 }
 

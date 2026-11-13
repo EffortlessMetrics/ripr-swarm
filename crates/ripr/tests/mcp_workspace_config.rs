@@ -552,6 +552,32 @@ fn unreadable_ripr_toml_fails_the_refresh_closed_with_config_invalid() -> Result
         ));
     }
 
+    // #14451: the detail is the source-free summary the CLI JSON uses: the
+    // location and the parser's reason, never the TOML source excerpt, the
+    // CLI-only "fix the error above" trailer, or a mid-word cut.
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14451]\nmode = 1\n")
+        .map_err(|error| error.to_string())?;
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    refresh_attempt_failure_code(&refresh, "ripr_refresh unknown table")?;
+    let detail = refresh
+        .pointer("/result/structuredContent/attempt/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !detail.contains("TOML parse error at line 1, column 2")
+        || !detail.contains("; unknown key, expected one of `analysis`")
+        || detail.contains("canary_table_14451")
+        || detail.contains('\n')
+        || detail.contains("Fix the error above")
+        || detail.ends_with('\u{2026}')
+    {
+        return Err(format!(
+            "config_invalid detail must be the source-free summary: {detail:?}"
+        ));
+    }
+
     Ok(())
 }
 

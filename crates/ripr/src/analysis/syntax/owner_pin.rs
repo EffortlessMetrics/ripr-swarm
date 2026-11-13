@@ -5750,10 +5750,15 @@ fn eager_path(
             if block.async_token().is_some() {
                 // `tokio::spawn(async { .. }).await.unwrap()` re-raises the
                 // task's panic on the test task, like a joined thread.
-                let Some(joined) = spawned_task_reaching_test(&block, function) else {
+                // `futures::executor::block_on(async { .. })` polls the block
+                // to completion on the test thread, so its panic is the
+                // test's own (#14106).
+                let Some(driven) = spawned_task_reaching_test(&block, function)
+                    .or_else(|| blocked_on_async_block(&block, function))
+                else {
                     return Err("an `async` block");
                 };
-                return eager_path(joined, function, true, first_return);
+                return eager_path(driven, function, true, first_return);
             }
             if block.const_token().is_some()
                 || block.gen_token().is_some()
@@ -6782,32 +6787,7 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
     {
         return None;
     }
-    // `first_return` skips a `return` owned by an `async` block and the escape
-    // gate only reads closures, so an exit inside this block would skip the
-    // assertion unseen: refuse any `return` or `?` the block itself owns,
-    // including inside macro tokens.
-    let owns_exit = block
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| {
-            matches!(
-                token.kind(),
-                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
-            )
-        })
-        .any(|token| {
-            token
-                .parent_ancestors()
-                .find(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::Fn::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node.clone())
-                            .is_some_and(|inner| inner.async_token().is_some())
-                })
-                .is_some_and(|owner| owner == *block.syntax())
-        });
-    if owns_exit {
+    if async_block_owns_exit(block) {
         return None;
     }
     let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
@@ -6840,48 +6820,7 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
         return None;
     }
     let file = function.syntax().ancestors().last()?;
-    if file
-        .descendants()
-        .filter_map(ast::Name::cast)
-        .any(|name| matches!(unraw(name.text()), "tokio" | "spawn"))
-    {
-        return None;
-    }
-    // A `use` can supply `tokio` or `spawn` without declaring a `Name`: a
-    // glob import may pull in another module's `tokio`, and a path segment such
-    // as `crate::fake::tokio` is a `NameRef`. Only the crate's own
-    // `use tokio::..` keeps the spelling honest.
-    let rebinds_through_use = file.descendants().filter_map(ast::Use::cast).any(|item| {
-        let Some(tree) = item.use_tree() else {
-            return true;
-        };
-        let own_root = tree
-            .path()
-            .and_then(|path| path.first_segment())
-            .and_then(|segment| segment.name_ref());
-        // `use super::*;` inside an inline `mod` only re-exports names this
-        // file declares, which the scan above already covers.
-        let parent_glob =
-            item.syntax().ancestors().skip(1).any(|node| {
-                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
-            }) && tree
-                .syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>()
-                == "super::*";
-        tree.syntax().descendants().any(|node| {
-            ast::UseTree::cast(node.clone())
-                .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
-                || ast::NameRef::cast(node.clone()).is_some_and(|name| {
-                    matches!(unraw(name.text()), "tokio" | "spawn")
-                        && !(unraw(name.text()) == "tokio"
-                            && own_root.as_ref().is_some_and(|root| root == &name))
-                })
-        })
-    });
-    if rebinds_through_use {
+    if !file_keeps_crate_path(&file, "tokio", Some("spawn")) {
         return None;
     }
     let awaited = call.syntax().parent().and_then(ast::AwaitExpr::cast)?;
@@ -6905,6 +6844,149 @@ fn spawned_task_reaching_test(block: &ast::BlockExpr, function: &ast::Fn) -> Opt
         && ((name.text() == "unwrap" && arguments == 0)
             || (name.text() == "expect" && arguments == 1)))
         .then(|| outer.syntax().clone())
+}
+
+/// Whether `block` itself owns a `return` or `?`, including inside macro
+/// tokens. `first_return` skips a `return` owned by an `async` block and the
+/// escape gate only reads closures, so an exit inside the block would skip an
+/// assertion unseen.
+fn async_block_owns_exit(block: &ast::BlockExpr) -> bool {
+    block
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| {
+            matches!(
+                token.kind(),
+                ra_ap_syntax::SyntaxKind::RETURN_KW | ra_ap_syntax::SyntaxKind::QUESTION
+            )
+        })
+        .any(|token| {
+            token
+                .parent_ancestors()
+                .find(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::Fn::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node.clone())
+                            .is_some_and(|inner| inner.async_token().is_some())
+                })
+                .is_some_and(|owner| owner == *block.syntax())
+        })
+}
+
+/// Whether a path rooted at `root` in `file` names the extern crate `root`:
+/// nothing in the file declares the name `root` (or `item`, when the path's
+/// last segment could be rebound on its own), and no `use` can supply either.
+///
+/// A `use` can supply a name without declaring a `Name`: a glob import may
+/// pull in another module's `root`, and a path segment such as
+/// `crate::fake::root` is a `NameRef`. Only the crate's own `use root::..`
+/// keeps the spelling honest.
+fn file_keeps_crate_path(file: &SyntaxNode, root: &str, item: Option<&str>) -> bool {
+    let rebindable = |name: &str| name == root || item.is_some_and(|item| name == item);
+    if file
+        .descendants()
+        .filter_map(ast::Name::cast)
+        .any(|name| rebindable(unraw(name.text())))
+    {
+        return false;
+    }
+    !file
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|use_item| {
+            let Some(tree) = use_item.use_tree() else {
+                return true;
+            };
+            let own_root = tree
+                .path()
+                .and_then(|path| path.first_segment())
+                .and_then(|segment| segment.name_ref());
+            // `use super::*;` inside an inline `mod` only re-exports names this
+            // file declares, which the scan above already covers.
+            let parent_glob = use_item.syntax().ancestors().skip(1).any(|node| {
+                ast::Module::cast(node).is_some_and(|module| module.item_list().is_some())
+            }) && tree
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                == "super::*";
+            tree.syntax().descendants().any(|node| {
+                ast::UseTree::cast(node.clone())
+                    .is_some_and(|inner| inner.star_token().is_some() && !parent_glob)
+                    || ast::NameRef::cast(node.clone()).is_some_and(|name| {
+                        rebindable(unraw(name.text()))
+                            && !(unraw(name.text()) == root
+                                && own_root.as_ref().is_some_and(|own| own == &name))
+                    })
+            })
+        })
+}
+
+/// Free functions that poll the future they are handed to completion on the
+/// calling thread and return its output, so a panic in the future is a panic
+/// in the caller: `(crate, path)`.
+const BLOCK_ON_PATHS: &[(&str, &str)] = &[
+    ("futures", "futures::executor::block_on"),
+    ("futures_executor", "futures_executor::block_on"),
+    ("tokio_test", "tokio_test::block_on"),
+    ("pollster", "pollster::block_on"),
+    ("smol", "smol::block_on"),
+    ("async_std", "async_std::task::block_on"),
+];
+
+/// Where an `async` block's panic reaches the test thread, for a block that
+/// is the only argument of a crate-qualified `block_on(..)` in
+/// [`BLOCK_ON_PATHS`] inside a synchronous test (#14106): the executor polls
+/// the block to completion before the call returns, as a called closure runs
+/// before its call returns.
+///
+/// Nothing in the file may be named like the path's crate, so the path names
+/// the real crate's function. A bare or partially qualified `block_on` (which
+/// a test-local helper or another crate may define), a method `block_on` on a
+/// runtime value, a block that owns a `return` or `?`, and a call inside an
+/// `async fn` test (where a nested executor may refuse to start) stay
+/// refused. Returns the call, from which the test thread continues.
+fn blocked_on_async_block(block: &ast::BlockExpr, function: &ast::Fn) -> Option<SyntaxNode> {
+    if block.const_token().is_some()
+        || block.gen_token().is_some()
+        || block.try_block_modifier().is_some()
+        || block.label().is_some()
+        || function.async_token().is_some()
+        || async_block_owns_exit(block)
+    {
+        return None;
+    }
+    let args = block.syntax().parent().and_then(ast::ArgList::cast)?;
+    if args.args().count() != 1 {
+        return None;
+    }
+    let call = args.syntax().parent().and_then(ast::CallExpr::cast)?;
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    if path
+        .path()?
+        .segments()
+        .any(|segment| segment.generic_arg_list().is_some())
+    {
+        return None;
+    }
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let unrooted = text.strip_prefix("::").unwrap_or(&text);
+    let (krate, _) = BLOCK_ON_PATHS
+        .iter()
+        .find(|(_, block_on)| *block_on == unrooted)?;
+    let file = function.syntax().ancestors().last()?;
+    file_keeps_crate_path(&file, krate, None).then(|| call.syntax().clone())
 }
 
 /// `<spawned>.join().unwrap()` or `<spawned>.join().expect(..)`: the outer
