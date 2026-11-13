@@ -450,7 +450,17 @@ ignoring one leading `./` on both sides, `class` takes an exposure-class wire
 token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
-count while `filtered` counts the narrowed set the page walks. An unknown
+count while `filtered` counts the narrowed set the page walks. With no
+`class`, `exposed` items whose `repair_ineligibility` is `seam_already_gripped`
+(the shared seam gate found existing tests already check the seam) are left
+out of `items` and `filtered` and disclosed as `exposed_omitted` plus an
+`exposed_route` hint (both absent when zero or when `class` is given; the
+default applies under `repair_ready: false` too). An `exposed` item that is
+repair-ready, or unready for any other cause (for example
+`seam_inventory_truncated` or `worktree_source_not_committed`), stays listed:
+missing or limited evidence is never read as "no action needed". `total`, `eligible`,
+`selected` and `outcome` still describe the whole snapshot, and
+`class: "exposed"` lists them. An unknown
 `file` value is an empty disclosed page; an unknown `class` or `language` is
 an `invalid_argument` tool failure (`isError: true`, see "Argument errors" below)
 naming the accepted tokens in `failure.data.allowed` (the echoed token is

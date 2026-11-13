@@ -582,6 +582,22 @@ cargo test --locked -p ripr --test mcp_sdk
 
 These tests qualify wire behavior, not installation or every protocol version.
 
+## MCP default gap-list exposure omission
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md)
+defines the default `ripr_list_gaps` exclusion (#14327): with no `class`, only
+`exposed` items refused as `seam_already_gripped` are left out and counted in
+`exposed_omitted`. The unit control separates that cause from a
+truncation-refused `exposed` item; the real-stdio parity case proves a gripped
+Rust seam is omitted by default and recovered by `class: "exposed"`; the
+truncation stdio controls keep evidence-limited `exposed` items listed.
+
+```bash
+cargo test --locked -p ripr --lib mcp::workspace::tests::default_gap_list_omits_exposed_and_discloses_the_count -- --exact
+cargo test --locked -p ripr --test mcp_cli_repair_parity already_gripped_seam_is_refused_with_one_cause_on_every_surface -- --exact
+cargo test --locked -p ripr --test mcp_stdio truncated_seam_inventory
+```
+
 ## Stub routes past the seam cap
 
 [RIPR-SPEC-0287](specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md)

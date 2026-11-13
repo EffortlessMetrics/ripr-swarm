@@ -16441,6 +16441,7 @@ tests = [
   "crates/ripr/src/mcp/writer.rs::tests::request_id_escaping_is_charged_exactly_by_the_outer_budget",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_summaries_project_readiness_matching_get_gap",
   "crates/ripr/src/mcp/workspace.rs::tests::gap_list_filters_narrow_each_dimension_then_combine_before_paging",
+  "crates/ripr/src/mcp/workspace.rs::tests::default_gap_list_omits_exposed_and_discloses_the_count",
   "crates/ripr/src/mcp/server_tests.rs::list_gaps_accepts_filters_at_the_dispatch_edge",
   "crates/ripr/tests/mcp_stdio.rs::pre_call_contract_discloses_committed_scope_on_wire_and_help",
   "crates/ripr/tests/mcp_stdio.rs::dirty_tree_cli_and_mcp_share_the_default_input",
