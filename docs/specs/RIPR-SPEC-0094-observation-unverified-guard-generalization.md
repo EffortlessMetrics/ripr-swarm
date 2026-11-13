@@ -807,6 +807,52 @@ Proof: `crates/ripr/src/analysis/classify/owner_value_sink.rs` unit tests,
 and `crates/ripr/tests/predicate_owner_value_masked.rs` through
 `check_workspace` (every row of the issue's two tables).
 
+## A predicate that sets one field of the returned record (#14562)
+
+A predicate probe whose changed line is exactly one field initializer of a
+struct literal (`big: n >= 10,`) changes only that field of the value the
+owner returns. An assertion on another field of the same result passes for
+either version:
+
+```rust
+assert_eq!(opts(10).retries, 3);                  // another field
+let o = opts(10); assert_eq!(o.retries, 3);       // the same, through a let
+assert_eq!(opts(10).summary(), 3);                // a method that may not read `big`
+```
+
+The `field_construction` probe on that line already read these as weak. The
+predicate probe read `exposed`, because the #14206 reading above treats any
+field or method of the owner call's result as carrying its value.
+
+Rule, for `ProbeFamily::Predicate` when the probe's changed line is
+`name: <predicate>` with an optional trailing comma: `owner_value_flow` reads
+the owner call as the whole record whose field `name` the change sets.
+
+- Compared whole (`assert_eq!(opts(10), want)`, `opts(10).eq(&want)`, `ne`,
+  `cmp`, `partial_cmp`), it reaches.
+- `.name` on it reaches. From there the rest of the operand reads as before.
+- `clone`, `to_owned`, `as_ref`, `as_mut`, `as_deref`, `unwrap`, `expect`,
+  `unwrap_or`, `unwrap_or_default`, `into_inner` and a payload-extracting
+  `claims` macro hand the record back unchanged.
+- Any other field (named or positional) and any other method is `Masked`,
+  with the #14206 consequences: weak relative strength,
+  `observation_unconfirmed`, and the "discards or masks the call's value"
+  summary when it is the selected oracle.
+
+Known limits:
+- The record must be read off the owner call directly. A value that passes
+  through a test-built container (`Some(opts(10)).unwrap().retries`) or a
+  one-argument helper is read as #14206 reads it, without the field rule.
+- A nested literal (`Outer { inner: Inner { big: n >= 10 } }`) reads
+  `outer(..).inner.big` as `Masked`, an underclaim.
+- `matches!(opts(10), Opts { retries: 3, .. })` still reaches.
+
+Static evidence only.
+
+Proof: `a_kept_field_is_read_only_whole_or_through_that_field` in
+`crates/ripr/src/analysis/classify/owner_value_sink.rs`, and
+`crates/ripr/tests/predicate_record_field_masked.rs` through `check_workspace`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

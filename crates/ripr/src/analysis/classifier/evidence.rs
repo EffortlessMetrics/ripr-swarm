@@ -1172,6 +1172,24 @@ impl ClassifiedProbeEvidence {
         // only once per original test, and borrow its rows instead of copying
         // them for each assertion. File/name/coordinate retain provenance.
         let wrapper_activations = RefCell::new(BTreeMap::new());
+        // #14562: the owner's source line at a predicate probe, so reveal can
+        // tell a predicate that sets one field of a returned record.
+        let predicate_source_line = matches!(context.probe.family, ProbeFamily::Predicate)
+            .then(|| {
+                let function = context.owner_fn?;
+                let offset = context
+                    .probe
+                    .location
+                    .line
+                    .checked_sub(function.start_line)?;
+                function
+                    .body
+                    .as_str()
+                    .lines()
+                    .nth(offset)
+                    .map(str::to_string)
+            })
+            .flatten();
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1431,6 +1449,7 @@ impl ClassifiedProbeEvidence {
                 owner_returns_value: context
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
+                predicate_record_field: predicate_source_line.as_deref(),
                 owner_may_exit_before_probe: context.owner_fn.is_some_and(|function| {
                     crate::analysis::classify::owner_may_exit_before_line(
                         function.body.as_str(),
