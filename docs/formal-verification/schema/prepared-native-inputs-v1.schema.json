@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/prepared-native-inputs-v1.schema.json",
+  "title": "RIPR passive prepared native input report v1",
+  "description": "Serialized report only; it cannot reconstruct a validated registry/prepared handle or establish compiler consumption, native origin or lifecycle authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "registry_generation",
+    "registry_digest",
+    "registry_input_digests",
+    "bindings_digest",
+    "source_policy",
+    "claims",
+    "canonical_scoreboard",
+    "native_origin",
+    "native_assurance",
+    "execution_authority",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.prepared-native-inputs.v1"
+    },
+    "registry_generation": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*:sha256:[0-9a-fA-F]{64}$"
+    },
+    "registry_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    },
+    "registry_input_digests": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-fA-F]{64}$"
+      },
+      "maxProperties": 20000
+    },
+    "bindings_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    },
+    "source_policy": {
+      "const": "ripr-workspace-ordinary-sources-v1"
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "canonical_scoreboard": {
+      "$ref": "formal-assurance-scoreboard-v1.schema.json"
+    },
+    "native_origin": {
+      "const": "not_established"
+    },
+    "native_assurance": {
+      "const": "not_assessed"
+    },
+    "execution_authority": {
+      "const": "not_granted"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_generation",
+        "decision_digest",
+        "canonical_subjects",
+        "required_covers",
+        "negative_controls",
+        "binding_state",
+        "missing_obligations",
+        "declaration",
+        "source_manifest",
+        "source_digest",
+        "explicit_inputs",
+        "subjects"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-fA-F]{64}$"
+        },
+        "canonical_subjects": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "required_covers": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "negative_controls": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "binding_state": {
+          "enum": [
+            "missing",
+            "incomplete",
+            "prepared"
+          ]
+        },
+        "missing_obligations": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "declaration": {
+          "anyOf": [
+            {
+              "$ref": "native-bindings-v1.schema.json#/$defs/claim_binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_manifest": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-fA-F]{64}$"
+          },
+          "maxProperties": 20000
+        },
+        "source_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-fA-F]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "explicit_inputs": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+          }
+        },
+        "subjects": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "canonical_subject",
+              "native",
+              "effective_unwind"
+            ],
+            "properties": {
+              "canonical_subject": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "native": {
+                "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/native_subject"
+              },
+              "effective_unwind": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "binding_state": {
+                "const": "prepared"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "missing_obligations": {
+                "maxItems": 0
+              },
+              "declaration": {
+                "type": "object"
+              },
+              "source_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-fA-F]{64}$"
+              },
+              "subjects": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "binding_state": {
+                "const": "missing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "missing_obligations": {
+                "minItems": 1
+              },
+              "declaration": {
+                "type": "null"
+              },
+              "source_digest": {
+                "type": "null"
+              },
+              "source_manifest": {
+                "maxProperties": 0
+              },
+              "subjects": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

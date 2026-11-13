@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/native-bindings-v1.schema.json",
+  "title": "RIPR canonical native binding declarations v1",
+  "description": "Untrusted additive provider declarations. Canonical registry admission and exact keyed semantic binding remain owned by the Rust loader/preparer; this schema grants no native origin or assurance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "registry_generation",
+    "bindings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.native-bindings.v1"
+    },
+    "registry_generation": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*:sha256:[0-9a-fA-F]{64}$"
+    },
+    "bindings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/claim_binding"
+      }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "oneOf": [
+        {
+          "const": {
+            "kani_version": "0.68.0",
+            "cbmc_version": "6.11.0",
+            "target": "x86_64-unknown-linux-gnu",
+            "configuration_policy": "kani-0.68-defaults-v1",
+            "default_unwind": 32,
+            "lib": true,
+            "default_features": true,
+            "features": [],
+            "all_features": false
+          }
+        },
+        {
+          "const": {
+            "kani_version": "0.68.0",
+            "cbmc_version": "6.11.0",
+            "target": "x86_64-unknown-linux-gnu",
+            "configuration_policy": "kani-0.68-rust-only-v1",
+            "default_unwind": 32,
+            "lib": true,
+            "default_features": false,
+            "features": [
+              "lang-rust"
+            ],
+            "all_features": false
+          }
+        }
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_subject",
+        "package",
+        "file",
+        "qualified_name"
+      ],
+      "properties": {
+        "canonical_subject": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "package": {
+          "enum": [
+            "ripr",
+            "ripr-contract"
+          ]
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+        },
+        "qualified_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*$"
+        }
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "description",
+        "file",
+        "function",
+        "line",
+        "column"
+      ],
+      "properties": {
+        "property": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\.cover\\."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+        },
+        "function": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "obligation",
+        "canonical_subject",
+        "file",
+        "anchor"
+      ],
+      "properties": {
+        "obligation": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "canonical_subject": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+        },
+        "anchor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "presentation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/presentation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "claim_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_generation",
+        "decision_digest",
+        "profile",
+        "subjects",
+        "covers",
+        "correspondence",
+        "limitations"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]+$"
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-fA-F]{64}$"
+        },
+        "profile": {
+          "$ref": "#/$defs/profile"
+        },
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/subject"
+          }
+        },
+        "covers": {
+          "type": "array",
+          "minItems": 0,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/cover"
+          }
+        },
+        "correspondence": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    }
+  }
+}

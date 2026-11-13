@@ -1,0 +1,123 @@
+{
+  "schema": "ripr.native-bindings.v1",
+  "registry_generation": "3:sha256:e7553187890ee593cb57f210ac36dc5dc731dce13eecf04f46face8daa45c144",
+  "bindings": [
+    {
+      "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
+      "claim_generation": 2,
+      "decision_digest": "sha256:1dbf915af1e4fec7109230ca73a3bba0267b509b4940a0dd860300badf2188b4",
+      "profile": {
+        "kani_version": "0.68.0",
+        "cbmc_version": "6.11.0",
+        "target": "x86_64-unknown-linux-gnu",
+        "configuration_policy": "kani-0.68-rust-only-v1",
+        "default_unwind": 32,
+        "lib": true,
+        "default_features": false,
+        "features": [
+          "lang-rust"
+        ],
+        "all_features": false
+      },
+      "subjects": [
+        {
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "package": "ripr-contract",
+          "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+          "qualified_name": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint"
+        }
+      ],
+      "covers": [
+        {
+          "obligation": "the CandidateCurrent constructor is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::CandidateCurrent",
+          "presentation": {
+            "description": "\"cover condition: * value == SourceCurrentness::CandidateCurrent\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1,
+            "property": "domain::proof_domains::cover_currentness.cover.1"
+          }
+        },
+        {
+          "obligation": "the BaseDeleted constructor is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::BaseDeleted",
+          "presentation": {
+            "description": "\"cover condition: * value == SourceCurrentness::BaseDeleted\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1,
+            "property": "domain::proof_domains::cover_currentness.cover.2"
+          }
+        },
+        {
+          "obligation": "the MovedOrRenamed constructor is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::MovedOrRenamed",
+          "presentation": {
+            "description": "\"cover condition: * value == SourceCurrentness::MovedOrRenamed\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1,
+            "property": "domain::proof_domains::cover_currentness.cover.3"
+          }
+        },
+        {
+          "obligation": "the UnresolvedSubject constructor is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+          "anchor": "SourceCurrentness::UnresolvedSubject",
+          "presentation": {
+            "description": "\"cover condition: * value == SourceCurrentness::UnresolvedSubject\"",
+            "file": "crates/ripr-contract/src/domain/proof_domains.rs",
+            "function": "domain::proof_domains::cover_currentness",
+            "line": 40,
+            "column": 1,
+            "property": "domain::proof_domains::cover_currentness.cover.4"
+          }
+        },
+        {
+          "obligation": "a base-side state is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+          "anchor": "kani::cover!(value.is_base_side());",
+          "presentation": {
+            "description": "\"cover condition: value.is_base_side()\"",
+            "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+            "function": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+            "line": 40,
+            "column": 5,
+            "property": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.cover.1"
+          }
+        },
+        {
+          "obligation": "a candidate-action-permitting state is explored",
+          "canonical_subject": "currentness_action_and_base_side_are_disjoint",
+          "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+          "anchor": "kani::cover!(value.permits_candidate_action());",
+          "presentation": {
+            "description": "\"cover condition: value.permits_candidate_action()\"",
+            "file": "crates/ripr-contract/src/domain/probe_kani.rs",
+            "function": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint",
+            "line": 41,
+            "column": 5,
+            "property": "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.cover.2"
+          }
+        }
+      ],
+      "correspondence": "Canonical SourceCurrentness predicate harness and exhaustive CURRENTNESS domain; six exact native presentations from the retained same-source Kani format fixture.",
+      "limitations": [
+        "Historical presentation metadata does not establish a current native result, origin, compiler consumption, or lifecycle.",
+        "Rust-only is a separately declared candidate profile; fresh captured arguments and resolved Cargo metadata remain required."
+      ]
+    }
+  ]
+}

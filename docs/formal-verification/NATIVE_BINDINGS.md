@@ -72,11 +72,11 @@ presentations cannot be reused for two cover obligations in one subject.
 Missing mappings or nullable presentations remain visible as missing
 obligations; the required cover inventory never shrinks to the supplied list.
 
-In particular, the current canonical currentness claim declares two covers,
-while its harness includes four additional constructor covers. Adopting a
-six-witness native contract requires an explicit canonical cover decision and
-generation update. This bridge neither aliases an aggregate claim ID nor
-silently drops witnesses to fit the older declaration.
+The canonical currentness claim now declares all six required covers: four
+constructor witnesses and two semantic predicates. Its explicit claim
+generation 1-to-2 and registry generation 2-to-3 transition preserves the
+canonical ID. The binding example below uses that exact decision; it does not
+alias a historical aggregate claim or reuse historical result authority.
 
 Unknown JSON fields and duplicate object keys refuse. Flags such as
 `native_captured`, `source_current`, or `execution_authority` cannot construct
@@ -93,8 +93,10 @@ the selected package source tree and `ripr-contract` sources when selecting
 supported literal inputs, path attributes, and default build scripts.
 
 Every source path is repository-relative and every component must be a regular
-directory or file, with symlinks refused. Reads are limited to 8 MiB per source
-file, 256 MiB total, 20,000 files/traversed entries, and directory depth 128.
+directory or file, with symlinks refused. Individual source-cache reads are
+limited to 8 MiB per file; the retained cache is limited to 256 MiB. The shared
+scanner also performs bounded file reads, so 256 MiB is not a cumulative I/O
+limit. Inventory/traversal limits are 20,000 entries and directory depth 128.
 The registry and binding documents retain their 1 MiB per-file limit. Native
 subject and cover checks consume the same cached bytes that are hashed into
 the report. Canonical membership and input bytes are readmitted by the existing
@@ -125,6 +127,39 @@ matching recomputed hashes, cannot change those authority boundaries. The
 protected #14500 provenance/currentness join and #6452/#6456 transitions remain
 external prerequisites; #14469 continues to own complete positive-cover
 admission in the live lane.
+
+## Document contracts and a real binding
+
+The [native binding schema](schema/native-bindings-v1.schema.json) describes
+the untrusted input shape, including the two exact declared profiles. The
+[preparation report schema](schema/prepared-native-inputs-v1.schema.json)
+reuses the existing native-subject and canonical-scoreboard schema owners.
+Schema validation is structural; exact canonical identity, membership,
+generation, source, and cover semantics remain in the Rust registry/preparer.
+Neither a schema-valid JSON document nor a recomputed digest reconstructs an
+opaque validated handle or grants result authority.
+
+The [currentness binding example](examples/currentness-native-bindings.example.json)
+names the actual canonical currentness ID, short subject, native locator,
+generation and six required cover presentations. Its native property metadata
+comes from the retained `currentness-mutant.stdout` format fixture with matching
+proof/domain source bytes; it claims no current positive execution. It selects
+the separately declared Rust-only candidate profile.
+
+```sh
+cargo run --locked -p xtask --no-default-features \
+  --features formal-native-bindings --bin formal-claim-registry -- \
+  prepare-native --root . \
+  --bindings docs/formal-verification/examples/currentness-native-bindings.example.json
+```
+
+The example is deliberately tied to its canonical registry generation. After
+an accepted registry transition, review the binding against the resulting
+canonical decision, update its exact registry/claim identities as appropriate,
+and rerun preparation and emitted-document schema validation. Do not silently
+rebind old declarations or mark historical results current. Retain the complete
+source manifest and native exit of a real bound preparation; a missing-bindings
+report alone does not exercise the source scanner over the full closure.
 
 ## Maintenance and qualification
 
