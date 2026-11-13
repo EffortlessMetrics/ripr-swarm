@@ -178,8 +178,8 @@ difference; the route below is the discipline.
 
 The sanctioned local route on a Windows host:
 
-1. Read the pin from `rust-toolchain.toml` (channel `1.95.0` as of this
-   writing; cargo follows the channel).
+1. Read the pin from `rust-toolchain.toml` (channel `1.100.0` as of this
+   writing; cargo follows the channel). The source MSRV is checked separately.
 2. Run the failing `cargo xtask goldens check` under WSL Ubuntu with the
    pinned toolchain, so the arbiter platform — not the host platform —
    observes the drift.

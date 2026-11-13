@@ -29,7 +29,7 @@ Policy impact:
   and the original failure outcome remain unchanged.
 - A focused stable-toolchain job in the existing advisory future-Clippy workflow
   exercises the real compiler/LLVM boundary and isolated fixture activation
-  through the documented pinned/stable upgrade recipe, without running workspace
+  through the documented previous-baseline/stable upgrade recipe, without running workspace
   coverage or adding a required check. Its existing 15-minute budget and routing
   remain unchanged.
 - Only Coverage's Generate step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
@@ -86,8 +86,14 @@ other profiles. Malformed or unsupported data remains unavailable or partial
 and never discards the original profile or changes the recorded failed coverage
 result.
 
-Executable associations inspect only direct executable files under the four
-declared coverage build roots. A candidate requires an exact GNU build-ID
+Executable associations inspect direct executable files under `debug`,
+`debug/deps`, `release`, and `release/deps`, then the Cargo 1.100 intermediate
+scopes `debug/build/<package>/<16-hex-unit>/out` and the corresponding
+`release/build` layout. The finite package/unit/out traversal never follows
+symlinks, shares all scan budgets with the original roots, and does not inspect
+arbitrary descendants or a separately configured Cargo build directory. Cargo's
+intermediate layout is private; the adapter recognizes only these verified
+shapes and makes no broader discovery claim. A candidate requires an exact GNU build-ID
 match and allocated LLVM profile data and counter sections. A structurally
 parsed executable without those sections is a definitive noncandidate and does
 not make unmatched IDs unavailable. Unreadable, malformed, unsupported,
@@ -103,6 +109,9 @@ The scan retains its existing limits: 1,024 entries, 256 files, 2 MiB total
 reads, 64 KiB per file, 16 matches, 32 KiB serialized JSON, and two seconds.
 Mapping failure cannot abort profile retention or replace the original
 coverage failure.
+`roots_unavailable_count` retains the total unavailable-directory count;
+`roots_unavailable` retains at most eight path samples so dynamic unit discovery
+cannot expand the diagnostic unboundedly.
 
 ## Required Evidence
 
@@ -280,9 +289,10 @@ and does not establish the producer of later, unobserved ENOSPC growth.
   and each scan limit.
 - Execute the actual marked `docs/ci/coverage.md` upgrade recipe on native Linux
   from a stable SDK first on `PATH` and an absolute stable `RUSTC`. Its first
-  pinned check must select the pin despite that initial activation; provisioning
-  explicitly installs the pin even when automatic installation is disabled.
-- Require all four ordered successful commands: pinned diagnostics, stable
+  `pinned` phase must select the retained previous baseline, 1.95.0, despite that
+  initial activation; provisioning explicitly installs it even when automatic
+  installation is disabled. The phase marker remains stable for its consumers.
+- Require all four ordered successful commands: previous-baseline diagnostics, stable
   diagnostics, stable `frontdoor`, and strict stable package Clippy. Each test
   phase must report exactly one nonempty successful outer summary; each diagnostic
   phase must report exactly one genuine profile association. Retain compiler,
@@ -301,7 +311,7 @@ and does not establish the producer of later, unobserved ENOSPC growth.
 - Determining the historical coverage producer or cause of a short profile.
 - Changing instrumentation, profile bytes, coverage thresholds, or required
   merge gates.
-- Binary-ID scanning outside its four declared build roots or collecting whole
+- Binary-ID scanning outside its six declared build scopes or collecting whole
   binaries. Storage observations use only metadata in their separately declared
   roots and never widen binary-ID or profile-content reads.
 

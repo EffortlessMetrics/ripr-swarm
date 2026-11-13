@@ -52,6 +52,8 @@ Current how-to docs:
 - [Contributing](../CONTRIBUTING.md)
 - [Testing](TESTING.md)
 - [CI strategy](CI.md)
+- [Rust 1.100 compiler upgrade](ci/rust-1.100-upgrade.md) - build compiler,
+  source minimum, Cargo artifacts and LLVM compatibility
 - [Proof routing](PROOF_ROUTING.md)
 - [Source-of-truth control plane](source-of-truth/README.md)
 - [Sibling-tool interop and learning ledger](interop/sibling-tools.md)

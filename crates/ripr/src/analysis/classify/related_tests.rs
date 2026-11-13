@@ -7300,7 +7300,7 @@ fn impl_identity_is_shadowed(
     // symbol id names (even a generic one) counts, and so does one declared
     // at the root of an out-of-line parent module of the test file (#7087).
     let owner_trait = owner_trait_name(&owner.id.0);
-    if owner_trait.as_deref().is_some_and(|trait_name| {
+    owner_trait.as_deref().is_some_and(|trait_name| {
         test_source.is_some_and(|source| {
             super::owner_pin::test_module_shadows_trait(
                 test,
@@ -7312,10 +7312,7 @@ fn impl_identity_is_shadowed(
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {
         super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
-    }) {
-        return true;
-    }
-    false
+    })
 }
 
 /// Whether the test's own scope rebinds the owner's impl type or trait, so a

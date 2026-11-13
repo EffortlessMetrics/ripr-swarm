@@ -1518,10 +1518,9 @@ fn impl_stand_in(ty: &str) -> Option<String> {
     let ty = ty.trim();
     let (head, rest) = if let Some(rest) = ty.strip_prefix("impl Into<") {
         ("", rest)
-    } else if let Some(rest) = ty.strip_prefix("impl AsRef<") {
-        ("&", rest)
     } else {
-        return None;
+        let rest = ty.strip_prefix("impl AsRef<")?;
+        ("&", rest)
     };
     let inner = rest.strip_suffix('>')?.trim();
     let plain = !inner.is_empty()

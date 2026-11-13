@@ -255,13 +255,13 @@ fn markdown_report(report: &Value) -> String {
                 .map_or("unknown", |value| value),
             real.get("attempt_cases")
                 .and_then(Value::as_u64)
-                .map_or(0, |count| count),
+                .unwrap_or(0),
             real.get("exclusions")
                 .and_then(Value::as_u64)
-                .map_or(0, |count| count),
+                .unwrap_or(0),
             real.get("observations")
                 .and_then(Value::as_u64)
-                .map_or(0, |count| count),
+                .unwrap_or(0),
             real.get("card_measurement_state")
                 .and_then(Value::as_str)
                 .map_or("unknown", |state| state),
@@ -286,19 +286,19 @@ fn markdown_report(report: &Value) -> String {
                 profile
                     .get("card_bytes")
                     .and_then(Value::as_u64)
-                    .map_or(0, |count| count),
+                    .unwrap_or(0),
                 profile
                     .get("packet_bytes")
                     .and_then(Value::as_u64)
-                    .map_or(0, |count| count),
+                    .unwrap_or(0),
                 profile
                     .get("packet_over_card_percent")
                     .and_then(Value::as_u64)
-                    .map_or(0, |count| count),
+                    .unwrap_or(0),
                 profile
                     .get("detail_items")
                     .and_then(Value::as_u64)
-                    .map_or(0, |count| count),
+                    .unwrap_or(0),
                 profile
                     .get("next_action_present")
                     .and_then(Value::as_bool)

@@ -9,8 +9,8 @@ const USAGE: &str = "release-manifest-proposal --controller-root <path> --versio
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut flags = BTreeMap::new();
-    let mut pairs = args.chunks_exact(2);
-    for pair in &mut pairs {
+    let (pairs, remainder) = args.as_chunks::<2>();
+    for pair in pairs {
         let flag = pair[0].as_str();
         if !["--controller-root", "--version", "--input", "--out"].contains(&flag)
             || flags.insert(flag, pair[1].as_str()).is_some()
@@ -18,7 +18,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             return Err(format!("unknown or repeated {flag}; {USAGE}"));
         }
     }
-    if !pairs.remainder().is_empty() || flags.len() != 4 {
+    if !remainder.is_empty() || flags.len() != 4 {
         return Err(USAGE.to_string());
     }
     let get = |flag| flags.get(flag).copied().ok_or_else(|| USAGE.to_string());

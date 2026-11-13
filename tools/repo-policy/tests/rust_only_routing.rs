@@ -241,7 +241,7 @@ fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
     let steps = source.split("\n      - ").collect::<Vec<_>>();
     for (header, command) in [
         (
-            "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+            "uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1",
             None,
         ),
         (
@@ -295,7 +295,7 @@ fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestRes
     let source = job("rust-only-features")?;
     verify_guarded_rust_only_steps(source)?;
     for header in [
-        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+        "uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1",
         "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
         "name: Prepare locked owner-return fixture dependencies",
         "name: Test --no-default-features --features lang-rust",

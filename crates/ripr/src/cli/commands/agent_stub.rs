@@ -57,15 +57,12 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 // seam resolution would have supplied a value; the document
                 // goes to stdout and the prose still reaches stderr via
                 // `CommandError` after the envelope.
-                match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
-                    // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => {
-                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
-                    }
-                    // No envelope could be produced, so no machine answer
-                    // exists: the typed render failure is exit 2, not decision 3.
-                    Err(render_error) => return Err(render_error),
-                }
+                // No envelope could be produced on render failure, so no
+                // machine answer exists: keep the typed operational exit 2.
+                let rendered =
+                    render_selector_refusal_document(&options.selector, refusal_kind, &message)?;
+                // A JSON document, not report text: keep it parseable (#6309).
+                write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?;
             }
             let message = if list_selectors {
                 let root = shell_arg(&bound_root(&options.root.to_string_lossy()));

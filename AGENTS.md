@@ -296,7 +296,9 @@ Internal owners:
   not analysis or rendering.
 
 Keep Rust 2024, MSRV 1.95 and `unsafe_code = "forbid"`. Read the actual toolchain
-pin from `rust-toolchain.toml`. Rust is the default for product, automation,
+pin from `rust-toolchain.toml`; the build compiler is 1.100.0, independently of
+the source minimum. See `docs/ci/rust-1.100-upgrade.md` for compiler changes.
+Rust is the default for product, automation,
 tests, fixtures, release and policy checks. Non-Rust programming files belong
 only in approved surfaces under `policy/non-rust-allowlist.toml`; justify a new
 exception in the PR. The extension, Actions declarations, fixtures, examples,

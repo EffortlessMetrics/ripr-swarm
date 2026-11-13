@@ -19,7 +19,7 @@ concurrency:
 
 # Advisory future-Clippy scan.
 #
-# Runs the pinned Rust 1.95.0 toolchain over the workspace with the deferred
+# Runs the pinned Rust 1.100.0 toolchain over the workspace with the deferred
 # lint trajectory turned on. Selected lint findings remain advisory warnings;
 # missing or failed instrumentation fails this advisory job. The point is to
 # track readiness for the planned flips recorded in `policy/clippy-lints.toml`.
@@ -46,13 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
+          toolchain: 1.100.0
           components: clippy
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: ripr-future-clippy-1.95.0-${{ runner.os }}
+          shared-key: ripr-future-clippy-1.100.0-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run future Clippy (advisory)
@@ -61,9 +62,9 @@ jobs:
         run: |
           mkdir -p target
           rm -f target/future-clippy.log target/future-clippy-status.txt
-          printf 'source_sha=%s\nrun_id=%s\nrun_attempt=%s\ntoolchain=1.95.0\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > target/future-clippy-status.txt
+          printf 'source_sha=%s\nrun_id=%s\nrun_attempt=%s\ntoolchain=1.100.0\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > target/future-clippy-status.txt
           set +e
-          cargo +1.95.0 clippy --workspace --all-targets --message-format=json-render-diagnostics -- -W clippy::same_length_and_capacity -W clippy::manual_ilog2 -W clippy::needless_type_cast -W clippy::decimal_bitwise_operands -W clippy::disallowed_fields -W clippy::manual_checked_ops -W clippy::manual_take -W clippy::manual_pop_if -W clippy::duration_suboptimal_units -W clippy::unnecessary_trailing_comma 2>&1 | tee target/future-clippy.log
+          cargo +1.100.0 clippy --workspace --all-targets --message-format=json-render-diagnostics -- -W clippy::same_length_and_capacity -W clippy::manual_ilog2 -W clippy::needless_type_cast -W clippy::decimal_bitwise_operands -W clippy::disallowed_fields -W clippy::manual_checked_ops -W clippy::manual_take -W clippy::manual_pop_if -W clippy::duration_suboptimal_units -W clippy::unnecessary_trailing_comma 2>&1 | tee target/future-clippy.log
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
           printf 'cargo_exit=%s\ntee_exit=%s\n' "${pipeline_status[0]}" "${pipeline_status[1]}" >> target/future-clippy-status.txt

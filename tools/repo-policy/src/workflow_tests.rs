@@ -116,7 +116,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         };
         let prepared = |text: &str, command: &str| {
             let setup = format!(
-                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
+                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.100.0\n          components: llvm-tools-preview"
             );
             match (text.find(setup.as_str()), text.find(command)) {
                 (Some(setup), Some(test)) => {
@@ -146,7 +146,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             command
         ));
         assert!(!prepared(
-            &text.replace("toolchain: 1.95.0", "toolchain: stable"),
+            &text.replace("toolchain: 1.100.0", "toolchain: stable"),
             command
         ));
         let test_first = format!("{command}\n{text}");

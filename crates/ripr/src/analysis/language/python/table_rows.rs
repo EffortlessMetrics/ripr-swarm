@@ -689,10 +689,9 @@ fn dict_field_value(line: &str) -> Option<&str> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let rest = if let Some(rest) = trimmed.strip_prefix('"') {
         rest.split_once('"')?.1
-    } else if let Some(rest) = trimmed.strip_prefix('\'') {
-        rest.split_once('\'')?.1
     } else {
-        return None;
+        let rest = trimmed.strip_prefix('\'')?;
+        rest.split_once('\'')?.1
     };
     rest.trim()
         .strip_prefix(':')

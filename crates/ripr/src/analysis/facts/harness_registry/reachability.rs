@@ -1057,8 +1057,8 @@ impl<'a, 'b> Resolver<'a, 'b> {
     ) -> Option<(usize, usize)> {
         let mut last_semicolon: Option<usize> = None;
         let mut depth: usize = 0;
-        for index in body_first..=body_last {
-            match self.scan.tokens[index].kind() {
+        for (offset, token) in self.scan.tokens[body_first..=body_last].iter().enumerate() {
+            match token.kind() {
                 SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY => {
                     depth += 1;
                 }
@@ -1066,7 +1066,7 @@ impl<'a, 'b> Resolver<'a, 'b> {
                     depth = depth.saturating_sub(1);
                 }
                 SyntaxKind::SEMICOLON if depth == 0 => {
-                    last_semicolon = Some(index);
+                    last_semicolon = Some(body_first + offset);
                 }
                 SyntaxKind::RETURN_KW
                 | SyntaxKind::IF_KW

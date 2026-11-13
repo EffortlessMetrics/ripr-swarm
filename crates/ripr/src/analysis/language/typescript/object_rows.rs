@@ -734,7 +734,7 @@ fn skip_comment(bytes: &[u8], idx: usize) -> Option<usize> {
         }
         Some(b'*') => {
             let rest = bytes.get(idx + 2..)?;
-            let end = rest.windows(2).position(|w| w == [b'*', b'/'])?;
+            let end = rest.windows(2).position(|w| w == b"*/")?;
             Some(idx + 2 + end + 2)
         }
         _ => None,

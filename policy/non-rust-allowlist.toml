@@ -708,7 +708,7 @@ kind = "rust_toolchain_pin"
 owner = "lsp/editor"
 surface = "editor"
 classification = "config"
-reason = "Names the wasm32-wasip2 target so rustup installs it when Zed builds the extension under the repository's 1.95.0 pin (#4460)."
+reason = "Names the wasm32-wasip2 target so rustup installs it when Zed builds the extension under the repository's exact compiler pin (#4460)."
 covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
 
 # ---------------------------------------------------------------------------

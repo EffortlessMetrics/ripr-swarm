@@ -37,10 +37,10 @@ fn ordinary_runner_requires_one_successful_exact_source_cargo_artifact() -> Test
     let head = fixture.git(&["rev-parse", "HEAD"])?;
     let runner = fixture.0.join(".git/compiled-runner");
     executable(&runner, "#!/bin/bash\nexit 0\n")?;
-    fixture.write_shim("rustc", "printf 'rustc 1.95.0 (fixture)\n'\n")?;
+    fixture.write_shim("rustc", "printf 'rustc 1.100.0 (fixture)\n'\n")?;
     fixture.write_shim(
         "cargo",
-        r#"if test "$*" = '--version --verbose'; then printf 'cargo 1.95.0 (fixture)\n'; exit 0; fi
+        r#"if test "$*" = '--version --verbose'; then printf 'cargo 1.100.0 (fixture)\n'; exit 0; fi
 test "$*" = 'test -p ripr --locked --test boundary_gap_closure --no-run --message-format=json' || exit 91
 cat "$CARGO_MESSAGES"
 exit "$CARGO_TEST_EXIT"
@@ -153,7 +153,7 @@ test "${#RIPR_ORDINARY_EXPECTED_SHA256}" -eq 64
 test -n "${RIPR_ORDINARY_EXPECTED_VERSION:?}"
 test -n "${RIPR_ORDINARY_EVIDENCE_DIR:?}"
 test "${CARGO_NET_OFFLINE:?}" = true
-test "${RUSTUP_TOOLCHAIN:?}" = 1.95.0
+test "${RUSTUP_TOOLCHAIN:?}" = 1.100.0
 test -x "${RUSTC:?}"
 test -z "${CARGO_BIN_EXE_ripr:-}"
 if test "$scenario" = zero_execution; then
@@ -192,11 +192,11 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
     fs::create_dir(&temporary)?;
     executable(&installed, "#!/bin/bash\nexit 97\n")?;
     executable(&runner, FAKE_RUNNER)?;
-    fixture.write_shim("cargo", "printf 'cargo 1.95.0 (fixture)\n'\n")?;
-    fixture.write_shim("rustc", "printf 'rustc 1.95.0 (fixture)\n'\n")?;
+    fixture.write_shim("cargo", "printf 'cargo 1.100.0 (fixture)\n'\n")?;
+    fixture.write_shim("rustc", "printf 'rustc 1.100.0 (fixture)\n'\n")?;
     fixture.write_shim(
         "rustup",
-        "test \"$1 $2 $3\" = 'which --toolchain 1.95.0' || exit 90\nprintf '%s/%s\n' \"$NATIVE_TOOL_DIR\" \"$4\"\n",
+        "test \"$1 $2 $3\" = 'which --toolchain 1.100.0' || exit 90\nprintf '%s/%s\n' \"$NATIVE_TOOL_DIR\" \"$4\"\n",
     )?;
     fixture.write_shim(
         "find",

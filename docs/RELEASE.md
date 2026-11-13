@@ -165,6 +165,8 @@ public vocabulary, asset verification) that the v0.5.0 release surfaced.
   `0.3.0`; `0.3.0` predates `ripr pilot` and `ripr outcome`.
 - The root workspace uses Rust edition `2024`.
 - The root workspace `rust-version` is `1.95`.
+- The build/release compiler in `rust-toolchain.toml` is `1.100.0`; compiler
+  identity and matching LLVM evidence follow [the upgrade guide](ci/rust-1.100-upgrade.md).
 - `repository` and `homepage` point at `https://github.com/EffortlessMetrics/ripr/`.
 - The README says `ripr` is alpha software and does not claim mutation execution.
 

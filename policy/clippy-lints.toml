@@ -223,10 +223,8 @@ level = "deny"
 # When that version is already met, a remaining non-MSRV `blocked_by` is
 # required or the lint must be promoted. A `blocked_by` that only names an
 # MSRV/Rust version is treated as missing. `reason` is narrative and does
-# not satisfy the gate. The field is not verified available-since (some
-# historical values are planned-MSRV guesses; `clippy::manual_pop_if`
-# records `1.95` while `blocked_by` says pinned 1.95.0 Clippy does not
-# recognize the lint). `check-lint-policy` also ensures planned lints are
+# not satisfy the gate. The field is not verified available-since; historical
+# values may be planned-MSRV guesses. `check-lint-policy` also ensures planned lints are
 # absent from Cargo.toml.
 
 [[planned]]
@@ -273,6 +271,11 @@ note = "Prefer checked arithmetic over manual divide-by-zero guards."
 name = "clippy::manual_take"
 level = "warn"
 note = "Use the standard ownership helper instead of a local reimplementation."
+
+[[active.collection_ownership]]
+name = "clippy::manual_pop_if"
+level = "warn"
+note = "The Rust 1.100 build compiler recognizes this lint. Clippy's configured 1.95 MSRV still governs API suggestions; the source-minimum lane runs cargo check, not old Clippy."
 
 [[active.collection_ownership]]
 name = "clippy::duration_suboptimal_units"
@@ -389,10 +392,3 @@ level = "deny"
 activate_when_msrv = "1.95"
 reason = "Retained after PR 03 because promotion requires a reviewed `clippy.toml` `disallowed-fields = [...]` protected-seam list; the lint is a no-op without that config."
 blocked_by = "Retained after PR 03 because promotion requires a reviewed `clippy.toml` `disallowed-fields = [...]` protected-seam list; the lint is a no-op without that config."
-
-[[planned]]
-name = "clippy::manual_pop_if"
-level = "warn"
-activate_when_msrv = "1.95"
-reason = "Retained after PR 03 because Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."
-blocked_by = "Retained after PR 03 because Rust 1.95.0 Clippy does not recognize this lint; promote only after the pinned toolchain supports it."

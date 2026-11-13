@@ -191,9 +191,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${CANDIDATE_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
           targets: ${{ matrix.target }}
 
       - name: Verify requested version matches candidate package
@@ -410,9 +410,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${CANDIDATE_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -654,9 +654,9 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${RECEIPT_INSTRUMENT_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
 
       - name: Read target outcomes from the public workflow-run API
         shell: bash

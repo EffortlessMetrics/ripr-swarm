@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #9097 (PATH-mismatch warning fires for every contributor running a Cargo-built binary)
+- #14539 (recognize Cargo 1.100 profile markers after the compiler upgrade)
 
 Linked PRs:
 
@@ -70,6 +71,12 @@ the warning.
 - The separate "PATH `ripr` is Cargo build output" warning is unchanged;
   a workspace build first on PATH is still named.
 - No schema or exit-code change; doctor warnings remain advisory.
+- Cargo source-build detection accepts either the legacy `deps/` plus
+  `.fingerprint/` directories, or Cargo 1.100's `build/` directory plus regular
+  `.cargo-artifact-lock` and `.cargo-build-lock` files beside the executable.
+  All markers in the selected layout are required, including their file types.
+  This is an advisory heuristic; a custom separate Cargo build directory can
+  omit these markers, and the heuristic does not prove build provenance.
 - #10347: when no `ripr` is on PATH and a project config (`.mcp.json`,
   `.vscode/mcp.json`, `.cursor/mcp.json`) launches it with the bare
   `"command": "ripr"` (or `ripr.exe`) in a server definition (`mcpServers` for
@@ -89,6 +96,11 @@ the warning.
 - The pre-existing negative control
   `different_installed_ripr_on_path_warns_without_build_output_claim`
   passes unchanged.
+- `cargo_1_100_build_output_preserves_identity_and_warnings` requires the
+  same source-build suppression and PATH-build warning with the native 1.100
+  marker shape. `cargo_1_100_build_output_requires_all_profile_markers` rejects
+  every missing marker and every marker with the wrong file type. Existing
+  legacy-layout and plain installed-directory controls remain required.
 
 ## Required guards
 

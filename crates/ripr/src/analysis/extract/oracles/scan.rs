@@ -679,16 +679,15 @@ fn guarded_match_oracle_fact(shape: &GuardedMatchShape, line: usize) -> Option<O
                 .join(" | "),
             OracleStrength::Strong,
         )
-    } else if let Some(pin) = downcast_pin {
-        (
-            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
-            OracleStrength::Medium,
-        )
     } else {
         // Wildcard arms, opaque predicates, and message-only diagnostics
         // stay unrecognized: exactness is never inferred from names or
         // payload text (#3709 fail-closed).
-        return None;
+        let pin = downcast_pin?;
+        (
+            truncate_chars(&pin, PIN_TEXT_MAX_CHARS),
+            OracleStrength::Medium,
+        )
     };
     Some(guarded_match_fact(shape, line, pin_text, strength))
 }

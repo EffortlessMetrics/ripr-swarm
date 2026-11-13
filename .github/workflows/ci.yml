@@ -106,11 +106,13 @@ jobs:
           ref: ${{ inputs.subject_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: ripr-release-proof-1.95-${{ runner.os }}
+          shared-key: ripr-release-proof-1.100-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The routed Rust workflow owns ordinary merge-safety and repository
@@ -240,13 +242,15 @@ jobs:
           classify
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           { echo "### Rust-Only Surface Detection"; echo ""; echo "- rust: \`$rust\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         if: steps.surface.outputs.rust == 'true'
+        with:
+          toolchain: 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: steps.surface.outputs.rust == 'true'
         with:
-          shared-key: ripr-rust-only-1.95-${{ runner.os }}
+          shared-key: ripr-rust-only-1.100-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prepare locked owner-return fixture dependencies
         if: steps.surface.outputs.rust == 'true'
@@ -265,9 +269,9 @@ jobs:
         run: cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
 
   msrv:
-    # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
-    # PR and main push. Keep the duplicate named proof only for explicit full
-    # CI and manual investigation.
+    # The build/release compiler is newer than the declared minimum. Select
+    # 1.95.0 explicitly so the repository toolchain pin cannot turn this proof
+    # into another build-compiler check. Keep the existing callable/manual route.
     needs: source-identity
     if: >-
       always() && !cancelled() &&
@@ -275,6 +279,8 @@ jobs:
       (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.95.0
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -286,7 +292,7 @@ jobs:
         with:
           shared-key: ripr-msrv-1.95-${{ runner.os }}
           save-if: false
-      - run: cargo check --workspace --all-targets
+      - run: cargo +1.95.0 check --locked --workspace --all-targets
 
   # #12252: pull requests run the extension e2e from routed-rust.yml, where the
   # Result reads it as a `needs` result of its own run. This lane keeps push,

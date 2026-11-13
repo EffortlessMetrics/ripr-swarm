@@ -112,11 +112,13 @@ details and may be skipped when another target is selected.
 
 The router reads runner state with `EM_RUNNER_READ_TOKEN` when that secret is
 available. It selects a self-hosted runner only when the runner is idle and has
-the matching host label plus the `em-ci-rust-1.95` runner-image/toolchain
-readiness label. If runner state cannot be read, no target runner is idle, or a
-runner is available but not image-ready, the workflow falls back to GitHub-hosted with
+`em-ci`, the matching host label and its capacity label: `cx43` with
+`rust-medium`, `cpx42` with `rust-16gb`, or `cx53` with `rust-large`.
+Exact Rust 1.100.0 installation happens inside the job. If runner state cannot
+be read, no target runner is idle, or a runner lacks the required capacity,
+the workflow falls back to GitHub-hosted with
 `router_reason=runner_api_failed`, `router_reason=no_idle_runner`, or
-`router_reason=runner_image_unavailable`. Fork PRs route to GitHub-hosted with
+`router_reason=runner_capacity_unavailable`. Fork PRs route to GitHub-hosted with
 `router_reason=fork_or_untrusted_pr`.
 
 The route and protected result summaries report count-only diagnostics for
@@ -141,9 +143,10 @@ Before running proof:
 - confirm `ripr-swarm` has access to runner group `em-ci-small`;
 - confirm `EM_RUNNER_READ_TOKEN` is available to this repository or the
   workflow can otherwise read org runner state;
-- confirm one idle, online runner has labels `CX43` and `em-ci-rust-1.95`;
-- confirm one idle, online runner has labels `CPX42` and `em-ci-rust-1.95`;
-- confirm one idle, online runner has labels `CX53` and `em-ci-rust-1.95`;
+- confirm one idle, online runner has `em-ci`, `cx43`, and `rust-medium`;
+- confirm one idle, online runner has `em-ci`, `cpx42`, `rust-medium`, and `rust-16gb`;
+- confirm one idle, online runner has `em-ci`, `cx53`, and `rust-large`;
+- confirm those runners retain the requested `self-hosted`, `linux`, `x64`, and `trusted-pr` labels;
 - keep source/release/publish/signing secrets out of `ripr-swarm`.
 
 Prove CX43 primary:

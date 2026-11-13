@@ -44,10 +44,10 @@ fn step(name: &str) -> Result<String, String> {
 fn pinned_component_and_failure_evidence_are_wired() -> Result<(), String> {
     let text = workflow()?;
     assert!(text.contains(
-        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0\n"
+        "uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: 1.100.0\n"
     ));
     assert!(text.contains("components: clippy\n"));
-    assert!(step("Run future Clippy (advisory)")?.contains("cargo +1.95.0 clippy "));
+    assert!(step("Run future Clippy (advisory)")?.contains("cargo +1.100.0 clippy "));
     let (_, summary) = text
         .split_once("- name: Write step summary\n")
         .ok_or("missing summary")?;
@@ -233,7 +233,7 @@ mod behavior {
     const CARGO: &str = r#"#!/bin/bash
 printf '%s\n' "$@" > "$ARG_LOG"
 case "$SCAN_CASE" in
-  missing) echo "error: the 'cargo-clippy' binary is not installed for toolchain '1.95-x86_64-unknown-linux-gnu'" >&2; exit 1 ;;
+  missing) echo "error: the 'cargo-clippy' binary is not installed for toolchain '1.100.0-x86_64-unknown-linux-gnu'" >&2; exit 1 ;;
   compile) echo 'error[E0308]: mismatched types' >&2; echo '{"reason":"build-finished","success":false}'; exit 101 ;;
   empty) exit 0 ;;
   completion-only) echo '{"reason":"build-finished","success":true}'; exit 0 ;;
@@ -831,7 +831,7 @@ esac
         let output = fixture.run("Run future Clippy (advisory)", "warning", "success")?;
         assert!(output.status.success(), "{output:?}");
         let args = fixture.read("args")?;
-        assert!(args.starts_with("+1.95.0\nclippy\n--workspace\n--all-targets\n"));
+        assert!(args.starts_with("+1.100.0\nclippy\n--workspace\n--all-targets\n"));
         assert!(args.contains("--message-format=json-render-diagnostics\n"));
         assert_eq!(args.lines().filter(|arg| *arg == "-W").count(), 10);
         assert!(args.contains("clippy::same_length_and_capacity\n"));
@@ -845,7 +845,7 @@ esac
             "source_sha=candidate-sha",
             "run_id=7307",
             "run_attempt=2",
-            "toolchain=1.95.0",
+            "toolchain=1.100.0",
             "cargo_exit=0",
             "tee_exit=0",
             "scan_completed=true",

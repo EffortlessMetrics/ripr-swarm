@@ -3,6 +3,8 @@
 //! annotated, so the pin is its peeled commit, not its tag-object SHA.
 //! 035fceb3 hard-codes 1.95.0 for both generated 1.95 and 1.95.0 refs and
 //! declares no toolchain input; stable/v1 and both taiki variants consume inputs.
+//! Build/release jobs use generic v1 with explicit 1.100.0; the CI MSRV job
+//! deliberately retains the generated 1.95.0 action and explicit Cargo selector.
 #[path = "../test_support.rs"]
 mod test_support;
 
@@ -30,18 +32,26 @@ const PINS: &[Pin] = &[
     (
         "ci.yml",
         "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        2,
+    ),
+    (
+        "ci.yml",
+        "dtolnay/rust-toolchain",
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
         None,
-        3,
+        1,
     ),
     (
         // #12252: the extension e2e moved out of ci.yml into the reusable workflow.
         "vscode-e2e.yml",
         "dtolnay/rust-toolchain",
-        "1.95.0",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -95,9 +105,17 @@ const PINS: &[Pin] = &[
     (
         "future-clippy.yml",
         "dtolnay/rust-toolchain",
-        "1.95.0",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
+    (
+        "goldens-rebless.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -111,9 +129,9 @@ const PINS: &[Pin] = &[
     (
         "macos-advisory.yml",
         "dtolnay/rust-toolchain",
-        "1.95",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -127,9 +145,9 @@ const PINS: &[Pin] = &[
     (
         "pilot-ranking.yml",
         "dtolnay/rust-toolchain",
-        "1.95.0",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -143,9 +161,9 @@ const PINS: &[Pin] = &[
     (
         "printed-command-paste.yml",
         "dtolnay/rust-toolchain",
-        "1.95",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -177,7 +195,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "v1",
         "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
-        Some("toolchain: 1.95.0"),
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -209,7 +227,7 @@ const PINS: &[Pin] = &[
         "dtolnay/rust-toolchain",
         "v1",
         "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
-        Some("toolchain: 1.95.0"),
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -255,17 +273,17 @@ const PINS: &[Pin] = &[
     (
         "windows-advisory.yml",
         "dtolnay/rust-toolchain",
-        "1.95",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         2,
     ),
     (
         "zed-extension.yml",
         "dtolnay/rust-toolchain",
-        "1.95.0",
-        "035fceb3c12fb0c6a9461b52775e16473133e591",
-        None,
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
 ];
@@ -340,8 +358,8 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
         total += count;
     }
     assert_eq!(
-        total, 39,
-        "38 burn-down pins plus the inherited #9527 cache pin"
+        total, 40,
+        "39 inherited pins plus the Rust 1.100 golden refresh selector"
     );
     Ok(())
 }
@@ -355,10 +373,10 @@ fn pin_contract_rejects_missing_wrong_or_neighboring_inputs() -> Result<(), Stri
     let text = source(pin.0)?;
     assert_eq!(verify(&text, pin)?, 1);
     for wrong in [
-        text.replace("          toolchain: 1.95.0\n", ""),
-        text.replace("toolchain: 1.95.0", "toolchain: stable"),
-        text.replace("          toolchain: 1.95.0\n", "")
-            + "\n      - name: unrelated\n        with:\n          toolchain: 1.95.0\n",
+        text.replace("          toolchain: 1.100.0\n", ""),
+        text.replace("toolchain: 1.100.0", "toolchain: stable"),
+        text.replace("          toolchain: 1.100.0\n", "")
+            + "\n      - name: unrelated\n        with:\n          toolchain: 1.100.0\n",
     ] {
         assert_ne!(wrong, text, "mutation must change the source");
         assert!(
@@ -468,10 +486,16 @@ fn first_run_main_composition_keeps_both_new_actions_pinned() -> Result<(), Stri
 #[test]
 fn fixed_toolchain_revision_rejects_ignored_override_inputs() -> Result<(), String> {
     for reference in ["1.95", "1.95.0"] {
-        let pin = PINS
-            .iter()
-            .find(|pin| pin.1 == "dtolnay/rust-toolchain" && pin.2 == reference)
-            .ok_or("missing fixed-toolchain control")?;
+        // The live MSRV job still uses this generated revision. Both upstream
+        // version refs resolve to it, even though builds now use generic v1.
+        let pin = &(
+            "synthetic.yml",
+            "dtolnay/rust-toolchain",
+            reference,
+            "035fceb3c12fb0c6a9461b52775e16473133e591",
+            None,
+            1,
+        );
         assert!(pin.4.is_none(), "fixed revision has no toolchain input");
         let text = format!("steps:\n      - uses: {}@{} # {}\n", pin.1, pin.3, pin.2);
         assert_eq!(verify(&text, pin)?, 1);
