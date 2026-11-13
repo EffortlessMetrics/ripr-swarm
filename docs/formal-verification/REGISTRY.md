@@ -24,11 +24,21 @@ and every listed file must exist. Extra, missing, symlinked, duplicated, or
 non-JSON entries refuse the registry.
 
 Claim-document semantics remain owned by `xtask/src/formal_evidence.rs`. The
-registry invokes that validator before it computes membership, decision
-digests, planner projection, or scoreboard state. It also requires every
-declared source-closure and authority path to resolve to a regular non-symlink
-file in the checkout. Existence does not establish completeness or currentness.
-The registry does not maintain a second positive-evidence admission law.
+registry snapshots each listed regular claim file, invokes that shared
+path-based validator, and then requires a bounded reread to match the exact
+snapshotted bytes consumed by the registry. This refuses an ordinary concurrent
+edit or path swap between semantic admission and registry projection. It is a
+stability observation, not an atomic filesystem transaction, authenticated
+source custody, or proof of bytes consumed by an external verifier.
+
+The registry also requires every declared source-closure and authority path to
+resolve to a regular non-symlink file in the checkout. Existence does not
+establish completeness or currentness. The registry does not maintain a second
+positive-evidence admission law.
+
+All Markdown projections escape table separators, code delimiters, HTML syntax,
+and control characters. JSON and Markdown derive from the same typed values;
+projection safety does not authenticate the underlying declarations.
 
 ## Commands
 
@@ -110,6 +120,8 @@ Transition validation requires:
 - an unchanged claim decision cannot change its generation;
 - a new claim starts at generation 1;
 - a removed claim has an explicit retirement with its exact final generation;
+- every newly added retirement corresponds to an active base claim removed by
+  that transition—an unrelated tombstone cannot be invented;
 - a replacement names another active claim;
 - accepted retirements are append-only and cannot be rewritten or reactivated.
 
@@ -207,12 +219,15 @@ Required discriminators include:
 - a listed missing file;
 - duplicate manifest keys;
 - decision-digest mismatch;
+- claim bytes changing while semantic admission is in progress;
 - decision change without claim-generation increase;
 - registry change without registry-generation increase;
 - removal without retirement;
+- a newly invented retirement with no active base authority;
 - retirement with an absent replacement;
 - reactivation of a retired claim;
 - output-order changes that do not change generation;
+- Markdown control/table syntax in projected text;
 - a registry-only scoreboard that never reports established assurance.
 
 ## Native join boundary
