@@ -218,7 +218,7 @@ impl Fixture {
         let status = child.wait().map_err(|error| error.to_string())?;
         for before in &descendants {
             if same_process_is_live(before)? {
-                return Err("an owned probe descendant survived watchdog cleanup".into());
+                return Err("an owned probe descendant remained after watchdog cleanup".into());
             }
         }
         let read_capture = |name| {

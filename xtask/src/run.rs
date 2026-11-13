@@ -201,7 +201,7 @@ fn settle_timed_capture_streams(
     require_complete_output: bool,
     error_context: &str,
 ) -> Result<(String, String), TimedCaptureError> {
-    // Cleanup has already run. A descendant that survived it can also make
+    // Cleanup has already run. A descendant that remained can also make
     // the drain fail, so typed callers must retain that observed cause.
     if require_complete_output && let Err(cleanup) = &tree_cleanup {
         return Err(TimedCaptureError::new(
