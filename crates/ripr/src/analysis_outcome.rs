@@ -198,7 +198,7 @@ impl AnalysisLimitationKind {
             Self::MalformedDiff => "the diff could not be parsed",
             Self::DiffScopeOversized => "the diff is larger than the configured limit",
             Self::LanguageAdapterUnavailable => "no analyzer is available for a changed language",
-            Self::LanguageScopeUnsupported => "some changed files were not analyzed",
+            Self::LanguageScopeUnsupported => "some files were not fully analyzed",
             Self::ChangedFileAbsentFromWorktree => "a changed file is absent from the working tree",
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
