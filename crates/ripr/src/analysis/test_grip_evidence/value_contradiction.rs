@@ -1859,21 +1859,35 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
 /// Whether a branch-local return-value seam is statically reached by the
 /// oracle's call (#14496). `None` when the seam is not the tail expression or
 /// `return` statement of a single `if` branch of the owner, the oracle does not
-/// name a bare owner call with literal arguments, or the condition does not
-/// fold. `Some(false)` only when the condition folds and the seam's branch is
-/// not the taken one, so a caller can withhold credit without guessing.
+/// name a bare owner call with literal arguments, the owner rebinds or mutates
+/// a parameter, or a condition does not fold. `Some(false)` only when every
+/// condition on the path folds and one of them is not the taken branch, so a
+/// caller can withhold credit without guessing.
+///
+/// The call shape is the bare `owner(..)` form, read through a `let` the
+/// assertion pins when there is one. A `.await` or wrapper call
+/// (`wrapper(owner(..))`) is not modelled here and keeps today's credit.
 pub(super) fn seam_branch_reached_by_call(
     owner: &FunctionSummary,
     seam_expression: &str,
     oracle_text: &str,
+    test: &TestSummary,
 ) -> Option<bool> {
-    let (_, arguments) = equality_assertion_shape(oracle_text)?;
-    let [actual, ..] = arguments.as_slice() else {
+    // The assertion may pin a local the call was bound to
+    // (`let got = owner(..); assert_eq!(got, 50)`), so resolve the compared
+    // operands through their `let` initializers before looking for the call.
+    let operands = assertion_operands(oracle_text, test.body.as_str());
+    let mut calls = Vec::new();
+    for operand in &operands {
+        if let Some(arguments) = owner_call_arguments(&operand.text, &owner.name) {
+            calls.push(arguments);
+        }
+    }
+    let [call_arguments] = calls.as_slice() else {
         return None;
     };
-    let call_arguments = owner_call_arguments(actual, &owner.name)?;
     let mut values = Vec::with_capacity(call_arguments.len());
-    for argument in &call_arguments {
+    for argument in call_arguments {
         values.push(fold_expression(argument, &BTreeMap::new())?);
     }
     let parse = parse_clean_source_file(owner.body.as_str())?;
@@ -1893,6 +1907,14 @@ pub(super) fn seam_branch_reached_by_call(
     if names.len() != values.len() {
         return None;
     }
+    // The environment binds the call's literal arguments to the parameter
+    // names once. A `let` rebind, an assignment or a `for` pattern that
+    // targets one of those names changes what the condition reads, so the
+    // fold could disagree with the branch the call actually reaches. Keep
+    // today's credit rather than withhold a real discriminator.
+    if parameter_is_rebound_or_mutated(&block, &names) {
+        return None;
+    }
     let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
     let target = normalized_expression(seam_expression);
     let mut matches = Vec::new();
@@ -1905,6 +1927,11 @@ pub(super) fn seam_branch_reached_by_call(
             }
             _ => false,
         };
+        // Both arms holding the same expression means the seam's own branch
+        // is not established by text, so keep today's credit.
+        if in_then && in_else {
+            return None;
+        }
         if in_then || in_else {
             matches.push((if_expr, in_then));
         }
@@ -1918,7 +1945,85 @@ pub(super) fn seam_branch_reached_by_call(
         &if_expr.condition()?.syntax().text().to_string(),
         &environment,
     )?;
-    Some(if *in_then { condition } else { !condition })
+    let reached = if *in_then { condition } else { !condition };
+    if !reached {
+        return Some(false);
+    }
+    // The seam's own branch is taken, but an enclosing `if` can still keep the
+    // call from evaluating it. Every enclosing branch on the path must be the
+    // taken one too.
+    enclosing_branches_reached(if_expr, &environment)
+}
+
+/// Whether the owner body rebinds or mutates one of `names` anywhere, which
+/// makes the call-argument environment stale for the condition fold.
+fn parameter_is_rebound_or_mutated(block: &ast::BlockExpr, names: &[String]) -> bool {
+    let targets = |name: &str| names.iter().any(|candidate| candidate == name);
+    block.syntax().descendants().any(|node| {
+        if let Some(let_stmt) = ast::LetStmt::cast(node.clone())
+            && let Some(ast::Pat::IdentPat(ident)) = let_stmt.pat()
+            && let Some(name) = ident.name()
+        {
+            return targets(name.text());
+        }
+        if let Some(for_expr) = ast::ForExpr::cast(node.clone())
+            && let Some(ast::Pat::IdentPat(ident)) = for_expr.pat()
+            && let Some(name) = ident.name()
+        {
+            return targets(name.text());
+        }
+        if let Some(binary) = ast::BinExpr::cast(node)
+            && matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+            && let Some(lhs) = binary.lhs()
+        {
+            return lhs
+                .syntax()
+                .descendants()
+                .filter_map(ast::NameRef::cast)
+                .any(|name| targets(name.text()));
+        }
+        false
+    })
+}
+
+/// Whether every `if` enclosing `if_expr` takes the branch that holds it.
+/// `None` when an enclosing branch cannot be read, so the caller keeps
+/// today's credit.
+fn enclosing_branches_reached(
+    if_expr: &ast::IfExpr,
+    environment: &BTreeMap<String, i128>,
+) -> Option<bool> {
+    let range = if_expr.syntax().text_range();
+    let mut current = if_expr.syntax().parent();
+    while let Some(node) = current {
+        if let Some(ancestor) = ast::IfExpr::cast(node.clone()) {
+            let in_then = ancestor
+                .then_branch()
+                .is_some_and(|block| block.syntax().text_range().contains_range(range));
+            let in_else = match ancestor.else_branch() {
+                Some(ast::ElseBranch::Block(block)) => {
+                    block.syntax().text_range().contains_range(range)
+                }
+                Some(ast::ElseBranch::IfExpr(inner)) => {
+                    inner.syntax().text_range().contains_range(range)
+                }
+                None => false,
+            };
+            if !in_then && !in_else {
+                return None;
+            }
+            let condition = fold_condition(
+                &ancestor.condition()?.syntax().text().to_string(),
+                environment,
+            )?;
+            let reached = if in_then { condition } else { !condition };
+            if !reached {
+                return Some(false);
+            }
+        }
+        current = node.parent();
+    }
+    Some(true)
 }
 
 /// Whitespace- and trailing-semicolon-insensitive spelling of one expression,

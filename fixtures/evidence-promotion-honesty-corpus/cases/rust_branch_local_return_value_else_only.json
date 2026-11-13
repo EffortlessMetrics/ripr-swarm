@@ -1,0 +1,27 @@
+{
+  "id": "rust_branch_local_return_value_else_only",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-else-only",
+  "vector": "branch_local_return_value_seam_is_not_promoted_by_an_else_only_call",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "return amount - 10",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "return amount - 10",
+      "test": "below_threshold_has_no_discount",
+      "file": "tests/pricing.rs",
+      "line": 4,
+      "oracle_strength": "weak",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

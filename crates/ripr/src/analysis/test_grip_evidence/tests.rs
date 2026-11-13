@@ -23779,3 +23779,152 @@ fn committed_boundary_gap_fixture_stays_strongly_gripped() -> Result<(), String>
     );
     Ok(())
 }
+
+/// #14496: the assertion may pin a local the call was bound to. The gate must
+/// resolve the `let` initializer before deciding reach, or the most common
+/// Rust test shape keeps today's over-credit.
+#[test]
+fn branch_local_return_value_seam_is_not_gripped_by_a_let_bound_else_branch_call()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    let got = discounted_total(50, 100);\n    assert_eq!(got, 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a let-bound else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: an enclosing `if` the call does not take keeps the seam
+/// unreachable even when the seam's own condition folds true.
+#[test]
+fn branch_local_return_value_seam_behind_an_untaken_enclosing_guard_is_not_gripped()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if discount_threshold > 0 {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 0), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an untaken enclosing guard must not strongly grip the inner return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a parameter rebound before the `if` makes the call-argument fold
+/// stale. The gate must keep today's credit rather than withhold a real
+/// discriminator.
+#[test]
+fn branch_local_return_value_seam_with_a_rebound_parameter_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    let amount = -amount;\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn negated_amount_reaches_the_discount() {\n    assert_eq!(discounted_total(-50, 0), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a reaching call through a rebound parameter must keep its grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: both arms holding the same expression makes the seam's own branch
+/// ambiguous by text. The gate must keep today's credit, so an else-arm call
+/// that reaches its return is not downgraded.
+#[test]
+fn branch_local_return_value_seam_with_identical_arms_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount;\n    } else {\n        return amount;\n    }\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let return_seams: Vec<_> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ReturnValue)
+        .collect();
+    assert!(
+        !return_seams.is_empty(),
+        "expected the return seams; seams: {seams:?}"
+    );
+    for seam in return_seams {
+        let evidence = evidence_for_seam(seam, &index);
+        assert_eq!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "identical arms are ambiguous, so the else-arm call keeps its grip: {:?}",
+            evidence.discriminate
+        );
+    }
+    Ok(())
+}
+
+/// #14496: the per-test record must agree with the discriminate stage. A test
+/// the branch gate refuses must not publish strong per-test grip.
+#[test]
+fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the stage must withhold credit: {:?}",
+        evidence.discriminate
+    );
+    let grip = evidence
+        .related_tests
+        .iter()
+        .find(|grip| grip.test_name == "below_threshold_has_no_discount")
+        .ok_or_else(|| "expected the else-only test record".to_string())?;
+    assert_ne!(
+        grip.oracle_strength,
+        OracleStrength::Strong,
+        "the per-test record must not publish strong grip the stage refuses: {grip:?}"
+    );
+    Ok(())
+}

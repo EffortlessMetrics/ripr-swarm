@@ -4846,12 +4846,7 @@ fn oracle_discriminates_seam_in_test(
     // of the owner's result from a call that takes the other branch observes a
     // different value, so it is not strong grip for this seam. `None` (a shape
     // the fold cannot read) keeps today's credit.
-    if seam.kind() == SeamKind::ReturnValue
-        && let Some(owner) = owner
-        && let Some(reached) =
-            value_contradiction::seam_branch_reached_by_call(owner, seam.expression(), &oracle.text)
-        && !reached
-    {
+    if branch_gate_withholds(seam, oracle, test, owner) {
         return false;
     }
     oracle_discriminates_seam(seam, oracle)
@@ -4871,6 +4866,26 @@ fn oracle_discriminates_seam_in_test(
                                 receiver, owner, index, test, oracle, pin_syntax,
                             )))
             })
+}
+
+/// #14496: whether the branch gate withholds credit for this oracle. Shared by
+/// the discriminate stage and the per-test record so they cannot disagree
+/// about one assertion.
+fn branch_gate_withholds(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    owner: Option<&FunctionSummary>,
+) -> bool {
+    seam.kind() == SeamKind::ReturnValue
+        && owner.is_some_and(|owner| {
+            value_contradiction::seam_branch_reached_by_call(
+                owner,
+                seam.expression(),
+                &oracle.text,
+                test,
+            ) == Some(false)
+        })
 }
 
 fn collection_assertion_admitted(
@@ -5780,6 +5795,16 @@ fn best_oracle(
             )
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
+        // #14496: the per-test record must not publish strong grip for a
+        // return-value seam the branch gate refuses, or the record and the
+        // discriminate stage disagree about the same assertion.
+        let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && branch_gate_withholds(seam, oracle, test, owner_fn)
         {
             OracleStrength::Weak
         } else {
