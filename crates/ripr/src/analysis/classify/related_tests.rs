@@ -2164,7 +2164,7 @@ fn type_reexported_from_owner_dependency(
         || use_statement_paths(stripped_file)
             .iter()
             .any(|statement| statement.contains('*'))
-        || has_reexport_token_pair(stripped_file, "extern", "crate")
+        || has_reexport_guard_tokens(stripped_file, "extern", "crate")
         || super::reveal::flattened_use_paths(stripped_file)
             .iter()
             .any(|other| {
@@ -2194,11 +2194,11 @@ fn type_reexported_from_owner_dependency(
         {
             continue;
         }
-        let stripped = strip_comments_and_strings(&facts.source);
+        let stripped = mask_comments_and_strings(&facts.source);
         // Share the path-remapping authority with call identity. Literal
         // spelling misses whitespace, comments and conditional attributes.
         if super::call_identity::has_path_attribute(&stripped)
-            || has_reexport_token_pair(&stripped, "include", "!")
+            || has_reexport_guard_tokens(&facts.source, "include", "!")
         {
             return false;
         }
@@ -2219,7 +2219,7 @@ fn type_reexported_from_owner_dependency(
         let library_imports = super::reveal::flattened_use_paths(&stripped);
         // A library-local binding of a dependency key (`use x::y as crate_a;`,
         // `mod crate_a`, `extern crate`) would rebind the terminal hop's root.
-        if has_reexport_token_pair(&stripped, "extern", "crate")
+        if has_reexport_guard_tokens(&facts.source, "extern", "crate")
             || reexport.library_dependency_names.iter().any(|dependency| {
                 file_may_bind_name(&stripped, dependency)
                     || library_imports.iter().any(|import| {
@@ -2584,29 +2584,38 @@ fn declares_module(stripped: &str, name: &str) -> bool {
     })
 }
 
-/// Adjacent code tokens for the re-export refusals (`extern crate` or
-/// `include!`), independent of trivia. Masking can leave holes where strings
-/// were removed, so inspect parser tokens without requiring a clean AST.
-fn has_reexport_token_pair(stripped: &str, first: &str, second: &str) -> bool {
-    use ra_ap_syntax::{Edition, SourceFile, SyntaxToken};
-    if !stripped.contains(first) {
+/// Inspect original parser tokens for re-export refusals. A character such
+/// as `'"'` must not let a lossy string stripper hide subsequent code. In
+/// addition to a direct `include!`, an `include` token inside a macro token
+/// tree may be forwarded to a metavariable invocation (`$i!`). Without macro
+/// expansion that possible source splice cannot establish a re-export hop.
+/// Unrelated macros and include text inside literals/comments remain allowed.
+fn has_reexport_guard_tokens(source: &str, first: &str, second: &str) -> bool {
+    use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxToken, ast};
+    if !source.contains(first) {
         return false;
     }
-    if crate::analysis::syntax::rust_nesting_refusal(stripped).is_some() {
+    if crate::analysis::syntax::rust_nesting_refusal(source).is_some() {
         return true;
     }
-    let file = SourceFile::parse(stripped, Edition::CURRENT).tree();
+    let file = SourceFile::parse(source, Edition::CURRENT).tree();
     let mut previous: Option<SyntaxToken> = None;
     file.syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
         .any(|token| {
-            let found = previous.as_ref().is_some_and(|previous| {
-                previous.text() == first || first == "include" && previous.text() == "r#include"
-            }) && token.text() == second;
+            let is_first = |token: &SyntaxToken| {
+                token.text() == first || first == "include" && token.text() == "r#include"
+            };
+            let found = previous.as_ref().is_some_and(is_first) && token.text() == second;
+            let forwarded_include = first == "include"
+                && is_first(&token)
+                && token
+                    .parent_ancestors()
+                    .any(|node| ast::TokenTree::can_cast(node.kind()));
             previous = Some(token);
-            found
+            found || forwarded_include
         })
 }
 
@@ -14275,6 +14284,72 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn reexport_hop_refuses_forwarded_include_identifiers() -> Result<(), String> {
+        // Every case retains a complete, plausible owner re-export in filter.rs.
+        // Only the macro expansion selects the external type instead.
+        for (definition, invocation) in [
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount!(include);",
+            ),
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount! { r#include }",
+            ),
+            (
+                "($i:ident) => { $i!(\"../foreign.rs\"); }",
+                "mount![/*gap*/ include];",
+            ),
+            (
+                "($i:path) => { $i!(\"../foreign.rs\"); }",
+                "mount!(include);",
+            ),
+        ] {
+            assert_parsed_reexport_case(
+                &format!("macro_rules! mount {{ {definition}; }}\n#[cfg(any())] pub mod filter;\n{invocation}"),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_guards_after_character_literals() -> Result<(), String> {
+        for literal in ["'\"'", "'\\\"'", "b'\"'", "'\\u{22}'"] {
+            let ty = if literal.starts_with('b') { "u8" } else { "char" };
+            assert_parsed_reexport_case(
+                &format!("const QUOTE: {ty} = {literal};\npub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                true,
+            )?;
+            for invocation in ["include!", "include /*gap*/ !", "r#include !"] {
+                assert_parsed_reexport_case(
+                    &format!("#[cfg(any())] pub mod filter;\nconst QUOTE: {ty} = {literal};\n{invocation}(\"../foreign.rs\");"),
+                    "",
+                    "pub mod filter { pub use foreign_dep::*; }",
+                    false,
+                )?;
+            }
+            assert_parsed_reexport_case(
+                &format!("const QUOTE: {ty} = {literal};\nextern /*gap*/ crate foreign_dep as crate_a;\npub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+            assert_parsed_reexport_case(
+                &format!("const QUOTE: {ty} = {literal};\n#[path = \"../foreign.rs\"] pub mod filter;"),
+                "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reexport_hop_refuses_extern_crate_token_spacing_with_complete_index() -> Result<(), String> {
         assert_parsed_reexport_case("pub mod filter;", "", "pub use foreign_dep::*;", true)?;
         for keywords in [
@@ -14324,7 +14399,7 @@ fn crate_c_score_test() {
     #[test]
     fn reexport_hop_preserves_unrelated_macro_definitions() -> Result<(), String> {
         assert_parsed_reexport_case(
-            "macro_rules! marker { () => {} }\npub mod filter;",
+            "macro_rules! marker { ($value:expr) => { const MARKER: u32 = $value; }; }\nmarker!(2);\nmacro_rules! harmless { () => { \"include\" }; }\npub mod filter;",
             "",
             "pub use foreign_dep::*;",
             true,

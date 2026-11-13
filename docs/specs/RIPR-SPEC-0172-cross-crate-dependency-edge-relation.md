@@ -291,9 +291,11 @@ hold, or the route refuses:
   `mod key`, `extern crate`).
 
 The `extern crate` and `include!` refusals read adjacent Rust parser tokens
-after masking comments and strings, so whitespace or comments between tokens
-do not bypass them. An include invocation inside a macro token tree also
-refuses; an unrelated macro definition does not.
+from the original source, so character literals cannot hide subsequent code
+and whitespace or comments between tokens do not bypass them. An include
+identifier inside a macro token tree also refuses: a macro may forward it to
+a metavariable invocation. Unrelated macros and quoted include text remain
+allowed.
 
 The competitor and owner-crate foreign-import rules above still apply.
 
@@ -335,6 +337,8 @@ The competitor and owner-crate foreign-import rules above still apply.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_unresolved_crate_local_chains`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_path_remaps_with_complete_index`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_include_token_spacing_with_complete_index`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_forwarded_include_identifiers`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_guards_after_character_literals`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_extern_crate_token_spacing_with_complete_index`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_library_extern_crate_token_spacing`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_ignores_quoted_lexical_guard_text`
