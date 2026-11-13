@@ -95,8 +95,11 @@ NEGATION = re.compile(
     # ready marker is a blocker, though no state token carries the REVIEW_ prefix. The
     # label must open the line (after list or emphasis markup), so prose that recalls
     # an earlier verdict is narration; a refusing word anywhere in the value counts,
-    # including quoted, bracketed, compound and suffixed forms.
-    r"|^\W*verdict[ \t*_`]*:.*?(?<![a-z])(?:block(?:ed|s)?|reject(?:ed|s)?|nack"
+    # including quoted, bracketed, compound and suffixed forms. A word negated by a
+    # preceding "no", "non" or "not" ("no blocking findings", "no block remains")
+    # is a resolved finding, not a refusing value.
+    r"|^\W*verdict[ \t*_`]*:.*?(?<![a-z])(?<!\bno[ \t_-])(?<!\bnon[ \t_-])(?<!\bnot[ \t_-])"
+    r"(?:block(?:ed|s|ing)?|reject(?:ed|s)?|nack"
     r"|request(?:ed|s)?[ \t_-]*changes|changes[ \t_-]*requested|repairs?[ \t_-]*required"
     r"|fail(?:ed|s|ure)?|not[ \t_-]*ready|incomplete|no[ \t_-]*go|hold)(?![a-z])"
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
@@ -689,6 +692,12 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: FAILURE", False),
         ("SOURCE_REVIEW_READY\nVERDICT: INCOMPLETE", False),
         ("REVIEW_READY\nVerdict: approve, nonblocking notes only.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCKING", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, non-blocking notes only.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve - no failures.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: not ready", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: NO-GO", False),
         ("REVIEW_READY \u2014 no findings", False),
         ("REVIEW_READY for the candidate, but repairs required", False),
         ("SOURCE_REVIEW_READY, but repairs required", False),
