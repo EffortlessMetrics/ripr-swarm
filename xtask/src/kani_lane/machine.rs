@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
-const MAX_RUN_TEXT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RUN_TEXT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CAPTURED_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 static NEXT_RUN: AtomicU64 = AtomicU64::new(0);
@@ -436,10 +436,21 @@ impl Report {
                         .to_string(),
                 );
             }
-            if invocation.stdout.as_ref().is_some_and(|s| s.text.is_none())
-                || invocation.stderr.as_ref().is_some_and(|s| s.text.is_none())
-            {
-                return Some("captured text exceeded the per-stream retention budget".to_string());
+            for (stream, captured) in [
+                ("stdout", invocation.stdout.as_ref()),
+                ("stderr", invocation.stderr.as_ref()),
+            ] {
+                if let Some(captured) = captured.filter(|captured| captured.text.is_none()) {
+                    let cause = if captured.bytes > MAX_STREAM_BYTES {
+                        format!("per-stream limit {MAX_STREAM_BYTES} bytes")
+                    } else {
+                        format!("aggregate run limit {MAX_RUN_TEXT_BYTES} bytes")
+                    };
+                    return Some(format!(
+                        "captured text omitted for {} {stream} ({} bytes): {cause}",
+                        invocation.package, captured.bytes
+                    ));
+                }
             }
         }
         if !invocation_packages.contains("@preflight")
@@ -835,6 +846,106 @@ mod tests {
         assert_eq!(capture.text, None);
         assert_eq!(capture.bytes, text.len());
         assert_eq!(capture.sha256, digest(text.as_bytes()));
+    }
+
+    #[test]
+    fn observed_native_stream_sizes_fit_without_omitting_text() -> Result<(), String> {
+        // Byte counts from hosted run 43428466597, not a replay of its omitted
+        // text or a new solver result. Both values exceeded the former cap.
+        let mut report = Report::new("synthetic-retention-size-control".to_string());
+        ready(&mut report, true)?;
+        for (package, bytes) in [("ripr", 14_616_478), ("ripr-contract", 4_198_103)] {
+            let text = "x".repeat(bytes);
+            report.capture(
+                InvocationContext {
+                    package,
+                    argv: &[],
+                    budget: None,
+                    elapsed: Duration::ZERO,
+                    harnesses: &[],
+                },
+                CaptureOutcome {
+                    exit_code: Some(0),
+                    exit_success: Some(true),
+                    timed_out: false,
+                    stdout: Some(&text),
+                    stderr: Some(""),
+                    error: None,
+                },
+            );
+            let captured = report
+                .invocations
+                .last()
+                .and_then(|i| i.stdout.as_ref())
+                .ok_or_else(|| "missing captured stream".to_string())?;
+            assert_eq!(captured.text.as_deref(), Some(text.as_str()));
+            assert_eq!(captured.bytes, bytes);
+            assert_eq!(captured.sha256, digest(text.as_bytes()));
+        }
+        assert_eq!(report.evidence_problem(), None);
+        assert_eq!(report.registered_claims, 0);
+        assert_eq!(report.claim_assurance, "not_established");
+        Ok(())
+    }
+
+    #[test]
+    fn retention_refusal_distinguishes_stream_and_run_budgets() -> Result<(), String> {
+        for (stdout_bytes, stderr_bytes, expected_stream, expected_cause) in [
+            (MAX_STREAM_BYTES + 1, 0, "stdout", "per-stream"),
+            (0, MAX_STREAM_BYTES + 1, "stderr", "per-stream"),
+            (
+                MAX_STREAM_BYTES,
+                MAX_STREAM_BYTES,
+                "stdout",
+                "aggregate run",
+            ),
+        ] {
+            let mut report = selected("proof")?;
+            let output = good_output("proof");
+            let stdout = "x".repeat(stdout_bytes);
+            let stderr = "y".repeat(stderr_bytes);
+            report.capture(
+                InvocationContext {
+                    package: "ripr",
+                    argv: &[],
+                    budget: None,
+                    elapsed: Duration::ZERO,
+                    harnesses: &[harness("proof")],
+                },
+                CaptureOutcome {
+                    exit_code: Some(0),
+                    exit_success: Some(true),
+                    timed_out: false,
+                    stdout: Some(&stdout),
+                    stderr: Some(&stderr),
+                    error: None,
+                },
+            );
+            report.rows(
+                "ripr",
+                &super::super::results_from_output(&[harness("proof")], &output),
+            );
+            let expected_bytes = if expected_stream == "stdout" {
+                stdout_bytes
+            } else {
+                stderr_bytes
+            };
+            let expected_limit = if expected_cause == "per-stream" {
+                MAX_STREAM_BYTES
+            } else {
+                MAX_RUN_TEXT_BYTES
+            };
+            let expected = format!(
+                "captured text omitted for ripr {expected_stream} ({expected_bytes} bytes): {expected_cause} limit {expected_limit} bytes"
+            );
+            assert_eq!(report.evidence_problem(), Some(expected));
+            assert!(report.finish(Ok(())).is_err());
+            assert!(!report.lane_success);
+            assert_eq!(report.results.len(), 1);
+            assert_eq!(report.registered_claims, 0);
+            assert_eq!(report.claim_assurance, "not_established");
+        }
+        Ok(())
     }
 
     #[test]

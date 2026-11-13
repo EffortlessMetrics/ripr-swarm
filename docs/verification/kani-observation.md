@@ -109,11 +109,32 @@ for every local run.
 
 ## Resource and custody limits
 
-Captured-text retention is capped at 4 MiB per stream and 8 MiB per run. A larger
+Captured-text retention is capped at 16 MiB per stream and 32 MiB per run. A larger
 stream retains its byte count/hash, omits the text and refuses a clean evidence
 result. These are retention bounds, not bounds on the existing subprocess
 capture's allocation, source scan or total runtime. Native block metadata and
 JSON escaping have their own overhead. No peak-memory saving is claimed.
+
+The original 4 MiB/8 MiB envelope did not fit the actual pinned-provider output
+in hosted run 43428466597: the `ripr` and `ripr-contract` stdout observations were
+14,616,478 and 4,198,103 UTF-8 bytes. Both were omitted, and that historical run
+remains NOT-ESTABLISHED. The larger bounded envelope retains the same inline
+text/length/hash shape and refusal law; it does not restore historical bytes,
+change native verdicts or confer assurance. Tests use those byte counts with
+synthetic text, not a fabricated provider replay.
+
+Capacity qualification must account for all immutable checkpoints and aliases,
+not only the final compressed artifact. JSON escaping can expand retained text
+by up to six times: the 32 MiB retained-text budget alone can contribute up to
+192 MiB per JSON document, before metadata, Markdown and source observations.
+The observed two-package run published checkpoints 0 through 5 plus the alias;
+that shape can therefore contribute up to 1,344 MiB of escaped captured text on
+disk. Other invocation shapes must use their actual checkpoint count. This is
+an arithmetic component bound, not a measured whole-process memory/disk bound:
+DTO cloning, serialization, round-trip parsing, native metadata and the existing
+subprocess capture all remain additional costs. Over-limit capture still omits
+text and refuses success, with package/stream/byte/limit diagnostics identifying
+whether the per-stream or aggregate retention budget was exhausted.
 
 Selected proof-source observations are bounded to 8 MiB per file and 64 MiB total;
 rechecks use bounded reads and reject non-regular final paths. The original
