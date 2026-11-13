@@ -3669,6 +3669,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_dire
     owner_names
 }
 
+#[cfg(test)]
+thread_local! {
+    static QUALIFIED_HELPER_CLEAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qualified_calls(
     calls: &[CallFact],
     qualified_helpers: &QualifiedHelperModules<'_>,
@@ -3676,6 +3681,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
 ) -> BTreeSet<String> {
     let mut owner_names = BTreeSet::new();
     for call in calls {
+        // The indexed name is required by every qualified and aliased match.
+        // Check it before cleaning, but still clean candidate text before
+        // testing its syntax: removing quoted text can change its spelling.
+        if !qualified_helpers.by_name.contains_key(call.name.as_str()) {
+            continue;
+        }
+        #[cfg(test)]
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(count.get() + 1));
         let cleaned = strip_comments_and_strings(&call.text);
         for &(module_path, helper_owner_names) in qualified_helpers.candidates(&cleaned, &call.name)
         {
@@ -3994,6 +4007,31 @@ mod tests {
             scoped_names,
             Some(&production_names),
         ));
+    }
+
+    #[test]
+    fn qualified_helper_skips_cleaning_for_names_without_candidates() {
+        let modules = BTreeMap::from([(
+            "pkg::helpers".to_string(),
+            BTreeMap::from([("target".to_string(), BTreeSet::from(["owner".to_string()]))]),
+        )]);
+        let inverted = QualifiedHelperModules::new(&modules);
+        let calls = [
+            ("absent", "pkg::helpers::absent()"),
+            ("absent", r#"absent("pkg::helpers::target()")"#),
+            ("target", "pkg::helpers::target()"),
+            ("target", r#"target("pkg::helpers::target()")"#),
+        ]
+        .map(|(name, text)| CallFact {
+            line: 2,
+            name: name.to_string(),
+            text: text.to_string().into(),
+        });
+        QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.set(0));
+        let actual = helper_owner_call_names_from_qualified_calls(&calls, &inverted, None);
+        let cleaned = QUALIFIED_HELPER_CLEAN_COUNT.with(|count| count.get());
+        assert_eq!(actual, BTreeSet::from(["owner".to_string()]));
+        assert_eq!(cleaned, 2, "only candidate names need lexical cleaning");
     }
 
     #[test]
