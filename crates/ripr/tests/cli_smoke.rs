@@ -11893,6 +11893,12 @@ fn agent_repair_seam_selection_names_start_command_and_found_ids()
             "found-many must name the id {attempt}:\n{stderr}"
         );
     }
+    // In id order, not directory-listing order, so the refusal is the same
+    // bytes on every filesystem.
+    assert!(
+        stderr.contains(&format!("found 2: {}; pass", attempts.join(", "))),
+        "found-many must list the ids in sorted order {attempts:?}:\n{stderr}"
+    );
     assert!(
         stderr.contains("pass --attempt <id> to select the prepared work exactly"),
         "found-many must name the selection flag:\n{stderr}"

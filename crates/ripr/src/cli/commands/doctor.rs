@@ -1983,31 +1983,52 @@ fn count_files(root: &Path, ext: &str) -> usize {
 }
 
 /// Detect the Perl test framework from .t files (shallow scan).
+///
+/// The answer depends only on what the `t/*.t` files say, never on the order
+/// the directory lists them (#14103): `read_dir` order is filesystem-defined,
+/// so "the first file that names a framework" reported `Test2::V0` on one
+/// checkout and `Test::More` on another for the same mixed suite.
 fn detect_perl_framework(root: &Path) -> &'static str {
     let t_dir = root.join("t");
     let Ok(entries) = std::fs::read_dir(&t_dir) else {
         return "not detected (no t/ directory)";
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "t")
-            && let Ok(content) = std::fs::read_to_string(&path)
+    let sources = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "t"))
+        .filter_map(|path| std::fs::read_to_string(path).ok());
+    perl_framework_in(sources).unwrap_or("not detected")
+}
+
+/// Framework markers in the order doctor prefers them. One file naming two
+/// of them has always answered with the earlier one; the same order now
+/// decides between files too.
+const PERL_FRAMEWORK_MARKERS: [(&str, &str); 4] = [
+    ("use Test2::V0", "Test2::V0"),
+    ("use Test::More", "Test::More"),
+    ("use Test::Exception", "Test::Exception"),
+    ("use Test::Fatal", "Test::Fatal"),
+];
+
+/// The most preferred framework any of `sources` names, whatever order they
+/// arrive in.
+fn perl_framework_in<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Option<&'static str> {
+    let mut best: Option<usize> = None;
+    for source in sources {
+        let source = source.as_ref();
+        let limit = best.unwrap_or(PERL_FRAMEWORK_MARKERS.len());
+        if let Some(rank) = PERL_FRAMEWORK_MARKERS[..limit]
+            .iter()
+            .position(|(marker, _)| source.contains(marker))
         {
-            if content.contains("use Test2::V0") {
-                return "Test2::V0";
-            }
-            if content.contains("use Test::More") {
-                return "Test::More";
-            }
-            if content.contains("use Test::Exception") {
-                return "Test::Exception";
-            }
-            if content.contains("use Test::Fatal") {
-                return "Test::Fatal";
+            best = Some(rank);
+            if rank == 0 {
+                break;
             }
         }
     }
-    "not detected"
+    best.map(|rank| PERL_FRAMEWORK_MARKERS[rank].1)
 }
 
 /// Perl test runners doctor may name. Availability is PATH-only (#5103).
@@ -7110,6 +7131,75 @@ mod tests {
             assert_eq!(detect_languages(&root), expected, "{name}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn perl_framework_ignores_the_order_test_files_are_listed() -> Result<(), String> {
+        // #14103: `read_dir` order is filesystem-defined. A mixed suite must
+        // name one framework whichever file is read first.
+        let more = "use Test::More;\nok(1);\ndone_testing;\n";
+        let v0 = "use Test2::V0;\nok(1);\ndone_testing;\n";
+        let fatal = "use Test::Fatal;\n";
+        let exception = "use Test::Exception;\n";
+        let plain = "print qq(ok 1\\n);\n";
+
+        // Fixture: each source alone names exactly its own framework, so the
+        // mixed answers below come from combining them, not from one file.
+        assert_eq!(perl_framework_in([more]), Some("Test::More"));
+        assert_eq!(perl_framework_in([v0]), Some("Test2::V0"));
+        assert_eq!(perl_framework_in([fatal]), Some("Test::Fatal"));
+        assert_eq!(perl_framework_in([exception]), Some("Test::Exception"));
+        assert_eq!(perl_framework_in([plain]), None);
+        assert_eq!(perl_framework_in(Vec::<&str>::new()), None);
+
+        let mixed: [(&[&str], &str); 4] = [
+            (&[more, v0], "Test2::V0"),
+            (&[fatal, more, plain], "Test::More"),
+            (&[fatal, exception], "Test::Exception"),
+            (&[plain, fatal, exception, more, v0], "Test2::V0"),
+        ];
+        for (sources, expected) in mixed {
+            // Every rotation and its reverse: each source takes each position.
+            for start in 0..sources.len() {
+                let mut order = sources.to_vec();
+                order.rotate_left(start);
+                assert_eq!(perl_framework_in(&order), Some(expected), "{order:?}");
+                order.reverse();
+                assert_eq!(perl_framework_in(&order), Some(expected), "{order:?}");
+            }
+        }
+
+        // Through the directory read, in both creation orders. A filesystem
+        // that lists in creation order (tmpfs) reported two answers here.
+        let mut answers = Vec::new();
+        for (name, files) in [
+            ("more-first", [("more.t", more), ("v0.t", v0)]),
+            ("v0-first", [("v0.t", v0), ("more.t", more)]),
+        ] {
+            let root = unique_command_test_dir(&format!("perl-framework-order-{name}"));
+            let t_dir = root.join("t");
+            std::fs::create_dir_all(&t_dir).map_err(|err| format!("mkdir: {err}"))?;
+            for (file, source) in files {
+                std::fs::write(t_dir.join(file), source)
+                    .map_err(|err| format!("write {file}: {err}"))?;
+            }
+            answers.push(detect_perl_framework(&root));
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        assert_eq!(answers, ["Test2::V0", "Test2::V0"]);
+
+        // The two not-detected spellings keep their meaning.
+        let root = unique_command_test_dir("perl-framework-order-none");
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        assert_eq!(
+            detect_perl_framework(&root),
+            "not detected (no t/ directory)"
+        );
+        std::fs::create_dir_all(root.join("t")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(root.join("t/plain.t"), plain).map_err(|err| format!("write: {err}"))?;
+        assert_eq!(detect_perl_framework(&root), "not detected");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 
