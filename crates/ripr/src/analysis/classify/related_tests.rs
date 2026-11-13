@@ -2067,19 +2067,23 @@ fn type_path_call_admits_owner(
                     dependency_name,
                     self_type,
                 ))
-    }) || (imported_type_call
-        && type_reexported_from_owner_dependency(
+    }) || (imported_type_call && {
+        // File-fact lookups return an owned view. Retain its shared source
+        // after the view is released instead of returning a borrow from it.
+        let test_source = context
+            .index
+            .files()
+            .get(&test.file)
+            .map(|facts| std::sync::Arc::clone(&facts.source));
+        type_reexported_from_owner_dependency(
             context,
             reexport,
             file_level_imports,
             stripped_file,
-            context
-                .index
-                .files()
-                .get(&test.file)
-                .map_or(test.body.as_ref(), |facts| facts.source.as_ref()),
+            test_source.as_deref().unwrap_or(test.body.as_ref()),
             self_type,
-        ));
+        )
+    });
     spelled_through_dependency
         && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
 }
