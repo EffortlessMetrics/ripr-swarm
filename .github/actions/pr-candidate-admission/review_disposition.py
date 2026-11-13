@@ -91,6 +91,11 @@ NEGATION = re.compile(
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\bstatus:[ \t]*(?:blocked|not[ \t]+ready|incomplete|rejected)\b|\breview[ \t]+incomplete\b"
+    # #14592: the review convention's verdict line. "VERDICT: BLOCK <sha>" after a
+    # ready marker is a blocker, though no state token carries the REVIEW_ prefix.
+    r"|\bverdict[ \t*_`]*:[ \t*_`]*(?:block(?:ed|s|ing)?|reject(?:ed|s)?|nack"
+    r"|request(?:ed|s)?[ \t_-]*changes|changes[ \t_-]*requested|repairs?[ \t_-]*required"
+    r"|fail(?:ed|s)?|not[ \t_-]*ready|no[ \t_-]*go|hold)\b"
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -662,6 +667,17 @@ def self_test() -> None:
         ("REVIEW_READY\nDo not merge", False),
         ("REVIEW_READY\nI take it back", False),
         ("REVIEW_READY\nThe change is blocked on CI", False),
+        # #14592: a verdict line that blocks refuses whatever marker precedes it.
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCKED 1cc13d3d", False),
+        ("REVIEW_READY\n\n**Verdict:** block \u2014 two findings remain", False),
+        ("REVIEW_READY\n- Verdict: request changes", False),
+        ("REVIEW_READY\nVERDICT: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\nVerdict: not ready", False),
+        ("REVIEW_READY\n```\nverdict: blocked\n```", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("REVIEW_READY\nVerdict: no blocking findings on this head.", True),
+        ("REVIEW_READY\nThe verdict on the earlier block was reversed; the fix landed.", True),
         ("REVIEW_READY \u2014 no findings", False),
         ("REVIEW_READY for the candidate, but repairs required", False),
         ("SOURCE_REVIEW_READY, but repairs required", False),

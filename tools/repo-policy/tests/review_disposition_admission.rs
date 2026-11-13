@@ -1006,3 +1006,57 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         "negative then neutral reply without a description line",
     )
 }
+
+/// #14592: the review convention's verdict line. A ready marker followed by
+/// `VERDICT: BLOCK <sha>` refuses through the real CLI, whether the body is the
+/// full recorded review of #13896 or the two-line minimum; `VERDICT: APPROVE`
+/// after the same marker still admits.
+#[test]
+fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_verdicts/refuse-pr13896-5892179853.md");
+    let recorded =
+        std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !recorded.starts_with("SOURCE_REVIEW_READY\nVERDICT: BLOCK ") {
+        return Err("fixture setup: recorded body lost its marker and verdict lines".into());
+    }
+    let cases = [
+        (
+            recorded.as_str(),
+            false,
+            "recorded #13896 review 5892179853",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3d",
+            false,
+            "bare BLOCK",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKED 1cc13d3d",
+            false,
+            "bare BLOCKED",
+        ),
+        (
+            "REVIEW_READY\n\n**Verdict:** block",
+            false,
+            "emphasised verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve verdict",
+        ),
+        (
+            "REVIEW_READY\nVerdict: no blocking findings on this head.",
+            true,
+            "no blocking findings",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
