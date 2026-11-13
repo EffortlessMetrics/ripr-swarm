@@ -31,6 +31,7 @@ Every critical claim records:
 
 | Field | Required meaning |
 | --- | --- |
+| `schema` | Exact `ripr.formal-claim.v1` serialization contract |
 | `claim_id` | Stable descriptive identifier; never a bare function name |
 | `claim_generation` | Positive integer for decision-bearing revisions |
 | `family` | Bounded model checking, deductive proof, state-machine model, etc. |
@@ -46,7 +47,7 @@ Every critical claim records:
 | `trust_dependencies` | Stubs, axioms, external bodies, admitted libraries |
 | `observable` | Return, state, effect, ordering, reachability, or invariant |
 | `bounds` | Unwind, state, schedule, width, depth, or campaign limits |
-| `harnesses_or_models` | Exact registered implementation locators |
+| `subjects` | Exact registered implementation locators |
 | `required_covers` | Non-vacuity/reachability obligations |
 | `negative_controls` | Deliberately wrong implementation or model controls |
 | `result_satisfaction` | Native statuses required to establish the claim |

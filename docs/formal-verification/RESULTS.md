@@ -7,6 +7,23 @@ registered claim satisfaction, source applicability, and trust separately.
 The draft schema is
 [`schema/native-proof-run-v1.schema.json`](schema/native-proof-run-v1.schema.json).
 
+## Mandatory semantic admission
+
+Schema validation checks structure; it is necessary but insufficient for claim
+admission. A semantic validator must also compare claim generation, subject,
+source/provider/configuration identity, exact selected inventory and cover
+counts. An `ESTABLISHED` row requires `covers.satisfied == covers.required`;
+`covers.unreachable == 0` alone is insufficient. For example, two required
+covers with zero satisfied and zero unreachable must be rejected even though
+that record is structurally valid JSON Schema.
+
+[PR #14478](https://github.com/EffortlessMetrics/ripr-swarm/pull/14478) owns the
+existing offline semantic auditor and its incomplete-cover negative control.
+#14472 must reuse that admission law in the native producer. The documentation
+and draft schemas here do not provide a runtime admission implementation.
+Even a successful semantic audit establishes document consistency only; it
+does not authenticate execution or establish source currentness by itself.
+
 ## Run identity
 
 A native run binds at least:
@@ -59,12 +76,19 @@ All of the following hold:
 
 - exact current claim generation;
 - exact current source closure and provider/configuration identity;
-- complete expected inventory;
-- normal native process completion;
+- exact expected claim-to-subject mapping;
+- a complete successful native proof block for that subject;
 - provider reports the required successful outcome;
 - all required covers are reachable;
 - no ambiguity, duplicate, stale input, unsupported status, or result-parser
   mismatch.
+
+This is a per-row law. Successful run admission additionally requires complete
+expected inventory and normal, zero-exit aggregate process completion. A
+completed positive row may remain visible after a later process failure or
+timeout, but it cannot qualify that failed or incomplete run. Consumers must
+check the aggregate law rather than treating one `ESTABLISHED` row as a green
+run.
 
 ### `FAILED`
 
