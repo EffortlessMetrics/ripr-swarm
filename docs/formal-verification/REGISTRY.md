@@ -131,8 +131,16 @@ Each existing Kani harness calls production code and declares reachability.
 Their registry-only status remains `NOT_ESTABLISHED`; harness presence and old
 Kani runs are not rebound to this generation.
 
-The gate and repair claims now include their production domain definitions;
-their generations and the registry generation increase to 2.
+Generation 2 added the production domain definitions to the gate and repair
+claims and increased both claim generations to 2.
+
+Generation 3 increases the currentness claim to generation 2. Its required
+covers now name all four `SourceCurrentness` constructors and both existing
+semantic predicates. The unchanged harness emits all six native properties;
+each obligation must map to a distinct property. The proposition, source
+domain, bounds, subject, and the other four claim generations are unchanged.
+Earlier native receipts remain bound to their original claim and registry
+generations. This declaration does not establish a native result.
 
 ## Qualification
 
