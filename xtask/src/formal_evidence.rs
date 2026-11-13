@@ -931,6 +931,12 @@ mod tests {
             .ok_or_else(|| "missing test row".to_string())
     }
 
+    fn rejection<T>(result: AuditResult<T>) -> AuditResult<String> {
+        result.err().ok_or_else(|| {
+            "expected a diagnostic refusal, but supplied evidence was accepted".to_string()
+        })
+    }
+
     #[test]
     fn consistent_documents_never_become_native_assurance() -> AuditResult<()> {
         let (claim, run) = fixtures()?;
@@ -946,11 +952,11 @@ mod tests {
         let (claim, _) = fixtures()?;
         let encoded = serde_json::to_string(&claim).map_err(|e| e.to_string())?;
         let duplicate = encoded.replacen("{", "{\"claim_generation\":1,", 1);
-        assert!(parse_json::<Claim>(duplicate.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(duplicate.as_bytes()))?.is_empty());
         let unknown = encoded.replacen("{", "{\"native_status\":\"VERIFIED\",", 1);
-        assert!(parse_json::<Claim>(unknown.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(unknown.as_bytes()))?.is_empty());
         let bad_family = encoded.replace("bounded_model_check", "optimistic_proof");
-        assert!(parse_json::<Claim>(bad_family.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(bad_family.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -967,7 +973,7 @@ mod tests {
         let unknown = String::from_utf8(encoded)
             .map_err(|e| e.to_string())?
             .replace("admitted_merge_group", "implicit_push_qualification");
-        assert!(parse_json::<Claim>(unknown.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(unknown.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -1001,10 +1007,14 @@ mod tests {
             .insert("unwind".to_string(), BoundValue::Number(0.into()));
         mutations.push(c);
         for c in mutations {
-            assert!(validate_claim(&c).is_err(), "accepted {}", c.claim_id);
+            assert!(
+                !rejection(validate_claim(&c))?.is_empty(),
+                "accepted {}",
+                c.claim_id
+            );
         }
-        assert!(audit(&[], None).is_err());
-        assert!(audit(&[claim.clone(), claim], None).is_err());
+        assert!(!rejection(audit(&[], None))?.is_empty());
+        assert!(!rejection(audit(&[claim.clone(), claim], None))?.is_empty());
         Ok(())
     }
 
@@ -1040,7 +1050,7 @@ mod tests {
         row(&mut r)?.duration_ms = None;
         mutations.push(r);
         for r in mutations {
-            assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+            assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         }
         Ok(())
     }
@@ -1050,19 +1060,19 @@ mod tests {
         let (claim, run) = fixtures()?;
         let mut r = run.clone();
         row(&mut r)?.claim_generation = 2;
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         row(&mut r)?.subject = "other::same_name".to_string();
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         r.results.extend(run.results.clone());
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         r.results.clear();
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run;
         r.provider.name = "lookalike".to_string();
-        assert!(audit(&[claim], Some(&r)).is_err());
+        assert!(!rejection(audit(&[claim], Some(&r)))?.is_empty());
         Ok(())
     }
 
@@ -1140,7 +1150,7 @@ mod tests {
         mutations.push(candidate);
         for candidate in mutations {
             assert!(
-                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                !rejection(audit(std::slice::from_ref(&claim), Some(&candidate)))?.is_empty(),
                 "not-started row accepted native observations"
             );
         }
@@ -1164,11 +1174,11 @@ mod tests {
         let (claim, mut run) = fixtures()?;
         row(&mut run)?.native_verdict = Verdict::Timeout;
         row(&mut run)?.status = Status::Failed;
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         row(&mut run)?.status = Status::NotEstablished;
         audit(std::slice::from_ref(&claim), Some(&run))?;
         run.process.timed_out = true;
-        assert!(audit(&[claim], Some(&run)).is_err());
+        assert!(!rejection(audit(&[claim], Some(&run)))?.is_empty());
         Ok(())
     }
 
@@ -1219,13 +1229,13 @@ mod tests {
                 .ok_or("missing row")?
                 .native_verdict;
             assert!(
-                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                !rejection(audit(std::slice::from_ref(&claim), Some(&candidate)))?.is_empty(),
                 "accepted contradictory failed row: {verdict:?}"
             );
         }
         row(&mut failed)?.native_verdict = Verdict::UnreachableCover;
         assert!(
-            audit(std::slice::from_ref(&claim), Some(&failed)).is_err(),
+            !rejection(audit(std::slice::from_ref(&claim), Some(&failed)))?.is_empty(),
             "accepted unreachable verdict with zero unreachable covers"
         );
         row(&mut failed)?.covers.satisfied = 1;
@@ -1233,7 +1243,7 @@ mod tests {
         audit(std::slice::from_ref(&claim), Some(&failed))?;
         row(&mut failed)?.covers.required = 3;
         assert!(
-            audit(&[claim], Some(&failed)).is_err(),
+            !rejection(audit(&[claim], Some(&failed)))?.is_empty(),
             "accepted different required-cover inventory"
         );
         Ok(())
@@ -1258,7 +1268,7 @@ mod tests {
         let (claim, run) = fixtures()?;
         let encoded = serde_json::to_string(&claim).map_err(|e| e.to_string())?;
         let duplicate = encoded.replace("\"bounds\":{", "\"bounds\":{\"selection\":\"shadow\",");
-        assert!(parse_json::<Claim>(duplicate.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(duplicate.as_bytes()))?.is_empty());
         let mut value = serde_json::to_value(run).map_err(|e| e.to_string())?;
         value
             .get_mut("process")
@@ -1266,9 +1276,9 @@ mod tests {
             .ok_or("missing process")?
             .remove("exit_code");
         let missing = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-        assert!(parse_json::<Run>(&missing).is_err());
+        assert!(!rejection(parse_json::<Run>(&missing))?.is_empty());
         let trailing = format!("{encoded} {{}}");
-        assert!(parse_json::<Claim>(trailing.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(trailing.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -1278,7 +1288,7 @@ mod tests {
         run.inventory
             .discovered_subjects
             .push("unmapped::proof".to_string());
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         run.inventory.complete = false;
         run.inventory
             .rejection_reasons
@@ -1302,7 +1312,7 @@ mod tests {
         missing.covers.satisfied = 0;
         run.results.push(missing);
         assert!(
-            audit(std::slice::from_ref(&claim), Some(&run)).is_err(),
+            !rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty(),
             "placeholder row hid incomplete native discovery"
         );
         run.inventory.complete = false;
@@ -1388,7 +1398,7 @@ mod tests {
         for invalid in [None, Some(native::sha256(b"wrong"))] {
             let mut changed = run.clone();
             changed.results[0].assumptions_digest = invalid;
-            assert!(audit(std::slice::from_ref(&claim), Some(&changed)).is_err());
+            assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&changed)))?.is_empty());
         }
         claim.assumptions = vec!["A".to_string(), "B".to_string()];
         // Independent SHA-256 of the exact bytes ["A","B"], not the helper
@@ -1398,7 +1408,7 @@ mod tests {
         );
         audit(std::slice::from_ref(&claim), Some(&run))?;
         claim.assumptions.reverse();
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         claim.assumptions.clear();
         run.results[0].assumptions_digest = Some(assumptions_digest(&claim.assumptions)?);
         assert_eq!(
@@ -1410,7 +1420,7 @@ mod tests {
         run.results[0].native_verdict = Verdict::Counterexample;
         run.process.state = ProcessState::Failed;
         run.process.exit_code = Some(10);
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         run.results[0]
             .reasons
             .push("observed synthetic counterexample".to_string());
@@ -1424,7 +1434,7 @@ mod tests {
         claim.provider = "tlc".to_string();
         claim.family = Family::StateMachineModel;
         claim.required_covers.clear();
-        assert!(validate_claim(&claim).is_err());
+        assert!(!rejection(validate_claim(&claim))?.is_empty());
         claim
             .required_covers
             .push("finite terminal-state reachability".to_string());

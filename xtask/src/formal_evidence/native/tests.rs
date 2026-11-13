@@ -1,6 +1,12 @@
 use super::*;
 use crate::formal_evidence::{audit, parse_json};
 
+fn refusal<T>(result: AuditResult<T>, expected: &str) -> AuditResult<()> {
+    let reason = result.err().ok_or("expected a diagnostic refusal")?;
+    assert!(reason.contains(expected), "{reason}");
+    Ok(())
+}
+
 fn complete_document() -> AuditResult<Run> {
     let mut value: serde_json::Value = parse_json(include_bytes!(
         "../../../../docs/formal-verification/examples/native-proof-run.example.json"
@@ -104,22 +110,22 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
     ] {
         let mut run = valid.clone();
         run.unregistered_results[0].native_verdict = verdict;
-        assert!(audit(&[], Some(&run)).is_err());
+        refusal(audit(&[], Some(&run)), "native observation status")?;
     }
     let mut run = valid.clone();
     run.unregistered_results[0].subject.source_digest =
         sha256(b"another source with the same native name");
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "observation identity or source")?;
     let mut run = valid.clone();
     run.unregistered_results[0].properties.clear();
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "native cover projection differs")?;
     let mut run = valid.clone();
     run.execution
         .as_mut()
         .ok_or("execution absent")?
         .lane_success = false;
     run.unregistered_results[0].status = ObservationStatus::Failed;
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "native observation status")?;
     for verdict in [
         super::super::Verdict::Counterexample,
         super::super::Verdict::UnreachableCover,
@@ -131,7 +137,7 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
             .lane_success = false;
         run.unregistered_results[0].status = ObservationStatus::Failed;
         run.unregistered_results[0].native_verdict = verdict.clone();
-        assert!(audit(&[], Some(&run)).is_err());
+        refusal(audit(&[], Some(&run)), "native observation status")?;
         if verdict == super::super::Verdict::Counterexample {
             run.unregistered_results[0].properties.push(NativeProperty {
                 name: "m::proof.assertion.1".into(),
@@ -145,7 +151,7 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
                 .last_mut()
                 .ok_or("failure absent")?
                 .name = "m::proof.unwind.1".into();
-            assert!(audit(&[], Some(&run)).is_err());
+            refusal(audit(&[], Some(&run)), "native observation status")?;
         } else {
             run.unregistered_results[0].cover_properties[0].status = "UNREACHABLE".into();
             run.unregistered_results[0].properties[0].status = "UNREACHABLE".into();
@@ -163,12 +169,21 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
 #[test]
 fn source_manifest_rejects_duplicate_and_escaping_paths() -> AuditResult<()> {
     let digest = sha256(b"source");
-    for text in [
-        format!("{{\"a.rs\":\"{digest}\",\"a.rs\":\"{digest}\"}}"),
-        format!("{{\"../a.rs\":\"{digest}\"}}"),
-        format!("{{\"C:/a.rs\":\"{digest}\"}}"),
+    for (text, expected) in [
+        (
+            format!("{{\"a.rs\":\"{digest}\",\"a.rs\":\"{digest}\"}}"),
+            "duplicate JSON key",
+        ),
+        (
+            format!("{{\"../a.rs\":\"{digest}\"}}"),
+            "artifact path must remain relative",
+        ),
+        (
+            format!("{{\"C:/a.rs\":\"{digest}\"}}"),
+            "artifact path must remain relative",
+        ),
     ] {
-        assert!(parse_source_manifest(text.as_bytes()).is_err());
+        refusal(parse_source_manifest(text.as_bytes()), expected)?;
     }
     let manifest = SourceManifest::from([("src/a.rs".to_string(), digest)]);
     assert_eq!(
