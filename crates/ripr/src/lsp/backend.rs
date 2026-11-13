@@ -9,8 +9,9 @@
 use super::AnalysisStatusNotification;
 use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
-    ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
-    root_from_initialize_params, workspace_folder_set_from_initialize_params,
+    ConfigurationMode, PullDiagnosticAdvertisement, WorkspaceRootResolution,
+    initialize_result_for_client, root_from_initialize_params,
+    workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
@@ -6780,7 +6781,10 @@ impl LanguageServer for Backend {
             .await;
         }
         Ok(initialize_result_for_client(
-            supports_pull_diagnostics,
+            PullDiagnosticAdvertisement::for_client(
+                supports_pull_diagnostics,
+                profile.ripr_editor.is_some(),
+            ),
             position_encoding,
         ))
     }
