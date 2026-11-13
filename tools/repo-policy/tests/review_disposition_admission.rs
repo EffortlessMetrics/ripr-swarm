@@ -1006,3 +1006,80 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         "negative then neutral reply without a description line",
     )
 }
+
+/// #8157: reports of a deliberately broken predecessor are not current failures.
+#[test]
+fn historical_test_failure_keeps_current_objections() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let body = include_str!("fixtures/historical-test-failure-review.md");
+    let cases = [
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard, as this patch does, ensures the test fails rather than passing vacuously.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard in this PR ensures the test fails rather than passing vacuously.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously?",
+            false,
+        ),
+        (body, true),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails rather than passing vacuously on this candidate. Fix it.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails before the repair; the current test fails too.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously. This is not ready.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard does not ensure the test fails rather than passing vacuously.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously. That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes. That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes, except one test fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously.\ndisposition: REPAIR_REQUIRED",
+            false,
+        ),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-11-13T00:00:00Z",
+            body
+        )]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}

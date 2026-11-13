@@ -259,14 +259,62 @@ def strip_negated_change(line: str) -> str:
     return NEGATED_CHANGE.sub(replace, line)
 
 
+# Narrow prose forms for an intentionally adverse test subject (#8157). Only
+# the failure token is removed: other blocker text in the sentence still counts.
+# A mutation witness must begin its sentence with Reverting, name the causal
+# relation, and end the failure phrase there; mere mention of a regression is
+# not enough. These are finite grammar controls, not semantic proof of prose.
+MUTATION_FAILURE = re.compile(
+    r"(?:^|[.!?][ \t]+)"
+    r"(?P<context>Reverting\b[^.!?;\n]*?)"
+    r"(?P<failure>\btests?[ \t]+fails?\b)[ \t]+rather[ \t]+than[ \t]+passing[ \t]+vacuously"
+    r"(?=[ \t]*(?:[.;]|$))",
+    re.IGNORECASE,
+)
+MUTATION_CAUSE = re.compile(r"\b(?:makes?|causes?|ensures?)\b", re.IGNORECASE)
+HISTORICAL_FAILURE = re.compile(
+    r"(?:^|[.!?][ \t]+)(?P<context>The[ \t]+)"
+    r"(?P<failure>test[ \t]+fails)[ \t]+before[ \t]+the[ \t]+repair;"
+    r"[ \t]+the[ \t]+repaired[ \t]+candidate[ \t]+passes"
+    r"(?=[ \t]*(?:[.;]|$))",
+    re.IGNORECASE,
+)
+# Do not exempt a negated causal statement or a subject switch to current work.
+FAILURE_CONTEXT_CONTRADICTION = re.compile(
+    r"\b(?:not|no|never|without|but|however|yet|whereas|although|current|candidate"
+    r"|this|patch|pr|head|main|master|branch|commit|submitted|proposed|here|our)\b"
+    r"|n['\u2019]t\b|\b(?:cannot|can't)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_historical_test_failure(line: str) -> str:
+    """Recognize two explicit adverse-subject forms; retain all other blockers."""
+    for pattern in (MUTATION_FAILURE, HISTORICAL_FAILURE):
+        def replace(match: re.Match[str]) -> str:
+            if (
+                (pattern is MUTATION_FAILURE and not MUTATION_CAUSE.search(match.group("context")))
+                or FAILURE_CONTEXT_CONTRADICTION.search(match.group("context"))
+                or REFUTATION_CUE.search(match.group("context"))
+                or REFUTATION_AFTER.search(line[match.end():])
+            ):
+                return match.group(0)
+            start = match.start("failure") - match.start()
+            end = match.end("failure") - match.start()
+            return match.group(0)[:start] + " " + match.group(0)[end:]
+
+        line = pattern.sub(replace, line)
+    return line
+
+
 def negation_hit(line: str) -> bool:
     """Whether ``line`` carries a blocker phrase outside a negated change phrase.
 
-    #14355: "no code change needed" is a resolved-work statement, not a blocker.
-    Only an unrefuted statement-position phrase is removed, so a genuine blocker
-    elsewhere on the same line still refuses.
+    #14355 excludes resolved change phrases; #8157 excludes two explicit
+    historical/mutation failure forms. Only the recognized tokens are removed,
+    so a genuine blocker elsewhere on the same line still refuses.
     """
-    return bool(NEGATION.search(strip_negated_change(line)))
+    return bool(NEGATION.search(strip_historical_test_failure(strip_negated_change(line))))
 
 
 def comment_body_ready(body: str) -> bool:
@@ -531,6 +579,21 @@ def self_test() -> None:
         ("REVIEW_READY\nnot ready; repairs are required", False),
         ("REVIEW_READY\nThis is no longer ready", False),
         ("REVIEW_READY\nRepairs are required before merge", False),
+        # #8157: historical/mutation evidence does not describe current failure.
+        ("SOURCE_REVIEW_READY\nReverting the guard, as this patch does, ensures the test fails rather than passing vacuously.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard in this PR ensures the test fails rather than passing vacuously.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously?", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously.", True),
+        ("SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes.", True),
+        ("SOURCE_REVIEW_READY\nThe test fails.", False),
+        ("SOURCE_REVIEW_READY\nThe test fails rather than passing vacuously on this candidate. Fix it.", False),
+        ("SOURCE_REVIEW_READY\nThe test fails before the repair; the current test fails too.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously. This is not ready.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard does not ensure the test fails rather than passing vacuously.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously. That is false.", False),
+        ("SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes. That is false.", False),
+        ("SOURCE_REVIEW_READY\nThe test fails before the repair; the repaired candidate passes, except one test fails.", False),
+        ("SOURCE_REVIEW_READY\nReverting the guard ensures the test fails rather than passing vacuously.\ndisposition: REPAIR_REQUIRED", False),
         # #14355: a negated change/repair phrase is resolved work, not a blocker.
         # "Resolved with no code change needed." admits only because the strip ran.
         ("REVIEW_READY\nResolved with no code change needed.", True),

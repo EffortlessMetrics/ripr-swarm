@@ -122,6 +122,16 @@ enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
 
+The historical-test-failure exception (#8157) recognizes two narrow forms: a
+sentence beginning `Reverting` with a causal `makes`/`causes`/`ensures` and ending
+`the test fails rather than passing vacuously`, and the explicit pair `The test
+fails before the repair; the repaired candidate passes.` Only the failure token
+is excluded; other blocker text, current-subject switches, negated causal claims
+and recognized immediate refutations still refuse. These finite prose forms do
+not establish that a mutation experiment ran or that a historical repair works.
+Unrecognized wording remains subject to the existing best-effort blocker scan;
+this is not a general natural-language interpreter or a new readiness carrier.
+
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
 instead (#4984). Put exactly one line at column zero, outside code fences and HTML
