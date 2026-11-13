@@ -25,6 +25,12 @@ pub(super) const GET_TOP_LIMITATION_TOOL_NAME: &str = "ripr_get_top_limitation";
 pub(super) const PREPARE_REPAIR_TOOL_NAME: &str = "ripr_prepare_repair";
 pub(super) const GET_REPAIR_ATTEMPT_TOOL_NAME: &str = "ripr_get_repair_attempt";
 pub(super) const GET_RECEIPT_STATUS_TOOL_NAME: &str = "ripr_get_receipt_status";
+/// One short line per argument the tools share. An argument with no
+/// description leaves the agent to guess: `snapshot_id` is best omitted (each
+/// tool description already names `stale_snapshot`), and a `canonical_id`
+/// only ever comes from the listing.
+const SNAPSHOT_ID_ARGUMENT: &str = "Omit for the current snapshot.";
+const CANONICAL_ID_ARGUMENT: &str = "From ripr_list_gaps.";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";
 pub(super) const SNAPSHOT_RESOURCE_TEMPLATE: &str = "ripr://snapshot/{snapshot_id}";
 pub(super) const GAP_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}";
@@ -851,7 +857,7 @@ fn refresh_tool_descriptor() -> Value {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256,
-                    "description": "Optional Git revision (branch, tag or commit) to diff against instead of the resolved default branch. Use it when the repository's default branch is not main or master, or when refresh fails with base_unresolvable. Omit it to use the default branch."
+                    "description": "Git revision (branch, tag or commit) to diff against. Omit for the default branch; set it when refresh fails with analysis_failed naming candidate branches."
                 },
                 "source": {
                     "type": "string",
@@ -884,7 +890,7 @@ fn list_gaps_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "snapshot_id": { "type": "string" },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT },
                 "offset": {
                     "type": "integer",
                     "minimum": 0,
@@ -893,7 +899,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "omitted_offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
+                    "description": "Start index within the omitted identities, which page on their own axis. Follow continuation.next_omitted_page. Default 0."
                 },
                 "independent_pages": {
                     "type": "boolean",
@@ -903,7 +909,7 @@ fn list_gaps_tool_descriptor() -> Value {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
-                    "description": "Maximum narrowed-item summaries to return in this page (the working-set bound; a larger value is refused as invalid_argument)."
+                    "description": "Maximum item summaries in this page; a larger value is refused as invalid_argument."
                 },
                 "file": {
                     "type": "string",
@@ -913,7 +919,13 @@ fn list_gaps_tool_descriptor() -> Value {
                 "class": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Narrow to one exposure-class wire token (for example `exposed` or `weakly_exposed`)."
+                    // The server refuses any other token (invalid_argument
+                    // naming this list), so advertise it up front.
+                    "enum": crate::domain::ExposureClass::ALL
+                        .iter()
+                        .map(crate::domain::ExposureClass::as_str)
+                        .collect::<Vec<_>>(),
+                    "description": "Narrow to one exposure class."
                 },
                 "language": {
                     "type": "string",
@@ -922,11 +934,11 @@ fn list_gaps_tool_descriptor() -> Value {
                         .iter()
                         .map(crate::domain::LanguageId::as_str)
                         .collect::<Vec<_>>(),
-                    "description": "Narrow to one language wire string (for example `rust` or `python`)."
+                    "description": "Narrow to one language."
                 },
                 "repair_ready": {
                     "type": "boolean",
-                    "description": "Narrow to repair-ready items (true) or not-ready items (false), using the commit-time readiness projection."
+                    "description": "Narrow to repair-ready (true) or not-ready (false) items."
                 }
             },
             "additionalProperties": false
@@ -949,8 +961,8 @@ fn get_gap_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -973,8 +985,8 @@ fn get_top_limitation_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -1043,8 +1055,8 @@ fn prepare_repair_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -1071,7 +1083,7 @@ fn get_repair_attempt_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "attempt_id": { "type": "string", "minLength": 1 }
+                "attempt_id": { "type": "string", "minLength": 1, "description": "From ripr_prepare_repair or ripr_list_repair_attempts." }
             },
             "required": ["attempt_id"],
             "additionalProperties": false
@@ -1094,7 +1106,7 @@ fn get_receipt_status_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "receipt_id": { "type": "string", "minLength": 1 }
+                "receipt_id": { "type": "string", "minLength": 1, "description": "The attempt_id whose receipt to read." }
             },
             "required": ["receipt_id"],
             "additionalProperties": false
@@ -1117,8 +1129,8 @@ fn get_repair_card_tool_descriptor() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "canonical_id": { "type": "string", "minLength": 1 },
-                "snapshot_id": { "type": "string" }
+                "canonical_id": { "type": "string", "minLength": 1, "description": CANONICAL_ID_ARGUMENT },
+                "snapshot_id": { "type": "string", "description": SNAPSHOT_ID_ARGUMENT }
             },
             "required": ["canonical_id"],
             "additionalProperties": false
@@ -3157,6 +3169,141 @@ mod tests {
         Ok(())
     }
 
+    /// Every argument of every published tool, with its description (or
+    /// `None`) and its tool's description, in listing order.
+    fn published_arguments(tools: &Value) -> Result<Vec<(String, Option<String>, String)>, String> {
+        let mut arguments = Vec::new();
+        for tool in tools["tools"].as_array().ok_or("tools/list lost tools")? {
+            let name = tool["name"].as_str().ok_or("unnamed tool")?;
+            let properties = tool
+                .pointer("/inputSchema/properties")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("{name} lost its inputSchema properties"))?;
+            for (argument, schema) in properties {
+                arguments.push((
+                    format!("{name}.{argument}"),
+                    schema
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    tool["description"].as_str().unwrap_or_default().to_string(),
+                ));
+            }
+        }
+        Ok(arguments)
+    }
+
+    /// #9360: an argument description is read before the first call, so it
+    /// must exist, and a failure code it names must be one the wire can
+    /// carry and its own tool's description names. `ripr_refresh.base` named `base_unresolvable`, a shared-check
+    /// identity this server always reports as `analysis_failed`.
+    fn check_argument_descriptions(tools: &Value) -> Result<usize, String> {
+        let vocabulary = failure_vocabulary();
+        let mut total = 0usize;
+        for (argument, description, tool_description) in published_arguments(tools)? {
+            let description = description
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format!("{argument} has no description"))?;
+            total += description.len();
+            for marker in ["fails with ", "refused as "] {
+                for (index, _) in description.match_indices(marker) {
+                    let code: String = description[index + marker.len()..]
+                        .chars()
+                        .take_while(|character| character.is_ascii_lowercase() || *character == '_')
+                        .collect();
+                    if !vocabulary.contains(&code.as_str()) {
+                        return Err(format!(
+                            "{argument} names failure code {code:?}, which this server never returns"
+                        ));
+                    }
+                    // The vocabulary is server-wide and includes reserved
+                    // codes, so also require the argument's own tool to
+                    // name the code: a code another tool returns is as
+                    // misleading here as one nobody returns.
+                    if !tool_description.contains(code.as_str()) {
+                        return Err(format!(
+                            "{argument} names failure code {code:?}, which its tool description does not"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn every_tool_argument_is_described_with_wire_failure_codes_only() -> Result<(), String> {
+        let total = check_argument_descriptions(&tools_list_result())?;
+        // Argument descriptions ride every session start inside the slim
+        // `tools/list` budget below. An intentional change reconciles this
+        // exact count, the same way the tool descriptions reconcile theirs.
+        assert_eq!(total, 1602);
+        Ok(())
+    }
+
+    #[test]
+    fn argument_description_check_rejects_a_missing_text_and_an_unreachable_code()
+    -> Result<(), String> {
+        let mut undescribed = tools_list_result();
+        undescribed["tools"][3]["inputSchema"]["properties"]["snapshot_id"]
+            .as_object_mut()
+            .ok_or("ripr_get_gap.snapshot_id schema")?
+            .remove("description")
+            .ok_or("ripr_get_gap.snapshot_id description")?;
+        match check_argument_descriptions(&undescribed) {
+            Err(error) if error == "ripr_get_gap.snapshot_id has no description" => {}
+            other => return Err(format!("missing description was not refused: {other:?}")),
+        }
+
+        let mut unreachable = tools_list_result();
+        unreachable["tools"][1]["inputSchema"]["properties"]["base"]["description"] =
+            json!("Use it when refresh fails with base_unresolvable.");
+        match check_argument_descriptions(&unreachable) {
+            Err(error)
+                if error.contains("ripr_refresh.base names failure code \"base_unresolvable\"") => {
+            }
+            other => return Err(format!("unreachable code was not refused: {other:?}")),
+        }
+
+        // A real code that only another tool returns is refused too.
+        let mut foreign = tools_list_result();
+        foreign["tools"][1]["inputSchema"]["properties"]["base"]["description"] =
+            json!("Use it when refresh fails with attempt_not_found.");
+        match check_argument_descriptions(&foreign) {
+            Err(error)
+                if error
+                    == "ripr_refresh.base names failure code \"attempt_not_found\", which its tool description does not" =>
+                {}
+            other => return Err(format!("foreign code was not refused: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// The `class` filter refuses any token outside the exposure classes, so
+    /// the schema advertises exactly that list instead of a free string.
+    #[test]
+    fn list_gaps_class_argument_advertises_the_exposure_classes() -> Result<(), String> {
+        let tools = tools_list_result();
+        let advertised = tools
+            .pointer("/tools/2/inputSchema/properties/class/enum")
+            .ok_or("ripr_list_gaps.class lost its enum")?;
+        let expected = json!([
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "propagation_unknown",
+            "static_unknown"
+        ]);
+        if advertised != &expected {
+            return Err(format!(
+                "class enum drifted from the exposure classes: {advertised}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn tools_list_byte_budget_pins_the_session_context_sink() -> Result<(), String> {
         // #9852: `tools/list` is paid by every LLM consumer at session start
@@ -3170,7 +3317,12 @@ mod tests {
         // #13803 made the slim listing the default and cut the descriptions:
         // the default budget is what every session pays; the full budget is
         // the opt-in a validating host pays.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_000)] {
+        // #9360 argument accuracy: describing the thirteen bare arguments
+        // and advertising the `class` enum cost 397 bytes after trimming the
+        // existing argument prose (slim 11,816 -> 12,213, inside its
+        // ceiling; full 40,887 -> 41,284, so the opt-in ceiling moved from
+        // 41,000 to 41,300).
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_300)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?
