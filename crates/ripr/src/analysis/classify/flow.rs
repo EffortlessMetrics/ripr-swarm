@@ -715,6 +715,7 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
         && result.chars().count() <= ARM_RESULT_BUDGET
         && !result.contains("/*")
         && !result.contains("Err(")
+        && !spells_result_err(result)
         && !masked_result.contains(['{', '}'])
         && balanced('(', ')')
         && balanced('[', ']');
@@ -3434,6 +3435,19 @@ mod tests {
         };
         assert_eq!(read_literal("\"a=>b\" =>"), "450");
         assert_eq!(read_literal("\"a=>b\" => 451,"), "451");
+        // A turbofish `Err::<..>(..)` result is an error construction too, so
+        // the head is kept as for `Err(..)`.
+        let turbofish = function(
+            "pub fn state(s: State) -> Result<u32, E> {\n    match s {\n        State::Bad => Err::<u32, E>(E::Bad),\n        _ => Ok(0),\n    }\n}\n",
+        );
+        assert_eq!(
+            local_flow_sinks(
+                &probe(ProbeFamily::MatchArm, "State::Bad =>", 3),
+                Some(&turbofish)
+            )[0]
+            .text,
+            "State::Bad =>"
+        );
         // Without an owner there is no source to read.
         let sinks = local_flow_sinks(&probe(ProbeFamily::MatchArm, "Size::Small =>", 3), None);
         assert_eq!(sinks[0].text, "Size::Small =>");
