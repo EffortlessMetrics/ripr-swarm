@@ -175,15 +175,15 @@ fn transition(base: &LoadedRegistry, head: &LoadedRegistry) -> RegistryResult<Tr
 fn markdown_transition(value: &TransitionReport) -> String {
     format!(
         "# Formal claim registry transition\n\n- Repository: `{}`\n- Base generation: `{}`\n- Head generation: `{}`\n- Unchanged: {}\n- Changed with generation bump: {}\n- Added: {}\n- Retired: {}\n- Native assurance: `{}`\n- Execution authority: `{}`\n",
-        value.repository,
-        value.base_registry_generation,
-        value.head_registry_generation,
+        project::markdown_text(&value.repository),
+        project::markdown_text(&value.base_registry_generation),
+        project::markdown_text(&value.head_registry_generation),
         value.unchanged_claims.len(),
         value.changed_claims.len(),
         value.added_claims.len(),
         value.retired_claims.len(),
-        value.native_assurance,
-        value.execution_authority,
+        project::markdown_text(value.native_assurance),
+        project::markdown_text(value.execution_authority),
     )
 }
 
