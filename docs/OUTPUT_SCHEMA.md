@@ -20894,6 +20894,39 @@ warnings. The TOML report uses schema `0.3` with `status = "proposal"` and is a
 copy aid only; reviewers must supply real ids, owners, expiries, and rationale
 before adopting any proposal.
 
+## Canonical PR Delta Artifact
+
+`cargo xtask ripr-pr` writes a cheap explicit unavailable comparison to
+`target/ripr/pr/canonical-delta.json`, without running canonical snapshots.
+This compatibility artifact preserves later gates' incomplete-comparison
+behavior; it is not a required evidence member or completed analysis.
+
+```json
+{
+  "schema_version": "0.1",
+  "status": "not_applicable",
+  "base": {"revision": "<rev>", "status": "unavailable", "available": false},
+  "head": {"revision": "<rev>", "status": "unavailable", "available": false},
+  "coverage": {
+    "base_items": 0, "head_items": 0, "matched_items": 0,
+    "ambiguous_items": 0, "unknown_items": 2,
+    "complete": false, "low_coverage_disclosed": true
+  },
+  "summary": {"attribution_counts": {}},
+  "limitations": ["canonical snapshot comparison is not performed by PR evidence"],
+  "deltas": []
+}
+```
+
+Readers also accept compatible historical or externally supplied artifacts.
+Each `deltas[]` entry is a serialized `CanonicalDelta` from `ripr::domain`.
+Consumers match only the exact `canonical_gap_id`; paths, lines, classes and
+prose do not establish causality. Root-aware envelopes may include
+`causal_comparison` with coverage counts, `complete` and `low_coverage_disclosed`.
+Incomplete coverage cannot authorize causal blocking or new-unsuppressed counts.
+Artifact absence omits this optional projection and preserves the general gate's
+non-causal fallback, which can block; it is not equivalent to incomplete coverage.
+
 ## Canonical PR Check Artifact
 
 `cargo xtask ripr-pr` also preserves the parsed producer output at

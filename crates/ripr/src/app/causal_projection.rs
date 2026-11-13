@@ -1,7 +1,8 @@
 //! Shared projection of producer-owned canonical PR delta artifacts.
 //!
-//! This module reads a compatible historical or externally supplied artifact
-//! when present. It never infers causality from a path, line, class, or message.
+//! This module reads the explicit unavailable PR comparison or a compatible
+//! historical or externally supplied artifact when present. It never infers
+//! causality from a path, line, class, or message.
 
 use crate::domain::{CanonicalDelta, CanonicalEvidenceState, ComparisonCoverage};
 use serde_json::{Map, Value, json};

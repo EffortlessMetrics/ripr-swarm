@@ -465,9 +465,12 @@ closed `delta_attribution` values. Only `introduced_by_change`,
 `baseline_existing`, and `comparison_unknown` remain visible context and do not
 block by themselves. Incomplete, ambiguous, or unknown comparison coverage is
 disclosed and fails closed; it is never treated as a complete causal comparison.
-Current `cargo xtask ripr-pr` runs do not produce this artifact or perform
-canonical snapshot comparisons; readers retain compatibility with historical or
-externally supplied artifacts.
+Current `cargo xtask ripr-pr` runs write an explicit unavailable comparison
+without performing canonical snapshots. Its `status: "not_applicable"`,
+incomplete coverage and empty deltas preserve later gates' unknown-comparison
+behavior. Omitting the artifact instead retains the general gate's non-causal
+fallback and can block; absence is not equivalent to incomplete comparison.
+Readers retain compatibility with historical or externally supplied artifacts.
 
 ### Resolved and regressed evidence
 

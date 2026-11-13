@@ -3236,6 +3236,96 @@ fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn gate_incomplete_comparison_is_not_equivalent_to_absent_artifact() -> Result<(), String> {
+    let dir = temp_dir("gate-incomplete-versus-absent")?;
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", GAP_LEDGER_BLOCKING_JSON)?;
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(gap_ledger),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+        acknowledgements: None,
+    };
+    let artifact = serde_json::json!({
+        "schema_version": "0.1",
+        "base": {"available": false, "status": "unavailable"},
+        "head": {"available": false, "status": "unavailable"},
+        "coverage": {
+            "base_items": 0, "head_items": 0, "matched_items": 0,
+            "ambiguous_items": 0, "unknown_items": 2,
+            "complete": false, "low_coverage_disclosed": true
+        },
+        "deltas": [],
+        "summary": {"attribution_counts": {}},
+        "limitations": ["base snapshot unavailable", "head snapshot unavailable"]
+    });
+    let path = dir.join("target/ripr/pr/canonical-delta.json");
+    fs::create_dir_all(path.parent().ok_or("delta path has no parent")?)
+        .map_err(|err| err.to_string())?;
+    fs::write(&path, artifact.to_string()).map_err(|err| err.to_string())?;
+
+    let incomplete = build_gate_decision_report(&input)?;
+    assert!(
+        incomplete.config_errors.is_empty(),
+        "{:?}",
+        incomplete.config_errors
+    );
+    assert_eq!(incomplete.status, "advisory");
+    assert_eq!(incomplete.decisions.len(), 1);
+    assert_eq!(incomplete.decisions[0].decision, "advisory");
+    assert_eq!(incomplete.new_unsuppressed.count, 0);
+    let rendered = render_gate_decision_json(&incomplete)?;
+    let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+    assert_eq!(
+        incomplete.decisions[0].delta_attribution,
+        Some(crate::domain::DeltaAttribution::ComparisonUnknown)
+    );
+    assert_eq!(value["causal_comparison"]["coverage"]["complete"], false);
+    assert_eq!(value["causal_comparison"]["coverage"]["unknown_items"], 2);
+    assert!(
+        incomplete
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("canonical delta comparison is incomplete") })
+    );
+
+    fs::remove_file(path).map_err(|err| err.to_string())?;
+    let absent = build_gate_decision_report(&input)?;
+    assert!(
+        absent.config_errors.is_empty(),
+        "{:?}",
+        absent.config_errors
+    );
+    assert_eq!(absent.status, "blocked");
+    assert_eq!(absent.decisions.len(), 1);
+    assert_eq!(absent.decisions[0].decision, "blocking");
+    assert_eq!(absent.new_unsuppressed.count, 1);
+    let rendered = render_gate_decision_json(&absent)?;
+    let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+    assert!(absent.decisions[0].delta_attribution.is_none());
+    assert!(value.get("causal_comparison").is_none());
+    assert!(
+        !absent
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("canonical delta comparison is incomplete") })
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 /// Root-honoring control: the gate resolves the producer-owned canonical
 /// delta against the explicit root, never the process working directory. A
 /// root-planted complete delta attributing the ledger gap to a causal class

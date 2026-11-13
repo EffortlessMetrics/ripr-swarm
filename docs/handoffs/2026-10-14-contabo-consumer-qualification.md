@@ -193,7 +193,9 @@ job status must retain that absence, never invent a completed command portfolio.
 
 Empty `annotations.txt` and `pr.diff` can be legitimate. The nextest producer
 still enforces fresh JUnit with at least one executed test. PR evidence no longer
-produces canonical snapshots or a canonical-delta artifact. The three PR summary
+produces canonical snapshots. A cheap explicit unavailable canonical-delta artifact
+preserves later-consumer behavior but is not a mandatory member of this contract.
+The three PR summary
 files include `target/ripr/reports/pr-evidence-summary.{json,md}`; that v1 pair reads optional
 report inputs distinct from `pr/repo-exposure.json` and may honestly report
 unavailable analysis. File presence is not an established causal comparison,

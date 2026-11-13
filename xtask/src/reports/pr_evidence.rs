@@ -18,7 +18,7 @@ const DEFAULT_HEAD: &str = "HEAD";
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const PR_CHECK_JSON: &str = "target/ripr/pr/check.json";
-const RETIRED_CANONICAL_DELTA_JSON: &str = "target/ripr/pr/canonical-delta.json";
+const PR_CANONICAL_DELTA_JSON: &str = "target/ripr/pr/canonical-delta.json";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 const PR_EVIDENCE_TIMEOUT_ENV: &str = "RIPR_PR_EVIDENCE_TIMEOUT_SECS";
@@ -222,6 +222,7 @@ fn write_pr_evidence_with_preparer(
     verify_revision(repo, &options.head)?;
     let changed_files = changed_files(repo, options)?;
     write_diff(repo, options)?;
+    write_unavailable_canonical_delta(repo, options)?;
     let default_cache = default_pr_cache_dir(
         repo,
         &options.root,
@@ -329,8 +330,37 @@ fn write_pr_evidence_packet(
     Ok(())
 }
 
+fn write_unavailable_canonical_delta(
+    repo: &Path,
+    options: &PrEvidenceOptions,
+) -> Result<(), String> {
+    // Absence opts later gates out of causal filtering. Preserve incomplete
+    // comparison semantics without running the retired snapshot analyses.
+    let artifact = json!({
+        "schema_version": "0.1",
+        "status": "not_applicable",
+        "base": {"revision": options.base, "status": "unavailable", "available": false},
+        "head": {"revision": options.head, "status": "unavailable", "available": false},
+        "coverage": {
+            "base_items": 0, "head_items": 0, "matched_items": 0,
+            "ambiguous_items": 0, "unknown_items": 2,
+            "complete": false, "low_coverage_disclosed": true
+        },
+        "summary": {"attribution_counts": {}},
+        "limitations": ["canonical snapshot comparison is not performed by PR evidence"],
+        "deltas": []
+    });
+    let text = serde_json::to_string_pretty(&artifact)
+        .map_err(|err| format!("serialize unavailable canonical comparison: {err}"))?;
+    write_parented_file(
+        &repo.join(PR_CANONICAL_DELTA_JSON),
+        PR_CANONICAL_DELTA_JSON,
+        format!("{text}\n"),
+    )
+}
+
 fn remove_stale_analysis_artifacts(repo: &Path) -> Result<(), String> {
-    for path in [PR_CHECK_JSON, RETIRED_CANONICAL_DELTA_JSON] {
+    for path in [PR_CHECK_JSON, PR_CANONICAL_DELTA_JSON] {
         match fs::remove_file(repo.join(path)) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -2793,7 +2823,7 @@ mod tests {
     #[test]
     fn stale_analysis_artifacts_are_removed_before_revision_setup_failure() -> Result<(), String> {
         let repo = temp_repo("ripr-pr-stale-before-setup-failure")?;
-        for path in [PR_CHECK_JSON, RETIRED_CANONICAL_DELTA_JSON] {
+        for path in [PR_CHECK_JSON, PR_CANONICAL_DELTA_JSON] {
             write_parented_file(&repo.join(path), path, "{\"stale\":true}\n")?;
         }
         let options = PrEvidenceOptions {
@@ -2815,8 +2845,120 @@ mod tests {
 
         assert!(!runner_called);
         assert!(!repo.join(PR_CHECK_JSON).exists());
-        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
+        assert!(!repo.join(PR_CANONICAL_DELTA_JSON).exists());
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pr_evidence_unavailable_comparison_preserves_later_gate_decision() -> Result<(), String> {
+        let (repo, options) = two_commit_repo("ripr-pr-later-gate")?;
+        write_pr_evidence_with_preparer(
+            &repo,
+            &options,
+            |_| Ok("unused-test-binary".to_string()),
+            |_, _, _, _| Ok(MINIMAL_CHECK_JSON.to_string()),
+        )?;
+        // Same eligible blocking ledger shape as the gate's paired absence control.
+        let ledger = json!({"gap_records": [{
+            "gap_id": "gap:pricing", "source_currentness": "candidate_current",
+            "canonical_gap_id": "pricing::discount::threshold",
+            "seam_id": "seam-pricing-threshold", "kind": "MissingBoundaryAssertion",
+            "language": "rust", "language_status": "stable", "scope": "pr_local",
+            "evidence_class": "weakly_exposed", "gap_state": "actionable",
+            "policy_state": "new", "repairability": "repairable",
+            "repair_route": {
+                "route_kind": "AddBoundaryAssertion", "target_file": "tests/pricing.rs",
+                "target_line": 12, "related_test": "tests/pricing.rs::above_threshold_gets_discount",
+                "assertion_shape": "assert_eq!(price(threshold), discounted)",
+                "missing_discriminator": "amount == discount_threshold",
+                "changed_behavior": "amount == discount_threshold",
+                "inspection_command": "ripr agent brief --root . --seam-id seam-pricing-threshold --json"
+            },
+            "anchor": {"file": "src/pricing.rs", "line": 88, "owner": "price",
+                       "dedupe_fingerprint": "gap:pricing"},
+            "evidence_ids": ["seam-pricing"],
+            "projection_eligibility": {"gate_candidate": {
+                "eligible": true, "reason": "new_repairable_pr_local_gap"
+            }},
+            "verification_commands": ["cargo xtask fixtures boundary_gap"],
+            "receipt_command": "ripr receipt write --gap pricing::discount::threshold",
+            "safe_gate_predicate": {
+                "policy_target_enabled": true, "suppressed": false, "waived": false,
+                "acknowledged_only": false, "baseline_known": false,
+                "preview_language": false, "static_unknown_only": false
+            }
+        }]});
+        write_repo_file(&repo, "gap-ledger.json", &ledger.to_string())?;
+        let output = repo.join("gate.json");
+        let args = vec![
+            "ripr".to_string(),
+            "gate".to_string(),
+            "evaluate".to_string(),
+            "--root".to_string(),
+            repo.display().to_string(),
+            "--gap-ledger".to_string(),
+            repo.join("gap-ledger.json").display().to_string(),
+            "--mode".to_string(),
+            "acknowledgeable".to_string(),
+            "--out".to_string(),
+            output.display().to_string(),
+            "--out-md".to_string(),
+            repo.join("gate.md").display().to_string(),
+        ];
+        ripr::cli::run(args.clone()).map_err(|err| err.to_string())?;
+        let report: Value =
+            serde_json::from_str(&fs::read_to_string(&output).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(report["config_errors"], json!([]));
+        assert_eq!(report["status"], "advisory");
+        assert_eq!(report["decisions"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["decisions"][0]["decision"], "advisory");
+        assert_eq!(report["new_unsuppressed"]["count"], 0);
+        assert_eq!(report["causal_comparison"]["coverage"]["complete"], false);
+        assert_eq!(report["causal_comparison"]["coverage"]["unknown_items"], 2);
+
+        // Omission is the deliberate wrong-implementation control: identical
+        // candidate input now reaches the pre-existing non-causal gate behavior.
+        fs::remove_file(repo.join(PR_CANONICAL_DELTA_JSON)).map_err(|err| err.to_string())?;
+        assert!(ripr::cli::run(args).is_err());
+        let report: Value =
+            serde_json::from_str(&fs::read_to_string(&output).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(report["config_errors"], json!([]));
+        assert_eq!(report["status"], "blocked");
+        assert_eq!(report["decisions"][0]["decision"], "blocking");
+        assert_eq!(report["new_unsuppressed"]["count"], 1);
+        assert!(report.get("causal_comparison").is_none());
+        fs::remove_dir_all(repo).map_err(|err| err.to_string())
+    }
+
+    fn assert_unavailable_comparison(
+        repo: &Path,
+        options: &PrEvidenceOptions,
+    ) -> Result<(), String> {
+        let artifact: Value = serde_json::from_str(
+            &fs::read_to_string(repo.join(PR_CANONICAL_DELTA_JSON))
+                .map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(artifact["schema_version"], "0.1");
+        assert_eq!(artifact["status"], "not_applicable");
+        assert_eq!(artifact["base"]["revision"], options.base);
+        assert_eq!(artifact["head"]["revision"], options.head);
+        assert_eq!(artifact["base"]["available"], false);
+        assert_eq!(artifact["head"]["available"], false);
+        assert_eq!(
+            artifact["coverage"],
+            json!({
+                "base_items": 0, "head_items": 0, "matched_items": 0,
+                "ambiguous_items": 0, "unknown_items": 2,
+                "complete": false, "low_coverage_disclosed": true
+            })
+        );
+        assert_eq!(artifact["deltas"], json!([]));
+        assert_eq!(artifact["summary"]["attribution_counts"], json!({}));
+        assert!(artifact.get("stale").is_none());
         Ok(())
     }
 
@@ -2843,7 +2985,7 @@ mod tests {
         assert_eq!(preparations, 1);
         assert!(error.contains("preparation unavailable"));
         assert!(!repo.join(PR_CHECK_JSON).exists());
-        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
+        assert_unavailable_comparison(&repo, &options)?;
         fs::remove_dir_all(repo).map_err(|err| err.to_string())
     }
 
@@ -2866,7 +3008,7 @@ mod tests {
         assert_eq!(preparations, 1);
         assert!(error.contains("sentinel build failure 1"));
         assert!(!repo.join(PR_CHECK_JSON).exists());
-        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
+        assert_unavailable_comparison(&repo, &options)?;
         let packet: Value = serde_json::from_str(
             &fs::read_to_string(repo.join(PR_EVIDENCE_JSON)).map_err(|err| err.to_string())?,
         )
@@ -2876,8 +3018,9 @@ mod tests {
     }
 
     #[test]
-    fn prepared_binary_runs_only_scoped_check_without_canonical_artifacts() -> Result<(), String> {
+    fn prepared_binary_runs_only_scoped_check_with_unavailable_comparison() -> Result<(), String> {
         let (repo, options) = two_commit_repo("ripr-pr-shared-binary")?;
+        write_repo_file(&repo, PR_CANONICAL_DELTA_JSON, "{\"stale\":true}")?;
         let fake = fake_ripr_binary(&repo, "shared-ripr", MINIMAL_CHECK_JSON, "", 0, None)?;
         let invocation_log = fake.with_extension("invocations.txt");
         let fake = fake.display().to_string();
@@ -2898,8 +3041,12 @@ mod tests {
         check_pr_evidence(&repo, &options)?;
         let invocations = fs::read_to_string(invocation_log).map_err(|err| err.to_string())?;
         let calls = invocations.lines().collect::<Vec<_>>();
-        assert_eq!(calls, ["invoked"], "unexpected analyzer calls: {invocations}");
-        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
+        assert_eq!(
+            calls,
+            ["invoked"],
+            "unexpected analyzer calls: {invocations}"
+        );
+        assert_unavailable_comparison(&repo, &options)?;
         assert!(!repo.join("target/ripr/pr/canonical-snapshots").exists());
         fs::remove_dir_all(repo).map_err(|err| err.to_string())
     }

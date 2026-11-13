@@ -7385,6 +7385,8 @@ id = "RIPR-SPEC-0067"
 name = "PR gate use case"
 spec = "docs/specs/RIPR-SPEC-0067-pr-gate-use-case.md"
 tests = [
+  "crates/ripr/src/output/gate/tests.rs::gate_incomplete_comparison_is_not_equivalent_to_absent_artifact",
+  "xtask/src/reports/pr_evidence.rs::tests::pr_evidence_unavailable_comparison_preserves_later_gate_decision",
   "crates/ripr/src/output/gate/repair_route.rs::tests::complete_route_projects_existing_identity_and_exact_inspection_command",
   "crates/ripr/src/output/gate/repair_route.rs::tests::incomplete_route_names_missing_fields_without_fabricating_fallbacks",
   "crates/ripr/src/output/gate/repair_route.rs::tests::current_review_fixture_projects_complete_route_without_renderer_inference",

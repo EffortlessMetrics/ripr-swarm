@@ -40,11 +40,14 @@ When `target/ripr/pr/canonical-delta.json` exists, the gate also consumes that
 versioned producer-owned comparison. Only `introduced_by_change`,
 `weakened_by_change`, and `reintroduced_by_change` can contribute to a causal
 blocking count. Resolved, existing, adjacent, baseline, and unknown
-attributions remain visible but non-blocking. Missing, ambiguous, or low
+attributions remain visible but non-blocking. Unknown, ambiguous, or low
 coverage comparison evidence is disclosed and fails closed rather than being
-treated as a complete causal comparison. Current `cargo xtask ripr-pr` runs do
-not produce this artifact or perform canonical snapshot comparisons; readers
-retain compatibility with historical or externally supplied artifacts.
+treated as a complete causal comparison. Current `cargo xtask ripr-pr` runs
+write an explicit unavailable comparison without running canonical snapshots.
+It carries `status: "not_applicable"`, incomplete coverage and no deltas, so a
+later gate retains the unknown-comparison behavior. Artifact absence is different:
+it preserves the general gate's existing non-causal fallback, which can block.
+Readers also retain compatibility with historical or externally supplied artifacts.
 
 Only `--pr-guidance`, `--mode`, `--out`, and `--out-md` are required for the
 smallest local run. Other inputs refine the decision when available:
