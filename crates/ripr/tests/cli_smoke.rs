@@ -21814,6 +21814,16 @@ fn pilot_artifact_note_uses_the_selected_root_at_the_cli() -> Result<(), String>
 
     for (label, cwd_rel, args, packet_rel, expect_note) in rows {
         let (sandbox, repo) = make_sandbox(&format!("pilot-note-{label}"))?;
+        if expect_note {
+            // ripr marks a target/ripr it creates as self-ignoring (#14315),
+            // which silences the note. A user-owned ignore file with no rules
+            // is kept as written and leaves the tree uncovered, so the note
+            // still has to resolve the selected root.
+            std::fs::create_dir_all(repo.join("target/ripr"))
+                .map_err(|err| format!("create target/ripr ({label}): {err}"))?;
+            std::fs::write(repo.join("target/ripr/.gitignore"), "# kept by the user\n")
+                .map_err(|err| format!("write user ignore file ({label}): {err}"))?;
+        }
         let repo_string = repo.to_string_lossy().into_owned();
         let mut argv: Vec<&str> = vec!["pilot"];
         argv.extend(args.iter().map(String::as_str));

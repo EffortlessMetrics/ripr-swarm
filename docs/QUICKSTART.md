@@ -205,6 +205,11 @@ without making a change, use the separate
 [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
 
+To get this advisory check on every commit or push, add the shipped
+[pre-commit hooks](INTEGRATIONS.md#pre-commit-framework) or a
+[lefthook, husky or plain Git hook](INTEGRATIONS.md#lefthook-husky-and-plain-git-hooks).
+Findings exit 0, so a hook never blocks on them.
+
 ### Reference: output mechanics and terms
 
 The first run does not need this subsection. It collects, without loss, the
@@ -395,9 +400,9 @@ change to inspect.
 To try it first on a small project with a known gap, use the
 [Python starter example](../examples/python-bulk-discount/README.md).
 
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -442,9 +447,9 @@ rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
 To try it first on a small project with a known gap, use the
 [TypeScript starter example](../examples/typescript-discount-threshold/README.md).
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -755,4 +760,4 @@ and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md) for supported cases.
 
 [Command guide](COMMAND_HIERARCHY.md) · [Configuration](CONFIGURATION.md) ·
 [Targeted tests](TARGETED_TEST_WORKFLOW.md) · [Output formats](OUTPUT_SCHEMA.md) ·
-[Terminology](TERMINOLOGY.md)
+[Integrations and Git hooks](INTEGRATIONS.md) · [Terminology](TERMINOLOGY.md)

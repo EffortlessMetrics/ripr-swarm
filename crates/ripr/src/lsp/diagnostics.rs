@@ -1112,6 +1112,10 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
 pub(super) enum AnalysisPendingRecovery {
     /// Configuration valid, root admitted: the ordinary cold-start state.
     SaveOrRefresh,
+    /// Configuration valid, root admitted, and an analysis attempt is queued
+    /// or running (#14447): asking the user to save or refresh to start
+    /// analysis would be wrong while one is already under way.
+    AnalysisRunning,
     /// Configuration invalid: `refresh_diagnostics` returns before
     /// analysis until the configuration is repaired.
     FixConfiguration,
@@ -1124,6 +1128,7 @@ impl AnalysisPendingRecovery {
     pub(super) fn recovery_id(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "save_or_refresh",
+            Self::AnalysisRunning => "analysis_running",
             Self::FixConfiguration => "fix_configuration",
             Self::RootBlocked(route) => route,
         }
@@ -1132,6 +1137,7 @@ impl AnalysisPendingRecovery {
     fn route_text(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
                 "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
             }
@@ -1172,6 +1178,12 @@ fn analysis_pending_diagnostic_for(
     let message = if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if recovery == AnalysisPendingRecovery::AnalysisRunning {
+        format!(
+            "ripr analysis is in progress, so no findings are reported yet — \
              this is not evidence of a clean workspace. {}",
             recovery.route_text()
         )
@@ -4729,12 +4741,26 @@ fn lsp_message(finding: &Finding) -> String {
         .as_ref()
         .is_some_and(|status| status.as_str() == "preview")
     {
+        // The Problems panel row is often the only text shown, so say
+        // "preview" once: the producer's own step usually opens with
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
+        // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
-            .as_ref()
-            .map(|language| language.as_str())
-            .unwrap_or("preview-language");
-        let mut message = format!("{language} preview evidence (syntax-first, advisory): {base}");
+            .map(|language| language.display_name())
+            .unwrap_or("Preview-language");
+        let step = [
+            format!("{language} preview advisory: "),
+            format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
+        ]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix.as_str()))
+        .unwrap_or(&base);
+        let mut message = format!("{language} preview (advisory): {step}");
         if let Some(static_limit_kind) = &finding.static_limit_kind {
             message.push_str(&format!(" Static limit: {}.", static_limit_kind.as_str()));
         }

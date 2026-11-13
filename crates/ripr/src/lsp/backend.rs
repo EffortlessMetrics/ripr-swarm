@@ -194,6 +194,10 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
+    /// Recovery id of the pre-snapshot pull marker last served to the pull
+    /// client (#14447 review): an attempt transition that leaves the served
+    /// route unchanged sends no `workspace/diagnostic/refresh`.
+    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -370,6 +374,7 @@ impl Backend {
             config_pull: ConfigPullCoordinator::default(),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
+            pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
@@ -458,7 +463,14 @@ impl Backend {
         // snapshot commits (and no failure is latched) real payloads own
         // the client state and this is a no-op decision-wise.
         if self.configuration_failure().is_some() || self.latest_pull_snapshot().is_none() {
-            self.publish_analysis_pending_push_markers().await;
+            // #14447: when nothing blocks this refresh, analysis is about to
+            // start, so the marker must not tell the user to start it.
+            let authority = self.workspace_root_authority();
+            let analysis_starting = self.configuration_failure().is_none()
+                && authority.effective_root.is_some()
+                && authority.allows_analysis();
+            self.publish_analysis_pending_push_markers(analysis_starting)
+                .await;
         }
         if self.configuration_failure().is_some() {
             return;
@@ -551,6 +563,7 @@ impl Backend {
                 if let Some(request) = self.refresh_scheduler.pending_request(generation) {
                     self.mark_pending_attempt(&request);
                     self.publish_analysis_status().await;
+                    self.refresh_pending_marker_surfaces().await;
                 }
                 self.log_refresh_queued(generation).await;
                 // #8733: answer once the scheduler has accepted (and
@@ -572,10 +585,24 @@ impl Backend {
             &self.refresh_idle,
             request.clone(),
         );
-
+        // #14447: re-serve the marker only once the cancellation guard is
+        // armed, so a handler dropped while the pull client answers the
+        // refresh request still finishes the scheduler's active request. The
+        // re-serve runs alongside the attempt and is dropped once the attempt
+        // ends, so a pull client slow to answer `workspace/diagnostic/refresh`
+        // delays neither analysis nor the attempt's outcome handling.
         loop {
             let attempt_started = Instant::now();
-            let outcome = self.run_refresh_request(&request).await;
+            let outcome = {
+                let attempt = self.run_refresh_request(&request);
+                let marker = self.refresh_pending_marker_surfaces();
+                tokio::pin!(attempt, marker);
+                tokio::select! {
+                    biased;
+                    outcome = &mut attempt => outcome,
+                    () = &mut marker => attempt.await,
+                }
+            };
             let attempt_duration = attempt_started.elapsed();
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
@@ -591,6 +618,11 @@ impl Backend {
             else {
                 cancellation_guard.disarm();
                 self.refresh_idle.notify_waiters();
+                // #14447: an attempt that ended without a snapshot, with no
+                // follow-up request, leaves the marker naming the route that
+                // starts analysis again. A follow-up keeps "in progress", so
+                // the start route never flashes between handed-off attempts.
+                self.refresh_pending_marker_surfaces().await;
                 return;
             };
             request = next;
@@ -1565,6 +1597,11 @@ impl Backend {
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
         }
+        // #14447 review: the client's cached report was the snapshot, not a
+        // pending marker, so the next pre-snapshot transition re-pulls.
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
+        }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
         if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
             uris.extend(documents.documents.keys().cloned());
@@ -1597,7 +1634,7 @@ impl Backend {
     /// the caller sampled the state owns the client surface, and a late
     /// marker must not overwrite completed diagnostics or resurrect
     /// cleared ones (#8732 review).
-    async fn publish_analysis_pending_push_markers(&self) {
+    async fn publish_analysis_pending_push_markers(&self, analysis_starting: bool) {
         if self.pull_diagnostics_enabled() {
             return;
         }
@@ -1607,7 +1644,12 @@ impl Backend {
         if failure.is_none() && has_snapshot {
             return;
         }
-        let recovery = self.analysis_pending_recovery();
+        let recovery = match self.analysis_pending_recovery() {
+            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        };
         let withdrawn = has_snapshot;
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
@@ -1643,6 +1685,57 @@ impl Backend {
             self.client
                 .publish_diagnostics(uri, items.clone(), version)
                 .await;
+        }
+    }
+
+    /// Re-serve the pre-snapshot marker after an attempt-state transition
+    /// (#14447): push clients get a republish when the route changed, and a
+    /// pull client that cached the previous pending result id is asked to
+    /// pull again, only when the served recovery route changed. A committed
+    /// snapshot owns both surfaces, so nothing is sent once one exists
+    /// without a latched failure.
+    async fn refresh_pending_marker_surfaces(&self) {
+        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+            return;
+        }
+        self.publish_analysis_pending_push_markers(false).await;
+        if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
+            return;
+        }
+        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let route_unchanged = self
+            .pending_pull_marker_served_recovery
+            .lock()
+            .is_ok_and(|served| *served == Some(recovery_id));
+        if route_unchanged {
+            return;
+        }
+        if let Err(error) = self
+            .bounded_client_request(self.client.workspace_diagnostic_refresh())
+            .await
+        {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("pull diagnostic refresh request failed: {error}"),
+                )
+                .await;
+        }
+    }
+
+    /// Record the pre-snapshot pull marker route just served (#14447 review).
+    fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = Some(recovery.recovery_id());
+        }
+    }
+
+    /// Forget the served pending route once committed payloads are served
+    /// (#14447 review): the client no longer holds a pending marker, so the
+    /// next pending transition must ask it to re-pull.
+    fn forget_pending_pull_marker_served(&self) {
+        if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
+            *served = None;
         }
     }
 
@@ -3304,10 +3397,26 @@ impl Backend {
     /// mirrors the `refresh_diagnostics` preconditions so a blocked state
     /// never advertises a route that returns before analysis.
     fn analysis_pending_recovery(&self) -> AnalysisPendingRecovery {
-        analysis_pending_recovery_for(
+        match analysis_pending_recovery_for(
             self.configuration_failure().as_ref(),
             &self.workspace_root_authority(),
-        )
+        ) {
+            // #14447: an attempt already queued or running needs no start.
+            AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
+    /// Whether an analysis attempt is queued or running right now.
+    fn analysis_attempt_active(&self) -> bool {
+        self.analysis_health.lock().is_ok_and(|health| {
+            matches!(
+                health.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        })
     }
 
     /// Whether the most recent bounded disclosure window after an
@@ -3373,7 +3482,7 @@ impl Backend {
                 // client otherwise keeps the last published diagnostics
                 // indefinitely (the refresh guard below returns before any
                 // re-analysis can replace them).
-                self.publish_analysis_pending_push_markers().await;
+                self.publish_analysis_pending_push_markers(false).await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
                         .await;
@@ -7589,6 +7698,7 @@ impl Backend {
             // marker under a stable state identity instead, promising only
             // the recovery route the current blocking state honors.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(
                 analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
@@ -7604,12 +7714,14 @@ impl Backend {
         // holding the stale payload.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_document_report_withdrawn(
                 params.previous_result_id,
                 recovery,
             )
             .into());
         }
+        self.forget_pending_pull_marker_served();
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -7707,6 +7819,7 @@ impl Backend {
             // workspace report item needs a document URI, and the document
             // pull path discloses the state for every open file.
             let recovery = self.analysis_pending_recovery();
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
         // A configuration failure latched after this snapshot committed
@@ -7715,8 +7828,10 @@ impl Backend {
         // URI under the FixConfiguration recovery route.
         if self.configuration_failure().is_some() {
             let recovery = AnalysisPendingRecovery::FixConfiguration;
+            self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }
+        self.forget_pending_pull_marker_served();
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()

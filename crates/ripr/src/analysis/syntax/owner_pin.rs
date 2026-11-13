@@ -758,14 +758,25 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         } else if let Some(other) = ast::Use::cast(child.clone()) {
             // Another import taking the root's name (`use dep as global;`),
             // possibly under a `cfg` the scan does not evaluate.
-            // Any spelling of the root name inside the import (`as global`,
-            // `dep::global`, `dep::global::{self}`) may bind it; refuse them all.
-            let binds_root = other.syntax().descendants().any(|node| {
-                ast::NameRef::cast(node.clone())
-                    .map(|name| name.text().to_string())
-                    .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
-                    .is_some_and(|text| text.trim_start_matches("r#") == root)
-            });
+            // A path prefix reads a name; only the import leaf binds one.
+            // Keep the old spelling check for opaque leaves: an absolute
+            // grouped `self` may bind its parent's name when that path is unread.
+            let bindings = super::name_scope::use_item_bindings(&other);
+            let opaque = bindings
+                .imports
+                .iter()
+                .any(|import| matches!(import.binding, super::name_scope::UseBinding::Opaque));
+            let binds_root = bindings
+                .imports
+                .iter()
+                .any(|import| import.bound.trim_start_matches("r#") == root)
+                || (opaque
+                    && other.syntax().descendants().any(|node| {
+                        ast::NameRef::cast(node.clone())
+                            .map(|name| name.text().to_string())
+                            .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+                            .is_some_and(|text| text.trim_start_matches("r#") == root)
+                    }));
             if binds_root {
                 return false;
             }
