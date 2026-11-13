@@ -895,3 +895,110 @@ fn workflow_input_reuse_propagates_discovery_and_action_read_errors() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), String> {
+    let judge = Fixture::new()?;
+    let subject = Fixture(test_support::scratch("user-text-subject")?);
+    for dir in [
+        "policy",
+        "fixtures/example/expected",
+        "crates/ripr/src/lsp",
+        "tools/repo-policy/src",
+    ] {
+        std::fs::create_dir_all(subject.0.join(dir)).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(subject.0.join(".gitignore"), "target/\n").map_err(|e| e.to_string())?;
+    let golden = subject.0.join("fixtures/example/expected/human.txt");
+    let matcher = subject.0.join("tools/repo-policy/src/user_text.rs");
+    std::fs::write(
+        subject.0.join("policy/user-text-baseline.toml"),
+        "schema_version = \"1.0\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(&golden, "plain words\n").map_err(|e| e.to_string())?;
+    std::fs::copy(judge.0.join("tools/repo-policy/src/user_text.rs"), &matcher)
+        .map_err(|e| e.to_string())?;
+    let lsp: String = (0..250)
+        .map(|n| format!("const F{n}: &str = \"plain words number {n}\";\n"))
+        .collect();
+    std::fs::write(subject.0.join("crates/ripr/src/lsp/text.rs"), lsp)
+        .map_err(|e| e.to_string())?;
+    subject.git(&["init", "-q", "-b", "main"])?;
+    subject.git(&["config", "user.name", "matcher-control"])?;
+    subject.git(&["config", "user.email", "matcher@example.invalid"])?;
+    subject.git(&["config", "commit.gpgsign", "false"])?;
+    subject.git(&["add", "-A"])?;
+    subject.git(&["commit", "-qm", "base"])?;
+    let base = subject.git(&["rev-parse", "HEAD"])?;
+    subject.git(&["checkout", "-qb", "candidate"])?;
+    std::fs::write(subject.0.join("README.md"), "unrelated candidate change\n")
+        .map_err(|e| e.to_string())?;
+    subject.git(&["add", "-A"])?;
+    subject.git(&["commit", "-qm", "clean candidate"])?;
+    subject.git(&["checkout", "-q", "main"])?;
+    subject.git(&["merge", "--no-ff", "candidate", "-qm", "clean integration"])?;
+    let event = subject.0.join(".git/event.json");
+    let run = |head: &str| -> Result<Output, String> {
+        std::fs::write(
+            &event,
+            serde_json::to_vec(&serde_json::json!({
+                "merge_group": {"base_sha": base.trim(), "head_sha": head.trim()}
+            }))
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        judge
+            .command("check-user-text")?
+            .arg("--tree")
+            .arg(&subject.0)
+            .env("GITHUB_ACTIONS", "true")
+            .env("GITHUB_EVENT_NAME", "merge_group")
+            .env("GITHUB_SHA", head.trim())
+            .env("GITHUB_EVENT_PATH", &event)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let clean = subject.git(&["rev-parse", "HEAD"])?;
+    let passed = run(&clean)?;
+    assert!(
+        passed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&passed.stderr)
+    );
+    assert!(String::from_utf8_lossy(&passed.stdout).contains("Status: pass"));
+    subject.git(&["checkout", "-q", "candidate"])?;
+    std::fs::write(&golden, "open the seam list\n").map_err(|e| e.to_string())?;
+    let mut weakened = std::fs::read_to_string(&matcher).map_err(|e| e.to_string())?;
+    let start = weakened
+        .find("const BANNED:")
+        .ok_or("missing matcher table")?;
+    let end = weakened[start..].find("\n];").ok_or("missing table end")? + start + 3;
+    weakened.replace_range(start..end, "const BANNED: &[Banned] = &[];");
+    std::fs::write(&matcher, weakened).map_err(|e| e.to_string())?;
+    subject.git(&["add", "-A"])?;
+    subject.git(&["commit", "-qm", "weakened matcher and banned golden"])?;
+    subject.git(&["checkout", "-qb", "bad-integration", base.trim()])?;
+    subject.git(&["merge", "--no-ff", "candidate", "-qm", "bad integration"])?;
+    let bad = subject.git(&["rev-parse", "HEAD"])?;
+    let refused = run(&bad)?;
+    assert!(!refused.status.success());
+    let report = String::from_utf8_lossy(&refused.stdout);
+    assert!(
+        report.contains("Status: fail") && report.contains("seam"),
+        "{report}"
+    );
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("plain-language term count(s) rose"));
+    let wrong_subject = run(&base)?;
+    assert!(!wrong_subject.status.success());
+    assert!(String::from_utf8_lossy(&wrong_subject.stdout).contains("Status: fail"));
+    std::fs::write(
+        judge.0.join("tools/repo-policy/src/user_text.rs"),
+        "stale judge source\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let stale = run(&bad)?;
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("policy executable is stale"));
+    Ok(())
+}
