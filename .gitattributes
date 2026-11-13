@@ -88,6 +88,7 @@ package-lock.json linguist-generated
 Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
+metrics/dx-scoreboard/** linguist-generated
 fixtures/perl-verdict-corpus/packets/** linguist-generated
 # Repo-exposure captures written by `ripr check --format repo-exposure-json` and
 # bound by the honesty gate (content_sha256 plus regeneration from the Cargo
