@@ -17,7 +17,12 @@ struct ArtifactCache<'a> {
     directory: &'a Path,
     limit: u64,
     total: Cell<u64>,
-    entries: RefCell<BTreeMap<String, (Artifact, Arc<[u8]>)>>,
+    entries: RefCell<BTreeMap<String, CachedArtifact>>,
+}
+
+struct CachedArtifact {
+    commitment: Artifact,
+    bytes: Arc<[u8]>,
 }
 
 impl<'a> ArtifactCache<'a> {
@@ -31,12 +36,12 @@ impl<'a> ArtifactCache<'a> {
     }
 
     fn read(&self, artifact: &Artifact) -> AuditResult<Arc<[u8]>> {
-        if let Some((previous, bytes)) = self.entries.borrow().get(&artifact.path) {
+        if let Some(previous) = self.entries.borrow().get(&artifact.path) {
             require(
-                previous == artifact,
+                &previous.commitment == artifact,
                 "one artifact path has conflicting commitments",
             )?;
-            return Ok(Arc::clone(bytes));
+            return Ok(Arc::clone(&previous.bytes));
         }
         let next = self
             .total
@@ -51,7 +56,10 @@ impl<'a> ArtifactCache<'a> {
         self.total.set(next);
         self.entries.borrow_mut().insert(
             artifact.path.clone(),
-            (artifact.clone(), Arc::clone(&bytes)),
+            CachedArtifact {
+                commitment: artifact.clone(),
+                bytes: Arc::clone(&bytes),
+            },
         );
         Ok(bytes)
     }

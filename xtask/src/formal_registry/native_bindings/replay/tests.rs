@@ -198,7 +198,7 @@ impl Supplied {
             stdout.as_bytes(),
         )?);
         let (observations, observed, reasons) = formal::native_inventory::observe_invocation(
-            &[subject.clone()],
+            std::slice::from_ref(&subject),
             &invocations[11],
             Some(stdout.as_bytes()),
             Some(b""),
@@ -403,6 +403,23 @@ fn successful_forged_and_rehashed_replay_cannot_mint_native_origin_or_assurance(
             2
         );
         assert_eq!(report["canonical_scoreboard"]["summary"]["established"], 0);
+        assert_eq!(
+            report["canonical_scoreboard"]["native_result_join"],
+            "not_supplied"
+        );
+        assert_eq!(
+            report["canonical_scoreboard"]["native_assurance"],
+            "not_established"
+        );
+        let claims = report["canonical_scoreboard"]["claims"]
+            .as_array()
+            .ok_or("baseline claim rows absent")?;
+        assert_eq!(claims.len(), 2);
+        assert!(
+            claims
+                .iter()
+                .all(|claim| claim["status"] == "NOT_ESTABLISHED")
+        );
         assert_eq!(report["native_origin"], "not_established");
         assert_eq!(report["native_assurance"], "not_assessed");
         assert_eq!(report["execution_authority"], "not_granted");
