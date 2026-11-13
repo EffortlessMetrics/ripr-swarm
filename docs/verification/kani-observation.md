@@ -57,6 +57,15 @@ and prevent a clean lane result rather than disappearing from the denominator.
 
 ## Result and failure law
 
+Admission requires equality between the unique selected harness-file set and
+its observed source-file set, with exactly one observation per file. Missing,
+extra, duplicated or substituted observations refuse clean lane success even
+when all observed files recheck successfully. Several harnesses in one file
+legitimately share one file observation; harness count is not file count.
+`--allow-empty` does not waive this invariant. This check closes an internal
+construction-divergence gap; it does not establish complete native discovery
+or the source/configuration closure consumed by the verifier.
+
 The existing lane verdict is authoritative for native row classification.
 The reporting layer can refuse incomplete observations; it cannot turn a
 failed native lane into success. A completed row survives a later process
@@ -150,6 +159,11 @@ real Kani separately when qualifying the composed producer.
 Regression controls must preserve positive output and challenge stale success,
 missing tool/result, extra native subjects, ambiguous and duplicate identities,
 source edits, partial timeout, retained-text limits and JSON/Markdown agreement.
+The `machine::inventory_tests` module specifically challenges a two-file
+selection with one missing commitment, extra and duplicate observations,
+same-count wrong-file substitution, a valid shared-file selection, ordering,
+empty opt-out and the independent changed-source refusal. These controls use
+actual file rechecks and synthetic native observations; they are not solver runs.
 A compile failure is not the intended behavioral negative control. Keep failing
 results distinct from an unavailable execution environment.
 

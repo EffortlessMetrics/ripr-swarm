@@ -188,7 +188,13 @@ The journal records selected source harnesses, their observed proof-file bytes,
 process arguments/status/deadlines, captured text and commitments, parsed native
 block identities and existing-parser cover counts. Missing selected results,
 unexpected native blocks, changed/unreadable proof files, or exceeded retained-
-text budgets cannot earn lane success. Complete historical rows survive a
+text budgets cannot earn lane success. The unique selected harness-file set
+must equal the observed source-file set, with one observation per file. Missing,
+extra, duplicate or same-count substituted observations refuse admission, even
+if every observed file rechecks successfully or `--allow-empty` is present.
+Multiple harnesses in one file share its one observation. This is an internal
+inventory-consistency invariant, not complete native discovery or consumed-source
+closure. Complete historical rows survive a
 partial failure; they do not override the aggregate refusal.
 
 This is `ripr.kani-observation.v1`, not a registered-claim receipt. Claim IDs and

@@ -277,6 +277,28 @@ impl Report {
         if self.selected.is_empty() && !self.requested.as_ref().is_some_and(|r| r.allow_empty) {
             return Some("no source harnesses selected".to_string());
         }
+        // File custody must cover exactly the selected source-file set. A
+        // successful recheck of one observed file says nothing about a second
+        // selected file omitted from discovery's supplied source observations.
+        // Several distinct harnesses may legitimately share one source file.
+        let selected_files: BTreeSet<&str> = self
+            .selected
+            .iter()
+            .map(|selected| selected.harness.file.as_str())
+            .collect();
+        let observed_files: BTreeSet<&str> = self
+            .selected_source_files
+            .iter()
+            .map(|source| source.file.as_str())
+            .collect();
+        if selected_files != observed_files {
+            return Some(
+                "selected harness files and observed source files do not agree".to_string(),
+            );
+        }
+        if observed_files.len() != self.selected_source_files.len() {
+            return Some("duplicate source-file observations are not admitted".to_string());
+        }
         if !self.source_recheck_errors.is_empty()
             || (!self.selected.is_empty() && self.selected_files_unchanged_after_run != Some(true))
         {
@@ -668,3 +690,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod inventory_tests;

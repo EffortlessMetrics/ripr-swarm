@@ -17,4 +17,12 @@ tests = [
   "xtask/tests/kani_machine_report.rs::current_run_replaces_old_success_without_borrowing_its_evidence",
   "xtask/tests/kani_machine_report.rs::unexpected_native_subject_is_preserved_and_refuses_lane_success",
   "xtask/tests/kani_machine_report.rs::changed_proof_source_cannot_reuse_a_success_looking_row",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::selected_file_without_source_observation_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::unselected_source_observation_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::duplicate_source_observations_are_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::same_cardinality_source_substitution_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::multiple_harnesses_share_one_observed_source_file",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::complete_multi_file_inventory_is_order_independent",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::empty_opt_out_does_not_admit_an_orphan_source",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::complete_inventory_does_not_bypass_changed_source_refusal",
 ]
