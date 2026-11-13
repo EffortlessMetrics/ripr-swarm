@@ -1608,6 +1608,28 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 );
             }
         };
+    // #14136: the findings `ripr check` withholds (an owner that carries
+    // `#[mutants::skip]`, or a suppression policy) are not projected into the
+    // editor either. The id set is the shared `withheld_finding_ids` owner, not
+    // an LSP-side matcher; the disclosure count stays on the snapshot.
+    let withheld_ids: std::collections::BTreeSet<String> = output
+        .withheld_finding_ids()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let owner_opt_out_findings = output.owner_opt_outs.len();
+    // A withheld finding that carries a static limit still limits the run: the
+    // analysis was incomplete for that owner, so the status stays `limited`
+    // rather than reading `full` just because the finding is not shown.
+    let mut visible_findings = Vec::new();
+    let mut withheld_static_limits = Vec::new();
+    for finding in output.findings {
+        if !withheld_ids.contains(&finding.id) {
+            visible_findings.push(finding);
+        } else if finding.static_limit_kind.is_some() {
+            withheld_static_limits.push(finding);
+        }
+    }
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
@@ -1639,7 +1661,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // already excluded. The suppressed count stays on the snapshot as the
     // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), visible_findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -1770,8 +1792,9 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // state, scope, deferral, and the typed component outcomes (#1939,
     // #1997). A degraded optional component makes the run `limited` — never
     // a silent `full`.
+    let status_findings = run_status_findings(&findings, &withheld_static_limits);
     let run_status = derive_run_status_with_outcome(
-        &findings,
+        &status_findings,
         &gap_artifact_report.rejections,
         &gap_artifact_report.artifacts,
         defer_seam_inventory,
@@ -1845,7 +1868,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // requires visible, bounded advisory evidence rather than a silent zero.
     if should_project_gap_records(
         run_status,
-        &findings,
+        &status_findings,
         &gap_artifact_report.artifacts,
         &component_outcomes,
         gap_ledger.as_ref().map(|(_, records)| records.as_slice()),
@@ -1915,6 +1938,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        owner_opt_out_findings,
         unavailable_adapter,
         language_view,
         rust_diagnostic_origins: origins,
@@ -2461,6 +2485,21 @@ pub(super) fn language_not_analyzed_diagnostic(
 /// and no other component degraded. This keeps preview diagnostics visible
 /// while preserving the fail-closed suppression policy for stale, rejected,
 /// incomplete, partial, and operationally degraded runs.
+/// Findings the run status is derived from: the projected findings plus any
+/// withheld finding that carries a static limit (#14136). Borrowed when
+/// nothing was withheld.
+fn run_status_findings<'a>(
+    projected: &'a [Finding],
+    withheld_static_limits: &[Finding],
+) -> std::borrow::Cow<'a, [Finding]> {
+    if withheld_static_limits.is_empty() {
+        return std::borrow::Cow::Borrowed(projected);
+    }
+    let mut all = projected.to_vec();
+    all.extend_from_slice(withheld_static_limits);
+    std::borrow::Cow::Owned(all)
+}
+
 fn should_project_gap_records(
     run_status: &str,
     findings: &[Finding],
@@ -2651,6 +2690,7 @@ fn git_timeout_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2758,6 +2798,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -6605,6 +6646,30 @@ mod diagnostic_policy_tests {
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRepairRoute, ProjectionEligibility};
 
+    #[test]
+    fn withheld_static_limit_keeps_the_run_limited() -> Result<(), String> {
+        let mut limited = policy_finding();
+        limited.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        let withheld = vec![limited];
+        let projected: Vec<Finding> = Vec::new();
+        let none: Vec<Finding> = Vec::new();
+        let borrowed = run_status_findings(&projected, &none);
+        let widened = run_status_findings(&projected, &withheld);
+        let status = |findings: &[Finding]| {
+            derive_run_status_with_outcome(findings, &[], &[], false, false, &[], None)
+        };
+        if status(&borrowed) != "full" {
+            return Err(format!("control run is not full: {}", status(&borrowed)));
+        }
+        if status(&widened) != "limited" {
+            return Err(format!(
+                "withheld static limit did not limit the run: {}",
+                status(&widened)
+            ));
+        }
+        Ok(())
+    }
+
     fn policy_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
@@ -9306,6 +9371,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

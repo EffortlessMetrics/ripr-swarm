@@ -3849,10 +3849,17 @@ instead. The diff-scope badges (`badge-json`,
 as unsuppressed exposure gaps or calibrated unknowns; an explicit badge
 suppression that matches one still counts it as suppressed.
 
+The editor sidecar consumes the same set (#14136): the LSP projects no
+diagnostic, hover repair text, code action or code lens for a finding id in
+`CheckOutput::withheld_finding_ids`, and `ripr/workspaceStatus` discloses the
+withheld count and the `owner_mutants_skip` reason under
+`diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
+(the reason is `null` when nothing is withheld). The set is recomputed on every
+refresh, so removing the attribute brings the findings back.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-LSP diagnostics, hover and code actions; MCP gaps and repair cards; `ripr
-explain`; and the repo-scope formats (`repo-*`), which do not read the
-attribute at all. The canonical next-action stop
+MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
+(`repo-*`), which do not read the attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 

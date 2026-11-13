@@ -94,6 +94,7 @@ mod bare_cr_origin_tests;
 mod consumed_source_tests;
 mod diagnostics_generation_tests;
 mod document_store_overflow_tests;
+mod owner_opt_out_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
@@ -1171,6 +1172,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -10969,6 +10971,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -16329,6 +16332,7 @@ fn sample_analysis_snapshot(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -23848,6 +23852,7 @@ fn quarantine_workspace_diagnostics(
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -24781,6 +24786,7 @@ fn partition_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -25141,6 +25147,7 @@ fn disabled_language_workspace_diagnostics(
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter,
         language_view: Some(not_selected_language_view("python")),
         rust_diagnostic_origins: Default::default(),
@@ -25542,6 +25549,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: UnavailableAdapterCoverage::from_preview_advisories(&[
             crate::analysis::PreviewLanguageAdvisory {
                 language: "perl".to_string(),

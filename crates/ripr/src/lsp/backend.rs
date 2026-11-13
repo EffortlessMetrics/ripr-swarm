@@ -8539,6 +8539,8 @@ impl Backend {
                         "actionable_gap_artifacts": actionable_gap_artifacts,
                         "gap_artifact_rejections": gap_artifact_rejections,
                         "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
                     },
                     "diagnostic_budget": diagnostic_budget_json.clone(),
                     "diagnostic_budget_state": diagnostic_budget_state.clone(),
@@ -8575,6 +8577,8 @@ impl Backend {
                 "actionable_gap_artifacts": actionable_gap_artifacts,
                 "gap_artifact_rejections": gap_artifact_rejections,
                 "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
+                        "owner_opt_out_findings": snapshot.owner_opt_out_findings,
+                        "owner_opt_out_reason": owner_opt_out_reason(snapshot.owner_opt_out_findings),
             },
             "diagnostic_budget": diagnostic_budget_json,
             "diagnostic_budget_state": diagnostic_budget_state,
@@ -9381,6 +9385,21 @@ fn workspace_status_report_paths() -> serde_json::Value {
 /// registrations, `available: false` for a limited run that did not
 /// compute harness facts, and the registration summaries when facts are
 /// complete (#3605).
+/// Reason token for the owner opt-out disclosure on workspace status (#14136):
+/// the shared `owner_mutants_skip` token when findings were withheld, otherwise
+/// `null`, so a status reader never sees a reason without a count.
+fn owner_opt_out_reason(withheld: usize) -> serde_json::Value {
+    if withheld == 0 {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(
+            crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip
+                .as_str()
+                .to_string(),
+        )
+    }
+}
+
 fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
     match &snapshot.harness_facts {
         crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered => serde_json::Value::Null,
@@ -10340,6 +10359,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -12289,6 +12309,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -12671,6 +12692,35 @@ mod delivery_selection_parity_tests {
             if unserved != stored {
                 return Err(format!(
                     "{transport} unserved identities diverge from stored omissions: unserved={unserved:?} stored={stored:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_status_discloses_withheld_owner_opt_out_findings() -> Result<(), String> {
+        // #14136: the committed snapshot's withheld count reaches the
+        // `ripr/workspaceStatus` payload with the shared reason token, and a
+        // snapshot with nothing withheld reports a null reason.
+        for (withheld, reason) in [
+            (2usize, serde_json::json!("owner_mutants_skip")),
+            (0usize, serde_json::Value::Null),
+        ] {
+            let harness = parity_backend()?;
+            let backend = harness.service.inner();
+            let mut diagnostics = parity_workspace_diagnostics(Vec::new());
+            diagnostics.snapshot.owner_opt_out_findings = withheld;
+            commit(backend, diagnostics)?;
+            let status = backend
+                .collect_workspace_status()
+                .ok_or_else(|| "expected workspace status".to_string())?;
+            let section = &status["diagnostics"];
+            if section["owner_opt_out_findings"] != serde_json::json!(withheld)
+                || section["owner_opt_out_reason"] != reason
+            {
+                return Err(format!(
+                    "workspace status diverged from the committed snapshot for {withheld} withheld: {section}"
                 ));
             }
         }
@@ -13461,6 +13511,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -14674,6 +14725,7 @@ mod pull_disclosure_dedup_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
