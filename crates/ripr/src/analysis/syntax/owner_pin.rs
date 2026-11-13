@@ -4143,6 +4143,40 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
     Some(gates)
 }
 
+/// How the out-of-line `mod name;` declared on `line` of `source` is gated
+/// (#14463): `Some(false)` when every attribute is available in test builds
+/// (none, or `cfg(test)`), `Some(true)` when at least one is a `cfg` ripr
+/// cannot evaluate and the rest are available, and `None` for a provably-off
+/// gate, any other attribute, or a declaration not found exactly once.
+pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -> Option<bool> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| {
+            module.item_list().is_none()
+                && module
+                    .mod_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let (Some(module), None) = (found.next(), found.next()) else {
+        return None;
+    };
+    let mut gated = false;
+    for attr in module.attrs() {
+        let text = attr.syntax().text().to_string();
+        match attribute_test_build_availability(&text) {
+            Some(true) => {}
+            None if text.starts_with("#[cfg(") => gated = true,
+            _ => return None,
+        }
+    }
+    Some(gated)
+}
+
 /// Attributes a pinned test may carry: `#[test]` itself, and the
 /// `serial_test` locks, which run the unchanged body while holding a mutex or
 /// file lock. Lock arguments are admitted only as bare key names
