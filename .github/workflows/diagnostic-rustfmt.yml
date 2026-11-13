@@ -1,0 +1,49 @@
+name: Diagnostic rustfmt patch
+
+on:
+  push:
+    branches:
+      - feat/14473-formal-claim-registry
+      - feat/14472-kani-observation-journal
+    paths:
+      - "**/*.rs"
+      - ".github/workflows/diagnostic-rustfmt.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Generate exact rustfmt patch
+        run: |
+          set -euo pipefail
+          cargo fmt
+          git diff --binary -- '*.rs' > rustfmt.patch
+          git diff --name-only -- '*.rs' > rustfmt-files.txt
+          test -s rustfmt.patch
+          test -s rustfmt-files.txt
+          mkdir formatted
+          while IFS= read -r file; do
+            mkdir -p "formatted/$(dirname "$file")"
+            cp "$file" "formatted/$file"
+          done < rustfmt-files.txt
+
+      - name: Upload exact rustfmt output
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rustfmt-${{ github.sha }}
+          path: |
+            rustfmt.patch
+            rustfmt-files.txt
+            formatted
+          if-no-files-found: error

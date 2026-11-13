@@ -1,0 +1,57 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "admitted_merge_group",
+  "proposition": "repair_card_route_exposable is true exactly when the instruction is FixSiteReady and the readiness authority reports repair_ready.",
+  "non_claims": [
+    "This claim does not establish that the repair instruction or readiness facts were produced from current repository evidence.",
+    "This claim does not establish correctness of repair execution, edit application, or downstream verification."
+  ],
+  "owners": [
+    "ripr::domain::repair_card_route_exposable"
+  ],
+  "source_closure": [
+    "crates/ripr/src/domain/repair_card.rs",
+    "crates/ripr/src/domain/repair_card/kani_proofs.rs"
+  ],
+  "domain": "Every FixInstructionState variant and both boolean repair_ready values.",
+  "assumptions": [
+    "The symbolic instruction index is constrained below the five registered FixInstructionState variants."
+  ],
+  "trust_dependencies": [
+    "Kani 0.68.0 frontend and transformation semantics",
+    "CBMC solver execution and result reporting",
+    "the pinned Rust verifier toolchain and target configuration"
+  ],
+  "observable": "The repair-card route exposure boolean.",
+  "bounds": {
+    "instruction_variants": 5,
+    "repair_ready": "all boolean values"
+  },
+  "subjects": [
+    "route_exposable_iff_fix_site_ready_and_repair_ready"
+  ],
+  "required_covers": [
+    "the route is exposable",
+    "FixSiteReady without repair readiness remains closed",
+    "a stale instruction remains closed"
+  ],
+  "negative_controls": [
+    "Mutation control: expose a route for stale/unavailable instructions or without repair readiness."
+  ],
+  "result_satisfaction": "One current verified row for the registered subject with the open and fail-closed covers satisfied.",
+  "currentness_inputs": [
+    "claim document decision digest",
+    "complete registered source-closure digest",
+    "provider, solver and Rust toolchain identity",
+    "runner generation and effective verifier configuration",
+    "actual admitted merge-group and ordered member heads"
+  ],
+  "transition_policy": "base_and_head_remain_protected_until_an_explicit_generation-bumped replacement or recorded retirement is accepted",
+  "owner_spec": "RIPR-SPEC-0192",
+  "owner_issue": 12109
+}

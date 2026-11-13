@@ -1,0 +1,58 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "admitted_merge_group",
+  "proposition": "SourceCurrentness permits candidate action only for CandidateCurrent, and that state is disjoint from every base-side state.",
+  "non_claims": [
+    "This claim does not establish that source-currentness inputs were collected from the correct repository or merge group.",
+    "This claim does not establish correctness of every consumer of SourceCurrentness."
+  ],
+  "owners": [
+    "ripr_contract::domain::SourceCurrentness::permits_candidate_action",
+    "ripr_contract::domain::SourceCurrentness::is_base_side"
+  ],
+  "source_closure": [
+    "crates/ripr-contract/src/domain/probe.rs",
+    "crates/ripr-contract/src/domain/proof_domains.rs",
+    "crates/ripr-contract/src/domain/probe_kani.rs"
+  ],
+  "domain": "Every SourceCurrentness constructor enumerated by the maintained CURRENTNESS proof-domain constant.",
+  "assumptions": [
+    "The symbolic index is constrained below CURRENTNESS.len()."
+  ],
+  "trust_dependencies": [
+    "Kani 0.68.0 frontend and transformation semantics",
+    "CBMC solver execution and result reporting",
+    "the pinned Rust verifier toolchain and target configuration"
+  ],
+  "observable": "The permits_candidate_action and is_base_side predicates.",
+  "bounds": {
+    "domain_source": "CURRENTNESS constant",
+    "symbolic_index": "usize constrained to index < CURRENTNESS.len()"
+  },
+  "subjects": [
+    "currentness_action_and_base_side_are_disjoint"
+  ],
+  "required_covers": [
+    "a base-side state is explored",
+    "a candidate-action-permitting state is explored"
+  ],
+  "negative_controls": [
+    "Mutation control: permit candidate action for a base-side or unresolved currentness state."
+  ],
+  "result_satisfaction": "One current verified row for the registered subject with both disjoint-state covers satisfied.",
+  "currentness_inputs": [
+    "claim document decision digest",
+    "complete registered source-closure digest",
+    "provider, solver and Rust toolchain identity",
+    "runner generation and effective verifier configuration",
+    "actual admitted merge-group and ordered member heads"
+  ],
+  "transition_policy": "base_and_head_remain_protected_until_an_explicit_generation-bumped replacement or recorded retirement is accepted",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

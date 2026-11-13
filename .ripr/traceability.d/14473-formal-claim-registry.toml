@@ -1,0 +1,18 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/formal_registry.rs",
+  "xtask/src/formal_registry/load.rs",
+  "xtask/src/formal_registry/project.rs",
+  "xtask/src/formal_registry/transition.rs",
+  "xtask/src/bin/formal-claim-registry.rs",
+]
+tests = [
+  "xtask/src/formal_registry/tests.rs::registry_emits_deterministic_index_and_honest_scoreboard",
+  "xtask/src/formal_registry/tests.rs::registry_membership_is_complete_and_exact",
+  "xtask/src/formal_registry/tests.rs::decision_digest_mismatch_and_duplicate_manifest_keys_reject",
+  "xtask/src/formal_registry/tests.rs::decision_digest_covers_route_authority_and_document_locator",
+  "xtask/src/formal_registry/tests.rs::transition_requires_generation_bumps_for_decision_changes",
+  "xtask/src/formal_registry/tests.rs::transition_requires_explicit_retirement_for_removal",
+  "xtask/src/formal_registry/tests.rs::order_does_not_change_registry_generation",
+]

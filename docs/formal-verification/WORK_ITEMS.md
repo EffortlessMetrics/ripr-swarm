@@ -11,7 +11,7 @@ It is not a second programme or claim registry.
 | #12579 / #12581 | Preserve delivered attribution and process-completion owners | Bounded, diagnosable version preflight |
 | #14460 / #14469 | Independent collector repair; retain native controls | Complete positive cover evidence |
 | #14472 / #12470 | Compose the two runner repairs and reuse #14478 admission predicates | Native JSON/Markdown, raw custody and exact inventory |
-| #14473 | Consume current #14472 results | Stable critical claims and assurance scoreboard |
+| #14473 | Governed registry baseline first; exact #14472 result join second | Stable critical claims, planner projection, and assurance scoreboard |
 | #14474 | Consume #14473; retain #6452/#6456 protection | Conservative affected plan on admitted qualification subject |
 | #10686 / #11517 | Separate #10745 product track | Declared Kani context/source/cache/public inventory |
 | #12596 and product successors | Consume #11517 without crediting it as self-proof | Exact owner/domain/observable and public native correlation |
@@ -23,12 +23,14 @@ before any required-check promotion under #12904.
 
 | Owner | Current result | Required next transition |
 | --- | --- | --- |
-| #12579 / PR #12581 | Bounded preflight implementation; current repair requires distinct sanitized failure classes and an independent test deadline | Resolve actual conflicts, preserve native process controls, qualify the repaired head and its integration |
-| #14460 / PR #14469 | Positive-cover admission; historical hosted run reported 73 VERIFIED rows and 29,346 complete workspace test subjects; the candidate now includes the missing provenance-fixture policy entry | Retain exact historical source identities and qualify the repaired integration; registered/advisory cover policy belongs to #14472/#14473 |
-| #14472 / PR #14478 | Native-tested offline document auditor; exit zero means consistent documents and always retains native assurance as not assessed | Reuse its DTO/admission owner in the native producer; source/configuration/custody must be measured, not declared into existence |
+| #12579 / PR #12581 | Exact-head source review and the complete maintained H/P route passed; protected merge-group and landed-main identity remain pending | Consume actual G/M without rebinding the successful P to later main; preserve the bounded process-custody owner |
+| #14460 / PR #14469 | Positive-cover admission passed its current H/P route and entered protected delivery; actual G/M remains authoritative | Land through protection, then compose the observation producer without weakening cover admission |
+| #12904 / PR #14471 | Maintenance, claim and result contracts passed their current H/P route; protected G/M remains pending | Land the contract through protection and keep executable child acceptance separate |
+| #14472 / PR #14478 | Shared offline claim/run semantic auditor has 21 focused controls and 28 actual CLI/schema dispositions; parent/protected integration is pending | Reuse this one admission owner in native capture and the governed result join |
+| #14472 / PR #14545 | Run-owned observation producer compiles on its exact head; journal controls, full policy, real Kani and protected integration are incomplete | Repair selected-harness/source-observation set equality, execute all behavioral controls, and compose #14469/#12581/current-main retirement |
 | #10686 / draft PR #11517 | Large context/source/cache/public-inventory candidate | Keep owner/domain semantics out; split producer/context and projections if needed; qualify current head instead of recreating work |
-| #14472/#14473 / draft PR #14478 | Offline claim/run document auditor and strengthened design contracts; native assurance remains `not_assessed` | Reuse one semantic validator at the native producer/report boundary, generate the governed registry/result join, and avoid a second admission implementation |
-| #14474 / stacked passive selector candidate | Supplied-fact critical selection, all-critical fallback, queue identity, and JSON/Markdown planning without provider execution | Qualify this contract, then generate its claim index from #14473 and bind actual `B/G/member/change` facts under #14500 before any advisory execution |
+| #14473 / governed registry child | Canonical membership, decision/registry generations, five initial critical claims, planner projection, transition checks, and an honest registry-only scoreboard | Qualify the passive registry, then join exact #14472 results and #14500 lifecycle identities without changing the shared admission law |
+| #14474 / PR #14542 | Current stack passes 38 focused auditor/planner tests, strict Clippy and both builds; protected integration remains pending | Consume the generated #14473 index and authenticated `B/G/member/change` facts under #14500 before advisory execution |
 
 ## Newly split infrastructure leaves
 
@@ -40,9 +42,10 @@ inventory, cover, currentness, and raw-artifact identity.
 It consumes the delivered runner-integrity fixes and composes with #12581 and
 #14469. It does not add a proof, semantic relation, or required check.
 
-Draft PR #14478 supplies an executable offline consistency auditor and corrects
-the draft schemas, but explicitly does not emit or authenticate native evidence.
-The production runner/result integration remains open.
+PR #14478 supplies the shared executable consistency auditor and corrected
+contracts. Draft PR #14545 supplies the first run-owned observation producer,
+but it still needs the selected-harness/source-observation set repair, complete
+behavioral qualification, admitted result conversion, and protected integration.
 
 ### #14473 — stable claims and assurance scoreboard
 
@@ -58,8 +61,11 @@ The first claim families are:
 4. resource/budget safety;
 5. edit/repair final disposition.
 
-PR #14478 validates supplied draft claim documents but creates no governed
-registry and no assurance scoreboard.
+The governed registry child adds canonical membership, decision and registry
+digests, five initial critical claim documents, #14542-compatible projection,
+base/head transition validation, and a registry-only scoreboard. That
+scoreboard deliberately leaves all native claims `NOT_ESTABLISHED` until an
+exact #14472 result and #14500 lifecycle identity are joined.
 
 ### #14474 — affected critical selection
 

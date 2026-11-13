@@ -43,6 +43,7 @@ automation = [
     "dep:rayon",
     "dep:serde",
     "formal-evidence-audit",
+    "formal-claim-registry",
     "formal-claim-plan",
     "dep:sha2",
     "dep:toml",
@@ -54,6 +55,8 @@ automation = [
 ]
 # Pure document admission can be tested without compiling the product library.
 formal-evidence-audit = ["dep:serde", "dep:sha2"]
+# Governed claim membership reuses the one document-admission authority.
+formal-claim-registry = ["formal-evidence-audit"]
 # Passive affected-claim planning consumes supplied facts and executes no provider.
 formal-claim-plan = ["dep:serde", "dep:sha2"]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
@@ -70,6 +73,11 @@ required-features = ["automation"]
 name = "formal-evidence-audit"
 path = "src/bin/formal-evidence-audit.rs"
 required-features = ["formal-evidence-audit"]
+
+[[bin]]
+name = "formal-claim-registry"
+path = "src/bin/formal-claim-registry.rs"
+required-features = ["formal-claim-registry"]
 
 [[bin]]
 name = "formal-claim-plan"

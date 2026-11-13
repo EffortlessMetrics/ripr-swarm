@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/formal-assurance-scoreboard-v1.schema.json",
+  "title": "RIPR formal assurance scoreboard v1",
+  "description": "Registry-only baseline scoreboard. Current native assurance requires a separately admitted result join.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "registry_generation",
+    "native_result_join",
+    "native_assurance",
+    "summary",
+    "claims"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.formal-assurance-scoreboard.v1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "registry_generation": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*:sha256:[a-f0-9]{64}$"
+    },
+    "native_result_join": {
+      "enum": [
+        "not_supplied",
+        "admitted"
+      ]
+    },
+    "native_assurance": {
+      "enum": [
+        "not_established",
+        "partially_established",
+        "established"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registered_claims",
+        "established",
+        "failed",
+        "not_established",
+        "stale",
+        "unsupported",
+        "not_proven"
+      ],
+      "properties": {
+        "registered_claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "established": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_established": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unsupported": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_proven": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_id",
+          "claim_generation",
+          "criticality",
+          "phase",
+          "provider",
+          "route",
+          "status",
+          "reasons",
+          "subjects",
+          "decision_digest"
+        ],
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]+$"
+          },
+          "claim_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "criticality": {
+            "enum": [
+              "critical",
+              "important",
+              "advisory",
+              "scheduled",
+              "manual"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "admitted_merge_group",
+              "ordinary_pr_critical",
+              "merge_ready",
+              "scheduled",
+              "release",
+              "manual"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "route": {
+            "enum": [
+              "native",
+              "manual",
+              "unsupported"
+            ]
+          },
+          "status": {
+            "enum": [
+              "ESTABLISHED",
+              "FAILED",
+              "NOT_ESTABLISHED",
+              "STALE",
+              "UNSUPPORTED",
+              "NOT_PROVEN"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "subjects": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "decision_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}
