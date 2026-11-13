@@ -26,7 +26,7 @@ const LEAF_SCOPED_FAMILIES: &[&str] = &[
 ];
 
 /// The scoped help for one leaf path (`reports kani`), or `None` when the path
-/// does not share a family body (it has no `option_section`) or the body no
+/// is outside `LEAF_SCOPED_FAMILIES`, has no `option_section`, or the body no
 /// longer carries the leaf's usage line or section.
 pub(super) fn leaf_help(path: &str) -> Option<String> {
     let (family, _) = path.split_once(' ')?;

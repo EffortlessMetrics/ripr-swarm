@@ -196,7 +196,7 @@ fn shared_body_leaf_rows_list_only_the_leaf_flags() -> Result<(), String> {
     assert_eq!(
         leaves.len(),
         23,
-        "every option_section leaf is leaf_section"
+        "every option_section leaf of a leaf-scoped family is leaf_section"
     );
     // No shared-body row remains for these families. Other families (for
     // example `gate`, whose body documents both subcommands) may still
