@@ -509,7 +509,8 @@ wrong credits.
    A compared operand that is a plain identifier the test binds exactly
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
-   `assert_eq!` assertions on later lines, and the assertion is the
+   `assert_eq!` assertions (or one whole side of a plain lone-equality
+   `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
    change the value through a shared handle). A `mut` binding, a second binding, a
@@ -1880,7 +1881,14 @@ reads `assert_eq!` operands when:
    macro admission (the parser keys each terminal Err-return guard by its
    `if` line and whitespace-free condition, with the same eager-path
    gates), `#[should_panic]`, the test's line range and the return-path
-   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+   gate. The #6974 let-bound result rule reads a plain `assert!` here as
+   it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
+   fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
+   side of the single `==` is the binding alone, the assertion names it
+   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
+   is string text), and every #6974 binding condition holds. A guard twin
+   over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
+   stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
    when the guard fires, so it is never the pinned assertion, and the
    self-computed check selects its reader the same way: an `assert_eq!`
@@ -3365,6 +3373,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Let-bound lone-equality pins (#14085):
+  `crates/ripr/tests/let_bound_lone_equality_pin.rs`
+  (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
+  `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
+  `an_equality_the_test_never_runs_stays_unrevealed`).
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,
