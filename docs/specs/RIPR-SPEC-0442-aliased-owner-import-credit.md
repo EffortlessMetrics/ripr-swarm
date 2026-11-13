@@ -58,7 +58,8 @@ A direct import of the owner's function under an alias credits the owner as
 
 Both sides of the module comparison use one `/`-segment representation.
 `src/pricing/mod.rs` names the `pricing` module; a crate root has the empty
-path.
+path. A nested `mod x;` resolves as rustc does: under `pricing/` when declared
+in `pricing.rs`, and under the declaring file's directory for `#[path]`.
 
 ### Refusal
 
@@ -94,8 +95,9 @@ read the test's assertions and the owner's body.
   the observed argument.
 - An integration test's genuine package-qualified alias credits the owner;
   the same test crate's own `crate::` module does not.
-- A nested owner (`src/pricing/inner.rs`) and a `mod.rs` owner
-  (`src/pricing/mod.rs`) credit their `crate::` imports.
+- A nested owner (`src/pricing/inner.rs`) reached through `pricing/mod.rs` or
+  `pricing.rs`, and a `mod.rs` owner (`src/pricing/mod.rs`), credit their
+  `crate::` imports.
 - A same-named local function in the import's module or a nested module, or
   a lexical binding, withholds the owner; an enclosing-module declaration is
   shadowed by the import and keeps credit; a later genuine alias call keeps
@@ -136,7 +138,7 @@ read the test's assertions and the owner's body.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_an_integration_test_module_shadows_the_library_module_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_owner_is_a_nested_module_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_owner_is_a_mod_rs_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_sibling_module_declares_the_alias_name_then_owner_keeps_related_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_test_module_declares_the_alias_name_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_local_function_shadows_it_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_inline_module_shadows_the_library_module_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_root_imports_the_library_root_then_owner_gets_no_related_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_target_imports_a_library_module_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_crate_root_redirects_the_module_with_path_then_owner_gets_no_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_indexed_packages_when_alias_names_a_sibling_package_then_owner_gets_no_related_test`
-- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_closure_parameter_shadows_it_then_owner_takes_no_value_from_it`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value`, `crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it`
 - `fixtures/evidence-promotion-honesty-corpus/corpus.json` `report_digest_required`
   report fixtures `rust-repo-exposure-alias-crate` and
   `rust-repo-exposure-alias-external`

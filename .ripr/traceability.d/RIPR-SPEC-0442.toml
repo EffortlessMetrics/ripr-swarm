@@ -18,7 +18,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_crate_root_redirects_the_module_with_path_then_owner_gets_no_related_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_indexed_packages_when_alias_names_a_sibling_package_then_owner_gets_no_related_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test",
-  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_closure_parameter_shadows_it_then_owner_takes_no_value_from_it",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it",
   "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_table_covers_each_scanned_form",

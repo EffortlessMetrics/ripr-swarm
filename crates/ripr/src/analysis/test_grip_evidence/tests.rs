@@ -23281,48 +23281,36 @@ fn given_direct_owner_alias_when_a_block_binding_shadows_it_then_owner_takes_no_
 }
 
 #[test]
-fn given_direct_owner_alias_when_a_closure_parameter_shadows_it_then_owner_takes_no_value_from_it()
+fn given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it()
 -> Result<(), String> {
-    assert_scoped_alias_shadow(
-        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let f = |dt: fn(i32, i32) -> i32| dt(7, 7);\n    assert_eq!(f(|a, b| a + b), 14);\n}\n",
-        "closure parameter",
-    )
-}
-
-#[test]
-fn given_direct_owner_alias_when_a_for_pattern_shadows_it_then_owner_takes_no_value_from_it()
--> Result<(), String> {
-    assert_scoped_alias_shadow(
-        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    for dt in [|a: i32, b: i32| a + b] {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
-        "for pattern",
-    )
-}
-
-#[test]
-fn given_direct_owner_alias_when_a_match_arm_shadows_it_then_owner_takes_no_value_from_it()
--> Result<(), String> {
-    assert_scoped_alias_shadow(
-        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let x = |a: i32, b: i32| a + b;\n    match x {\n        dt => assert_eq!(dt(7, 7), 14),\n    };\n}\n",
-        "match arm",
-    )
-}
-
-#[test]
-fn given_direct_owner_alias_when_an_if_let_pattern_shadows_it_then_owner_takes_no_value_from_it()
--> Result<(), String> {
-    assert_scoped_alias_shadow(
-        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
-        "if let pattern",
-    )
-}
-
-#[test]
-fn given_direct_owner_alias_when_a_nested_fn_parameter_shadows_it_then_owner_takes_no_value_from_it()
--> Result<(), String> {
-    assert_scoped_alias_shadow(
-        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    fn helper(dt: fn(i32, i32) -> i32) -> i32 {\n        dt(7, 7)\n    }\n    assert_eq!(helper(|a, b| a + b), 14);\n}\n",
-        "nested fn parameter",
-    )
+    // One table over every scanned shadowing form keeps each form and its
+    // expected value covered without five near-identical functions.
+    let cases = [
+        (
+            "closure parameter",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let f = |dt: fn(i32, i32) -> i32| dt(7, 7);\n    assert_eq!(f(|a, b| a + b), 14);\n}\n",
+        ),
+        (
+            "for pattern",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    for dt in [|a: i32, b: i32| a + b] {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+        ),
+        (
+            "match arm",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let x = |a: i32, b: i32| a + b;\n    match x {\n        dt => assert_eq!(dt(7, 7), 14),\n    };\n}\n",
+        ),
+        (
+            "if let pattern",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+        ),
+        (
+            "nested fn parameter",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    fn helper(dt: fn(i32, i32) -> i32) -> i32 {\n        dt(7, 7)\n    }\n    assert_eq!(helper(|a, b| a + b), 14);\n}\n",
+        ),
+    ];
+    for (label, tests_src) in cases {
+        assert_scoped_alias_shadow(tests_src, label)?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -23882,32 +23870,37 @@ fn given_direct_owner_alias_when_the_owner_is_a_nested_module_then_owner_keeps_r
 -> Result<(), String> {
     // #14508 review: the alias table stores the import with `::` while the
     // owner's module path comes from the index with `/`; the nested owner
-    // (`pricing/inner`) must still resolve its `crate::pricing::inner` import.
+    // (`pricing/inner`) must still resolve its `crate::pricing::inner` import
+    // whether `pricing` is `pricing/mod.rs` or `pricing.rs`, whose
+    // `pub mod inner;` rustc resolves under `pricing/`, not `src/`.
     let inner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::inner::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
     let lib = "pub mod pricing;\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::inner::owner as dt;\n\n    #[test]\n    fn aliased_from_root() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
-    let root = alias_workspace_with_files(
-        "lib_proptest",
-        &[
-            ("src/lib.rs", lib),
-            ("src/pricing/mod.rs", "pub mod inner;\n"),
-            ("src/pricing/inner.rs", inner),
-        ],
-    )?;
-    let files = [
-        PathBuf::from("src/lib.rs"),
-        PathBuf::from("src/pricing/mod.rs"),
-        PathBuf::from("src/pricing/inner.rs"),
-    ];
-    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing/inner.rs")?;
-    let mut related = direct_owner_call_tests(&evidence);
-    related.sort_unstable();
-    assert_eq!(related, vec!["aliased", "aliased_from_root"]);
-    assert!(
-        evidence
-            .observed_values
-            .iter()
-            .any(|fact| fact.value == "100")
-    );
+    for module in ["src/pricing/mod.rs", "src/pricing.rs"] {
+        let root = alias_workspace_with_files(
+            "lib_proptest",
+            &[
+                ("src/lib.rs", lib),
+                (module, "pub mod inner;\n"),
+                ("src/pricing/inner.rs", inner),
+            ],
+        )?;
+        let files = [
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from(module),
+            PathBuf::from("src/pricing/inner.rs"),
+        ];
+        let evidence = evidence_for_alias_seam(&root, &files, "src/pricing/inner.rs")?;
+        let mut related = direct_owner_call_tests(&evidence);
+        related.sort_unstable();
+        assert_eq!(related, vec!["aliased", "aliased_from_root"], "{module}");
+        assert!(
+            evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "100"),
+            "{module}"
+        );
+    }
     Ok(())
 }
 
