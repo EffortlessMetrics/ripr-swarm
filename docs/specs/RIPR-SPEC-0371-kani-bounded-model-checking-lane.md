@@ -107,6 +107,21 @@ Fixed identity strings and other bounds of existing harnesses remain unchanged;
 this does not establish packet validation, full-program behavior, or a full-lane
 qualification.
 
+### Terminal character policy (#12109)
+
+`terminal_text::kani_proofs::needs_terminal_escape_covers_controls_and_bidi` retains
+an unrestricted symbolic `char`. Its independent assertions include U+061C
+(Arabic letter mark), which is a format character rather than an
+`is_control()` character. A separate input-only cover witnesses U+061C even
+when the production escape decision is wrong. Existing control, bidi, tag,
+ZWSP/BOM, printable-ASCII and newline/tab assertions and covers remain intact.
+
+The focused wrong-implementation control removes only U+061C from the actual
+`needs_terminal_escape` policy: the old harness assertions accept that change,
+while the added assertion must reject it. Ordinary Rust execution of extracted
+production and harness items is distinct from native Kani evidence and does
+not qualify the whole lane, string formatting or all invisible characters.
+
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
