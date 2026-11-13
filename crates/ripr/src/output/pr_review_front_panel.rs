@@ -423,7 +423,9 @@ pub(crate) fn pr_review_front_panel_input_warnings(
         .filter_map(|warning| {
             let path = warning.source_artifact.as_deref()?;
             match warning.kind.as_str() {
-                "missing_optional_input" | "malformed_input" => {
+                "missing_optional_input" | "malformed_input" | "unreadable_input" => {
+                    // The message already carries the path and the read cause,
+                    // so do not append the path again (#14553).
                     Some(warning.message.trim_end_matches('.').to_string())
                 }
                 // An explicit `--assistant-proof` that could not be read is
@@ -3303,7 +3305,10 @@ mod tests {
             out_md_path: fixture_path(repo_root, expected_md_path),
             pr_guidance_json: read_optional_fixture(repo_root, pr_guidance.as_deref())?,
             first_action_json: read_optional_fixture(repo_root, first_action.as_deref())?,
-            assistant_proof_json: read_optional_fixture(repo_root, assistant_proof.as_deref())?,
+            assistant_proof_json: read_optional_fixture_typed(
+                repo_root,
+                assistant_proof.as_deref(),
+            )?,
             assistant_health_json: read_optional_fixture(repo_root, assistant_health.as_deref())?,
             ledger_json: read_optional_fixture(repo_root, ledger.as_deref())?,
             baseline_delta_json: read_optional_fixture(repo_root, baseline_delta.as_deref())?,
@@ -3725,6 +3730,29 @@ mod tests {
             "{} does not exist",
             display_path(&absolute)
         ))))
+    }
+
+    /// [`read_optional_fixture`] for the assistant proof: the not-found case is
+    /// derived from the io error kind so the fixture inputs match the typed
+    /// production reader (#14553).
+    fn read_optional_fixture_typed(
+        repo_root: &Path,
+        path: Option<&str>,
+    ) -> Result<Option<Result<String, PanelInputError>>, String> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let absolute = repo_root.join(path);
+        match std::fs::read_to_string(&absolute) {
+            Ok(text) => Ok(Some(Ok(text))),
+            Err(error) => Ok(Some(Err(PanelInputError {
+                not_found: error.kind() == std::io::ErrorKind::NotFound,
+                message: format!(
+                    "read assistant proof {} failed: {error}",
+                    display_path(&absolute)
+                ),
+            }))),
+        }
     }
 
     fn fixture_path(repo_root: &Path, path: &Path) -> String {
