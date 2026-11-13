@@ -1876,6 +1876,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
 pub(super) fn seam_branch_reached_by_call(
     owner: &FunctionSummary,
     seam_expression: &str,
+    seam_line: usize,
     oracle_text: &str,
     test: &TestSummary,
 ) -> Option<bool> {
@@ -1933,35 +1934,43 @@ pub(super) fn seam_branch_reached_by_call(
     }
     let environment: BTreeMap<String, i128> = names.into_iter().zip(values).collect();
     let target = normalized_expression(seam_expression);
+    // The seam's own line, in the coordinates of the parsed body. `body` starts
+    // at the owner's `fn` token, so body line 1 is `owner.start_line`. Matching
+    // the seam's line is what tells two same-text occurrences apart: a sibling
+    // `return` after the `if` is a different line, so it can neither stand in
+    // for the seam's branch nor make the branch scan ambiguous (#14496 review).
+    let body = owner.body.as_str();
+    let seam_body_line = seam_line.checked_sub(owner.start_line)? + 1;
     let mut matches = Vec::new();
     for if_expr in block.syntax().descendants().filter_map(ast::IfExpr::cast) {
         let then_block = if_expr.then_branch()?;
-        let in_then = block_holds_expression(&then_block, &target);
-        let in_else = match if_expr.else_branch() {
-            Some(ast::ElseBranch::Block(else_block)) => {
-                block_holds_expression(&else_block, &target)
-            }
-            _ => false,
+        let else_block = match if_expr.else_branch() {
+            Some(ast::ElseBranch::Block(else_block)) => Some(else_block),
+            _ => None,
         };
         // Both arms holding the same expression means the seam's own branch
-        // is not established by text, so keep today's credit.
-        if in_then && in_else {
+        // is not established by text, so keep today's credit. This is a
+        // text-only check: the two arms are different lines, so the line
+        // match below would otherwise pick one and withhold credit for a
+        // value the other arm returns identically.
+        if block_holds_expression(&then_block, &target)
+            && else_block
+                .as_ref()
+                .is_some_and(|else_block| block_holds_expression(else_block, &target))
+        {
             return None;
         }
+        let in_then = block_holds_expression_at_line(&then_block, &target, body, seam_body_line);
+        let in_else = else_block.as_ref().is_some_and(|else_block| {
+            block_holds_expression_at_line(else_block, &target, body, seam_body_line)
+        });
         if in_then || in_else {
             matches.push((if_expr, in_then));
         }
     }
-    // A duplicate of the seam expression outside an `if` branch (a sibling
-    // `return` after the `if`) is invisible to the branch scan, so one match
-    // would look unambiguous while the call may reach the sibling instead.
-    // Count every seam-position occurrence in the body and keep today's
-    // credit when the branch scan does not account for all of them.
-    if seam_expression_occurrences(&block, &target) > matches.len() {
-        return None;
-    }
-    // More than one `if` holding the same expression is ambiguous: the seam's
-    // own branch is not established, so keep today's credit.
+    // No `if` branch holds the seam's own occurrence: the seam is not
+    // branch-local (a plain tail or a sibling `return`), so keep today's
+    // credit. More than one `if` holding it is ambiguous for the same reason.
     let [(if_expr, in_then)] = matches.as_slice() else {
         return None;
     };
@@ -2070,46 +2079,14 @@ fn enclosing_branches_reached(
     Some(true)
 }
 
-/// How many times `target` is a seam position in `block`: the block's tail
-/// expression, a `return` value, or an inner block's tail expression. A
-/// `return_value` seam is one of those, so a count above the `if`-branch match
-/// count means the seam's own occurrence is not established by the branch
-/// scan and the caller keeps today's credit.
-fn seam_expression_occurrences(block: &ast::BlockExpr, target: &str) -> usize {
-    block
-        .syntax()
-        .descendants()
-        .filter_map(ast::Expr::cast)
-        .filter(|expr| normalized_expression(&expr.syntax().text().to_string()) == target)
-        .filter(is_seam_position)
-        .count()
-}
-
-/// Whether `expr` occupies a position a `return_value` seam can be recorded
-/// at: a block's tail expression, or the value of a `return`. A same-text
-/// occurrence inside a condition (`if amount - 10 >= t`) changes a different
-/// value, so counting it made the duplicate guard answer `None` for every
-/// seam whose expression also appeared in its own guard (#14496 review).
-fn is_seam_position(expr: &ast::Expr) -> bool {
-    // A recorded seam expression may include the `return`, so the node itself
-    // is then the `return` statement.
-    if ast::ReturnExpr::cast(expr.syntax().clone()).is_some() {
-        return true;
-    }
-    let Some(parent) = expr.syntax().parent() else {
-        return false;
-    };
-    if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
-        return block
-            .tail_expr()
-            .is_some_and(|tail| tail.syntax() == expr.syntax());
-    }
-    if let Some(return_expr) = ast::ReturnExpr::cast(parent) {
-        return return_expr
-            .expr()
-            .is_some_and(|value| value.syntax() == expr.syntax());
-    }
-    false
+/// 1-based line of `offset` in `text`, the same coordinates the parsed body
+/// uses. The body is a fresh parse of `owner.body`, so its offsets are not the
+/// file's; counting newlines in the body text is what maps a seam's file line
+/// onto a node in that parse.
+fn line_of_offset(text: &str, offset: usize) -> usize {
+    text.as_bytes().get(..offset).map_or(1, |prefix| {
+        prefix.iter().filter(|byte| **byte == b'\n').count() + 1
+    })
 }
 
 /// Whitespace- and trailing-semicolon-insensitive spelling of one expression,
@@ -2122,7 +2099,9 @@ fn normalized_expression(text: &str) -> String {
         .to_string()
 }
 
-/// Whether `block`'s tail expression or one of its statements is `target`.
+/// Whether `block`'s tail expression or one of its statements is `target`,
+/// ignoring the line. Used only for the identical-arms check, where the two
+/// arms are different lines but return the same value.
 fn block_holds_expression(block: &ast::BlockExpr, target: &str) -> bool {
     if block
         .tail_expr()
@@ -2133,6 +2112,28 @@ fn block_holds_expression(block: &ast::BlockExpr, target: &str) -> bool {
     block
         .statements()
         .any(|statement| normalized_expression(&statement.syntax().text().to_string()) == target)
+}
+
+/// Whether `block`'s tail expression or one of its statements is `target` and
+/// starts on `line` (a body-relative line). The line check is what keeps a
+/// same-text sibling `return` from standing in for the seam's own occurrence.
+fn block_holds_expression_at_line(
+    block: &ast::BlockExpr,
+    target: &str,
+    body: &str,
+    line: usize,
+) -> bool {
+    let at_line = |expr: &ast::Expr| {
+        normalized_expression(&expr.syntax().text().to_string()) == target
+            && line_of_offset(body, usize::from(expr.syntax().text_range().start())) == line
+    };
+    if block.tail_expr().is_some_and(|tail| at_line(&tail)) {
+        return true;
+    }
+    block.statements().any(|statement| {
+        normalized_expression(&statement.syntax().text().to_string()) == target
+            && line_of_offset(body, usize::from(statement.syntax().text_range().start())) == line
+    })
 }
 
 /// Fold one `if` condition with the call's literal argument bindings.

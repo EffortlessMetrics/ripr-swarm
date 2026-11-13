@@ -1,8 +1,8 @@
 <!-- section: Fixed -->
-- Repo seam grip: a branch-local `return_value` seam keeps strong grip only
-  from an oracle whose call the fold establishes reaches that branch, so an exact
-  pin of the owner's result from a call that provably takes the other branch
-  no longer reads as strong grip (#14496). When the shape is unresolved — an
+- Repo seam grip: a branch-local `return_value` seam keeps its credit unless the
+  fold establishes that the pinned call takes the other branch, so an exact pin
+  of the owner's result from a call that provably takes the other branch no
+  longer reads as strong grip (#14496). When the shape is unresolved — an
   unreadable condition, a wrapper that transforms the result, an operand the
   parser cannot resolve — the gate keeps today's credit instead of downgrading,
   so the change only ever removes an established false promotion. The compared

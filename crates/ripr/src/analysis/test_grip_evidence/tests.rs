@@ -23958,8 +23958,10 @@ fn branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call()
 }
 
 /// #14496: a sibling `return` after the `if` holds the same expression, so the
-/// branch scan cannot establish which occurrence the seam is. The gate keeps
-/// today's credit, and the call that reaches the sibling keeps its grip.
+/// seam's own occurrence must be told apart by its line, not by counting. The
+/// call `discounted_total(50, 100)` takes the else path, so the sibling return
+/// on line 5 is reached and keeps its grip, while the then-branch return on
+/// line 3 is not reached and must not answer `Yes` (#14496 review).
 #[test]
 fn branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip() -> Result<(), String> {
     let prod = PathBuf::from("src/lib.rs");
@@ -23968,16 +23970,26 @@ fn branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip() -> R
     let reaching = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 40);\n}\n";
     let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
     let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
-    let seam = seams
-        .iter()
-        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.display_line() == 5)
-        .ok_or_else(|| format!("expected the sibling return seam on line 5; seams: {seams:?}"))?;
-    let evidence = evidence_for_seam(seam, &index);
+    let evidence_at = |line: usize| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.display_line() == line)
+            .ok_or_else(|| format!("expected a return seam on line {line}; seams: {seams:?}"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+    let sibling = evidence_at(5)?;
     assert_eq!(
-        evidence.discriminate.state,
+        sibling.discriminate.state,
         StageState::Yes,
         "a call that reaches the sibling return keeps its grip: {:?}",
-        evidence.discriminate
+        sibling.discriminate
+    );
+    let then_branch = evidence_at(3)?;
+    assert_ne!(
+        then_branch.discriminate.state,
+        StageState::Yes,
+        "the then-branch return is not reached, so it must not answer Yes: {:?}",
+        then_branch.discriminate
     );
     Ok(())
 }
@@ -24176,6 +24188,30 @@ fn branch_local_return_value_seam_summary_names_the_branch_refusal() -> Result<(
     assert!(
         !evidence.discriminate.summary.contains("kind-match false"),
         "a kind-matching oracle must not be reported as a kind mismatch: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a snapshot oracle that names a different receiver is refused by the
+/// exact-read gate (#8121/#12189/#11398), not by kind. The summary used to
+/// print `best_matching != None` as "kind-match", so that refusal read as a
+/// kind mismatch. Named input: `rust-field-snapshot-wrong-receiver.json`,
+/// `src/lib.rs:7`.
+#[test]
+fn branch_local_return_value_seam_summary_names_the_exact_read_refusal() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub struct Record {\n    pub items: usize,\n}\n\npub fn make_record(count: usize) -> Record {\n    let record = Record { items: count + 0 };\n    record\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn snapshot_field() {\n        let record = make_record(2);\n        let other = Record { items: 2 };\n        insta::assert_json_snapshot!(other.items);\n    }\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression() == "record")
+        .ok_or_else(|| format!("expected the returned-record seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.discriminate.summary.contains("kind-match true"),
+        "a kind-matching oracle refused by the exact-read gate must not read as a kind mismatch: {:?}",
         evidence.discriminate
     );
     Ok(())
