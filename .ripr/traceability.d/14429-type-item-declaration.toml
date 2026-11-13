@@ -1,0 +1,7 @@
+# A one-line `type` item reads as a declaration, not a constructed field (#14429).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/classify.rs::tests::type_items_read_as_declarations_not_fields",
+  "crates/ripr/src/analysis/probes/classify.rs::tests::diff_producer_reads_associated_type_as_declaration",
+]

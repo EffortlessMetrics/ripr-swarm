@@ -661,9 +661,13 @@ impl Snapshot {
             })?
             .as_str()
             .to_string();
+        // The profile identity names the mode the analysis actually ran
+        // (`[analysis] mode`, #14347), so a draft and a deep selection never
+        // share one identity; default runs keep `profile:diff:draft`.
         let profile_identity = format!(
-            "mcp:{}:profile:diff:draft",
-            root_identity.unwrap_or("root:unavailable")
+            "mcp:{}:profile:diff:{}",
+            root_identity.unwrap_or("root:unavailable"),
+            output.mode.as_str()
         );
         let evidence_identity = evidence_identity(&items).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
@@ -1484,7 +1488,7 @@ impl WorkspaceSession {
         let mut desired_input = json!({
             "kind": "workspace_diff",
             "base": "default_branch",
-            "mode": "draft",
+            "mode": profile.mode,
             "scope": "diff",
         });
         if let Some(base) = &self.desired_base {
@@ -2049,8 +2053,14 @@ impl SessionProfile {
                     Some(identity) => SessionConfigPosture::Loaded { identity },
                     None => SessionConfigPosture::BuiltInDefaults,
                 };
+                // The effective mode the refresh runs, through the same
+                // `[analysis] mode` the check input applies (#14347).
+                let mode = config
+                    .analysis()
+                    .mode()
+                    .map_or(crate::app::Mode::Draft.as_str(), |mode| mode.as_str());
                 Self {
-                    mode: "draft",
+                    mode,
                     languages,
                     posture,
                 }
@@ -2112,9 +2122,9 @@ impl SessionProfile {
             SessionConfigPosture::DetectedNotLoaded => Some(
                 "project-local ripr.toml is detected but could not be loaded; refresh fails closed with config_invalid until it parses",
             ),
-            SessionConfigPosture::BuiltInDefaults => {
-                Some("no workspace ripr.toml was loaded; refresh runs with built-in defaults")
-            }
+            SessionConfigPosture::BuiltInDefaults => Some(
+                "no workspace ripr.toml was loaded at server startup; each ripr_refresh re-resolves it, so a ripr.toml added after startup applies to the next refresh before it is visible here",
+            ),
         }
     }
 }
@@ -2137,21 +2147,37 @@ pub(crate) fn run_check(
     // loading configuration so a pending signal cannot poison later retries.
     let attempt = || -> Result<Snapshot, AttemptFailure> {
         let config = crate::config::load_for_root(root).map_err(|error| {
+            // #14451: the source-free summary every other machine surface
+            // uses (location plus the parser's reason, #14441). The raw
+            // message carries the TOML source excerpt and a CLI-only
+            // "fix the error above" trailer, and was cut mid-word by the
+            // detail bound.
             AttemptFailure::new(
                 CODE_CONFIG_INVALID,
-                format!("the workspace configuration could not be loaded: {error}"),
                 format!(
-                    "address the configuration error above (the detail names the cause), then {}",
+                    "the workspace configuration could not be loaded: {}",
+                    crate::config::config_error_summary(&error)
+                ),
+                format!(
+                    "fix ripr.toml at the location the detail names (the detail gives the cause), then {}",
                     check_retry_recovery(root, base, source)
                 ),
             )
         })?;
-        let input = crate::app::CheckInput {
+        let mut input = crate::app::CheckInput {
             root: PathBuf::from(root),
             base: base.map(str::to_string),
             git_timeout: Some(crate::app::default_cli_git_timeout()),
             ..Default::default()
         };
+        // The repo's `[analysis]` table (mode, include_unchanged_tests) goes
+        // through the same owner `ripr check` and the LSP use (#14347). A
+        // refresh takes no per-call mode, so nothing here is explicit.
+        crate::config::apply_to_check_input(
+            &mut input,
+            &config,
+            crate::config::CheckInputExplicit::default(),
+        );
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }

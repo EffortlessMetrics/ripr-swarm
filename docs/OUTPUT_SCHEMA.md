@@ -279,6 +279,7 @@ terse document rewrites repeated content. Exactly what differs:
 | Document head | no rendering marker | `"rendering": "terse"` names the profile |
 | `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
+| `ripr.<stage>.summary` (#13673) | stage prose, usually repeated verbatim in `evidence` | coded the same way and sharing the `evidence` code; `state` and `confidence` stay verbatim |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
@@ -287,9 +288,10 @@ terse document rewrites repeated content. Exactly what differs:
 Guarantees and limits, stated precisely:
 
 - No finding is dropped; no verdict changes. Finding `id`,
-  `classification`, `severity`, `confidence`, `probe` and `ripr` blocks
-  move verbatim, and identity/verdict fields are exempt from alias removal
-  even when values coincide.
+  `classification`, `severity`, `confidence` and `probe` move verbatim, as
+  does every `ripr` stage `state` and `confidence`; a `ripr` stage `summary`
+  may be a legend code. Identity/verdict fields are exempt from alias
+  removal even when values coincide.
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
   the terse document alone. Restore an omitted `suggested_next_action` from
@@ -306,10 +308,12 @@ Guarantees and limits, stated precisely:
   property tests, not the schema, hold that guarantee. Tying their omission
   to the alias declaration in the schema needs a narrowing change and a
   schema version bump, which is deferred.
-- What terse does *not* code: `ripr` stage summaries, related-test oracle
-  lines, flow-sink text and repair cards stay inline. Those are the
-  remaining cross-finding duplication; coding them is follow-up work if
-  measurements justify it.
+- What terse does *not* code: related-test oracle lines, flow-sink text and
+  repair cards stay inline. Those are the remaining cross-finding
+  duplication; coding them is follow-up work if measurements justify it.
+  (`ripr` stage summaries joined the coded surfaces in #13673: on a
+  four-finding `dtolnay/semver` diff each long stage summary appeared in
+  `ripr` and again in `evidence`.)
 - The transform runs on the stamped `json` document (including the CLI's
   canonical next-action member when present) and fails closed: an
   unparseable producer document aborts the run instead of emitting an
@@ -1094,6 +1098,11 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- A run refused before analysis (unresolvable base, invalid `ripr.toml`,
+  unusable root) replaces this whole record with the short refusal record
+  described under the `ripr check` refusal documents below, whose header reads
+  `#ripr agent static-advisory refused run_status=<identity> repair_route=<route>`
+  (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
   `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
@@ -1121,16 +1130,19 @@ verify=complete|outcome=O|findings=N|exposed=N
   `partial_scope`, `no_scope`. It is independent of `done=`, is static
   evidence only, and does not replace running the tests.
 - Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
-  every test-side gap (candidate-current, `weakly_exposed` or
-  `reachable_unrevealed`, not static-limited, not preview-only), and the class
+  one row per distinct test-side gap record before the output budget, so it
+  includes rows the `+N more gaps not shown` line summarizes (candidate-current,
+  `weakly_exposed` or `reachable_unrevealed`, not static-limited, not
+  preview-only; identical records fold, see `folded_gaps=`), and the class
   counts cover every non-suppressed finding in the run.
 - `folded_gaps=F` follows `gaps=` (#14338) when some gap findings would
   print identical records: the same class, `FILE:LINE`, changed expression,
   `missing=` value, strongest related test (its whole `tK=` line) and
   `stages=` row, differing only in `id=` (for example an `error_path` and a
   `return_value` probe on one `return Err(..)` line). The comparison uses the
-  unclipped values and every missing discriminator (its value, shape and
-  flow sink), not only the printed one; the explanatory `missing` prose is
+  unclipped values and every missing discriminator (its value, shape,
+  flow sink and drafted boundary call), not only the printed one; the
+  explanatory `missing` prose is
   compared only when no discriminator is named, since it is then what
   `missing=` prints. One test closes all of
   them, so they print as one row, kept by the first finding in triage order,
@@ -1507,7 +1519,15 @@ findings-array budgeting preserves this primary object and its
 `check_triage` stop for a preview finding whose gap `ripr agent repair` can
 start carries an additive `stop.repair_route` (#13599): the same command as
 `finding_routes[].repair.command`. The class stays `unsupported_or_limited`
-because naming the route does not run it; the field is omitted otherwise. Classification
+because naming the route does not run it; the field is omitted otherwise. A
+`check_triage` stop for `scope_missing` on a clean base branch whose `HEAD~1`
+resolves carries an additive `stop.scope_route` (#14423): the
+`ripr check --root <root> --base HEAD~1` rerun the human `Safe next action`
+and the agent `stop=` line name, from one decision; it is omitted otherwise.
+The base may be the checked-out branch or, in a clone, `origin/<branch>` at
+the same commit; an untracked or ignored source file in the working tree
+omits it, because the last commit cannot reach that file.
+Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
 For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,
@@ -1769,6 +1789,17 @@ format and each carrying the same typed identity and repair route:
   class), and an empty `seams` array.
 - `--format agent-seam-packets-json` renders the same refused envelope with
   `packets_total: 0`, an empty `packets` array, and no `next` block.
+- `--format agent` renders a three- or four-line refusal record (#14452):
+  `#ripr agent static-advisory refused run_status=<identity>
+  repair_route=<route>`, then `stop=<diagnostic on one line>`, then
+  `next=<command>` only when the diagnostic names a command that runs as-is
+  (the same rule as the JSON refusal's `next`: unconditional, no placeholder,
+  no flags or environment named outside it), then
+  `verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>`.
+  An `analysis_timeout` refusal puts its bounded retry (the JSON envelope's
+  `input_context.recovery.command`) on `next=` instead, and stderr keeps the
+  requested-input echo and retry the human format prints; a stdin diff has
+  no replayable retry, so `next=` is absent there.
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
@@ -3818,10 +3849,17 @@ instead. The diff-scope badges (`badge-json`,
 as unsuppressed exposure gaps or calibrated unknowns; an explicit badge
 suppression that matches one still counts it as suppressed.
 
+The editor sidecar consumes the same set (#14136): the LSP projects no
+diagnostic, hover repair text, code action or code lens for a finding id in
+`CheckOutput::withheld_finding_ids`, and `ripr/workspaceStatus` discloses the
+withheld count and the `owner_mutants_skip` reason under
+`diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
+(the reason is `null` when nothing is withheld). The set is recomputed on every
+refresh, so removing the attribute brings the findings back.
+
 Surfaces that still report withheld findings (not yet wired to the opt-out):
-LSP diagnostics, hover and code actions; MCP gaps and repair cards; `ripr
-explain`; and the repo-scope formats (`repo-*`), which do not read the
-attribute at all. The canonical next-action stop
+MCP gaps and repair cards; `ripr explain`; and the repo-scope formats
+(`repo-*`), which do not read the attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 
@@ -11773,7 +11811,12 @@ Field contract:
   line, omitted when empty, #9734). A non-empty or malformed
   `parser_declined_files` also adds one entry to the gate decision's
   `warnings` naming the files, so the top-level `status` is never `pass` for
-  a decision whose changed files were not all parsed (#14082). The same holds
+  a decision whose changed files were not all parsed (#14082). In
+  `calibrated-gate` mode the same condition also makes the top-level `status`
+  `blocked` (exit `3`) with an extra warning saying so, because the mode exists
+  to stop a merge and nothing was judged for that file (#14485); the other
+  modes keep the advisory outcome unless a candidate decision already sets a
+  higher status. The same warning-only rule holds
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not
@@ -20336,7 +20379,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.180",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.181",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21121,7 +21164,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.180",
+      "schema_version": "1.181",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

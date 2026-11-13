@@ -151,8 +151,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later

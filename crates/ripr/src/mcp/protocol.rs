@@ -1433,7 +1433,7 @@ pub(super) fn status_success_schema() -> Value {
                             "base": { "type": "string", "enum": ["default_branch", "explicit"] },
                             "base_revision": { "type": "string" },
                             "source": { "type": "string", "const": "worktree" },
-                            "mode": { "type": "string", "const": "draft" },
+                            "mode": { "type": "string", "enum": ["instant", "draft", "fast", "deep", "ready"] },
                             "scope": { "type": "string", "const": "diff" }
                         },
                         "required": ["kind", "base", "mode", "scope"],
@@ -1488,7 +1488,7 @@ pub(super) fn status_success_schema() -> Value {
                     "profile": {
                         "type": "object",
                         "properties": {
-                            "mode": { "type": "string", "const": "draft" },
+                            "mode": { "type": "string", "enum": ["instant", "draft", "fast", "deep", "ready"] },
                             "languages": {
                                 "type": "array",
                                 "items": { "type": "string" }

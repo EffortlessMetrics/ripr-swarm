@@ -390,6 +390,33 @@ pub(crate) fn build_pr_review_front_panel_report(
     }
 }
 
+/// Supplied inputs the panel could not use, for stderr (#14371): an explicit
+/// path that is missing, unreadable or malformed is named with its cause so a
+/// mistyped path is visible without opening the report.
+pub(crate) fn pr_review_front_panel_input_warnings(
+    report: &PrReviewFrontPanelReport,
+) -> Vec<String> {
+    report
+        .warnings
+        .iter()
+        .filter_map(|warning| {
+            let path = warning.source_artifact.as_deref()?;
+            match warning.kind.as_str() {
+                "missing_optional_input" | "malformed_input" => {
+                    Some(warning.message.trim_end_matches('.').to_string())
+                }
+                // An explicit `--assistant-proof` that could not be read is
+                // promoted to this required-input warning, which drops the
+                // read detail, so name the path here.
+                "missing_required_input" => {
+                    Some(format!("{}: {path}", warning.message.trim_end_matches('.')))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn render_pr_review_front_panel_json(
     report: &PrReviewFrontPanelReport,
 ) -> Result<String, String> {

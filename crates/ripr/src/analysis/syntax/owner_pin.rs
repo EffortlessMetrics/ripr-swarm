@@ -758,14 +758,25 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         } else if let Some(other) = ast::Use::cast(child.clone()) {
             // Another import taking the root's name (`use dep as global;`),
             // possibly under a `cfg` the scan does not evaluate.
-            // Any spelling of the root name inside the import (`as global`,
-            // `dep::global`, `dep::global::{self}`) may bind it; refuse them all.
-            let binds_root = other.syntax().descendants().any(|node| {
-                ast::NameRef::cast(node.clone())
-                    .map(|name| name.text().to_string())
-                    .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
-                    .is_some_and(|text| text.trim_start_matches("r#") == root)
-            });
+            // A path prefix reads a name; only the import leaf binds one.
+            // Keep the old spelling check for opaque leaves: an absolute
+            // grouped `self` may bind its parent's name when that path is unread.
+            let bindings = super::name_scope::use_item_bindings(&other);
+            let opaque = bindings
+                .imports
+                .iter()
+                .any(|import| matches!(import.binding, super::name_scope::UseBinding::Opaque));
+            let binds_root = bindings
+                .imports
+                .iter()
+                .any(|import| import.bound.trim_start_matches("r#") == root)
+                || (opaque
+                    && other.syntax().descendants().any(|node| {
+                        ast::NameRef::cast(node.clone())
+                            .map(|name| name.text().to_string())
+                            .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+                            .is_some_and(|text| text.trim_start_matches("r#") == root)
+                    }));
             if binds_root {
                 return false;
             }
@@ -2064,6 +2075,73 @@ struct BindingFreeFileIndex {
     call_nodes: Vec<SyntaxNode>,
     /// Calls accepted as the identity over literal `fn` items (#8999).
     passthrough: BTreeSet<ra_ap_syntax::TextSize>,
+    /// The call-independent half of [`binding_free_local_wrapper`] for each
+    /// `macro_rules!` definition, keyed by its start offset. Every call of a
+    /// wrapper (and every queried name set) asks the same questions of the
+    /// one definition, and its textual scope walks the whole enclosing
+    /// module, so answering per call is quadratic in calls x module size.
+    wrapper_definitions: std::cell::RefCell<BTreeMap<ra_ap_syntax::TextSize, WrapperDefinition>>,
+}
+
+/// What [`binding_free_local_wrapper`] needs from a `macro_rules!`
+/// definition, independent of the call and the trusted names.
+#[derive(Clone, Copy)]
+struct WrapperDefinition {
+    /// The byte range the definition reaches by textual scope: the rest of
+    /// the file for a file-level definition, the bounding inline module
+    /// otherwise. `None` when the scope cannot be bounded or the definition
+    /// sits in a function or block, which fail closed.
+    reach: Option<ra_ap_syntax::TextRange>,
+    /// The body exists, holds only inert tokens and captures no `tt`
+    /// fragment.
+    inert_body: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WRAPPER_DEFINITION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_wrapper_definition_count() -> usize {
+    WRAPPER_DEFINITION_COUNT.with(|count| count.replace(0))
+}
+
+impl WrapperDefinition {
+    fn of(definition: &ast::MacroRules) -> Self {
+        #[cfg(test)]
+        WRAPPER_DEFINITION_COUNT.with(|count| count.set(count.get() + 1));
+        // A file-level definition reaches the rest of the file. One in an
+        // inline module reaches the call only when `textual_scope` can bound
+        // it and the call sits inside; `None` there means the scope cannot be
+        // bounded, not that it covers everything. Function and block bodies
+        // fail closed.
+        let reach = match definition.syntax().parent().map(|parent| parent.kind()) {
+            Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => {
+                definition.syntax().parent().map(|file| file.text_range())
+            }
+            Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => {
+                textual_scope(definition.syntax()).map(|scope| scope.text_range())
+            }
+            _ => None,
+        };
+        let inert_body = definition.token_tree().is_some_and(|body| {
+            let body_tokens = non_trivia_tokens(body.syntax());
+            // A definition body admits no `!` at all, so the trusted names
+            // never decide this answer.
+            //
+            // Only a `tt` fragment can capture a lone `!` (or `#`) from the
+            // arguments and splice it after another name: `$m $bang ($n)`
+            // turns `case!(define assert_eq!(x))` into `define!(assert_eq)`.
+            // Every other fragment keeps a macro call or attribute whole.
+            inert_tokens(&body_tokens, &[], true)
+                && !body_tokens.windows(2).any(|pair| {
+                    pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
+                        && pair[1].text().trim_start_matches("r#") == "tt"
+                })
+        });
+        Self { reach, inert_body }
+    }
 }
 
 #[cfg(test)]
@@ -2144,6 +2222,7 @@ impl BindingFreeFileIndex {
             site_nodes,
             call_nodes,
             passthrough: super::passthrough_item_macros::passthrough_invocation_starts(root),
+            wrapper_definitions: std::cell::RefCell::default(),
         }
     }
 }
@@ -2191,36 +2270,17 @@ fn binding_free_local_wrapper(
     if definition_end > call_start {
         return false;
     }
-    // A file-level definition reaches the rest of the file. One in an
-    // inline module reaches the call only when `textual_scope` can bound
-    // it and the call sits inside; `None` there means the scope cannot be
-    // bounded, not that it covers everything. Function and block bodies
-    // fail closed.
-    let in_scope = match definition.syntax().parent().map(|parent| parent.kind()) {
-        Some(ra_ap_syntax::SyntaxKind::SOURCE_FILE) => true,
-        Some(ra_ap_syntax::SyntaxKind::ITEM_LIST) => textual_scope(definition.syntax())
-            .is_some_and(|scope| scope.text_range().contains(call_start)),
-        _ => false,
-    };
-    if !in_scope {
-        return false;
-    }
-    let Some(body) = definition.token_tree() else {
-        return false;
-    };
-    let body_tokens = non_trivia_tokens(body.syntax());
-    if !inert_tokens(&body_tokens, trusted, true) {
-        return false;
-    }
-    // Only a `tt` fragment can capture a lone `!` (or `#`) from the
-    // arguments and splice it after another name: `$m $bang ($n)` turns
-    // `case!(define assert_eq!(x))` into `define!(assert_eq)`. Every other
-    // fragment keeps a macro call or attribute whole.
-    let token_tree_fragment = body_tokens.windows(2).any(|pair| {
-        pair[0].kind() == ra_ap_syntax::SyntaxKind::COLON
-            && pair[1].text().trim_start_matches("r#") == "tt"
-    });
-    if token_tree_fragment {
+    let facts_of_definition = *facts
+        .wrapper_definitions
+        .borrow_mut()
+        .entry(definition.syntax().text_range().start())
+        .or_insert_with(|| WrapperDefinition::of(definition));
+    // The file-level reach is the whole file, which holds every call.
+    if !facts_of_definition
+        .reach
+        .is_some_and(|reach| reach.contains(call_start))
+        || !facts_of_definition.inert_body
+    {
         return false;
     }
     // A module between the definition and the call (`#[macro_use] mod
@@ -4141,6 +4201,40 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
         }
     }
     Some(gates)
+}
+
+/// How the out-of-line `mod name;` declared on `line` of `source` is gated
+/// (#14463): `Some(false)` when every attribute is available in test builds
+/// (none, or `cfg(test)`), `Some(true)` when at least one is a `cfg` ripr
+/// cannot evaluate and the rest are available, and `None` for a provably-off
+/// gate, any other attribute, or a declaration not found exactly once.
+pub(crate) fn module_declaration_unestablished_gate(source: &str, line: usize) -> Option<bool> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| {
+            module.item_list().is_none()
+                && module
+                    .mod_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let (Some(module), None) = (found.next(), found.next()) else {
+        return None;
+    };
+    let mut gated = false;
+    for attr in module.attrs() {
+        let text = attr.syntax().text().to_string();
+        match attribute_test_build_availability(&text) {
+            Some(true) => {}
+            None if text.starts_with("#[cfg(") => gated = true,
+            _ => return None,
+        }
+    }
+    Some(gated)
 }
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
@@ -7120,6 +7214,80 @@ mod binding_free_index_tests {
             take_binding_free_index_count(),
             1,
             "wrapper facts must be collected once per parsed file, not once per macro"
+        );
+    }
+
+    /// The textual scope of a wrapper in an inline module walks that whole
+    /// module, so it is answered once per definition, not once per call and
+    /// queried name set (#11613).
+    #[test]
+    fn wrapper_definition_facts_are_answered_once_per_definition_not_per_call() {
+        let mut src = String::from(
+            "mod inner {\n    macro_rules! wrap { ($e:expr) => { $e }; }\n    fn f() {\n",
+        );
+        for i in 0..40 {
+            src.push_str(&format!("        wrap!(format!(\"{i}\"));\n"));
+        }
+        src.push_str("    }\n}\n");
+        let _ = take_wrapper_definition_count();
+        let sites = trusted_macro_binding_sites(
+            &src,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(
+            take_wrapper_definition_count(),
+            1,
+            "a wrapper definition's scope and body must be read once per file"
+        );
+        // The union scan and each singleton-name scan share one file index,
+        // so the definition is still read once across all of them.
+        let (union, singletons) = trusted_macro_binding_site_sets(
+            &src,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &["format", "assert_eq"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(
+            take_wrapper_definition_count(),
+            1,
+            "a wrapper definition must be read once across the union and singleton scans"
+        );
+        assert!(union.is_empty(), "{union:?}");
+        assert!(singletons.is_empty(), "{singletons:?}");
+        // The memo keeps the answer: every call of the bounded, inert wrapper
+        // stays binding-free, exactly as the file-level wrapper does.
+        let mut file_level = String::from("macro_rules! wrap { ($e:expr) => { $e }; }\nfn f() {\n");
+        for i in 0..40 {
+            file_level.push_str(&format!("    wrap!(format!(\"{i}\"));\n"));
+        }
+        file_level.push_str("}\n");
+        let file_level_sites = trusted_macro_binding_sites(
+            &file_level,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert_eq!(sites, file_level_sites);
+        assert!(sites.is_empty(), "{sites:?}");
+        // A call past the module that bounds the definition is outside its
+        // textual scope, so the remembered reach must still refuse it.
+        let outside = "mod inner {\n    macro_rules! wrap { ($e:expr) => { $e }; }\n    fn f() { wrap!(format!(\"0\")); }\n}\nfn g() { wrap!(format!(\"1\")); }\n";
+        let outside_sites = trusted_macro_binding_sites(
+            outside,
+            &BTreeSet::new(),
+            &["assert_eq", "assert", "format"],
+            &|_, _| true,
+            &|_| false,
+        );
+        assert!(
+            !outside_sites.is_empty(),
+            "a call outside the wrapper's scope must stay a site"
         );
     }
 }
