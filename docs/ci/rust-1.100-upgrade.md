@@ -75,8 +75,9 @@ the authoritative repository URL and removing duplicate homepage metadata.
 lint ledger into the active warning policy, with API suggestions still bounded
 by the 1.95 source minimum.
 
-The all-target pass also exposes 12 release-tooling Clippy diagnostics, repaired
-with the same ownership and default-value semantics. Two LSP test calls need
+The all-target pass also exposes 12 release-tooling and two integration-test
+Clippy diagnostics, repaired with the same ownership and default-value
+semantics. Two LSP test calls need
 explicit elimination of their impossible error value: stringifying `Infallible`
 becomes an unreachable call after it aliases `!`. The empty-match elimination
 compiles with warnings denied on both 1.95 and 1.100; it preserves the service
@@ -154,6 +155,42 @@ retains **previous baseline 1.95.0 versus current stable**. It exercises both ra
 versions after the repository build pin moves. Exact 1.100 proof also runs with
 1.100 explicitly selected, so a later stable release cannot rewrite its meaning.
 
+The reviewed `taiki-e/install-action` revision resolves the unversioned tool
+names used by these workflows through its bundled manifests: cargo-llvm-cov
+**0.9.1** and cargo-nextest **0.9.149** on the supported Linux host. Those exact
+versions already understand the new Cargo layout, so this upgrade does not
+require an additional tool-version bump. The [coverage tool's LLVM guidance](https://github.com/taiki-e/cargo-llvm-cov/tree/v0.9.1#readme)
+includes Rust 1.99–1.100 with LLVM 23. An isolated native fixture verified test
+discovery, nonempty test execution, raw-v11 profile processing, LCOV export and
+failure exits with the exact tools and the 1.100 LLVM component. That fixture
+does not replace the full repository coverage run or platform matrix.
+
+## Benchmark comparability
+
+An upgrade can change generated machine code and measured timings even when
+the application source is unchanged. The [DX scoreboard](../../benchmarks/dx_scoreboard/README.md)
+therefore records the build compiler separately from the source minimum and
+requires matching complete compiler identities for measured speed trends.
+Its additive v1 field records the release, full compiler commit, compiler host
+and LLVM version. The existing build script queries Cargo's selected `RUSTC`;
+the scoreboard joins that package's build-script record to its emitted binary
+artifact and successful completion in the same Cargo JSON stream. Cached
+artifacts retain Cargo's recorded build-script environment.
+
+The owned build keeps the lockfile fixed and uses the existing tool-build
+timeout and bounded process owner. An externally supplied `--ripr-bin` and
+older reports remain readable with unknown compiler identity; today's PATH
+compiler cannot establish their provenance. Unknown identities do not compare
+with one another. A compiler change excludes numeric speed trends while
+completion loss, failed instruments and hard ceilings still fail. Ingested
+metrics retain their own producer contracts. Historical baseline files are
+unchanged; new comparable baselines require a new measured run and review.
+
+The corpus/public-proof re-bless in [#13940](https://github.com/EffortlessMetrics/ripr-swarm/pull/13940)
+is sequenced before this compiler shift so that corpus and compiler effects
+remain separately assessable. The upgrade does not infer a performance gain
+from changed numbers or silently relabel a historical receipt.
+
 ## Maintaining the upgrade
 
 1. Read the root pin, declared source minimum, Zed pin and independently pinned
@@ -183,6 +220,17 @@ Current runner routing uses capability labels (`em-ci`, model and capacity),
 not a compiler-version label. The toolchain action prepares the exact compiler
 inside the job. A missing self-hosted capability falls back through the current
 router; the upgrade does not change live runner registrations or settings.
+
+All 57 repository-owned compiler setup steps select 1.100.0 explicitly through
+the reviewed generic action revision. The source-MSRV job selects 1.95.0.
+Two `stable` setups remain intentional: `security.yml` installs a prebuilt
+`cargo-deny` dependency verifier without building RIPR or `xtask`, and
+`future-clippy.yml` compares the documented 1.95 coverage baseline with current
+stable. Explicit inputs align setup receipts and builds outside the checkout
+with the release compiler. The checked upstream toolchain action installs the
+SDK and sets rustup's default; it does not export `RUSTUP_TOOLCHAIN`. The
+repository pin still selects in-checkout Cargo commands unless explicitly
+overridden, which is why the source-MSRV command names its compiler directly.
 
 Kani 0.68.0 carries its own
 [nightly compiler pin](https://github.com/model-checking/kani/blob/kani-0.68.0/rust-toolchain.toml).

@@ -300,8 +300,9 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-Run under the pinned 1.95.0 toolchain (rustfmt 1.9.0) using the worktree's own
-build artifacts; a stale cross-worktree binary is not proof of this slice.
+Run under the toolchain selected by `rust-toolchain.toml`, using its matching
+rustfmt and the worktree's own build artifacts; a stale cross-worktree binary
+is not proof of this slice.
 
 ## Test Mapping
 

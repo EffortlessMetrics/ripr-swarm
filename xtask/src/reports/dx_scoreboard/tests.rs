@@ -11,6 +11,8 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+#[path = "compiler_tests.rs"]
+mod compiler_tests;
 mod consumer_checkout;
 mod partial;
 #[path = "workload_tests.rs"]
@@ -87,6 +89,7 @@ fn context(runner: &str) -> RunContext {
     RunContext {
         revision: "abc".to_string(),
         runner_class: runner.to_string(),
+        rustc: Some("rustc-v1|1.95.0|59807616e1fa2540724bfbac14d7976d7e4a3860|x86_64-unknown-linux-gnu|22.1.2".to_string()),
         ..RunContext::default()
     }
 }
@@ -164,12 +167,14 @@ fn ingest_accepts_its_own_source_and_refuses_measured_metrics() -> Result<(), St
         Some(SampleOutcome::Value(3.0))
     );
 
-    let overwrite = json!({
-        "schema_version": INPUT_SCHEMA_VERSION,
-        "source": "first-run",
-        "metrics": [{"id": "ci.workflow_lines", "value": 1}],
-    });
-    assert!(parse_ingest(&overwrite, &config).is_err_and(|err| err.contains("sourced from")));
+    for id in ["ci.workflow_lines", "speed.warm_check_ms"] {
+        let overwrite = json!({
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "source": "first-run",
+            "metrics": [{"id": id, "value": 1}],
+        });
+        assert!(parse_ingest(&overwrite, &config).is_err_and(|err| err.contains("sourced from")));
+    }
 
     let wrong_schema = json!({"schema_version": "v0", "source": "first-run", "metrics": []});
     assert!(

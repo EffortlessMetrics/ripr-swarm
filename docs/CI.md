@@ -1137,15 +1137,18 @@ It runs on manual dispatch or a validated frozen-subject call selecting
 same command on Windows. The retained PR diff selector is legacy handling,
 not an active subscription: callable selection comes from explicit admitted
 inputs, and manual dispatch runs the lane unconditionally.
-The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
+The CI workflow also has an explicit MSRV job that sets
+`RUSTUP_TOOLCHAIN=1.95.0` and runs:
 
 ```bash
-cargo check --workspace --all-targets
+cargo +1.95.0 check --locked --workspace --all-targets
 ```
 
-The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
-duplicates that baseline and runs on manual dispatch or a validated callable
-selection with `run_msrv`. It has no independent PR subscription.
+The `release-proof` and `rust-only-features` jobs select the Rust `1.100.0`
+build/release compiler. The MSRV job checks the retained `1.95` source minimum
+independently of the repository's newer toolchain pin. It runs on manual
+dispatch or a validated callable selection with `run_msrv` and has no
+independent PR subscription.
 
 The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
 run on `ubuntu-latest`. They carry release-surface and baseline proof and must not

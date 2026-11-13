@@ -21,11 +21,25 @@ use std::process::{Command, Stdio};
 
 #[path = "src/build_commit_record.rs"]
 mod build_commit_record;
+#[path = "src/build_compiler_record.rs"]
+mod build_compiler_record;
 
 use build_commit_record::{is_full_commit_id, parse_cargo_vcs_info};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/build_compiler_record.rs");
+    println!("cargo:rerun-if-env-changed=RUSTC");
+    // Cargo passes its resolved compiler, including build.rustc selection.
+    // The scoreboard consumes this record from Cargo's build-script-executed
+    // JSON, which also retains the record for up-to-date build artifacts.
+    // https://doc.rust-lang.org/cargo/reference/environment-variables.html
+    // https://doc.rust-lang.org/cargo/reference/external-tools.html
+    println!(
+        "cargo:rustc-env={}={}",
+        build_compiler_record::ENV,
+        compiler_record().unwrap_or_default()
+    );
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR");
     let identity = manifest_dir.as_deref().map(Path::new).and_then(|dir| {
         let vcs_info = dir.join(".cargo_vcs_info.json");
@@ -54,6 +68,34 @@ fn main() {
     println!("cargo:rustc-env=RIPR_BUILD_COMMIT={commit}");
     println!("cargo:rustc-env=RIPR_BUILD_COMMIT_DIRTY={dirty}");
     println!("cargo:rustc-env=RIPR_BUILD_SOURCE_DIGEST={source_digest}");
+}
+
+fn compiler_record() -> Option<String> {
+    let compiler = std::env::var_os("RUSTC").filter(|path| !path.is_empty())?;
+    let output = Command::new(compiler)
+        .arg("-vV")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.len() > 8192 {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let field = |name: &str| {
+        let mut matches = text.lines().filter_map(|line| line.strip_prefix(name));
+        let value = matches.next()?.trim();
+        (matches.next().is_none()).then_some(value)
+    };
+    let record = format!(
+        "rustc-v1|{}|{}|{}|{}",
+        field("release: ")?,
+        field("commit-hash: ")?,
+        field("host: ")?,
+        field("LLVM version: ")?,
+    );
+    build_compiler_record::parse(&record)?;
+    Some(record)
 }
 
 /// FNV-1a over the crate sources and the nearest workspace manifest and

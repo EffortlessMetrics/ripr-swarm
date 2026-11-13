@@ -474,11 +474,11 @@ fn perf_probe_wall_time_samples() -> Result<(), String> {
     let methods: usize = std::env::var("RIPR_PERF_METHODS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .map_or(64, |value| value);
+        .unwrap_or(64);
     let samples: usize = std::env::var("RIPR_PERF_SAMPLES")
         .ok()
         .and_then(|value| value.parse().ok())
-        .map_or(7, |value| value);
+        .unwrap_or(7);
 
     let mut report = serde_json::json!({
         "methods": methods,

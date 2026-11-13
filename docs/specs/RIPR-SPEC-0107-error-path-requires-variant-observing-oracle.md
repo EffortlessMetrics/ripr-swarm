@@ -345,7 +345,7 @@ seam was wrongfully downgraded.
 4. `cargo xtask fixtures` passes for all fixtures.
 5. `cargo test -p ripr` passes (including new control tests).
 6. `cargo clippy -p ripr --all-targets -- -D warnings` clean.
-7. `cargo fmt --check` clean under rustfmt 1.9.0-stable (pinned 1.95.0).
+7. `cargo fmt --check` clean using rustfmt from the repository's pinned toolchain.
 
 ## Implementation Mapping
 

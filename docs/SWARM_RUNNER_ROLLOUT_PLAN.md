@@ -42,9 +42,11 @@ valid routed-result vocabulary.
 
 ## CPX42 execution model
 
-- Use direct Rust toolchain setup (`dtolnay/rust-toolchain@v1`, Rust `1.95.0`).
+- Use direct Rust toolchain setup with a `dtolnay/rust-toolchain` action
+  pinned to a commit SHA. Set its explicit `toolchain` input to match the
+  repository's `rust-toolchain.toml` (`1.100.0` for `ripr-swarm`).
 - Prepare `TMPDIR` and `CARGO_TARGET_DIR` before toolchain setup.
-- Do not assume local `em-ci-rust:1.95` Docker image on CPX42.
+- Do not assume a local `em-ci-rust:<version>` Docker image on CPX42.
 - Run repo Rust gate on host and clean scratch afterwards.
 
 ## CX43/CX53 execution model
@@ -64,7 +66,7 @@ valid routed-result vocabulary.
 Do not merge if any are true:
 
 - Repository runner endpoint is used.
-- CPX42 assumes `em-ci-rust:1.95` image.
+- CPX42 assumes a local `em-ci-rust:<version>` image.
 - `TMPDIR` created after toolchain step.
 - Result job does not include conditional runner jobs.
 - Fork PR can reach self-hosted jobs.

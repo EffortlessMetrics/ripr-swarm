@@ -243,7 +243,7 @@ Current reference docs:
 - [No-panic semantic allowlist](NO_PANIC_SEMANTIC_ALLOWLIST.md)
 - [Droid rollout checklist](agent-context/droid-rollout.md)
 - [CI verification ladder](ci/verification-ladder.md)
-- [CI current state](ci/current-state.md)
+- [CI implementation snapshot (2026-08-25)](ci/current-state.md)
 - [CI upstream tool substrate](ci/upstream-tool-substrate.md)
 - [CI LEM budgeting](ci/lem-budgeting.md)
 - [CI labels](ci/labels.md)

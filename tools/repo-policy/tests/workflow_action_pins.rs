@@ -5,6 +5,8 @@
 //! declares no toolchain input; stable/v1 and both taiki variants consume inputs.
 //! Build/release jobs use generic v1 with explicit 1.100.0; the CI MSRV job
 //! deliberately retains the generated 1.95.0 action and explicit Cargo selector.
+//! Only the prebuilt cargo-deny verifier and the stable coverage comparison
+//! intentionally retain a floating stable compiler setup.
 #[path = "../test_support.rs"]
 mod test_support;
 
@@ -21,6 +23,14 @@ type Pin = (
 );
 
 const PINS: &[Pin] = &[
+    (
+        "badge-endpoints.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
     (
         "ci.yml",
         "Swatinem/rust-cache",
@@ -65,17 +75,17 @@ const PINS: &[Pin] = &[
     (
         "dx-scoreboard.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
         "first-run-archive.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -89,9 +99,9 @@ const PINS: &[Pin] = &[
     (
         "first-run-install.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         2,
     ),
     (
@@ -104,6 +114,14 @@ const PINS: &[Pin] = &[
     ),
     (
         "future-clippy.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
+    (
+        "fuzz.yml",
         "dtolnay/rust-toolchain",
         "v1",
         "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
@@ -135,6 +153,38 @@ const PINS: &[Pin] = &[
         1,
     ),
     (
+        "mutation-spot-check-python.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
+    (
+        "mutation-spot-check-typescript.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
+    (
+        "mutation-spot-check.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        2,
+    ),
+    (
+        "outcome-nightly.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        1,
+    ),
+    (
         "pilot-ranking.yml",
         "Swatinem/rust-cache",
         "v2",
@@ -177,9 +227,9 @@ const PINS: &[Pin] = &[
     (
         "public-proof.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -209,9 +259,9 @@ const PINS: &[Pin] = &[
     (
         "rust-corpus.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         1,
     ),
     (
@@ -255,11 +305,19 @@ const PINS: &[Pin] = &[
         1,
     ),
     (
+        "size-scaling.yml",
+        "dtolnay/rust-toolchain",
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
+        2,
+    ),
+    (
         "source-of-truth.yml",
         "dtolnay/rust-toolchain",
-        "stable",
-        "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
-        Some("toolchain: stable"),
+        "v1",
+        "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        Some("toolchain: 1.100.0"),
         2,
     ),
     (
@@ -358,8 +416,114 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
         total += count;
     }
     assert_eq!(
-        total, 40,
-        "39 inherited pins plus the Rust 1.100 golden refresh selector"
+        total, 49,
+        "40 inherited pins plus nine additional owned-build compiler setups"
+    );
+    Ok(())
+}
+
+#[test]
+fn compiler_setups_use_the_build_pin_or_a_named_exception() -> Result<(), String> {
+    let workflows = test_support::workspace_root()?.join(".github/workflows");
+    let mut totals = [0; 3];
+    for entry in std::fs::read_dir(workflows).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if !matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("workflow filename must be UTF-8")?;
+        let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        // These two existing comment spellings name the same reviewed generic
+        // action commit. Keep their configuration while enforcing its input.
+        let build_ref = if matches!(name, "coverage.yml" | "test-analytics.yml") {
+            "master"
+        } else {
+            "v1"
+        };
+        let pins = [
+            (
+                "",
+                "dtolnay/rust-toolchain",
+                build_ref,
+                "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+                Some("toolchain: 1.100.0"),
+                0,
+            ),
+            (
+                "",
+                "dtolnay/rust-toolchain",
+                "1.95.0",
+                "035fceb3c12fb0c6a9461b52775e16473133e591",
+                None,
+                0,
+            ),
+            (
+                "",
+                "dtolnay/rust-toolchain",
+                "stable",
+                "b725eda525362e7cf34af9a7243cac1e3f01a7ec",
+                Some("toolchain: stable"),
+                0,
+            ),
+        ];
+        let counts = [
+            verify(&text, &pins[0])?,
+            verify(&text, &pins[1])?,
+            verify(&text, &pins[2])?,
+        ];
+        let declared = text
+            .lines()
+            .filter(|line| {
+                let key = line.trim_start();
+                key.strip_prefix("- ")
+                    .unwrap_or(key)
+                    .starts_with("uses: dtolnay/rust-toolchain@")
+            })
+            .count();
+        assert_eq!(
+            counts.iter().sum::<usize>(),
+            declared,
+            "{name}: compiler setup has an unreviewed revision or missing step-local input"
+        );
+        let exceptions = [
+            (1, (name == "ci.yml").then_some("msrv")),
+            (
+                2,
+                match name {
+                    "security.yml" => Some("cargo-deny"),
+                    "future-clippy.yml" => Some("stable-repo-policy"),
+                    _ => None,
+                },
+            ),
+        ];
+        for (index, job) in exceptions {
+            assert_eq!(counts[index], usize::from(job.is_some()), "{name}");
+            if let Some(job) = job {
+                let pin = &pins[index];
+                let header = format!("uses: {}@{} # {}", pin.1, pin.3, pin.2);
+                assert!(
+                    repo_policy::routed_rust_job_block_any(&text, job, |line| {
+                        line.strip_prefix("      - ") == Some(header.as_str())
+                            || line.strip_prefix("        ") == Some(header.as_str())
+                    }),
+                    "{name}: compiler exception must remain in {job}"
+                );
+            }
+        }
+        for (total, count) in totals.iter_mut().zip(counts) {
+            *total += count;
+        }
+    }
+    assert_eq!(
+        totals,
+        [57, 1, 2],
+        "57 owned-build setups, one source MSRV, two intentional stable controls"
     );
     Ok(())
 }
