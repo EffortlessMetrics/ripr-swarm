@@ -76,6 +76,10 @@ STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
 # which must not be able to hide one). Best effort: free prose cannot be enumerated, so
 # the closed control is the marker line plus later native reviews superseding this one.
+# #14592: a verdict field label at the start of a line, after bullet, numbered-list
+# or emphasis markup.
+VERDICT_LABEL = r"^(?:[\W_]|\d+[.)])*verdict[ \t*_`]*:"
+VERDICT_LINE = re.compile(VERDICT_LABEL, re.IGNORECASE)
 NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
@@ -95,10 +99,9 @@ NEGATION = re.compile(
     # ready marker is a blocker, though no state token carries the REVIEW_ prefix. The
     # label must open the line (after bullet, numbered-list or emphasis markup), so prose that recalls
     # an earlier verdict is narration; a refusing word anywhere in the value counts,
-    # including quoted, bracketed, compound and suffixed forms. A word negated by a
-    # preceding "no", "non" or "not" ("no blocking findings", "no block remains")
-    # is a resolved finding, not a refusing value.
-    r"|^(?:[\W_]|\d+[.)])*verdict[ \t*_`]*:.*?(?<![a-z])(?<!\bno[ \t_-])(?<!\bnon[ \t_-])(?<!\bnot[ \t_-])"
+    # including quoted, bracketed, compound and suffixed forms. A resolved finding
+    # ("no blocking findings") is removed first by strip_negated_verdict_word.
+    r"|" + VERDICT_LABEL + r".*?(?<![a-z])"
     r"(?:block(?:ed|s|ing)?|reject(?:ed|s)?|nack"
     r"|request(?:ed|s)?[ \t_-]*changes|changes[ \t_-]*requested|repairs?[ \t_-]*required"
     r"|fail(?:ed|s|ure)?|not[ \t_-]*ready|incomplete|no[ \t_-]*go|hold)(?![a-z])"
@@ -270,6 +273,39 @@ def strip_negated_change(line: str) -> str:
     return NEGATED_CHANGE.sub(replace, line)
 
 
+# #14592: on a verdict line, "no blocking findings", "no `block` remains",
+# "non-blocking" and "no failures" are resolved findings. Any run of spacing or
+# markup may separate the negator from the word.
+NEGATED_VERDICT_WORD = re.compile(
+    r"(?<![a-z])(?:no|non|not)[\W_]*(?:block(?:ed|s|ing)?|fail(?:ed|s|ures?)?)(?![a-z])",
+    re.IGNORECASE,
+)
+SENTENCE_END = re.compile(r"[.!;]")
+
+
+def strip_negated_verdict_word(line: str) -> str:
+    """Remove a resolved negated finding from a verdict line unless it is refuted.
+
+    #14592: the same refutation rules as negated change phrases apply. A cue
+    earlier in the clause ("it is false that no block remains") or a refutation
+    opening the next sentence ("no block remains. That is false.") keeps the
+    word, so the verdict scan still refuses it.
+    """
+    if not VERDICT_LINE.match(line):
+        return line
+
+    def replace(match: re.Match[str]) -> str:
+        before_clause = line[: match.start()].rsplit(",", 1)[-1]
+        after = line[match.end() :]
+        end = SENTENCE_END.search(after)
+        next_sentence = after[end.start() :] if end else ""
+        if REFUTES_NEGATION.search(before_clause) or REFUTATION_AFTER.search(next_sentence):
+            return match.group(0)
+        return " "
+
+    return NEGATED_VERDICT_WORD.sub(replace, line)
+
+
 def negation_hit(line: str) -> bool:
     """Whether ``line`` carries a blocker phrase outside a negated change phrase.
 
@@ -277,7 +313,7 @@ def negation_hit(line: str) -> bool:
     Only an unrefuted statement-position phrase is removed, so a genuine blocker
     elsewhere on the same line still refuses.
     """
-    return bool(NEGATION.search(strip_negated_change(line)))
+    return bool(NEGATION.search(strip_negated_verdict_word(strip_negated_change(line))))
 
 
 def comment_body_ready(body: str) -> bool:
@@ -699,6 +735,11 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: approve, non-blocking notes only.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: approve - no failures.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: it is false that no block remains.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: approve, no `block` remains.", True),
+        ("SOURCE_REVIEW_READY\nVERDICT: no block remains, but BLOCK on the docs.", False),
         ("SOURCE_REVIEW_READY\nVERDICT: not ready", False),
         ("SOURCE_REVIEW_READY\nVERDICT: NO-GO", False),
         ("REVIEW_READY \u2014 no findings", False),

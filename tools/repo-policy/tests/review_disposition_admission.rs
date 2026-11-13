@@ -1069,6 +1069,16 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
             "negated block in an approving verdict",
         ),
         (
+            "SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.",
+            false,
+            "refuted negated block",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
+            true,
+            "negated block with extra spacing",
+        ),
+        (
             "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
             true,
             "recalled verdict in prose",
