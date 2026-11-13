@@ -395,9 +395,9 @@ change to inspect.
 To try it first on a small project with a known gap, use the
 [Python starter example](../examples/python-bulk-discount/README.md).
 
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -442,9 +442,9 @@ rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
 To try it first on a small project with a known gap, use the
 [TypeScript starter example](../examples/typescript-discount-threshold/README.md).
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check

@@ -16,7 +16,16 @@ static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 /// only for commands whose output is entirely redirected by that variable;
 /// report-only writers use [`ensure_report_output_contained`].
 pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, std::env::var("RIPR_CACHE_DIR").ok().as_deref())
+    let cache_dir_env = std::env::var("RIPR_CACHE_DIR").ok();
+    ensure_default_output_contained_with(root, cache_dir_env.as_deref())?;
+    // An explicit `RIPR_CACHE_DIR` waives the check above, so the default tree
+    // self-ignores only once it is established as contained on its own.
+    if cache_dir_env.is_none_or(|value| value.trim().is_empty())
+        || ensure_default_output_contained_with(root, None).is_ok()
+    {
+        register_self_ignoring_output_root(root);
+    }
+    Ok(())
 }
 
 /// [`ensure_default_output_contained`] for commands that never write to the
@@ -25,7 +34,136 @@ pub(crate) fn ensure_default_output_contained(root: &Path) -> Result<(), String>
 /// `target` / `target/ripr/*` link check for the reports and review artifacts
 /// these commands still write under the workspace.
 pub(crate) fn ensure_report_output_contained(root: &Path) -> Result<(), String> {
-    ensure_default_output_contained_with(root, None)
+    ensure_default_output_contained_with(root, None)?;
+    register_self_ignoring_output_root(root);
+    Ok(())
+}
+
+/// Repository-relative default output tree that ignores itself.
+pub(crate) const DEFAULT_OUTPUT_ROOT: &str = "target/ripr";
+
+/// Contents of `target/ripr/.gitignore`. `*` covers the file itself, so
+/// ripr's whole output tree stays out of `git status` with no step from the
+/// user, the way `.pytest_cache` and `.ruff_cache` ignore themselves.
+pub(crate) const DEFAULT_OUTPUT_ROOT_GITIGNORE: &str =
+    "# Created by ripr: everything under target/ripr is ripr's own disposable output.\n*\n";
+
+/// `{root}/target/ripr` trees a workspace output guard has established as contained
+/// in this process, in lexical absolute form. Writes below one of them mark it
+/// self-ignoring ([`mark_self_ignoring_output_root`]). Presence of the ignore
+/// file is re-checked on each such write (one `lstat`), so a tree deleted and
+/// recreated inside a long-lived LSP or MCP process is marked again.
+static SELF_IGNORING_OUTPUT_ROOTS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn self_ignoring_output_roots() -> std::sync::MutexGuard<'static, Vec<std::path::PathBuf>> {
+    match SELF_IGNORING_OUTPUT_ROOTS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Lexical absolute form used to match guarded roots against write paths:
+/// relative paths are joined to the current directory and `.` components
+/// dropped, without touching the filesystem.
+fn lexical_absolute(path: &Path) -> Option<std::path::PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(
+        absolute
+            .components()
+            .filter(|component| !matches!(component, std::path::Component::CurDir))
+            .collect(),
+    )
+}
+
+/// Record that `{root}/target/ripr` is contained and is ripr's to mark, and
+/// mark it now when it already exists (a tree an older ripr left unignored).
+/// Creating nothing here keeps a command that refuses after its guard from
+/// leaving a `target/` behind; a missing tree is marked by the first write
+/// that creates it.
+fn register_self_ignoring_output_root(root: &Path) {
+    if !root.is_dir() {
+        return;
+    }
+    let Some(tree) = lexical_absolute(&root.join(DEFAULT_OUTPUT_ROOT)) else {
+        return;
+    };
+    write_self_ignore_file(&tree);
+    let mut roots = self_ignoring_output_roots();
+    if !roots.contains(&tree) {
+        roots.push(tree);
+    }
+}
+
+/// Called after an atomic write created `dir`: when `dir` lies in a guarded
+/// `target/ripr` tree, give that tree its self-ignore file. Matching is
+/// lexical; a writer that spells the tree differently from its guard (another
+/// symlinked spelling of the same directory) is simply not matched, and the
+/// next guard call marks the then-existing tree.
+fn mark_self_ignoring_output_root(dir: &Path) {
+    if self_ignoring_output_roots().is_empty() {
+        return;
+    }
+    let Some(dir) = lexical_absolute(dir) else {
+        return;
+    };
+    let tree = self_ignoring_output_roots()
+        .iter()
+        .find(|tree| dir.starts_with(tree))
+        .cloned();
+    if let Some(tree) = tree {
+        write_self_ignore_file(&tree);
+    }
+}
+
+/// Make ripr's default output tree (`{root}/target/ripr`) ignore itself.
+///
+/// Python and TypeScript projects do not ignore Cargo's `target/`
+/// convention, so without this the first `ripr check` left `?? target/` in
+/// `git status`, one `git add -A` away from committing ripr's reports, and
+/// every run asked the user to edit their `.gitignore`. The repository's own
+/// `.gitignore` is never touched.
+///
+/// Best effort and idempotent: only an existing real directory is marked,
+/// the file is created exclusively (`create_new`, which also refuses to
+/// follow a link planted at that name) and never rewritten, so a user's own
+/// file there is kept. Any failure (a read-only checkout, a race with another
+/// ripr process) leaves the tree as it was; the doctor and first-check ignore
+/// probes ask git directly, so they still report an uncovered tree honestly.
+///
+/// Returns whether an ignore file (ripr's or the user's) is now present.
+fn write_self_ignore_file(tree: &Path) -> bool {
+    let is_real_dir =
+        std::fs::symlink_metadata(tree).is_ok_and(|metadata| metadata.file_type().is_dir());
+    if !is_real_dir {
+        return false;
+    }
+    let ignore = tree.join(".gitignore");
+    if std::fs::symlink_metadata(&ignore).is_ok() {
+        return true;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&ignore)
+    else {
+        return false;
+    };
+    if file
+        .write_all(DEFAULT_OUTPUT_ROOT_GITIGNORE.as_bytes())
+        .is_err()
+    {
+        // A partial ignore file is worse than none: drop it so the next
+        // write retries cleanly.
+        drop(file);
+        let _ = std::fs::remove_file(&ignore);
+        return false;
+    }
+    true
 }
 
 /// Guard for report writers that take no `--root` (`evidence-health`, `zero`,
@@ -505,6 +643,7 @@ fn publish_with(
         .filter(|parent| !parent.as_os_str().is_empty());
     let dir = parent.unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir).map_err(|err| fail(Stage::CreateDirectory, dir, err))?;
+    mark_self_ignoring_output_root(dir);
     if path.file_name().is_none() {
         let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name");
         return Err(fail(Stage::NoFileName, path, err));
