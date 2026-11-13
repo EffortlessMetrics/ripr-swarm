@@ -53,7 +53,7 @@ automation = [
     "dep:rustix",
 ]
 # Pure document admission can be tested without compiling the product library.
-formal-evidence-audit = ["dep:serde"]
+formal-evidence-audit = ["dep:serde", "dep:sha2"]
 # Passive affected-claim planning consumes supplied facts and executes no provider.
 formal-claim-plan = ["dep:serde", "dep:sha2"]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in

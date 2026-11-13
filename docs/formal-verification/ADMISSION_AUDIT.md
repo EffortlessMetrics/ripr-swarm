@@ -48,7 +48,7 @@ run object. `--help` describes exit codes; malformed input exits 2. Output is
 JSON on stdout; diagnostics are on stderr. The helper writes no files, invokes
 no subprocess, installs no tools and performs no network access.
 
-The feature reuses the existing Serde and serde_json dependencies. Default
+The feature reuses the existing Serde, serde_json and SHA-256 dependencies. Default
 `automation` includes it, so ordinary workspace target qualification does not
 silently omit its tests. The isolated commands avoid the optional `ripr`
 dependency; they are not substitutes for the repository's integration gates.
@@ -61,10 +61,10 @@ These are byte/admission bounds, not a wall-time or exact peak-memory guarantee.
 | --- | --- |
 | Decoder | Unknown fields, unknown closed enums, duplicate keys (including bound maps), missing required nullable keys, trailing data and unsupported schema names reject. |
 | Claims | Empty/duplicate IDs, zero generations, blank proposition/domain/observable, missing nonclaims/trust/owners/closure/subjects/negative controls/currentness, empty bounds, invalid unwind and path traversal reject. |
-| Critical Kani claims | Required covers must be nonempty. Cover descriptions declare intent; they are not observed reachability. |
+| Critical claims | Every provider requires nonempty reachability obligations. The provider-specific descriptions declare intent; they are not observed reachability. |
 | Identity | Results must reference selected registered claims and their exact declared subjects. Duplicate result subjects reject. A generation mismatch must remain explicitly stale. |
-| Established row | Requires declared verified/current evidence, discovery membership, complete cover counts matching the claim, duration and raw stream/block commitments. |
-| Failed row | Requires a declared current counterexample or unreachable required cover, discovery membership, the claim's required-cover count, duration and raw stream/block commitments. An unreachable-cover verdict must report a positive unreachable count. Tool failure, absence and verified output cannot be relabeled as behavioral failure. |
+| Established row | Requires declared verified/current evidence, discovery membership, complete cover counts matching the claim, duration, raw stream/block commitments and the exact registered assumption digest. Success reasons may be empty. |
+| Failed row | Requires a declared current counterexample or unreachable required cover, discovery membership, the claim's required-cover count, duration, raw stream/block commitments, the exact assumption digest and a nonempty status explanation. An unreachable-cover verdict must report a positive unreachable count. Tool failure, absence and verified output cannot be relabeled as behavioral failure. |
 | Partial run | Completed rows remain inspectable after whole-run failure or timeout. Missing selected subjects and unmapped discovered subjects are reported separately. Neither is erased by a successful row. |
 | Complete inventory | Empty, missing, unmapped or rejection-bearing inventories cannot declare completeness. Every selected subject must occur in native discovery; a missing-result placeholder cannot fill that gap. `undiscovered_selected_subjects` reports this separately from missing result rows. |
 | Process | Completed needs an exit observation; failed/killed cannot claim exit zero; timeout fields must agree; not-started cannot borrow output or a native verdict. |
@@ -88,12 +88,17 @@ The helper does not inspect the current repository or verify the supplied
 source closure. It does not read raw output artifacts, recompute their digests,
 authenticate a producer, prove source-to-binary provenance, decide whether a
 `current` flag is true, or compare actual target/features/configuration/bounds.
-Digest syntax is checked; truthful bytes and their custody are not.
+Artifact/source digest syntax is checked; truthful bytes and their custody are
+not. The assumption digest is additionally recomputed from the supplied claim's
+compact UTF-8 JSON array, preserving order, as defined in [RESULTS.md](RESULTS.md).
+This establishes consistency between declarations, not that the provider used
+those assumptions. Even an empty array has a non-null digest on an observed row.
 
 Cover-count equality does not establish cover identity, assertion dominance or
 non-vacuity of every assertion. Required negative controls are declarations,
 not executed experiments. A valid identifier does not prove the proposition
-is correct or that its owner exists. JSON input ordering is irrelevant; changing
+is correct or that its owner exists. JSON object-key ordering is irrelevant;
+assumption-array order remains part of its exact commitment. Changing
 a proposition while retaining its generation is a separate base/head authority
 check that this helper deliberately does not pretend to perform.
 

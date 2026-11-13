@@ -4,9 +4,9 @@ A formal harness or model is an implementation artifact. The semantic unit of
 maintenance is a **registered claim**.
 
 The initial implementation should use a versioned machine-readable registry
-validated by repository policy. The exact storage path and generated Rust
-shape belong to #6381/#5198; the contract below is independent of that storage
-decision.
+validated by repository policy. The exact self-assurance registry path and
+generated Rust shape belong to #14473; the broader provider architecture stays
+with #6381/#5198. The contract below is independent of that storage decision.
 
 ## Stable identity
 
@@ -31,6 +31,7 @@ Every critical claim records:
 
 | Field | Required meaning |
 | --- | --- |
+| `schema` | Exact `ripr.formal-claim.v1` serialization contract |
 | `claim_id` | Stable descriptive identifier; never a bare function name |
 | `claim_generation` | Positive integer for decision-bearing revisions |
 | `family` | Bounded model checking, deductive proof, state-machine model, etc. |
@@ -46,7 +47,7 @@ Every critical claim records:
 | `trust_dependencies` | Stubs, axioms, external bodies, admitted libraries |
 | `observable` | Return, state, effect, ordering, reachability, or invariant |
 | `bounds` | Unwind, state, schedule, width, depth, or campaign limits |
-| `harnesses_or_models` | Exact registered implementation locators |
+| `subjects` | Exact registered implementation locators |
 | `required_covers` | Non-vacuity/reachability obligations |
 | `negative_controls` | Deliberately wrong implementation or model controls |
 | `result_satisfaction` | Native statuses required to establish the claim |
@@ -91,6 +92,12 @@ proof harness
 
 `cover!` is not decoration. A critical claim identifies the interesting
 partitions whose reachability is required for the proof to be useful.
+Every critical provider requires a nonempty `required_covers` obligation list.
+For Kani, those obligations map to native `cover!` properties. For a state-machine
+model, name the finite states/actions or transitions whose reachability must be
+observed, and define their provider-native evidence mapping. An unsupported
+mapping remains visible and unestablished; a zero-obligation list cannot stand
+in for a provider-specific reachability contract.
 
 Examples:
 
@@ -105,8 +112,11 @@ A native “verified” result with an unreachable required cover is `FAILED` fo
 the registered claim. A cover not included in the registered claim is
 advisory and must not silently affect claim status.
 
-Draft PR #14469 owns the current positive-cover tightening. New work must
-compose with it rather than rebuild its runner changes.
+PR #14469 / #14460 owns the existing collector's complete-positive-cover
+tightening. That collector treats every observed harness cover as required;
+it does not yet implement registered advisory-cover distinctions. #14472 and
+#14473 must compose with that behavior and make any changed cover policy an
+explicit versioned admission change, with native controls.
 
 ## Negative controls
 

@@ -746,6 +746,11 @@ normalization behavior surfaced only on a maintainer's local run.
 
 ### Advisory Kani Lane
 
+The maintained [formal-verification guide](formal-verification/README.md)
+defines claim/result identity, evidence retention, admitted qualification and
+the maintainer runbook. Its design contracts and implementation work index
+distinguish current source from candidates and planned assurance.
+
 `.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.

@@ -2,6 +2,8 @@
 id = "RIPR-SPEC-0371"
 code = ["xtask/src/bin/formal-evidence-audit.rs"]
 tests = [
+  "xtask/src/bin/formal-evidence-audit.rs::tests::observed_assumptions_are_exact_and_empty_set_is_committed",
+  "xtask/src/bin/formal-evidence-audit.rs::tests::every_critical_provider_needs_reachability_obligations",
   "xtask/src/bin/formal-evidence-audit.rs::tests::consistent_documents_never_become_native_assurance",
   "xtask/src/bin/formal-evidence-audit.rs::tests::unknown_duplicate_fields_and_unknown_vocabulary_reject",
   "xtask/src/bin/formal-evidence-audit.rs::tests::admitted_merge_group_phase_is_passive_metadata_not_admission",
