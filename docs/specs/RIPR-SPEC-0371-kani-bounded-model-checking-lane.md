@@ -84,7 +84,10 @@ discipline in the application proof domains. Symbolic indices are bounded by
 the declared slice length. Each input constructor has its own cover before
 the production predicate runs, alongside the existing semantic outcome covers.
 The literal predicates, warning/configuration-entry bounds and gate unwind
-bound remain unchanged. Native cover bindings must name the new constructor
+bound remain unchanged. The gate input helper returns immutable zero/one-entry
+slices over an empty string: the producer reads only slice emptiness, so the
+proof need not model allocation or vector cleanup to cover those same inputs.
+Native cover bindings must name the new constructor
 properties and retain their own source/configuration and claim generations;
 an older outcome-only cover receipt does not establish the new proof domain.
 
