@@ -1,4 +1,4 @@
-### Added
+<!-- section: Internal / CI -->
 
 - Stage an explicit source-review resolution mode and an unpublished-record
   formatter in the trusted admission reader. Bind same-head refutations to native

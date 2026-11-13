@@ -30,6 +30,22 @@ print(json.dumps(out))
 '''
 
 
+# Run the actual CLI, replacing only its external gh transport. Absolute Python
+# dispatch avoids platform-dependent .cmd/.exe lookup and never needs a shell.
+DRIVER = '''import runpy,subprocess,sys
+fake,script=sys.argv[1:3]
+cli=sys.argv[3:]
+real_run=subprocess.run
+def run(argv,*args,**kwargs):
+    if isinstance(argv,(list,tuple)) and argv and argv[0]=='gh':
+        argv=[sys.executable,fake,*argv[1:]]
+    return real_run(argv,*args,**kwargs)
+subprocess.run=run
+sys.argv=[script,*cli]
+runpy.run_path(script,run_name='__main__')
+'''
+
+
 def review(i, body, **kw):
     return dict(id=i, user={'login':'shared-account'}, author_association='MEMBER',
                 state='COMMENTED', commit_id=HEAD,
@@ -65,13 +81,14 @@ class Resolution(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='ripr-resolution-') as d:
             p=Path(d)
             (p/'fixture.json').write_text(json.dumps(v),encoding='utf-8')
-            (p/'gh').write_text('#!'+sys.executable+'\n'+GH,encoding='utf-8')
-            (p/'gh').chmod(0o755)
-            (p/'gh.cmd').write_text(f'@"{sys.executable}" "%~dp0gh" %*\r\n')
-            env=dict(os.environ,PATH=d+os.pathsep+os.environ.get('PATH',''),
-                     REVIEW_FIXTURE=str(p/'fixture.json'),REVIEW_READS=str(p/'reads'))
-            result=subprocess.run([sys.executable,'-I',str(SCRIPT),'--repository','o/r',
-                '--pr','17','--head',HEAD,*(['--require-explicit-resolution'] if strict else []),*args],env=env,text=True,capture_output=True,timeout=10)
+            (p/'gh.py').write_text(GH,encoding='utf-8')
+            (p/'driver.py').write_text(DRIVER,encoding='utf-8')
+            env=dict(os.environ,PATH='',REVIEW_FIXTURE=str(p/'fixture.json'),
+                     REVIEW_READS=str(p/'reads'))
+            result=subprocess.run([sys.executable,'-I',str(p/'driver.py'),str(p/'gh.py'),
+                str(SCRIPT),'--repository','o/r','--pr','17','--head',HEAD,
+                *(['--require-explicit-resolution'] if strict else []),*args],
+                env=env,text=True,capture_output=True,timeout=10)
             self.assertEqual(result.returncode, expected, result.stderr)
             self.assertNotIn('Traceback',result.stderr)
             self.assertNotIn('could not read reviews',result.stderr)
@@ -93,13 +110,37 @@ class Resolution(unittest.TestCase):
         self.run_cli(v,1,args+('--rationale','The source refutes the allegation.'))
         v=fixture();v['pull']['number']=True
         self.run_cli(v,1,args+('--rationale','The source refutes the allegation.'))
-        for rationale in [' '*66000+'x','x'*4001,' ']:
+        rationales=[' '*4000+'x','x'*4001,' ']
+        # Windows rejects an oversized argv before Python's validator can run.
+        # Keep the original large-argv reproduction where transport supports it.
+        if os.name != 'nt':
+            rationales.append(' '*66000+'x')
+        for rationale in rationales:
             v=fixture();self.run_cli(v,1,args+('--rationale',rationale))
             r=record(v);r['resolutions'][0]['rationale']=rationale;set_record(v,r)
             self.run_cli(v,1)
         v=fixture()
         out,_=self.run_cli(v,0,args+('--rationale','é'*4000))
         v['reviews'][2]['body']=out;self.run_cli(v,0)
+
+    def test_consumer_record_byte_limit_independent_of_field_limits(self):
+        v=fixture();template=record(v);v['reviews']=v['reviews'][:1]
+        entries=[]
+        for i in range(2,18):
+            negative=review(i,'REPAIR_REQUIRED\nThe alleged unbounded path needs inspection.')
+            v['reviews'].append(negative)
+            entry=copy.deepcopy(template['resolutions'][0])
+            entry.update(review_id=i,rationale='x'*3200)
+            entries.append(entry)
+        template['resolutions']=entries
+        body=HEADER+json.dumps(template)
+        self.assertLess(len(body.encode()),65536)
+        v['reviews'].append(review(18,body));self.run_cli(v,0)
+        # Every individual rationale is valid; only the complete byte budget is exceeded.
+        for entry in entries: entry['rationale']='x'*4000
+        body=HEADER+json.dumps(template)
+        self.assertGreater(len(body.encode()),65536)
+        v['reviews'][-1]['body']=body;self.run_cli(v,1)
 
     def test_historical_red_control_can_be_explicitly_retracted(self):
         v=fixture();v['reviews'][1]['body']='REPAIR_REQUIRED\nThe test fails before the repair.'
