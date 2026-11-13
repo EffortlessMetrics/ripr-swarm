@@ -748,6 +748,11 @@ fn step_lines<'a>(lines: &[&'a str], index: usize) -> Vec<&'a str> {
 /// Only a key directly under `with:` counts. A `toolchain:` under `env:`,
 /// inside a `run:` block, or in a sibling step is not the action input and
 /// must not satisfy the contract (#14563 review).
+///
+/// An empty value is not an input: `toolchain:` with nothing after it,
+/// `toolchain: ""` and `toolchain: # note` all leave the action without a
+/// toolchain and still exit 1 with `'toolchain' is a required input`
+/// (#14563 acceptance 2, second review).
 fn with_toolchain_value(step: &[&str]) -> Option<String> {
     let first = step.first()?;
     let item_indent = first.len() - first.trim_start().len();
@@ -765,8 +770,24 @@ fn with_toolchain_value(step: &[&str]) -> Option<String> {
         .find_map(|line| {
             line.trim_start()
                 .strip_prefix("toolchain:")
-                .map(|value| value.trim().to_string())
+                .map(|value| yaml_scalar(value))
         })
+        .filter(|value| !value.is_empty())
+}
+
+/// The text of a one-line YAML scalar, without surrounding quotes and without
+/// a trailing comment. An empty result means the key carried no value.
+fn yaml_scalar(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with('#') {
+        return String::new();
+    }
+    for quote in ['"', '\''] {
+        if trimmed.len() >= 2 && trimmed.starts_with(quote) && trimmed.ends_with(quote) {
+            return trimmed[1..trimmed.len() - 1].trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 /// Scan one workflow source for no-default rust-toolchain steps that do not
@@ -908,6 +929,41 @@ fn toolchain_contract_rejects_env_and_run_shapes() -> Result<(), String> {
                 "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n      - name: Other\n        run: |\n          toolchain: 1.95.0\n"
             ),
             false,
+        ),
+        (
+            "with: toolchain null",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain:\n"
+            ),
+            false,
+        ),
+        (
+            "with: toolchain empty string",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"\"\n"
+            ),
+            false,
+        ),
+        (
+            "with: toolchain whitespace only",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"   \"\n"
+            ),
+            false,
+        ),
+        (
+            "with: toolchain comment only",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: # pinned below\n"
+            ),
+            false,
+        ),
+        (
+            "with: toolchain quoted value",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"1.95.0\"\n"
+            ),
+            true,
         ),
     ];
     for (name, source, expected) in cases {
