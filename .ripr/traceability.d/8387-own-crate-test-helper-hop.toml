@@ -1,0 +1,20 @@
+# Own-library hop from an integration-test helper (#8387).
+[[extend]]
+id = "RIPR-SPEC-0159"
+tests = [
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::imported_bare_helper_call_is_the_linked_baseline",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::helper_call_spelled_through_the_own_library_links",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::the_own_library_hop_never_makes_the_finding_exposed",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::helper_entering_a_public_wrapper_links",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::the_helper_related_test_leads_a_name_token_neighbour",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::an_unrelated_import_from_the_library_still_links",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::another_crate_name_does_not_link",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::a_path_that_is_not_the_owners_module_path_does_not_link",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::a_rebindable_crate_name_does_not_link",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::a_helper_that_mentions_the_owner_twice_does_not_link",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::a_helper_that_invokes_an_opaque_macro_does_not_link",
+  "crates/ripr/tests/own_crate_test_helper_hop.rs::the_package_name_is_not_the_library_name_when_lib_name_differs",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer/own_crate_test_hop.rs::own_crate_test_helper_hop",
+]

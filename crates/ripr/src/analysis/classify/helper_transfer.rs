@@ -31,6 +31,7 @@
 mod cross_crate_hop;
 mod cross_crate_path;
 mod macro_argument;
+mod own_crate_test_hop;
 mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
@@ -1202,6 +1203,12 @@ fn chain_through_caller(
         // #11401: a call spelled through another workspace crate that the
         // caller's manifest depends on.
         if let Some(hop) = cross_crate_hop::cross_crate_free_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
+        // #8387: an integration-test helper's call spelled through the
+        // package's own library name.
+        if let Some(hop) = own_crate_test_hop::own_crate_test_helper_hop(caller, callee_name, index)
+        {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
         return stopped(format!(

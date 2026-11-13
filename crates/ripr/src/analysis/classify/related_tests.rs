@@ -2546,7 +2546,20 @@ fn own_crate_name_unshadowed_in_test(
     test: &TestSummary,
     crate_name: &str,
 ) -> bool {
-    let normalized_test = normalize_path(&test.file);
+    own_crate_name_unshadowed_in_test_crate_root(index, &test.file, &test.body, crate_name)
+}
+
+/// [`own_crate_name_unshadowed_in_test`] for any function of a test-crate
+/// root: `file` is the function's file and `body` its own source text. A
+/// same-file helper an integration test calls reads the crate name by the
+/// same rules as the test itself (#8387).
+pub(super) fn own_crate_name_unshadowed_in_test_crate_root(
+    index: &RustIndex,
+    file: &Path,
+    body: &str,
+    crate_name: &str,
+) -> bool {
+    let normalized_test = normalize_path(file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
         ["tests", file] => file.ends_with(".rs"),
@@ -2556,7 +2569,7 @@ fn own_crate_name_unshadowed_in_test(
     if !is_test_crate_root {
         return false;
     }
-    let Some(facts) = index.files().get(&test.file) else {
+    let Some(facts) = index.files().get(file) else {
         return false;
     };
     if facts.source.contains("include!")
@@ -2580,11 +2593,11 @@ fn own_crate_name_unshadowed_in_test(
             })
     };
     !file_may_bind_name(&stripped_file, crate_name)
-        && !body_binds_owner_name(&test.body, crate_name)
+        && !body_binds_owner_name(body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body)
+        && !may_rebind_crate_name(body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
