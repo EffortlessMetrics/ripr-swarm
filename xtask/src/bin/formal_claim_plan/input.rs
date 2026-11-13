@@ -134,7 +134,7 @@ fn execute(args: &[String]) -> PlanResult<String> {
 
 pub(super) fn entry() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args == ["--help"] || args == ["-h"] {
+    if matches!(args.as_slice(), [flag] if flag == "--help" || flag == "-h") {
         println!("{USAGE}");
         return std::process::ExitCode::SUCCESS;
     }
