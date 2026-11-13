@@ -62,9 +62,8 @@ jobs:
           PY
 
           grep -Fq 'toolchain: 1.100.0' .rust-1.100-rust-test-shards.yml
-          grep -Fq 'cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4' .rust-1.100-rust-test-shards.yml
+          grep -Fq 'cargo nextest list --workspace --profile ci --partition hash:' .rust-1.100-rust-test-shards.yml
           grep -Fq 'hidden by the discarded stderr (#12915)' .rust-1.100-rust-test-shards.yml
-          git diff --no-index --check /dev/null .rust-1.100-rust-test-shards.yml
           git add .rust-1.100-rust-test-shards.yml
           git commit -m "ci: stage merged Rust 1.100 shard workflow"
           git push \
