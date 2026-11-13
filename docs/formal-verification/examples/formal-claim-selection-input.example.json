@@ -1,0 +1,105 @@
+{
+  "schema": "ripr.formal-claim-selection-input.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "claim_index": {
+    "generation": "example-registry-1",
+    "global_authority_paths": [
+      "policy/formal-claims.toml",
+      "xtask/src/kani_lane.rs"
+    ],
+    "claims": [
+      {
+        "claim_id": "ripr.actionability",
+        "claim_generation": 1,
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "provider": "kani",
+        "route": "native",
+        "owners": [
+          "ripr_contract::domain::EvidenceState::is_actionable"
+        ],
+        "source_closure": [
+          "crates/ripr-contract/src/domain/evidence_state.rs"
+        ],
+        "authority_paths": [
+          "crates/ripr/src/kani_smoke.rs"
+        ],
+        "subjects": [
+          "ripr::kani_smoke::evidence_state_actionable_only_for_actionable"
+        ],
+        "limitations": [
+          "Illustrative projected claim; not a governed registry record."
+        ]
+      },
+      {
+        "claim_id": "ripr.repair-finish",
+        "claim_generation": 1,
+        "criticality": "critical",
+        "phase": "admitted_merge_group",
+        "provider": "tla_plus",
+        "route": "unsupported",
+        "owners": [
+          "ripr::domain::repair::finish"
+        ],
+        "source_closure": [
+          "crates/ripr/src/domain/repair.rs"
+        ],
+        "authority_paths": [
+          "formal/repair-attempt/RepairAttempt.tla"
+        ],
+        "subjects": [],
+        "limitations": [
+          "Native provider route is not admitted in the critical lane."
+        ]
+      },
+      {
+        "claim_id": "ripr.advisory-helper",
+        "claim_generation": 1,
+        "criticality": "advisory",
+        "phase": "manual",
+        "provider": "manual",
+        "route": "manual",
+        "owners": [
+          "ripr::advisory"
+        ],
+        "source_closure": [
+          "crates/ripr/src/advisory.rs"
+        ],
+        "authority_paths": [],
+        "subjects": [],
+        "limitations": [
+          "Not a critical claim."
+        ]
+      }
+    ]
+  },
+  "change_set": {
+    "base": "1111111111111111111111111111111111111111",
+    "group": "2222222222222222222222222222222222222222",
+    "members": [
+      {
+        "pr_number": 14471,
+        "head": "3333333333333333333333333333333333333333"
+      },
+      {
+        "pr_number": 14478,
+        "head": "4444444444444444444444444444444444444444"
+      }
+    ],
+    "expected_registry_generation": "example-registry-1",
+    "controller_generation": "example-controller-1",
+    "producer_generation": "example-producer-1",
+    "proof_profile": "kani-critical-v1",
+    "classification_complete": false,
+    "changes": [
+      {
+        "path": "docs/formal-verification/README.md",
+        "impact": "formal_irrelevant",
+        "semantic_subjects": []
+      }
+    ],
+    "limitations": [
+      "Illustrative supplied facts; no Git or registry authentication occurred."
+    ]
+  }
+}
