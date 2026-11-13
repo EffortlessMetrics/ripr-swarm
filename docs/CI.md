@@ -130,6 +130,11 @@ enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
 
+The separately staged [evidence-bound resolution mode](REVIEW_RESOLUTION.md)
+requires explicit source-backed adjudication rather than same-account positivity.
+It is not activated by this documentation or by adding a review record: both
+trusted admission and final-result callers need a coordinated migration.
+
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
 instead (#4984). Put exactly one line at column zero, outside code fences and HTML

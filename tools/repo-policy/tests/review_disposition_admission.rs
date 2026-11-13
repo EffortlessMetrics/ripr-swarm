@@ -1187,3 +1187,19 @@ fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Resu
         "negative then neutral reply without a description line",
     )
 }
+
+#[test]
+fn explicit_review_resolution_cli_controls() -> Result<(), String> {
+    let test = script()?.with_file_name("test_review_resolution.py");
+    let output = Command::new("python3")
+        .args(["-I"])
+        .arg(test)
+        .arg("--self-test")
+        .output()
+        .map_err(|error| format!("run resolution controls: {error}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() || !stderr.contains("OK") || stderr.contains("Ran 0 tests") {
+        return Err(format!("resolution controls failed: {stderr}"));
+    }
+    Ok(())
+}
