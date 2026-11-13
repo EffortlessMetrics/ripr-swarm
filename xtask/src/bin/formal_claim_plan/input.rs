@@ -81,11 +81,10 @@ pub(super) fn parse_input(bytes: &[u8]) -> PlanResult<SelectionInput> {
 }
 
 fn read_input(path: &Path) -> PlanResult<Vec<u8>> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|error| format!("inspect {}: {error}", path.display()))?;
+    let metadata =
+        std::fs::metadata(path).map_err(|error| format!("inspect {}: {error}", path.display()))?;
     require(metadata.is_file(), "input must be a regular file")?;
-    let file = File::open(path)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -147,7 +146,7 @@ fn execute(args: &[String]) -> PlanResult<String> {
     match format {
         OutputFormat::Json => {
             serde_json::to_string_pretty(&plan).map_err(|error| error.to_string())
-        },
+        }
         OutputFormat::Markdown => Ok(render_markdown(&plan)),
     }
 }
@@ -239,8 +238,14 @@ mod normalization_tests {
             ["a/path".to_string(), "z/path".to_string()]
         );
         let claim = &input.claim_index.claims[0];
-        assert_eq!(claim.owners, ["a::owner".to_string(), "z::owner".to_string()]);
-        assert_eq!(claim.subjects, ["a::subject".to_string(), "z::subject".to_string()]);
+        assert_eq!(
+            claim.owners,
+            ["a::owner".to_string(), "z::owner".to_string()]
+        );
+        assert_eq!(
+            claim.subjects,
+            ["a::subject".to_string(), "z::subject".to_string()]
+        );
         assert_eq!(
             input
                 .change_set

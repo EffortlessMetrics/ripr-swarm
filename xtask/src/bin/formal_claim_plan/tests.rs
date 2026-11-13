@@ -109,9 +109,7 @@ fn direct_owner_and_source_closure_change_selects_exact_claim() -> PlanResult<()
     input.change_set.changes = vec![ChangedPath {
         path: "crates/ripr-contract/src/domain/evidence_state.rs".to_string(),
         impact: ImpactClass::FormalRelevant,
-        semantic_subjects: vec![
-            "ripr_contract::domain::EvidenceState::is_actionable".to_string(),
-        ],
+        semantic_subjects: vec!["ripr_contract::domain::EvidenceState::is_actionable".to_string()],
     }];
     let result = plan(&input, "sha256:test".to_string())?;
     assert_eq!(selected(&result), ["ripr.actionability"]);
@@ -201,10 +199,12 @@ fn formal_relevant_unmapped_change_is_rejected_or_widened() -> PlanResult<()> {
     }];
     let result = plan(&input, "sha256:test".to_string())?;
     assert!(result.fallback_all_critical);
-    assert!(result
-        .fallback_reasons
-        .iter()
-        .any(|reason| reason.contains("unmapped_formal_relevant_change")));
+    assert!(
+        result
+            .fallback_reasons
+            .iter()
+            .any(|reason| reason.contains("unmapped_formal_relevant_change"))
+    );
     Ok(())
 }
 
@@ -226,10 +226,12 @@ fn manual_and_unsupported_routes_remain_visible_in_fallback() -> PlanResult<()> 
         .find(|claim| claim.claim_id == "ripr.repair-finish")
         .ok_or("missing manual claim")?;
     assert_eq!(manual.route, ProviderRoute::Manual);
-    assert!(result
-        .expected_native_subjects
-        .iter()
-        .all(|subject| !subject.contains("repair")));
+    assert!(
+        result
+            .expected_native_subjects
+            .iter()
+            .all(|subject| !subject.contains("repair"))
+    );
     Ok(())
 }
 
@@ -239,10 +241,12 @@ fn empty_change_facts_fall_back_to_all_critical() -> PlanResult<()> {
     input.change_set.changes.clear();
     let result = plan(&input, "sha256:test".to_string())?;
     assert!(result.fallback_all_critical);
-    assert!(result
-        .fallback_reasons
-        .iter()
-        .any(|reason| reason == "no_change_facts_supplied"));
+    assert!(
+        result
+            .fallback_reasons
+            .iter()
+            .any(|reason| reason == "no_change_facts_supplied")
+    );
     assert_eq!(result.selected_claim_count, result.critical_claim_count);
     Ok(())
 }
@@ -264,10 +268,12 @@ fn historical_native_phase_stays_visible_without_native_subjects() -> PlanResult
         .find(|claim| claim.claim_id == "ripr.actionability")
         .ok_or("missing actionability claim")?;
     assert_eq!(actionability.disposition, Disposition::Selected);
-    assert!(actionability
-        .reasons
-        .iter()
-        .any(|reason| reason == "native_phase_not_admitted_for_merge_group"));
+    assert!(
+        actionability
+            .reasons
+            .iter()
+            .any(|reason| reason == "native_phase_not_admitted_for_merge_group")
+    );
     assert!(result.expected_native_subjects.is_empty());
     Ok(())
 }
@@ -365,10 +371,7 @@ fn duplicate_keys_unknown_fields_and_missing_values_reject() -> PlanResult<()> {
         .and_then(serde_json::Value::as_object_mut)
         .ok_or("missing change_set")?
         .remove("classification_complete");
-    assert!(parse_input(
-        &serde_json::to_vec(&value).map_err(|error| error.to_string())?
-    )
-    .is_err());
+    assert!(parse_input(&serde_json::to_vec(&value).map_err(|error| error.to_string())?).is_err());
     Ok(())
 }
 

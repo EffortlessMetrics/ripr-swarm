@@ -215,9 +215,7 @@ fn stable_id(value: &str, field: &str) -> PlanResult<()> {
         value.len() >= 2
             && valid_first
             && bytes.all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || b"._-".contains(&byte)
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
             }),
         format!("{field}: expected stable lowercase identifier"),
     )
@@ -254,7 +252,10 @@ fn unique_strings(values: &[String], field: &str, require_nonempty: bool) -> Pla
     let mut seen = BTreeSet::new();
     for value in values {
         nonblank(value, field)?;
-        require(seen.insert(value), format!("{field}: duplicate value {value}"))?;
+        require(
+            seen.insert(value),
+            format!("{field}: duplicate value {value}"),
+        )?;
     }
     Ok(())
 }
@@ -318,10 +319,7 @@ fn validate_input(input: &SelectionInput) -> PlanResult<()> {
         &input.change_set.controller_generation,
         "controller generation",
     )?;
-    nonblank(
-        &input.change_set.producer_generation,
-        "producer generation",
-    )?;
+    nonblank(&input.change_set.producer_generation, "producer generation")?;
     nonblank(&input.change_set.proof_profile, "proof profile")?;
     git_object(&input.change_set.base, "base")?;
     git_object(&input.change_set.group, "group")?;
@@ -474,10 +472,7 @@ fn plan(input: &SelectionInput, input_digest: String) -> PlanResult<Plan> {
             && !matched_relevant_paths.contains(changed.path.as_str())
             && !global_paths.contains(changed.path.as_str())
         {
-            fallback_reasons.insert(format!(
-                "unmapped_formal_relevant_change:{}",
-                changed.path
-            ));
+            fallback_reasons.insert(format!("unmapped_formal_relevant_change:{}", changed.path));
         }
     }
 
@@ -589,10 +584,7 @@ fn plan(input: &SelectionInput, input_digest: String) -> PlanResult<Plan> {
 }
 
 fn escape_markdown(value: &str) -> String {
-    value
-        .replace('|', "\\|")
-        .replace('\r', " ")
-        .replace('\n', " ")
+    value.replace('|', "\\|").replace(['\r', '\n'], " ")
 }
 
 fn render_markdown(plan: &Plan) -> String {
@@ -604,7 +596,10 @@ fn render_markdown(plan: &Plan) -> String {
         .join(", ");
     let mut output = String::new();
     output.push_str("# Formal critical-claim plan\n\n");
-    output.push_str(&format!("- Repository: `{}`\n", escape_markdown(&plan.repository)));
+    output.push_str(&format!(
+        "- Repository: `{}`\n",
+        escape_markdown(&plan.repository)
+    ));
     output.push_str(&format!("- Base: `{}`\n", plan.base));
     output.push_str(&format!("- Group: `{}`\n", plan.group));
     output.push_str(&format!("- Ordered members: {}\n", members));
@@ -650,7 +645,10 @@ fn render_markdown(plan: &Plan) -> String {
         }
     }
     if let Some(basis) = &plan.zero_selection_basis {
-        output.push_str(&format!("\n## Zero-selection basis\n\n{}\n", escape_markdown(basis)));
+        output.push_str(&format!(
+            "\n## Zero-selection basis\n\n{}\n",
+            escape_markdown(basis)
+        ));
     }
     output.push_str("\n## Limitations\n\n");
     for limitation in &plan.limitations {
