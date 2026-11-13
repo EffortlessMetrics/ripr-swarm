@@ -301,7 +301,7 @@ Runs the static exposure analysis and renders findings.
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
 | `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
-| `--path GLOB` | (all files) | Repeatable. Analyze only changed files matching the repository-relative file, directory or glob. Files left out are named in a `language_scope_unsupported` limitation. |
+| `--path GLOB` | (all files) | Repeatable. Analyze only changed files matching the repository-relative file, directory or glob. Files left out are named in a `requested_scope_excluded` scope note on a complete outcome. |
 | `--exclude GLOB` | (none) | Repeatable. Skip changed files matching the pattern; wins over `--path`. Same disclosure. |
 | `--worktree` | already the default when the tree has staged or unstaged tracked edits | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits (untracked files never select it; stage them with `git add -N`). Like the committed `<base>...HEAD` diff, it starts at the merge base of the base and `HEAD`, so commits the base gained after the branch forked are not reported as branch changes (the base tip when there is no merge base, as in a shallow clone). Cannot be combined with `--diff`. |
 | `--committed` | _(off)_ | Diff committed history only (`base...HEAD`) even when the working tree has uncommitted changes; the output notes that those edits were not analyzed. Cannot be combined with `--worktree`, `--diff`, `--candidate-tree`, or repo-scope formats. |
@@ -455,8 +455,8 @@ ripr check --root . --base origin/main --path crates/api --path 'src/**/*.rs'
 ```
 
 Every changed file the scope leaves out is named in a
-`language_scope_unsupported` limitation and has no finding, so the outcome is
-`partial_with_limitations`, never a clean or complete analysis. A scope that
+`requested_scope_excluded` scope note and has no finding. The note is advisory,
+so the outcome stays complete when everything in scope was analyzed. A scope that
 leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
@@ -1296,7 +1296,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `generated_file_patterns` | array of strings | `[]` | Additional Rust generated-source globs. Built-in generated names and `gen/`, `generated/`, and `out/` directories remain excluded unless their exact path is in `handwritten_files`. Files whose first five lines carry an `@generated`, rust-bindgen, or `Code generated ... DO NOT EDIT` comment, and `cargo vendor` crates (directories holding `.cargo-checksum.json`) remain excluded. A pattern without `/` matches any filename; a pattern with `/` matches the repository-relative path. `*` matches within one path segment, `?` matches one character, and `**` matches zero or more path segments. Empty, duplicate, absolute, parent-traversing, drive-prefixed, and backslash-containing patterns are rejected. |
+| `generated_file_patterns` | array of strings | `[]` | Additional Rust generated-source globs. Built-in generated names and `gen/`, `generated/`, and `out/` directories remain excluded unless their exact path is in `handwritten_files`. Files whose first five lines carry an `@generated`, rust-bindgen, or `Code generated ... DO NOT EDIT` comment, and `cargo vendor` crates (directories holding `.cargo-checksum.json`) remain excluded. Diff checks name files matching these patterns in a `requested_scope_excluded` scope note on a complete outcome; the built-in skips stay a partial `language_scope_unsupported` limitation. A pattern without `/` matches any filename; a pattern with `/` matches the repository-relative path. `*` matches within one path segment, `?` matches one character, and `**` matches zero or more path segments. Empty, duplicate, absolute, parent-traversing, drive-prefixed, and backslash-containing patterns are rejected. |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative `.rs` files to analyze despite a built-in generated filename or directory convention. Explicit `generated_file_patterns`, generator headers and vendor markers still exclude them. Leading `./`, internal `.` and repeated `/` are normalized; order is immaterial. Empty, duplicate after normalization, absolute, parent-traversing, drive-prefixed, backslash-containing, control-character, non-Rust and glob paths are rejected. |
 
 For example, a hand-written test of generated workflows can keep its filename:
@@ -1323,7 +1323,7 @@ adapters:
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
-| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Files it leaves out are named in a `requested_scope_excluded` scope note on a complete outcome. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:

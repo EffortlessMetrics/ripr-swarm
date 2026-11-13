@@ -116,7 +116,6 @@ mod parse_failure_path_outcome;
 ))]
 #[path = "cli_smoke/partial_preview_disclosure.rs"]
 mod partial_preview_disclosure;
-#[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -147,6 +146,9 @@ mod related_test_count;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/requested_scope_complete.rs"]
+mod requested_scope_complete;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/rerun_ledger_recovery.rs"]
 mod rerun_ledger_recovery;
@@ -4305,8 +4307,8 @@ fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
 }
 
 #[test]
-fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
-{
+fn check_scope_flags_turn_an_oversized_diff_into_a_complete_scoped_result_with_a_note()
+-> Result<(), String> {
     let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
     let root = dir.display().to_string();
     let diff = diff.display().to_string();
@@ -4346,9 +4348,10 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         let value: serde_json::Value = serde_json::from_str(&stdout)
             .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
         let outcome = &value["analysis_outcome"];
-        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        // #13894: the operator-requested scope is complete.
+        assert_eq!(outcome["analysis_complete"], true, "{flags:?}");
         assert_eq!(
-            outcome["outcome"]["kind"], "partial_with_limitations",
+            outcome["outcome"]["kind"], "complete_with_findings",
             "{flags:?}"
         );
         let limitations = outcome["outcome"]["limitations"]
@@ -4356,7 +4359,7 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             .ok_or("limitations array")?;
         assert!(
             limitations.iter().any(|limitation| {
-                limitation["kind"] == "language_scope_unsupported"
+                limitation["kind"] == "requested_scope_excluded"
                     && limitation["bounded_detail"]
                         .as_str()
                         .is_some_and(|detail| detail.contains("src/big.rs"))

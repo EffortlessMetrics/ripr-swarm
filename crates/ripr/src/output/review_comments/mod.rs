@@ -2162,6 +2162,44 @@ mod tests {
         Ok(())
     }
 
+    /// #13894: a complete outcome that carries only the requested-scope note
+    /// stays `advisory`; the note is projected, not turned into `incomplete`.
+    /// The negative control is `review_comments_projects_typed_outcome_without_
+    /// strengthening_incomplete_input`, whose partial outcomes stay incomplete.
+    #[test]
+    fn review_comments_keeps_complete_outcome_with_requested_scope_note_advisory()
+    -> Result<(), String> {
+        let note = AnalysisLimitation::new(
+            AnalysisLimitationKind::RequestedScopeExcluded,
+            AnalysisStage::DiffLoad,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun without --exclude")?,
+        );
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 1,
+            },
+            vec![note],
+        )?;
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value_with_outcome(&working_set, &[classified(88)], &outcome)?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["kind"],
+            "requested_scope_excluded"
+        );
+        Ok(())
+    }
+
     #[test]
     fn review_comments_surface_external_observer_as_navigation_only_limitation()
     -> Result<(), String> {

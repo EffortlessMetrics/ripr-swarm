@@ -320,6 +320,60 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
     Ok(())
 }
 
+/// #13894: the requested-scope note is its own `scope_note=` line, appears
+/// once, and is not counted as an additional analysis limitation.
+#[test]
+fn agent_scope_note_line_is_single_and_not_counted_as_a_limitation() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteNoFindings, PartialWithLimitations,
+    };
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let note = || -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::RequestedScopeExcluded,
+            AnalysisStage::DiffLoad,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun without --exclude")?,
+        )
+        .with_affected_items(2)
+    };
+    let config = RiprConfig::default();
+
+    let mut complete = outcome_output(CompleteNoFindings, Vec::new())?;
+    complete
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing complete outcome")?
+        .limitations
+        .push(note()?);
+    let text = agent_dispatch(&complete, &config)?;
+    assert_eq!(text.matches("scope_note=").count(), 1, "{text}");
+    assert!(text.contains("scope_note=2 file(s) left out"), "{text}");
+    assert!(!text.contains("analysis=incomplete"), "{text}");
+
+    // Partial run with a real limitation plus the note: the note is neither
+    // the displayed limitation nor part of the "+N more" count.
+    let mut partial = outcome_output(PartialWithLimitations, Vec::new())?;
+    partial
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing partial outcome")?
+        .limitations
+        .push(note()?);
+    let text = agent_dispatch(&partial, &config)?;
+    assert_eq!(text.matches("scope_note=").count(), 1, "{text}");
+    assert!(text.contains("limitation=producer_failure|"), "{text}");
+    assert!(!text.contains("more analysis limitations"), "{text}");
+
+    // Negative: a partial run without a note carries no scope_note line.
+    let plain = outcome_output(PartialWithLimitations, Vec::new())?;
+    let text = agent_dispatch(&plain, &config)?;
+    assert!(!text.contains("scope_note="), "{text}");
+    Ok(())
+}
+
 #[test]
 fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     let text = rendered(&output(vec![

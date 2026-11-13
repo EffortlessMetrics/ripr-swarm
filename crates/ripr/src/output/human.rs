@@ -274,6 +274,26 @@ pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     match outcome.kind {
         NoScope => true,
         NoChangedLines | NoBehavioralCandidates => {
+            // #13894: a configured pattern (`generated_file_patterns`,
+            // `excluded_file_patterns`) leaves out files that are still
+            // counted in `changed_file_count`, so when those notes cover every
+            // changed file the requested scope was examined in full. Notes
+            // from CLI `--path`/`--exclude` (DiffLoad stage) are removed
+            // before `changed_files` is built, are NOT part of that count, and
+            // must never suppress the warning for a file still in scope.
+            let configured_left_out: u64 = outcome
+                .limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.kind.is_requested_scope_note()
+                        && limitation.producer_stage
+                            == crate::analysis_outcome::AnalysisStage::LanguageAdapter
+                })
+                .map(|limitation| limitation.affected_items.unwrap_or(0))
+                .sum();
+            if configured_left_out > 0 && configured_left_out >= outcome.counts.changed_file_count {
+                return false;
+            }
             outcome.counts.changed_file_count > 0
                 && output.summary.changed_rust_files == 0
                 && output
@@ -838,6 +858,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
                     limitation.recovery.detail
                 ));
             }
+            continue;
+        }
+        if limitation.kind.is_requested_scope_note() {
+            // #13894: the operator's own scope request, not a limitation.
+            out.push_str(&format!(
+                "  Scope note: {}.\n",
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or_else(|| limitation.kind.plain_label())
+                    .trim_end_matches('.')
+            ));
             continue;
         }
         if plain {

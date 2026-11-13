@@ -528,7 +528,8 @@
             "producer_failure",
             "eol_only_churn",
             "verification_only_change",
-            "unevaluated_condition"
+            "unevaluated_condition",
+            "requested_scope_excluded"
           ]
         },
         "producer_stage": {

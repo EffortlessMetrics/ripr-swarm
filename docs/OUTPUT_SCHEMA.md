@@ -1588,6 +1588,19 @@ this kind still marks the outcome incomplete — consumers gating on
 `analysis_complete` see these runs as partial; letting it ride a complete
 outcome is a separate, consumer-visible design decision (#8714 review).
 
+`requested_scope_excluded` (#13894) is the scope note for files the operator
+left out on purpose: `--path`/`--exclude` on `ripr check`, a configured
+`[languages.rust] generated_file_patterns` entry, or a configured preview
+`excluded_file_patterns` entry. The requested scope was analyzed in full, so
+this kind rides on a complete outcome (`analysis_complete: true`) like
+`eol_only_churn` and is not an incomplete-analysis limitation. It names the
+count and a bounded list of the files and the source of the exclusion, and the
+human report prints it as a `Scope note` line. The `missed-txt` and `github`
+streams do not repeat it, so a fully analyzed scoped run stays zero bytes.
+Built-in, non-configurable generated-file skips, unsupported languages, parse
+failures, budgets and refused files keep their incomplete kinds
+(`language_scope_unsupported` and the others), so they stay fail-closed.
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls

@@ -1483,9 +1483,10 @@ Options:
                            or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
                            Applied before the diff-size limits, so they measure
                            only the chosen files. Changed files outside the
-                           scope are named in a language_scope_unsupported
-                           limitation and have no finding: the outcome is
-                           partial_with_limitations, never clean. A scope that
+                           scope are named in a requested_scope_excluded
+                           scope note and have no finding; the outcome stays
+                           complete. Built-in generated skips still make the
+                           run partial. A scope that
                            leaves no changed file is an error. Not supported
                            for repo-scoped formats.
   --exclude GLOB           Skip changed files matching GLOB (repeatable;

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Check: files you leave out with `--path`, `--exclude` or a configured `generated_file_patterns` are now a scope note (`requested_scope_excluded`) on a complete analysis instead of a `language_scope_unsupported` limitation, so a fully tested scoped run reports `analysis_complete: true` and `--format missed-txt` stays empty. Built-in generated-name skips, unsupported languages and failed files still keep the run incomplete (#13894).

@@ -153,6 +153,7 @@ fn render_report(
         },
     );
     out.push_str(&incomplete_lines);
+    out.push_str(&requested_scope_note_line(output));
     let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -243,6 +244,28 @@ fn render_report(
     out
 }
 
+/// #13894: one informational line for files the operator left out with
+/// `--path`, `--exclude` or a configured pattern. The requested scope was
+/// analyzed in full, so this is a note, not a limitation, and a run with no
+/// such files prints nothing.
+fn requested_scope_note_line(output: &CheckOutput) -> String {
+    let Some(outcome) = output.analysis_outcome.as_ref() else {
+        return String::new();
+    };
+    let left_out: u64 = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.kind.is_requested_scope_note())
+        .map(|limitation| limitation.affected_items.unwrap_or(0))
+        .sum();
+    if left_out == 0 {
+        return String::new();
+    }
+    format!(
+        "scope_note={left_out} file(s) left out at your request (--path/--exclude or a configured pattern); not a limitation\n"
+    )
+}
+
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
@@ -281,10 +304,15 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
             field(&clip(reason)),
             field(&limitation.recovery.detail)
         ));
-        if outcome.limitations.len() > 1 {
+        let others = outcome
+            .limitations
+            .iter()
+            .filter(|other| !other.kind.is_requested_scope_note())
+            .count();
+        if others > 1 {
             out.push_str(&format!(
                 "+{} more analysis limitations; `--format json` lists all\n",
-                outcome.limitations.len() - 1
+                others - 1
             ));
         }
     }
