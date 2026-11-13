@@ -1,0 +1,1 @@
+crates/ripr/tests/terminal_styling_inert.rs|Command::new|1|cli-tests|#7441: the terminal-styling pin runs the worktree-built binary (CARGO_BIN_EXE_ripr) directly with fixed read-only arguments in an owned temporary sample workspace; no shell, network or repository mutation.
