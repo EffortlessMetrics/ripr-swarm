@@ -2121,7 +2121,7 @@ pub(crate) fn run_check(
         // say they agree.
         if let Some(reason) =
             committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
-                dirty_rust_routed_paths(Path::new(root))
+                dirty_rust_routed_paths(Path::new(root), git_timeout)
             })
         {
             let admission = super::repair_admission::SeamAdmission::withheld(
@@ -2378,8 +2378,14 @@ fn committed_over_uncommitted_refusal(
 /// The dirty tracked and untracked Rust-routed paths of the checkout, from the
 /// same committed-source probe the committed findings producer uses. Gitignored
 /// files are excluded (see the comment below).
-fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
-    let overlay = crate::analysis::committed_source::probe(root, mcp_git_timeout()?)
+///
+/// `git_timeout` is the deadline `run_check` already resolved for the findings
+/// producer, so the probe and the check run under one value (#14386).
+fn dirty_rust_routed_paths(
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> Result<Vec<String>, String> {
+    let overlay = crate::analysis::committed_source::probe(root, git_timeout)
         .map_err(|error| error.to_string())?;
     let Some(overlay) = overlay else {
         return Ok(Vec::new());
