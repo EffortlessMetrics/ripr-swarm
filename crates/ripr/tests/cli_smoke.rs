@@ -197,6 +197,9 @@ mod typescript_effect_aliases;
 #[path = "cli_smoke/typescript_finally_completion.rs"]
 mod typescript_finally_completion;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_generator_promise.rs"]
+mod typescript_generator_promise;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
 #[cfg(feature = "lang-typescript")]
