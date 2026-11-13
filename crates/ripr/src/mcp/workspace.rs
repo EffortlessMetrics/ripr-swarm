@@ -2084,11 +2084,19 @@ pub(crate) fn run_check(
     // loading configuration so a pending signal cannot poison later retries.
     let attempt = || -> Result<Snapshot, AttemptFailure> {
         let config = crate::config::load_for_root(root).map_err(|error| {
+            // #14451: the source-free summary every other machine surface
+            // uses (location plus the parser's reason, #14441). The raw
+            // message carries the TOML source excerpt and a CLI-only
+            // "fix the error above" trailer, and was cut mid-word by the
+            // detail bound.
             AttemptFailure::new(
                 CODE_CONFIG_INVALID,
-                format!("the workspace configuration could not be loaded: {error}"),
                 format!(
-                    "address the configuration error above (the detail names the cause), then {}",
+                    "the workspace configuration could not be loaded: {}",
+                    crate::config::config_error_summary(&error)
+                ),
+                format!(
+                    "fix ripr.toml at the location the detail names (the detail gives the cause), then {}",
                     check_retry_recovery(root, base, source)
                 ),
             )

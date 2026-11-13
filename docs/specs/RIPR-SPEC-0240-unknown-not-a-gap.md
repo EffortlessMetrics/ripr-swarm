@@ -102,7 +102,20 @@ stamp .. #[cfg(test)] mod tests { .. } }` reads `static_unknown`, neither a
 gap nor credit. A gate only the test carries (the default run never compiles
 the test), a different gate, a provably disabled gate (`cfg(any())`), a
 `cfg_attr` or unreadable gate, an owner in another file and an `#[ignore]`
-test keep the gap.
+test keep the gap. The out-of-line form follows the same rule (#14463): when
+the test's file is refused because a `mod name;` declaration on its module
+chain carries only `cfg` gates ripr cannot evaluate, and the changed owner's
+file is reached through that same declaration on a single module chain, the
+refusal is an analyzer limit, provided every other declaration on the test's
+chain is either shared with the owner or available in every test build (no
+attribute, or `cfg(test)`), the test's in-file `cfg` gates are a subset of
+the owner's, and the test's own reading of each assertion past that refusal is
+admitted or itself an analyzer limit. `#[cfg(feature = "v4")] mod v4;` with the owner
+and its tests in `src/v4.rs`, or in sibling files under `src/v4/`, reads
+`static_unknown`. A gated declaration only the test's chain carries (alone or
+below a shared one), an inline gate only the test's module carries, owner and
+test under different gated declarations, and a provably disabled declaration
+gate (`cfg(any())`) keep the gap.
 A plain `#[cfg(..)]` that is provably true under the test file's own package's
 default features is no refusal at all (#8780): a plain `cargo test` compiles
 the test, so its assertions are read like an ungated test's, whether the gate
@@ -1217,7 +1230,11 @@ and repair still does not start.
 - `shared_cfg_gate_owner_pin.rs` pins the shared-gate exception (#9643): the
   nested `cfg(feature)` module and a spelling-insensitive shared gate read
   `static_unknown`, while an ungated owner, another feature, `cfg(any())` and
-  an ignored test keep the gap.
+  an ignored test keep the gap. Its out-of-line rows (#14463) read a shared
+  gated `mod name;` declaration as `static_unknown` for the owner's own file
+  and for sibling files, and keep the gap for a test-only declaration,
+  different declarations and `cfg(any())`, and for an ignored test, an
+  expected-panic test or a conditional assertion under a shared declaration.
 - A paired fixture: a `cfg(feature)` test whose feature is off by default is
   withheld (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the
   gap (`gap_kept_ignored_test`).

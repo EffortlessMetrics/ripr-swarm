@@ -301,6 +301,32 @@ pub(crate) fn assistant_loop_health_proof_count(report: &AssistantLoopHealthRepo
     report.proofs.len()
 }
 
+/// Input problems to echo on stderr (#14371): one line per proof whose
+/// required input is missing, naming the proof path and the specific cause,
+/// so a mistyped or non-JSON `--proof` is visible without opening the report.
+pub(crate) fn assistant_loop_health_input_warnings(
+    report: &AssistantLoopHealthReport,
+) -> Vec<String> {
+    report
+        .proofs
+        .iter()
+        .flat_map(|proof| proof.warnings.iter())
+        .filter(|warning| warning.kind == "missing_required_input")
+        .map(|warning| {
+            let message = warning.message.trim_end_matches('.');
+            let next = if message.contains("ripr assistant-loop proof") {
+                ""
+            } else {
+                "; regenerate it with `ripr assistant-loop proof` (`ripr assistant-loop proof --help` lists its inputs)"
+            };
+            match warning.source_artifact.as_deref() {
+                Some(source) => format!("assistant proof {source}: {message}{next}"),
+                None => format!("{message}{next}"),
+            }
+        })
+        .collect()
+}
+
 pub(crate) use crate::output::path::display_path;
 
 fn classify_proof(input: AssistantLoopHealthProofInput) -> HealthProof {
@@ -789,8 +815,7 @@ fn repair_for_warning(proof: &HealthProof, warning: &HealthWarning) -> Option<Re
             seam_id: None,
             path: None,
             line: None,
-            reason: "The supplied proof is missing required selected seam and movement evidence."
-                .to_string(),
+            reason: warning.message.clone(),
             next_command: ASSISTANT_PROOF_COMMAND.to_string(),
             expected_result: "Regenerate a proof packet with selected seam and before/after static movement context.".to_string(),
         }),
@@ -1047,10 +1072,9 @@ fn raw_shell_words(command: &str) -> Option<Vec<&str>> {
 
 fn repair_markdown_line(repair: &RepairItem) -> String {
     match repair.repair_kind.as_str() {
-        "regenerate_proof" => {
-            "regenerate proof; supply selected seam and before/after static movement context."
-                .to_string()
-        }
+        // The reason names what is wrong with this proof (missing file,
+        // malformed JSON, missing context), so the Markdown repeats it.
+        "regenerate_proof" => format!("regenerate proof: {}", repair.reason),
         "inspect_unchanged_attempt" => format!(
             "{} - unchanged movement; inspect whether the focused test observes the missing equality boundary.",
             repair_location(repair)
@@ -1335,7 +1359,7 @@ mod tests {
         assert!(rendered.contains("\"repair_kind\": \"attach_receipt\""));
 
         let markdown = render_assistant_loop_health_markdown(&report);
-        assert!(markdown.contains("regenerate proof; supply selected seam"));
+        assert!(markdown.contains("regenerate proof: Proof input is missing selected seam"));
         assert!(markdown.contains("src/lib.rs:7 - missing receipt"));
         Ok(())
     }

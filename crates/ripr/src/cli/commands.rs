@@ -747,51 +747,51 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         pr_guidance_json: options
             .pr_guidance
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR guidance", path)),
+            .map(|path| read_report_input_plain("PR guidance", path)),
         first_action_json: options
             .first_action
             .as_ref()
-            .map(|path| read_optional_text_for_report("first useful action", path)),
+            .map(|path| read_report_input_plain("first useful action", path)),
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant proof", path)),
+            .map(|path| read_report_input_plain("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant loop health", path)),
+            .map(|path| read_report_input_plain("assistant loop health", path)),
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger", path)),
+            .map(|path| read_report_input_plain("PR evidence ledger", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| read_report_input_plain("baseline debt delta", path)),
         zero_status_json: options
             .zero_status
             .as_ref()
-            .map(|path| read_optional_text_for_report("RIPR Zero status", path)),
+            .map(|path| read_report_input_plain("RIPR Zero status", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
+            .map(|path| read_report_input_plain("gate decision", path)),
         recommendation_calibration_json: options
             .recommendation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| read_report_input_plain("recommendation calibration", path)),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| read_report_input_plain("mutation calibration", path)),
         coverage_frontier_json: options
             .coverage_frontier
             .as_ref()
-            .map(|path| read_optional_text_for_report("coverage/grip frontier", path)),
+            .map(|path| read_report_input_plain("coverage/grip frontier", path)),
         receipt_json: options
             .receipt
             .as_ref()
-            .map(|path| read_optional_text_for_report("receipt", path)),
+            .map(|path| read_report_input_plain("receipt", path)),
     };
     let report = output::pr_review_front_panel::build_pr_review_front_panel_report(input);
     let rendered_json = output::pr_review_front_panel::render_pr_review_front_panel_json(&report)?;
@@ -800,6 +800,9 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    emit_report_warnings(
+        &output::pr_review_front_panel::pr_review_front_panel_input_warnings(&report),
+    );
     Ok(())
 }
 
@@ -1878,6 +1881,19 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
+        )
+    })
+}
+
+/// Like `read_optional_text_for_report`, but a missing file reads `not found`
+/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
+/// some policy reports still classify a missing input by that errno text.
+fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        format!(
+            "read {label} {} failed: {}",
+            output::baseline_delta::display_path(path),
+            crate::bounded_input::read_failure_detail(&err)
         )
     })
 }
@@ -3635,6 +3651,94 @@ mod tests {
         assert!(md_text.contains("# RIPR Policy Readiness"));
         assert!(md_text.contains("Recommended mode: baseline-check"));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove policy dir: {err}"))?;
+        Ok(())
+    }
+    /// #14311: a supplied gate decision that is missing, not JSON, empty, or
+    /// another artifact never yields a `ready_for_*` recommendation; the run
+    /// writes `config_error` and refuses, naming the input.
+    #[test]
+    fn policy_readiness_refuses_an_unusable_supplied_input() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-readiness-unusable");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let out = dir.join("policy-readiness.json");
+        let out_md = dir.join("policy-readiness.md");
+        let gate = dir.join("gate-decision.json");
+        for body in [
+            None,
+            Some("not json {"),
+            Some("{}"),
+            Some("[]"),
+            Some(r#"{"schema":"ripr.other","x":1}"#),
+        ] {
+            if gate.exists() {
+                std::fs::remove_file(&gate).map_err(|err| format!("remove gate: {err}"))?;
+            }
+            if let Some(body) = body {
+                std::fs::write(&gate, body).map_err(|err| format!("write gate: {err}"))?;
+            }
+            let Err(err) = policy(&args(&[
+                "readiness",
+                "--gate-decision",
+                &gate.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ])) else {
+                return Err(format!("gate decision {body:?} must be refused"));
+            };
+            assert!(
+                err.contains("policy readiness could not use 1 supplied input")
+                    && err.contains("gate-decision.json")
+                    && err.contains("written as `config_error`"),
+                "{body:?}: {err}"
+            );
+            let report: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&out).map_err(|err| format!("read report: {err}"))?,
+            )
+            .map_err(|err| format!("parse report: {err}"))?;
+            assert_eq!(report["status"], "config_error", "{body:?}");
+        }
+        // Another artifact's `kind` is refused on the input it was passed to.
+        let baseline = dir.join("baseline-debt-delta.json");
+        std::fs::write(
+            &baseline,
+            r#"{"schema_version":"0.1","kind":"waiver_aging","delta":{"still_present":0}}"#,
+        )
+        .map_err(|err| format!("write baseline: {err}"))?;
+        let Err(err) = policy(&args(&[
+            "readiness",
+            "--baseline-delta",
+            &baseline.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ])) else {
+            return Err(
+                "a waiver-aging document passed as --baseline-delta must be refused".to_string(),
+            );
+        };
+        assert!(
+            err.contains("its kind is `waiver_aging`, expected `baseline_debt_delta`"),
+            "{err}"
+        );
+        // Discriminating control: a real gate decision still completes.
+        std::fs::write(
+            &gate,
+            r#"{"schema_version":"0.1","status":"advisory","mode":"visible-only","summary":{"blocking":0,"acknowledged":0,"advisory":0,"suppressed":0,"not_applicable":0},"decisions":[]}"#,
+        )
+        .map_err(|err| format!("write gate: {err}"))?;
+        policy(&args(&[
+            "readiness",
+            "--gate-decision",
+            &gate.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         Ok(())
     }
     #[test]

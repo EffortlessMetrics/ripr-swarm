@@ -269,6 +269,7 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
         "seam:sample",
         Path::new("some-checkout"),
         None,
+        false,
         &violations,
     );
     for fragment in [
@@ -283,6 +284,45 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
             "missing `{fragment}`: {message}"
         );
     }
+}
+
+/// #14394: a start through `ripr repair <item>` is told to rerun that same
+/// command; a store-located start keeps the advanced spelling, which is the
+/// only one that carries `--store`.
+#[test]
+fn before_phase_dirty_premise_refusal_names_the_facade_rerun_for_a_facade_start() {
+    let violations = vec!["src/lib.rs".to_string()];
+    let message = before_phase_dirty_premise_refusal(
+        "6c0f2a8a6134d929",
+        Path::new("some-checkout"),
+        None,
+        true,
+        &violations,
+    );
+    // The root is bound to an absolute path, so only its tail is stable.
+    assert!(
+        message.contains("then rerun `ripr repair 6c0f2a8a6134d929 --root ")
+            && message.contains("some-checkout`. A test file"),
+        "{message}"
+    );
+    assert!(!message.contains("ripr agent repair"), "{message}");
+    assert!(!message.contains("--phase before"), "{message}");
+
+    let stored = before_phase_dirty_premise_refusal(
+        "6c0f2a8a6134d929",
+        Path::new("some-checkout"),
+        Some(Path::new("attempts")),
+        true,
+        &violations,
+    );
+    assert!(
+        stored.contains("then rerun `ripr agent repair --root "),
+        "{stored}"
+    );
+    assert!(
+        stored.contains("--seam-id 6c0f2a8a6134d929 --phase before`"),
+        "{stored}"
+    );
 }
 
 /// A committed git fixture with one dirty tracked production file:
@@ -345,6 +385,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
             store: None,
             json: false,
             quiet: false,
+            facade_start: false,
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {

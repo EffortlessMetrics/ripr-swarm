@@ -128,7 +128,7 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|path| {
             let source_artifact = output::assistant_loop_health::display_path(path);
-            let proof_json = read_optional_text_for_report("assistant proof", path);
+            let proof_json = read_health_proof(path);
             output::assistant_loop_health::AssistantLoopHealthProofInput {
                 source_artifact,
                 proof_json,
@@ -152,7 +152,27 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
         "Proofs: {}",
         output::assistant_loop_health::assistant_loop_health_proof_count(&report)
     );
+    super::emit_report_warnings(
+        &output::assistant_loop_health::assistant_loop_health_input_warnings(&report),
+    );
     Ok(())
+}
+
+/// Read one `--proof` input for the health report. A missing file is the
+/// common case (a mistyped path), so it uses the shared `not found` wording
+/// (#9851) and names the producer; other failures keep the OS detail (#14371).
+fn read_health_proof(path: &std::path::Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "{detail}; pass the proof JSON that `ripr assistant-loop proof` wrote \
+                 (its --out, by default target/ripr/reports/test-oracle-assistant-proof.json)"
+            )
+        } else {
+            detail
+        }
+    })
 }
 
 fn parse_assistant_loop_proof_options(
