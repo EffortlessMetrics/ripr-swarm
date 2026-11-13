@@ -106,10 +106,13 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
   the body including a loop body, the answer is `None`: the call-argument
   environment is stale.
 - The seam expression must be the tail or a statement of exactly one `if`
-  branch. Both arms holding it, more than one `if` holding it, or the
-  expression appearing in more seam positions in the body than the branch
-  scan accounts for (a sibling `return` after the `if`), answers `None`:
-  the seam's own occurrence is not established by text.
+  branch, matched by the seam's own line. Both arms holding it, or more than
+  one `if` holding it, answers `None`. A seam whose own line is not inside an
+  `if` branch (a plain tail, or a sibling `return` after the `if`) answers
+  `None` and keeps today's credit. The seam is credited only when the
+  crediting call reaches that branch: a sibling duplicate `return` keeps the
+  sibling seam's grip, not the branch-local one, and the branch-local seam
+  answers `Some(false)` when the call takes the other branch.
 - The seam's own condition folds with the call's literal arguments. If the
   seam's branch is not the taken one, the answer is `Some(false)`.
 - Every enclosing `if` on the path must also take the branch that holds the
@@ -181,7 +184,7 @@ refuses.
    seam is not `Yes`.
 8. `if amount >= discount_threshold { return amount - 10; } return amount -
    10;` asserted at `(50, 100) == 40`: the sibling seam keeps its grip
-   (`Yes`).
+   (`Yes`), and the then-branch seam on line 3 is not `Yes`.
 9. `loop { if amount >= threshold { return amount - 10; } amount += 10; }`
    asserted at `(50, 100) == 90`: `Yes`.
 10. `let (amount,) = (-amount,);` before the `if`, asserted at `(-50, 0) ==
