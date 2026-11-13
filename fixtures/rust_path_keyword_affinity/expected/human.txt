@@ -9,20 +9,17 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
-  Safe next action: look at the reason below before adding a test
-  File: ./src/lib.rs:13
-  Static exposure: unknown (severity: note, confidence 0.50)
-  Why unknown: the analysis could not determine a static exposure state
-  Changed behavior: pub const SEED_BASE: u32 = 1;
-  Analyzer limit: No strong assertion was detected
-  Related test: tests/other.rs:25 seeds_base
-  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
-    gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
-    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
-    finds a gap. Compare the original and changed implementations with a focused run using the
-    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
-    may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+  Safe next action: look at the reason below and the existing tests before adding a test
+  File: ./src/lib.rs:4
+  Static exposure: no path (severity: warning, confidence 0.40)
+  Why no path: no related test was found that reaches this change
+  Changed behavior: pub changed_slot: u64,
+  Missing check: pub changed_slot: u64,
+  Next step: ripr found no static test path to this change — this is not a coverage assessment. A
+    test may already exercise it through macros, helper-call chains, or integration tests that
+    ripr's static model does not yet trace. If none does, add a co-located test that reaches and
+    observes the changed behavior so an assertion can notice if it is wrong
+  Evidence: reach no · infection unknown · propagation weak · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -33,25 +30,24 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach changed owner: seeds_base
-    - infection unknown: Changed syntax is not mapped to a high-confidence change type
-    - 7 more detail line(s) in --format human-full
+    - reach no: No static test path found for the changed owner
+    - infection unknown: No reachable tests were found, so infection cannot be established
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast probe:src_lib.rs:static_unknown:bd010b89
-  ripr context --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:bd010b89
+  ripr explain --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast probe:src_lib.rs:field_construction:ce334d10
+  ripr context --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast --at probe:src_lib.rs:field_construction:ce334d10
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:1 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:3 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
-    - ./src/lib.rs:4 (no path, lower-priority candidate); kind: field_construction; reason: Missing check value: pub changed_slot: u64,
     - ./src/lib.rs:7 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:13 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
-    no path = no test path was found
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -191,3 +191,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (16)
+
+Reason:
+RIPR-SPEC-0122: Start here ranks only printable repair routes (#14266 item 2); the no-path finding now leads the unknown one by class
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/human.txt`

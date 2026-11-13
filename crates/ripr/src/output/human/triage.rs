@@ -2354,7 +2354,11 @@ fn triage_rank<'a>(
 /// unchanged; only the selection order moves.
 fn has_ranked_repair_route(finding: &Finding) -> bool {
     if !is_preview_limited(finding) {
-        return has_repair_route(finding);
+        // #14266 item 2: rank by the route the screen can print. A
+        // static-limited finding never prints a repair route
+        // (`printed_repair_route`), so its advisory next step must not lift
+        // it to the routed tier over a gap whose route does print.
+        return !is_static_limited(finding) && has_repair_route(finding);
     }
     finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
@@ -4054,25 +4058,63 @@ mod tests {
     }
 
     /// #14266: two candidates equal on every evidence key through
-    /// confidence order by exposure class, not by file path. The unknown
-    /// sorts first by path and is listed first, so neither path order nor
-    /// insertion order can masquerade as ranking.
+    /// confidence order by exposure class, not by file path. The weaker
+    /// class sorts first by path and is listed first, so neither path order
+    /// nor insertion order can masquerade as ranking.
     #[test]
     fn start_here_breaks_an_evidence_tie_by_class_before_path() {
-        let mut unknown = finding_at(
-            "finding:unknown",
+        let mut weak = finding_at(
+            "finding:weak",
             "src/a_analysis.rs",
-            ExposureClass::PropagationUnknown,
+            ExposureClass::WeaklyExposed,
         );
         let mut gap = finding_at(
             "finding:unrevealed",
             "src/z_provider.rs",
             ExposureClass::ReachableUnrevealed,
         );
-        for finding in [&mut unknown, &mut gap] {
+        for finding in [&mut weak, &mut gap] {
             finding.recommended_next_step = Some("inspect the related test".to_string());
             finding.confidence = 0.66;
         }
+        let output = test_output(vec![weak.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence weak gap still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        weak.confidence = 0.9;
+        let output = test_output(vec![gap, weak]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:weak")
+        );
+    }
+
+    /// #14266 item 2: an advisory next step on a static-limited finding is
+    /// not a repair route (the screen never prints one for it), so it does
+    /// not lift the unknown over a gap that has no route either. The unknown
+    /// sorts first by path, is listed first and has the higher confidence.
+    #[test]
+    fn start_here_does_not_rank_an_unprintable_route_as_a_repair_route() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        unknown.recommended_next_step =
+            Some("The indexed related tests do not establish a call".to_string());
+        unknown.confidence = 0.9;
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        gap.confidence = 0.5;
         let output = test_output(vec![unknown.clone(), gap.clone()]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
@@ -4080,14 +4122,20 @@ mod tests {
             Some("finding:unrevealed")
         );
 
-        // Discriminating control: a higher-confidence unknown still leads,
-        // so class only breaks a tie and does not override earlier keys.
-        unknown.confidence = 0.9;
-        let output = test_output(vec![gap, unknown]);
+        // Discriminating control: a next step on a finding that is not
+        // static-limited still counts as a route and still leads.
+        let mut routed = finding_at(
+            "finding:routed-weak",
+            "src/a_analysis.rs",
+            ExposureClass::WeaklyExposed,
+        );
+        routed.recommended_next_step = Some("strengthen the assertion".to_string());
+        routed.confidence = 0.9;
+        let output = test_output(vec![routed, gap]);
         let triage = select_human_triage(&output, &RiprConfig::default());
         assert_eq!(
             triage.selected.map(|finding| finding.id.as_str()),
-            Some("finding:unknown")
+            Some("finding:routed-weak")
         );
     }
 
