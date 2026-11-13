@@ -106,6 +106,8 @@ owner where scope has become too large.
   artifact handling, and projection.
 - [CI.md](CI.md) — critical/full/canary topology and required-check admission.
 - [MAINTENANCE.md](MAINTENANCE.md) — operator and maintainer runbook.
+- [ADMISSION_AUDIT.md](ADMISSION_AUDIT.md) — isolated document-consistency
+  checks, adversarial controls and the boundary to native assurance.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
   implementation programme using the current issue and PR owners.
 - [WORK_ITEMS.md](WORK_ITEMS.md) — existing executable implementation owners
