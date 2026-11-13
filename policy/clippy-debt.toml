@@ -24,8 +24,9 @@ status = "active"
 #
 # Debt is reviewed at every release readiness check.
 # `[[planned]]` lints in policy/clippy-lints.toml (indexing_slicing,
-# string_slice, disallowed_fields, manual_pop_if) stay there — they are
-# already dual-railed with Cargo.toml. Do not duplicate them here.
+# string_slice, disallowed_fields) stay there; `manual_pop_if` is active
+# in that ledger. All are already dual-railed with Cargo.toml. Do not
+# duplicate them here.
 
 [[debt]]
 id = "clippy-debt-0001"

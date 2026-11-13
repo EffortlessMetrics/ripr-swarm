@@ -23,5 +23,4 @@ Then publish:
 cargo publish -p ripr
 ```
 
-Verify `repository` points at the canonical GitHub repository and that the
-packaged manifest does not reintroduce a duplicate `homepage` before publishing.
+Verify `repository` and `homepage` point at the canonical GitHub repository before publishing.

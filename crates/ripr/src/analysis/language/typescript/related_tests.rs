@@ -7620,7 +7620,7 @@ mod spy_binding_unicode_tests {
     fn a_non_ascii_qualifier_before_the_spy_call_does_not_split_a_char() {
         let name = |qualifier: &str| {
             let body = format!("const spy = {qualifier}.spyOn(mod, 'owner');");
-            let start = body.find("spyOn").map_or(0, |idx| idx);
+            let start = body.find("spyOn").unwrap_or(0);
             spy_bound_variable_name(&body, start)
         };
         // Must not panic, and must read the same as the ASCII spelling.

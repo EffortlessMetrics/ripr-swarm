@@ -459,6 +459,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
+      RUSTUP_TOOLCHAIN: 1.100.0
       SELECTOR_CONSUMER_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     steps:

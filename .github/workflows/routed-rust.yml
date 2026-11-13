@@ -92,7 +92,7 @@ jobs:
               attempt=$((attempt + 1)) delay=$((delay * 2))
             done
           }
-          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" --arg extra "${3:-}" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap) and ($extra == "" or index($extra))))] | length > 0' >/dev/null; }
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # A queued PR is built from the base repository's queue branch, so a
             # fork-authored PR is only visible through the PR itself.
@@ -107,11 +107,11 @@ jobs:
             cx43_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43")))] | length')"
             cx43_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43") and index("rust-medium")))] | length')"
             cpx42_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42")))] | length')"
-            cpx42_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42") and index("rust-16gb")))] | length')"
+            cpx42_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length')"
             cx53_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx53")))] | length')"
             cx53_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx53") and index("rust-large")))] | length')"
             if idle cx43 rust-medium; then target=cx43 reason=cx43_idle
-            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle
+            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle
             elif idle cx53 rust-large; then target=cx53 reason=cx53_idle
             elif [ "$cx43_online$cx43_idle_ready$cpx42_online$cpx42_idle_ready$cx53_online$cx53_idle_ready" != "000000" ]; then reason=runner_capacity_unavailable
             else reason=no_idle_runner

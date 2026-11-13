@@ -2021,3 +2021,27 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
         "      - uses: actions/cache@{sha} # v4.2.0\n"
     )));
 }
+
+#[test]
+fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
+        .map_err(|error| error.to_string())?;
+    assert!(text.contains(
+        "index(\"em-ci\") and index(\"cpx42\") and index(\"rust-16gb\") and index(\"rust-medium\")"
+    ));
+    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));
+    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));
+    Ok(())
+}
+
+#[test]
+fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))
+        .map_err(|error| error.to_string())?;
+    assert!(text.contains("(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"));
+    assert!(text.contains("(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"));
+    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));
+    Ok(())
+}

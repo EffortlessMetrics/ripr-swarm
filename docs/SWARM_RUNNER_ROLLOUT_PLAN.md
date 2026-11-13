@@ -31,13 +31,13 @@ repos/<owner>/<repo>/actions/runners
 ## Stable router outputs
 
 - `router_target=cpx42|cx43|cx53|github`
-- `router_reason=cpx42_idle|cx43_idle|cx53_idle|no_idle_runner|runner_image_unavailable|runner_token_missing|runner_token_unauthorized|runner_token_forbidden|runner_api_failed|parse_failed|fork_or_untrusted_pr`
+- `router_reason=cpx42_idle|cx43_idle|cx53_idle|no_idle_runner|runner_capacity_unavailable|runner_token_missing|runner_token_unauthorized|runner_token_forbidden|runner_api_failed|parse_failed|fork_or_untrusted_pr`
 - Optional `router_error=false|true` only for repos that already expose an error-classification output.
 
 Do not rename existing reason values without an explicit migration that updates
 the router summary, normalized result summary, rollout evidence, and downstream
 issue comments. In particular, `fork_or_untrusted_pr` and
-`runner_image_unavailable` are already used by `ripr-swarm` and must remain
+`runner_capacity_unavailable` are already used by `ripr-swarm` and must remain
 valid routed-result vocabulary.
 
 ## CPX42 execution model
@@ -83,7 +83,7 @@ Merge when all are true:
   proving a primary self-hosted rollout and an idle image-ready runner is
   discoverable.
 - GitHub-hosted fallback is accepted when the router records an allowed fallback
-  reason such as `no_idle_runner`, `runner_image_unavailable`,
+  reason such as `no_idle_runner`, `runner_capacity_unavailable`,
   `runner_api_failed`, `runner_token_missing`, `runner_token_unauthorized`,
   `runner_token_forbidden`, `parse_failed`, or `fork_or_untrusted_pr`.
 - Selected implementation lane succeeds.

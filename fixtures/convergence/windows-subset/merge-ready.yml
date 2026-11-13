@@ -121,7 +121,7 @@ jobs:
           target=github reason=runner_api_failed runner_query=not_attempted runner_total=not_available
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
-          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" --arg extra "${3:-}" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap) and ($extra == "" or index($extra))))] | length > 0' >/dev/null; }
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
           elif runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)"; then
@@ -130,11 +130,11 @@ jobs:
             cx43_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43")))] | length')"
             cx43_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43") and index("rust-medium")))] | length')"
             cpx42_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42")))] | length')"
-            cpx42_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42") and index("rust-16gb")))] | length')"
+            cpx42_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length')"
             cx53_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx53")))] | length')"
             cx53_idle_ready="$(count '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx53") and index("rust-large")))] | length')"
             if idle cx43 rust-medium; then target=cx43 reason=cx43_idle
-            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle
+            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle
             elif idle cx53 rust-large; then target=cx53 reason=cx53_idle
             elif [ "$cx43_online$cx43_idle_ready$cpx42_online$cpx42_idle_ready$cx53_online$cx53_idle_ready" != "000000" ]; then reason=runner_capacity_unavailable
             else reason=no_idle_runner

@@ -3332,7 +3332,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         stream
             .read_exact(&mut newline, deadline)
             .map_err(|error| format!("framing newline read failed: {error:?}"))?;
-        if newline != [b'\n'] {
+        if newline != *b"\n" {
             return Err(format!("framing newline missing: {newline:?}"));
         }
         let second = stream

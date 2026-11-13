@@ -1061,8 +1061,8 @@ jobs:
           for path in rust-toolchain.toml packaging/python/pyproject.toml Cargo.lock Cargo.toml crates/ripr/Cargo.toml; do
             cmp "pair-source/baseline/${path}" "pair-source/candidate/${path}"
           done
-          rustc -vV > pair/rustc-version.txt
-          cargo -vV > pair/cargo-version.txt
+          (cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt
+          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt
           python3 - <<'PY'
           import hashlib, json, os, platform
           from pathlib import Path

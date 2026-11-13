@@ -187,7 +187,7 @@ cutover tracker with the current run URL and the result summary:
 
 ```text
 target: github
-reason: runner_api_failed | no_idle_runner | runner_image_unavailable
+reason: runner_api_failed | no_idle_runner | runner_capacity_unavailable
 runner query: ok | failed | skipped_untrusted_pr
 visible runners: <count>
 cx53 online: <count>

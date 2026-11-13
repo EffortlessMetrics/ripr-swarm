@@ -18,6 +18,7 @@ license = "MIT OR Apache-2.0"
 # Keep new API use within this minimum; see docs/ci/rust-1.100-upgrade.md.
 rust-version = "1.95"
 repository = "https://github.com/EffortlessMetrics/ripr/"
+homepage = "https://github.com/EffortlessMetrics/ripr/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

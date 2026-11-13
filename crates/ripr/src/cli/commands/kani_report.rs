@@ -187,17 +187,20 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
 }
 
 fn paths_alias(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let (Ok(left), Ok(right)) = (left.metadata(), right.metadata()) {
-            return left.dev() == right.dev() && left.ino() == right.ino();
-        }
+        left == right
+            || matches!(
+                (left.metadata(), right.metadata()),
+                (Ok(left), Ok(right))
+                    if left.dev() == right.dev() && left.ino() == right.ino()
+            )
     }
-    false
+    #[cfg(not(unix))]
+    {
+        left == right
+    }
 }
 
 /// Resolve existing aliases while allowing report directories not yet created.
