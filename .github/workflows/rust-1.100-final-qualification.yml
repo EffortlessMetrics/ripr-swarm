@@ -1,0 +1,182 @@
+name: Rust 1.100 final qualification
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-final-qualification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-1.100-final-qualification
+  cancel-in-progress: true
+
+jobs:
+  linux-core:
+    name: Linux Rust 1.100 core
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt,clippy
+
+      - name: Record compiler identity
+        run: |
+          rustc -vV
+          cargo -vV
+
+      - name: Hide qualification-only workflow from repository policy
+        run: mv .github/workflows/rust-1.100-final-qualification.yml /tmp/rust-1.100-final-qualification.yml
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Workspace check
+        run: cargo check --locked --workspace --all-targets --all-features
+
+      - name: Strict Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: RIPR library tests
+        run: cargo test --locked -p ripr --lib
+
+      - name: Warm A/B compiler-integrity tests
+        run: cargo test --locked -p xtask warm_ab
+
+      - name: Workflow evidence-integrity tests
+        run: |
+          cargo test --locked -p repo-policy --lib routed_rust_cpx42_selection_matches_required_labels
+          cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
+          cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
+          cargo test --locked -p repo-policy --test workflow_action_pins
+
+      - name: Architecture ratchets
+        run: cargo xtask check-architecture
+
+  msrv:
+    name: Exact Rust 1.95 source floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.95.0
+      - name: Record compiler identity
+        run: rustc +1.95.0 -vV
+      - name: Check the retained source floor independently
+        run: cargo +1.95.0 check --locked --workspace --all-targets
+
+  coverage:
+    name: LLVM 23 raw-profile coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      - name: Record compiler and LLVM identity
+        run: rustc -vV
+      - name: Hide qualification-only workflow from coverage tests
+        run: mv .github/workflows/rust-1.100-final-qualification.yml /tmp/rust-1.100-final-qualification.yml
+      - name: Check coverage diagnostic controls
+        run: cargo test -p repo-policy --lib coverage_diagnostics
+      - name: Build coverage adapter and spawned binary
+        run: |
+          cargo build -p repo-policy
+          cargo build -p ripr
+      - name: Prepare locked fixture dependencies
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+      - name: Clean coverage state
+        run: cargo llvm-cov clean --workspace
+      - name: Generate coverage
+        env:
+          CARGO_PROFILE_TEST_STRIP: debuginfo
+        run: target/debug/repo-policy run-coverage
+      - name: Verify LCOV artifact
+        run: test -s lcov.info
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: rust-1.100-final-lcov
+          path: lcov.info
+          if-no-files-found: error
+          retention-days: 5
+
+  zed-wasi:
+    name: Zed wasm32-wasip2
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: editors/zed
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          targets: wasm32-wasip2
+          components: rustfmt,clippy
+      - run: rustc -vV
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --target wasm32-wasip2 --all-targets -- -D warnings
+      - run: cargo build --locked --release --target wasm32-wasip2
+
+  windows:
+    name: Windows Rust 1.100
+    runs-on: windows-latest
+    timeout-minutes: 70
+    env:
+      RUSTUP_TOOLCHAIN: 1.100.0
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt,clippy
+      - name: Record compiler identity
+        run: rustc -vV
+      - name: Workspace check
+        run: cargo check --locked --workspace --all-targets
+      - name: Strict Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: RIPR library tests
+        run: cargo test --locked -p ripr --lib
+      - name: Windows route contracts
+        run: |
+          cargo test --locked -p xtask --test windows_advisory_identity
+          cargo test --locked -p xtask --test windows_subset_admission_contract
+
+  macos:
+    name: macOS Rust 1.100
+    runs-on: macos-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt,clippy
+      - run: rustc -vV
+      - run: cargo check --locked --workspace --all-targets
+      - run: cargo test --locked -p ripr --lib
