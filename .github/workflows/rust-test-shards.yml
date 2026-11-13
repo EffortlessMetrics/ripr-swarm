@@ -153,22 +153,25 @@ jobs:
       # Shard 1 hands the prepared normal binary to the verifier. It needs no
       # additional compilation there; the attempt suffix isolates reruns.
       - name: Retain the xtask binary for the verify job
+        id: xtask-artifact
         if: matrix.shard == 1
         run: |
-          stripped="$(mktemp "$RUNNER_TEMP/xtask-stripped.XXXXXX")"
+          staging="$(mktemp -d "$RUNNER_TEMP/ripr-xtask-upload.XXXXXX")"
+          stripped="$staging/xtask-stripped"
           trap 'rm -f "$stripped"' EXIT
           strip --strip-debug -o "$stripped" target/debug/xtask
           python3 tools/ci/shard-verifier-artifact.py retain \
-            --binary "$stripped" --destination target/xtask-binary \
+            --binary "$stripped" --destination "$staging/payload" \
             --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" --sha "$(git rev-parse HEAD)"
+          printf 'path=%s\n' "$staging/payload" >> "$GITHUB_OUTPUT"
 
       - name: Upload the xtask binary
         if: matrix.shard == 1
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
-          path: target/xtask-binary/
+          path: ${{ steps.xtask-artifact.outputs.path }}
           if-no-files-found: error
           retention-days: 1
 

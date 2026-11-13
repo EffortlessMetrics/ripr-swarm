@@ -255,6 +255,30 @@ else:
         self.env['RUNNER_TEMP']=str(link)
         self.refused('invalid runner temporary directory')
 
+    def test_producer_workflow_ignores_restored_target_directory(self):
+        source=(ROOT/'.github/workflows/rust-test-shards.yml').read_text()
+        step=source.split('      - name: Retain the xtask binary for the verify job\n')[1]
+        lines=step.split('        run: |\n')[1].split('\n\n      - name:')[0].splitlines()
+        command='\n'.join(line[10:] for line in lines)
+        built=self.checkout/'target/debug/xtask';built.parent.mkdir(parents=True);built.write_bytes(self.payload)
+        stale=self.checkout/'target/xtask-binary/xtask';stale.parent.mkdir();stale.write_bytes(b'stale cached executable')
+        self._stub('strip',f'#!{sys.executable}\nimport sys,shutil\nassert sys.argv[1:3]==["--strip-debug","-o"]\nshutil.copyfile(sys.argv[4],sys.argv[3])\n')
+        upload_temp=self.root/'producer-temp';upload_temp.mkdir()
+        output=self.root/'producer-output'
+        env=dict(self.env,RUNNER_TEMP=str(upload_temp),GITHUB_OUTPUT=str(output))
+        for _ in range(2):
+            result=subprocess.run(['bash','-e','-o','pipefail','-c',command],cwd=self.checkout,env=env,capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+        paths=[Path(line.removeprefix('path=')) for line in output.read_text().splitlines()]
+        self.assertEqual(len(set(paths)),2)
+        self.assertTrue(all(path.is_relative_to(upload_temp) for path in paths))
+        self.assertEqual(stale.read_bytes(),b'stale cached executable')
+        for path in paths:
+            self.assertEqual({p.name for p in path.iterdir()},{'xtask','identity.json'})
+            self.assertFalse((path.parent/'xtask-stripped').exists())
+        self.artifact(members=[(p.name,p.read_bytes(),stat.S_IFREG) for p in paths[0].iterdir()])
+        self.assertEqual(self.execute().returncode,0)
+
     def test_retain_command_then_real_zip_roundtrip(self):
         binary=self.root/'built-xtask'; binary.write_bytes(self.payload)
         destination=self.root/'producer'

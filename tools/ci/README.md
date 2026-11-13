@@ -5,6 +5,8 @@
 
 Shard 1 retains its stripped `xtask` and an identity document containing the
 repository, run, producer attempt, actual checkout SHA and binary SHA-256.
+It stages those two files in a fresh `RUNNER_TEMP` directory and passes that
+exact path to the upload step; restored build-cache payloads cannot be reused.
 The verifier resolves a complete same-run artifact inventory, chooses the
 highest canonical positive attempt at or below its current attempt, then
 re-reads that artifact by exact ID. Ambiguous, future, expired or malformed
@@ -44,9 +46,11 @@ python3 tools/ci/test_shard_verifier_artifact.py -v
 cargo test -p repo-policy --test shard_verifier_artifact
 ```
 
-The Python suite executes the actual workflow launch block and helper against
+The Python suite executes the actual workflow producer and launch blocks against
 inert marker executables, real ZIP archives, and a fixture GitHub API. It covers
 valid selection, reuse, candidate shadows, missing/ambiguous/nonregular members,
 wrong identities/digests, current-attempt replacement, failure propagation and
-cleanup. The regular Linux repo-policy test invokes the same suite. These are
+cleanup. A restored `target/xtask-binary` fixture remains untouched across two
+producer executions, each of which emits a distinct fresh payload path. The regular
+Linux repo-policy test invokes the same suite. These are
 local transport controls, not observed hosted downloads or queue qualification.
