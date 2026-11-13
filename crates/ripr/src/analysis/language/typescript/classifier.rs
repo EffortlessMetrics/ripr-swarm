@@ -8250,8 +8250,9 @@ pub(crate) fn classify_resolved_owner(
         .chars()
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let family = probe_shape.family.clone();
-    let delta = probe_shape.delta.clone();
+    // #14381: an unrecognised plain value declaration presents as a value;
+    // every analysis decision above and below reads `probe_shape`.
+    let (family, delta) = presented_typescript_shape(&probe_shape, line_text);
     let expected_sinks = if probe_shape.specific {
         probes::expected_sinks(line_text, &family)
     } else {

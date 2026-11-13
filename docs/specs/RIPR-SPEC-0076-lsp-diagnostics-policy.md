@@ -120,9 +120,9 @@ completeness check applies. This exception is documented in the code.
 
 A finding's Problems-panel text is its reconciled next step. When that step
 is the generic one and the finding's witness names a first missing
-discriminator that the step does not already quote, the message ends with
-` Missing check: `<value>`.` so editors that show only the message still name
-the concrete input or value. Preview findings, an empty value, a value
+discriminator that the step does not already quote, the message starts with
+`Missing check: `<value>`. ` so editors that show only the message, or only
+its first words, still name the concrete input or value (#14465). Preview findings, an empty value, a value
 longer than 80 characters (counted as characters) and a value containing a
 backtick or newline leave the message unchanged. For a predicate probe the named value is the boundary input (a missing discriminator spelled `<left> == <right>`) when the witness carries one, even if an error-variant or value check sorts first, so a boundary-test step is not followed by a sibling check (#13372); every other probe family names the first. This changes wording only; class, severity and actionability are untouched.
 
@@ -214,8 +214,8 @@ and status surfaces, and it cannot authorize full-run gap diagnostics.
 - `no_warning_for_static_limit_gap_record` — complete packet + static_limit_kind=Some → INFORMATION.
 - `limited_run_downgrades_finding_warnings` — snapshot with static_limit finding → run_status="limited" → finding WARNING downgrades to INFORMATION.
 - `stale_run_suppresses_gap_record_diagnostics` — StaleArtifact rejection → run_status="stale" → gap records suppressed (is_full_run=false).
-- `generic_next_step_names_the_missing_check_when_the_witness_has_one` — generic next step + witness missing value → message ends with ``Missing check: `value`.``; a step that already quotes the value, no or whitespace-only value, a value over 80 characters or containing a backtick or newline, or a preview finding is unchanged; padding is trimmed and multibyte values count by character.
-- `predicate_boundary_message_names_the_boundary_input_not_a_sibling_check` — a predicate finding whose witness lists an error-variant check before `n == 0` ends with ``Missing check: `n == 0`.``; without a boundary input, or for a non-predicate probe, the first check is named.
+- `generic_next_step_names_the_missing_check_when_the_witness_has_one` — generic next step + witness missing value → message starts with ``Missing check: `value`.``; a step that already quotes the value, no or whitespace-only value, a value over 80 characters or containing a backtick or newline, or a preview finding is unchanged; padding is trimmed and multibyte values count by character.
+- `predicate_boundary_message_names_the_boundary_input_not_a_sibling_check` — a predicate finding whose witness lists an error-variant check before `n == 0` starts with ``Missing check: `n == 0`.``; without a boundary input, or for a non-predicate probe, the first check is named.
 - `gapless_family_overlap_publishes_one_diagnostic_with_every_probe_listed` / `gapless_overlap_keeps_findings_apart_when_any_repair_signal_differs` — overlapping gap-less probe families collapse to one diagnostic in either input order with all probes in `raw_findings`; any differing class, next step, evidence, line, column, expression, owner or a canonical gap keeps them separate.
 - `typed_incomplete_outcome_never_projects_as_full` — incomplete producer outcome → run_status="limited_incomplete_input" → full-run repair diagnostics suppressed.
 

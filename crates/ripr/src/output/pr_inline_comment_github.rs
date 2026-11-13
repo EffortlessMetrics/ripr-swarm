@@ -307,8 +307,17 @@ fn compact_body(operation: &Value) -> String {
             code_span_line(full, "Verify").unwrap_or("`ripr agent verify`")
         ),
     };
+    // A card placed on another changed line names the gap's own line under
+    // its heading (#14303); the lead carries it too, since the full card is
+    // folded away.
+    let displaced = full
+        .split("\n\n")
+        .nth(1)
+        .filter(|paragraph| paragraph.starts_with("Gap at line "))
+        .map(|paragraph| format!("{paragraph}\n\n"))
+        .unwrap_or_default();
     format!(
-        "**ripr: {gap}** — {repair}\n\n{next}\n\n<details><summary>Full RIPR repair card</summary>\n\n{full}\n\n</details>\n\n<!-- ripr:dedupe={dedupe_key} presentation=compact-v1 -->"
+        "**ripr: {gap}** — {repair}\n\n{displaced}{next}\n\n<details><summary>Full RIPR repair card</summary>\n\n{full}\n\n</details>\n\n<!-- ripr:dedupe={dedupe_key} presentation=compact-v1 -->"
     )
 }
 

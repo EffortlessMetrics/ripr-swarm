@@ -10,6 +10,16 @@ fields. A current positive attestation is either:
 
 Native APPROVED / CHANGES_REQUESTED / DISMISSED reviews remain a separate path.
 
+PR-body carrier (#4984): the same attestation may instead be one column-zero line in
+the pull request description, ``Source review: REVIEW_READY <40-hex head>`` (or
+``SOURCE_REVIEW_READY``). The full SHA must equal the candidate head, so a push makes
+the line stale by construction. It is read only for a same-repository pull request
+whose author association is trusted, which is the population that could already
+self-attest with a COMMENT review. It adds a carrier, not a new authority: a native
+CHANGES_REQUESTED or a trusted reviewer's current negative review still refuses.
+The reason is operational: creating a review is throttled per account ("was submitted
+too quickly"), which left reviewed candidates unable to request qualification.
+
 Documented decision (#12814): free prose cannot be enumerated, so the marker line
 is an allowlist built from the shapes of real review-of-record tails (full bodies
 are fixtures under tools/repo-policy/tests/fixtures/review_bodies). An unfamiliar
@@ -69,23 +79,90 @@ STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
-    r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
+    r"|\b(?:repairs?|changes?|fix(?:es)?)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
     r"|\bneeds?[ \t]+(?:work|a[ \t]+fix|fix|fixes|repair|changes|rework)\b"
     r"|\b(?:do(?:es)?[ \t]+not(?:[ \t]+yet)?|dont|don't|cannot|can't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\btake[ \t]+(?:it|that)[ \t]+back\b|\bretract(?:ing|ed|s)?\b|\bwithdr(?:aw|awn|awing)\b"
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
+    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\bstatus:[ \t]*(?:blocked|not[ \t]+ready|incomplete|rejected)\b|\breview[ \t]+incomplete\b"
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
+# #14355: a negated change/repair phrase is not a blocker. "no code change needed"
+# and "no changes needed" describe resolved work, not a required repair. The
+# filler set is closed so an unrelated "no findings and code change needed" is
+# not swallowed. The phrase is stripped only when it ends a sentence and no
+# preceding cue refutes it; the rest of the line is then scanned separately, so
+# "no code change needed. The build is red." still refuses.
+NEGATED_CHANGE = re.compile(
+    r"\b(?:no|without)\b[ \t]+"
+    r"(?:(?:a|an|any|further|code|source|production)[ \t]+){0,2}"
+    r"(?:repairs?|changes?|fix(?:es)?)\b[ \t]+"
+    r"(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b",
+    re.IGNORECASE,
+)
+# Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
+NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
+# A recognized cue that refutes a negated change phrase, so it is not resolved
+# work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
+# sentence does not reach across the '.' or ';'. The same cue set is checked
+# after the phrase, but only when the remainder actually refutes it (see
+# REFUTATION_AFTER), so "Nothing is wrong." is not a refutation. The set is a
+# closed enumeration; a phrasing outside it is not detected.
+REFUTATION_CUE = re.compile(
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case"
+    r"|isn't|is[ \t]+not|it's[ \t]+not|it[ \t]+is[ \t]+not"
+    r"|not[ \t]+accurate|not[ \t]+correct|not[ \t]+right"
+    r"|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say|wrong[ \t]+to[ \t]+claim"
+    r"|would[ \t]+be[ \t]+wrong[ \t]+to|disagree|disagrees|disagreed"
+    r"|(?:i|we)[ \t]+(?:don't|do[ \t]+not)[ \t]+believe|(?:i|we)[ \t]+doubt"
+    r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
+    re.IGNORECASE,
+)
+REFUTES_NEGATION = re.compile(
+    REFUTATION_CUE.pattern + r"[^.;\n]*$",
+    re.IGNORECASE,
+)
+# A refutation after the phrase counts only when the remainder starts with a
+# demonstrative/pronoun subject ("That is false", "It is a lie", "I deny it"),
+# a demonstrative plus a short noun ("That claim is false", "The above is
+# false"), or the cue itself ("Incorrect.", "Wrong.", "Not so."). Ordinary
+# prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
+# does not.
+REFUTATION_AFTER = re.compile(
+    r"^[ \t]*[.!;]?[ \t]*"
+    r"(?:"
+    r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:that|this)[ \t]+(?:claim|statement|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
+    r"|the[ \t]+(?:above|statement|claim|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
+    r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)"
+    r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case|accurate|right)|false|untrue|a[ \t]+lie)\b"
+    r")",
+    re.IGNORECASE,
+)
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+# PR-body carrier. Any column-zero line that starts with this field name and has a
+# value must be exactly the positive form; an empty value is the unfilled template.
+BODY_FIELD = re.compile(r"^source review:[ \t]*(?P<value>.*?)[ \t]*$", re.IGNORECASE)
+BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0-9a-f]{40})$")
+# A second, competing state field in the description. The review-body form is a
+# ``disposition:`` line, so a description that carries one (whatever its value, and
+# however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
+BODY_COMPETING_FIELD = re.compile(r"^[ \t>*\-+_`#~]*disposition[ \t*_`]*:", re.IGNORECASE)
 
 
 def normalize_body(body: str) -> str:
@@ -155,6 +232,43 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def strip_negated_change(line: str) -> str:
+    """Remove a negated change/repair phrase only when it is resolved work.
+
+    #14355: the phrase is stripped only when it ends a sentence, no preceding
+    cue refutes it, and the remainder of the line carries no refutation cue.
+    A refuted or followed-by-blocker phrase stays in place, so the blocker scan
+    still refuses it.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        before = line[: match.start()]
+        after = line[match.end() :]
+        # #14355: a cue only refutes the phrase in its own clause. A comma
+        # resets the clause, so "The Devin thread was a false positive, no code
+        # change needed." is resolved work, not a refutation.
+        before_clause = before.rsplit(",", 1)[-1]
+        if (
+            NEGATED_CHANGE_TAIL.match(after)
+            and not REFUTES_NEGATION.search(before_clause)
+            and not REFUTATION_AFTER.search(after)
+        ):
+            return " "
+        return match.group(0)
+
+    return NEGATED_CHANGE.sub(replace, line)
+
+
+def negation_hit(line: str) -> bool:
+    """Whether ``line`` carries a blocker phrase outside a negated change phrase.
+
+    #14355: "no code change needed" is a resolved-work statement, not a blocker.
+    Only an unrefuted statement-position phrase is removed, so a genuine blocker
+    elsewhere on the same line still refuses.
+    """
+    return bool(NEGATION.search(strip_negated_change(line)))
+
+
 def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
@@ -169,11 +283,11 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
+    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
     return all(
         positive_line(line)
-        or not (STATE_MENTION.search(line) or NEGATION.search(line))
+        or not (STATE_MENTION.search(line) or negation_hit(line))
         for line in substantive[1:]
     )
 
@@ -191,8 +305,55 @@ def comment_body_negative(body: str) -> bool:
         return True
     visible, fenced = parts
     return any(STATE_MENTION.search(line) for line in visible) or any(
-        STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced
+        STATE_TOKEN.search(line) or negation_hit(line) for line in fenced
     )
+
+
+def body_attests_head(body: str, head: str) -> bool:
+    """Whether a pull request description carries the exact-head attestation line.
+
+    Exactly one filled ``Source review:`` line may exist outside fences and HTML
+    comments, its value must be a marker, one space and the full lowercase head SHA,
+    and no fenced ``Source review:`` line may exist to be mistaken for it.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", head or ""):
+        return False
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    if any(BODY_FIELD.match(line.strip()) for line in fenced):
+        return False
+    if any(BODY_COMPETING_FIELD.match(line) for line in (*visible, *fenced)):
+        return False
+    values = []
+    for line in visible:
+        match = BODY_FIELD.match(line)
+        if match is not None and match.group("value"):
+            values.append(match.group("value"))
+    if len(values) != 1:
+        return False
+    match = BODY_FIELD_VALUE.match(values[0])
+    return match is not None and match.group("sha") == head
+
+
+def pull_allows_source_attestation(pull: dict[str, Any] | None, *, head: str) -> bool:
+    """Whether the pull request itself carries a trusted exact-head attestation."""
+    if not isinstance(pull, dict):
+        return False
+    if str(pull.get("author_association") or "").upper() not in TRUSTED_ASSOCIATIONS:
+        return False
+    head_ref = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+    base_ref = pull.get("base") if isinstance(pull.get("base"), dict) else {}
+    head_repo = str((head_ref.get("repo") or {}).get("full_name") or "")
+    base_repo = str((base_ref.get("repo") or {}).get("full_name") or "")
+    if not head_repo or head_repo != base_repo:
+        return False
+    # The live head must be the head being admitted: a description written for an
+    # earlier head never attests a later one.
+    if str(head_ref.get("sha") or "") != head:
+        return False
+    return body_attests_head(str(pull.get("body") or ""), head)
 
 
 def _order(review: dict[str, Any]) -> tuple[str, int]:
@@ -224,7 +385,11 @@ def _latest_decisive(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def reviews_allow_source_attestation(
-    reviews: list[dict[str, Any]], *, head: str, author: str | None = None
+    reviews: list[dict[str, Any]],
+    *,
+    head: str,
+    author: str | None = None,
+    pull: dict[str, Any] | None = None,
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
@@ -254,7 +419,27 @@ def reviews_allow_source_attestation(
     # trusted reviewer's current comment is ready.
     if any(comment_body_negative(str(r.get("body") or "")) for r in commented):
         return False
-    return any(comment_body_ready(str(r.get("body") or "")) for r in commented)
+    if any(comment_body_ready(str(r.get("body") or "")) for r in commented):
+        return True
+    # The description is only another carrier, so it must not be easier to satisfy
+    # than a ready review from the same people. A thread reply creates a neutral
+    # COMMENTED review that replaces its author's earlier one in the latest-per-login
+    # view above; here each trusted reviewer's latest current-head statement that
+    # says anything (ready or negative) decides, and a negative one refuses.
+    stated = [
+        r
+        for r in reviews
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+        and (
+            comment_body_ready(str(r.get("body") or ""))
+            or comment_body_negative(str(r.get("body") or ""))
+        )
+    ]
+    if any(comment_body_negative(str(r.get("body") or "")) for r in _latest_by_login(stated)):
+        return False
+    return pull_allows_source_attestation(pull, head=head)
 
 
 def parse_paginated(text: str) -> list[dict[str, Any]]:
@@ -289,6 +474,22 @@ def fetch_reviews(repository: str, pr_number: str) -> list[dict[str, Any]]:
         timeout=120,
     ).stdout
     return parse_paginated(out)
+
+
+def fetch_pull(repository: str, pr_number: str) -> dict[str, Any]:
+    """Read the pull request object; any failure raises."""
+    out = subprocess.run(
+        ["gh", "api", f"repos/{repository}/pulls/{pr_number}"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    ).stdout
+    pull = json.loads(out)
+    if not isinstance(pull, dict):
+        raise ValueError("pull request response is not an object")
+    return pull
 
 
 def self_test() -> None:
@@ -330,6 +531,114 @@ def self_test() -> None:
         ("REVIEW_READY\nnot ready; repairs are required", False),
         ("REVIEW_READY\nThis is no longer ready", False),
         ("REVIEW_READY\nRepairs are required before merge", False),
+        # #14355: a negated change/repair phrase is resolved work, not a blocker.
+        # "Resolved with no code change needed." admits only because the strip ran.
+        ("REVIEW_READY\nResolved with no code change needed.", True),
+        ("REVIEW_READY\nThree Devin threads resolved, no code changes needed.", True),
+        ("REVIEW_READY\nResolved without a code change.", True),
+        # #14355: a comma resets the clause, so a benign cue earlier in the
+        # sentence does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            True,
+        ),
+        ("REVIEW_READY\nGemini isn't available, no changes needed.", True),
+        # #14355: a hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            True,
+        ),
+        ("REVIEW_READY\nCode change needed.", False),
+        ("REVIEW_READY\nA change is needed.", False),
+        ("REVIEW_READY\nChanges required.", False),
+        ("REVIEW_READY\nRepairs required.", False),
+        ("REVIEW_READY\nNo code change needed, but repairs required.", False),
+        # #14355: the real #14117 line 6 is mid-line, followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR "
+            "conversation and resolved with no code change needed. Gemini had no findings. "
+            "CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a "
+            "review; the owning session's inline source review stands in for them.",
+            True,
+        ),
+        ("REVIEW_READY\nNo code change needed. All threads resolved.", True),
+        ("REVIEW_READY\nNo code change needed. Gemini had no findings.", True),
+        ("REVIEW_READY\nNo changes are needed. The build is red.", False),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", False),
+        ("REVIEW_READY\nNo code change needed. Repairs required.", False),
+        ("REVIEW_READY\nNo changes are needed. The build fails.", False),
+        ("REVIEW_READY\nNo changes are needed. The build is broken.", False),
+        ("REVIEW_READY\nNo changes are needed. The build is failing.", False),
+        ("REVIEW_READY\nNo code change needed. A fix is needed.", False),
+        # #14355: a refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", False),
+        ("REVIEW_READY\nNo changes are needed; that is false.", False),
+        ("REVIEW_READY\nNo changes are needed. That is not true.", False),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", False),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", False),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", False),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", False),
+        ("REVIEW_READY\nNo code change needed. Not so.", False),
+        ("REVIEW_READY\nNo changes are needed. Not true.", False),
+        ("REVIEW_READY\nNo changes are needed. That isn't true.", False),
+        ("REVIEW_READY\nNo changes are needed. This isn't correct.", False),
+        ("REVIEW_READY\nNo changes are needed. That claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The above is false.", False),
+        ("REVIEW_READY\nNo changes are needed. That assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. This claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The statement is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The finding is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The report is false.", False),
+        ("REVIEW_READY\nNo changes are needed. This statement is untrue.", False),
+        ("REVIEW_READY\nNo changes are needed. All green.", True),
+        # #14355: ordinary prose with a cue word is not a refutation.
+        ("REVIEW_READY\nNo changes are needed. Nothing is wrong.", True),
+        ("REVIEW_READY\nNo changes are needed. No incorrect claims.", True),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            True,
+        ),
+        # #14355: an unlisted refutation ahead of the phrase is not resolved work.
+        ("REVIEW_READY\nIt's not accurate that no changes are needed.", False),
+        ("REVIEW_READY\nIt's not correct that no changes are needed.", False),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            False,
+        ),
+        ("REVIEW_READY\nI disagree that no changes are needed.", False),
+        ("REVIEW_READY\nI don't believe no changes are needed.", False),
+        ("REVIEW_READY\nI doubt no changes are needed.", False),
+        # Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            True,
+        ),
+        ("REVIEW_READY\nNo code change needed. Gemini isn't available.", True),
+        # #14355: a refuted phrase is not resolved work.
+        ("REVIEW_READY\nIt is not true that no changes are needed.", False),
+        ("REVIEW_READY\nIt is false that no change is needed.", False),
+        ("REVIEW_READY\nNo changes are needed is false.", False),
+        ("REVIEW_READY\nNo code change needed is not correct.", False),
+        ("REVIEW_READY\nNo changes are needed -- the build is red.", False),
+        ("REVIEW_READY\nThere is no truth to the claim that no changes are needed.", False),
+        ("REVIEW_READY\nIt is a lie that no changes are needed.", False),
+        ("REVIEW_READY\nIt is wrong to say that no changes are needed.", False),
+        ("REVIEW_READY\nNobody could say that no changes are needed.", False),
+        ("REVIEW_READY\nno findings, code change needed", False),
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),
@@ -432,6 +741,121 @@ def self_test() -> None:
     assert not reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head
     )
+    line = f"Source review: REVIEW_READY {head}"
+    body_cases: list[tuple[str, bool]] = [
+        (line, True),
+        (f"Source review: SOURCE_REVIEW_READY {head}", True),
+        (f"## Summary\n\n- change\n\n{line}\n\n## Proof\n", True),
+        (f"source review:   REVIEW_READY {head}  ", True),
+        ("Source review:", False),  # unfilled template
+        (f"Source review:\n{line}", True),  # the empty template line is not a value
+        (f"Source review: REVIEW_READY {other}", False),  # another head
+        (f"Source review: REVIEW_READY {head[:12]}", False),  # abbreviated
+        (f"Source review: REVIEW_READY {head.upper()}", False),
+        ("Source review: REVIEW_READY", False),
+        (f"Source review: REVIEW_INCOMPLETE {head}", False),
+        (f"Source review: REVIEW_READY {head} pending CI", False),
+        (f"Source review: not REVIEW_READY {head}", False),
+        (f"{line}\nSource review: REVIEW_INCOMPLETE", False),  # contradicting second line
+        (f"{line}\n{line}", False),  # exactly one filled line
+        (f" {line}", False),  # not column zero
+        (f"> {line}", False),
+        (f"- {line}", False),
+        (f"`{line}`", False),
+        (f"```\n{line}\n```", False),
+        (f"{line}\n```\nSource review: REVIEW_INCOMPLETE\n```", False),
+        (f"<!-- {line} -->", False),
+        (f"<!-- unclosed\n{line}", False),
+        (f"Prior source review: REVIEW_READY {head}", False),
+        (f"{line}\ndisposition: REPAIR_REQUIRED", False),  # competing state field
+        (f"{line}\n- **Disposition:** REVIEW_INCOMPLETE", False),
+        (f"{line}\n> disposition: REVIEW_READY", False),  # ambiguous even when positive
+        (f"{line}\n```\ndisposition: REPAIR_REQUIRED\n```", False),
+        (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
+        ("", False),
+    ]
+    for body, expected in body_cases:
+        actual = body_attests_head(body, head)
+        assert actual == expected, f"pr body={body!r} expected={expected} actual={actual}"
+    assert not body_attests_head(line, "")
+    assert not body_attests_head(f"Source review: REVIEW_READY {head[:7]}", head[:7])
+
+    repo = {"repo": {"full_name": "owner/name"}}
+    pull = lambda **kw: {
+        "author_association": "MEMBER",
+        "head": {"sha": head, **repo},
+        "base": dict(repo),
+        "body": line,
+        **kw,
+    }
+    assert reviews_allow_source_attestation([], head=head, pull=pull())
+    assert not reviews_allow_source_attestation([], head=head, pull=None)
+    assert not reviews_allow_source_attestation([], head=head)
+    for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
+        assert not reviews_allow_source_attestation(
+            [], head=head, pull=pull(author_association=association)
+        ), association
+    # A fork head is never read, whatever its description says.
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": head, "repo": {"full_name": "fork/name"}})
+    )
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": head, "repo": None})
+    )
+    # The live head moved after the description was written.
+    assert not reviews_allow_source_attestation(
+        [], head=head, pull=pull(head={"sha": other, **repo})
+    )
+    assert not reviews_allow_source_attestation([], head=other, pull=pull())
+    # The description is a carrier only: every review refusal still applies.
+    assert not reviews_allow_source_attestation(
+        [review(state="CHANGES_REQUESTED", commit_id=head, body="")], head=head, pull=pull()
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=head, body="REPAIR_REQUIRED")],
+        head=head,
+        pull=pull(),
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head, pull=pull()
+    )
+    # A neutral current-head comment (a thread reply creates an empty one) no longer
+    # hides the attestation, and an older-head ready review does not supply one.
+    assert reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=head, body="")], head=head, pull=pull()
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="COMMENTED", commit_id=other, body="REVIEW_READY")],
+        head=head,
+        pull=pull(body="Source review:"),
+    )
+    # A reviewer's negative statement outlives their own later neutral reply: the
+    # description cannot stand in for the retraction they never made.
+    stamp = lambda n: f"2026-10-15T01:00:0{n}Z"
+    negative_then_reply = [
+        review(id=1, state="COMMENTED", commit_id=head, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+        review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+    ]
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head, pull=pull())
+    assert not reviews_allow_source_attestation(negative_then_reply, head=head)
+    # The same reviewer replacing it with a ready statement lifts it; a negative one on
+    # an earlier head never applied to this head.
+    assert reviews_allow_source_attestation(
+        negative_then_reply
+        + [review(id=3, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp(3))]
+        + [review(id=4, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(4))],
+        head=head,
+        pull=pull(),
+    )
+    assert reviews_allow_source_attestation(
+        [
+            review(id=1, state="COMMENTED", commit_id=other, body="REPAIR_REQUIRED", submitted_at=stamp(1)),
+            review(id=2, state="COMMENTED", commit_id=head, body="", submitted_at=stamp(2)),
+        ],
+        head=head,
+        pull=pull(),
+    )
+
     for bad_page in ('{"message": "Bad credentials"}', '[1]', '[{"a":1}] {"b":2}'):
         try:
             parse_paginated(bad_page)
@@ -522,6 +946,11 @@ def main() -> int:
     # FileType returns the existing sys.stdin for '-', ignoring its encoding
     # argument. Read bytes so piped GitHub JSON also has an explicit UTF-8 boundary.
     parser.add_argument("--check-reviews", type=argparse.FileType("rb"))
+    parser.add_argument(
+        "--check-pull",
+        type=argparse.FileType("rb"),
+        help="pull request object (JSON) to read the Source review line from, with --check-reviews",
+    )
     parser.add_argument("--repository", help="owner/name; read reviews with gh instead of a file")
     parser.add_argument("--pr", help="Pull request number for --repository")
     parser.add_argument("--head", help="Exact candidate head SHA")
@@ -544,22 +973,41 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        try:
+            pull = fetch_pull(args.repository, args.pr)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            # The description is an optional carrier: without it only reviews count.
+            print(
+                f"::warning::could not read the pull request description ({exc}); "
+                "only native reviews are considered for the source review attestation",
+                file=sys.stderr,
+            )
+            pull = None
     else:
         try:
             reviews = parse_paginated(args.check_reviews.read().decode("utf-8"))
+            pull = None
+            if args.check_pull is not None:
+                pull = json.loads(args.check_pull.read().decode("utf-8"))
+                if not isinstance(pull, dict):
+                    raise ValueError("pull request data is not an object")
         except ValueError as exc:
             print(
                 f"::error::source review attestation refused: malformed review data: {exc}",
                 file=sys.stderr,
             )
             return 1
-    if not reviews_allow_source_attestation(reviews, head=args.head, author=args.author):
+    if not reviews_allow_source_attestation(
+        reviews, head=args.head, author=args.author, pull=pull
+    ):
         print(
             "::error::source review attestation refused: a trusted reviewer "
             "(OWNER/MEMBER/COLLABORATOR) must post a current-head COMMENT whose first line is "
             "exactly SOURCE_REVIEW_READY or REVIEW_READY (or disposition: of either) with no "
             "contradicting disposition text, or a native APPROVED on the head; narrative "
-            "tokens and quoted examples do not count (#8157)",
+            "tokens and quoted examples do not count (#8157). When GitHub throttles review "
+            "writes, a same-repository pull request may instead carry one description line "
+            f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",
             file=sys.stderr,
         )
         return 1

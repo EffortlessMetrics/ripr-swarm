@@ -9,6 +9,8 @@ mod diff;
 mod diff_scope_filter;
 mod extract;
 mod facts;
+#[cfg(all(test, feature = "lang-rust"))]
+pub(crate) use facts::index_build_probe;
 mod generated_rust_corpus;
 pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
@@ -38,8 +40,10 @@ pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use pipeline::is_rust_excluded_by_config_detail;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
@@ -100,12 +104,12 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
-    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    artifact_root_gitignore_entry, artifact_root_pathspec, default_base_unresolved_message,
+    is_shallow_repository, load_diff, load_diff_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
+    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
     untrack_artifacts_command, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
@@ -119,9 +123,9 @@ pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS,
+    TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, is_ts_js_source_extension, route, ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{
@@ -129,8 +133,8 @@ pub(crate) use language::{
     with_concrete_discriminator,
 };
 pub use language::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
 pub(crate) use language::{
@@ -186,12 +190,15 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
-    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
+    inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
+    inventory_seams_at_with_config, locate_seam_file_at_with_config,
     prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
     scoped_file_seams, seam_kind_for_probe_family,
     workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
+#[cfg(test)]
+pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{

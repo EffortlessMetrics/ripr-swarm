@@ -921,9 +921,12 @@ fn start_recipe_offset(line: &str) -> Option<usize> {
     line.find("--phase before").into_iter().chain(bare).min()
 }
 
+/// What replaces a withheld new-attempt recipe (#8766).
+pub(crate) const START_RECIPE_WITHHELD: &str =
+    "a new attempt is not offered: the repair gate does not admit a new start";
+
 fn without_start_recipe_in_line(line: &str) -> String {
-    const WITHHELD: &str =
-        "a new attempt is not offered: the repair gate does not admit a new start";
+    const WITHHELD: &str = START_RECIPE_WITHHELD;
     const MARKERS: [&str; 6] = [
         "Then start a new attempt",
         "To keep the change,",
