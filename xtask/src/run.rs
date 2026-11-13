@@ -2704,9 +2704,30 @@ mod tests {
         // so the no-deadline runner must still return bounded by the post-exit
         // drain grace instead of waiting for the descendant (#4150 review
         // control), and it must not report a step timeout.
+        #[cfg(target_os = "linux")]
+        let marker = unique_pgid_marker("legacy-lingering-pipe");
+        #[cfg(target_os = "linux")]
+        let args = vec![
+            "-c".to_string(),
+            r#"sh -c 'cat /proc/$$/stat > "$1"; exec sleep 60' descendant "$1" & exit 0"#
+                .to_string(),
+            "legacy-capture".to_string(),
+            marker.display().to_string(),
+        ];
+        #[cfg(not(target_os = "linux"))]
         let args = vec!["-c".to_string(), "sleep 60 & exit 0".to_string()];
-        let output =
-            capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain")?;
+        let captured =
+            capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain");
+        #[cfg(target_os = "linux")]
+        {
+            // Preserve the capture result before fixture cleanup. The legacy
+            // truncation oracle must not leave a running child behind the test.
+            let recorded = fs::read_to_string(&marker)
+                .map_err(|error| format!("missing legacy descendant identity: {error}"))?;
+            super::test_cleanup::finish_recorded_member(&recorded)?;
+            fs::remove_file(&marker).map_err(|error| error.to_string())?;
+        }
+        let output = captured?;
 
         assert!(
             output.status.is_some_and(|status| status.success()),
