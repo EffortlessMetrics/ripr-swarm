@@ -1,2 +1,2 @@
-crates/ripr/tests/cli_error_message_snapshots.rs|Command::new|1|cli-tests|Runs the built ripr binary (CARGO_BIN_EXE_ripr) on bad argument invocations in an empty temp dir to pin each refusal's exact stderr. No shell, network, or repository mutation; bounded by `.output()`.
+crates/ripr/tests/cli_error_message_snapshots.rs|Command::new|2|cli-tests|Runs the built ripr binary (CARGO_BIN_EXE_ripr) on bad argument invocations in an empty temp dir to pin each refusal's exact stderr. No shell, network, or repository mutation; bounded by `.output()`.
 crates/ripr/tests/cli_error_message_snapshots.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.

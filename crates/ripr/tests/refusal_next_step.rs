@@ -596,6 +596,18 @@ const LIVE_CASES: &[Case] = &[
         exit: 2,
         reason: "must start with",
     },
+    // An unresolvable pr-evidence revision names the flag that carried it. It
+    // used to print `bad base/head revision` with a Debug-formatted git argv.
+    Case {
+        args: &["pr-evidence", "--base", "no-such-ref-xyz", "--head", "HEAD"],
+        exit: 2,
+        reason: "pr-evidence --base `no-such-ref-xyz` does not resolve to a commit",
+    },
+    Case {
+        args: &["pr-evidence", "--base", "HEAD", "--head", "no-such-ref-xyz"],
+        exit: 2,
+        reason: "pr-evidence --head `no-such-ref-xyz` does not resolve to a commit",
+    },
 ];
 
 fn scratch_repo(tag: &str) -> Result<PathBuf, String> {
