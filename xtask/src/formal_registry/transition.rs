@@ -68,6 +68,28 @@ fn transition(base: &LoadedRegistry, head: &LoadedRegistry) -> RegistryResult<Tr
         )?;
     }
 
+    // A retirement is evidence about authority that existed on the base side.
+    // Never admit a newly invented tombstone for a claim that was neither
+    // active nor already retired in the base registry.
+    for (claim_id, retirement) in &head_retirements {
+        if base_retirements.contains_key(claim_id) {
+            continue;
+        }
+        let base_claim = base_claims.get(claim_id).ok_or_else(|| {
+            format!("retirement {claim_id} does not correspond to an active base claim")
+        })?;
+        require(
+            !head_claims.contains_key(claim_id),
+            format!("retired claim {claim_id} cannot remain active"),
+        )?;
+        require(
+            retirement.final_generation == base_claim.claim.claim_generation,
+            format!(
+                "{claim_id}: retirement final_generation does not match the active base claim"
+            ),
+        )?;
+    }
+
     let mut unchanged_claims = Vec::new();
     let mut changed_claims = Vec::new();
     let mut added_claims = Vec::new();
@@ -165,6 +187,7 @@ fn markdown_transition(value: &TransitionReport) -> String {
     )
 }
 
+#[cfg(test)]
 pub(super) fn validate_transition(
     base: &LoadedRegistry,
     head: &LoadedRegistry,
