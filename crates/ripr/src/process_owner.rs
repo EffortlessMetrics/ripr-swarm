@@ -1918,7 +1918,7 @@ mod tests {
         assert!(owned.group_quiescent);
         assert!(owned.group_cleanup_error.is_none());
         assert!(
-            observe_unreaped_exit(&owned.child).is_err(),
+            matches!(observe_unreaped_exit(&owned.child), Err(_)),
             "successful wait reaps"
         );
         owned.terminate_tree()?;
