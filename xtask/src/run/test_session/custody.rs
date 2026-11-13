@@ -141,7 +141,7 @@ pub(crate) fn pid(value: u32) -> Result<Pid, String> {
     Pid::from_raw(value as i32).ok_or_else(|| "invalid isolated process identity".to_string())
 }
 
-fn send_kill(handle: &rustix::fd::OwnedFd) -> Result<(), String> {
+pub(crate) fn send_kill(handle: &rustix::fd::OwnedFd) -> Result<(), String> {
     match pidfd_send_signal(handle, Signal::KILL) {
         Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
         Err(error) => Err(format!("could not terminate owned session member: {error}")),
@@ -159,7 +159,7 @@ pub(crate) fn read_member(pid: u32) -> Result<Option<Member>, String> {
     member_from_stat_read(pid, fs::read_to_string(format!("/proc/{pid}/stat")))
 }
 
-pub(super) fn member_from_stat_read(
+pub(crate) fn member_from_stat_read(
     pid: u32,
     stat: std::io::Result<String>,
 ) -> Result<Option<Member>, String> {
