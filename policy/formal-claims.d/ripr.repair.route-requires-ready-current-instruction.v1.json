@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
-  "claim_generation": 2,
+  "claim_generation": 3,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -17,11 +17,12 @@
   "source_closure": [
     "crates/ripr/src/domain/fix_instruction.rs",
     "crates/ripr/src/domain/repair_card.rs",
-    "crates/ripr/src/domain/repair_card/kani_proofs.rs"
+    "crates/ripr/src/domain/repair_card/kani_proofs.rs",
+    "crates/ripr/src/proof_domains.rs"
   ],
-  "domain": "Every FixInstructionState variant and both boolean repair_ready values.",
+  "domain": "Every FixInstructionState constructor selected from the exhaustive, duplicate-checked FIX_INSTRUCTION_STATES domain and both boolean repair_ready values.",
   "assumptions": [
-    "The symbolic instruction index is constrained below the five registered FixInstructionState variants."
+    "The symbolic usize instruction index is constrained below FIX_INSTRUCTION_STATES.len(); the generated exhaustive match rejects omitted, duplicated, or newly added production constructors."
   ],
   "trust_dependencies": [
     "Kani 0.68.0 frontend and transformation semantics",
@@ -31,20 +32,28 @@
   "observable": "The repair-card route exposure boolean.",
   "bounds": {
     "instruction_variants": 5,
-    "repair_ready": "all boolean values"
+    "repair_ready": "all boolean values",
+    "symbolic_index": "usize constrained to index < FIX_INSTRUCTION_STATES.len()"
   },
   "subjects": [
     "route_exposable_iff_fix_site_ready_and_repair_ready"
   ],
   "required_covers": [
+    "the FixSiteReady constructor is explored",
+    "the StaticLimitation constructor is explored",
+    "the Stale constructor is explored",
+    "the Unavailable constructor is explored",
+    "the InspectOnly constructor is explored",
     "the route is exposable",
     "FixSiteReady without repair readiness remains closed",
     "a stale instruction remains closed"
   ],
   "negative_controls": [
-    "Mutation control: expose a route for stale/unavailable instructions or without repair readiness."
+    "Mutation control: expose a route for stale/unavailable instructions or without repair readiness.",
+    "Compiler control: omit or duplicate a constructor, or add a production enum variant without extending the proof domain; the generated guard must reject compilation.",
+    "Guard-removal control: removing the exhaustive guard permits an omitted constructor while ordinary behavior tests remain green; those tests alone do not establish domain completeness."
   ],
-  "result_satisfaction": "One current verified row for the registered subject with the open and fail-closed covers satisfied.",
+  "result_satisfaction": "One current verified row for the registered subject with every required constructor, open-route and fail-closed cover satisfied and no unreachable cover.",
   "currentness_inputs": [
     "claim document decision digest",
     "complete registered source-closure digest",

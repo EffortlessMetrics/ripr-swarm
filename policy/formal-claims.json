@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim-registry.v1",
   "repository": "EffortlessMetrics/ripr-swarm",
-  "registry_generation": 3,
+  "registry_generation": 4,
   "global_authority_paths": [
     "docs/formal-verification/CLAIMS.md",
     "docs/formal-verification/RESULTS.md",
@@ -13,7 +13,7 @@
     {
       "document": "policy/formal-claims.d/ripr.classification.actionable-only-with-evidence.v1.json",
       "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
-      "claim_generation": 1,
+      "claim_generation": 2,
       "route": "native",
       "authority_paths": [
         "docs/formal-verification/CLAIMS.md",
@@ -21,7 +21,7 @@
         "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
         "policy/formal-claims.d/ripr.classification.actionable-only-with-evidence.v1.json"
       ],
-      "expected_decision_digest": "sha256:851a7aa2b660e8e21556447919a576cb09886cf46956cf8a9b70d07ded471be1"
+      "expected_decision_digest": "sha256:b3481ad478525705c384d8890e92ba1347118c6cb4dadbcff7e8de2b9f9ba686"
     },
     {
       "document": "policy/formal-claims.d/ripr.currentness.candidate-action-requires-current.v1.json",
@@ -39,7 +39,7 @@
     {
       "document": "policy/formal-claims.d/ripr.gate.top-level-status-fails-closed.v1.json",
       "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
-      "claim_generation": 2,
+      "claim_generation": 3,
       "route": "native",
       "authority_paths": [
         "docs/formal-verification/CLAIMS.md",
@@ -47,12 +47,12 @@
         "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
         "policy/formal-claims.d/ripr.gate.top-level-status-fails-closed.v1.json"
       ],
-      "expected_decision_digest": "sha256:27eae2563ebf07257547d13a577b63e3e4590732f7116518d36c9e10098c9130"
+      "expected_decision_digest": "sha256:b678c03c8a62965e9f0b16ff67af133758d1a064e7ad1e5d9437c765fd9d359c"
     },
     {
       "document": "policy/formal-claims.d/ripr.repair.route-requires-ready-current-instruction.v1.json",
       "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
-      "claim_generation": 2,
+      "claim_generation": 3,
       "route": "native",
       "authority_paths": [
         "docs/formal-verification/CLAIMS.md",
@@ -60,7 +60,7 @@
         "docs/specs/RIPR-SPEC-0192-repair-card-v1.md",
         "policy/formal-claims.d/ripr.repair.route-requires-ready-current-instruction.v1.json"
       ],
-      "expected_decision_digest": "sha256:17627309595cc67fb9a754f3b70af481cb8b525a4d77bf93bf9f4f2f1f285152"
+      "expected_decision_digest": "sha256:38b4a04e15e39b4f42aa3eb7e1e0cfda8b5dc09890be582269c60600f57f886e"
     },
     {
       "document": "policy/formal-claims.d/ripr.resource.input-cap-is-exact.v1.json",

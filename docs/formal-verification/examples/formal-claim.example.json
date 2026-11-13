@@ -1,47 +1,58 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
-  "claim_generation": 1,
+  "claim_generation": 2,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
   "phase": "manual",
-  "proposition": "For the five explicitly selected EvidenceState variants, is_actionable() is true exactly for Actionable.",
+  "proposition": "EvidenceState::is_actionable returns true exactly for EvidenceState::Actionable.",
   "non_claims": [
     "Does not establish correct upstream evidence admission.",
-    "The manual five-constructor harness selection is not a compile-time enum-exhaustiveness guard.",
-    "This design example is not a registered assurance claim or proof receipt."
+    "This design example is not a registered assurance claim or proof receipt.",
+    "Constructor coverage does not establish whole-program correctness or specification adequacy."
   ],
   "owners": [
     "ripr_contract::domain::EvidenceState::is_actionable"
   ],
   "source_closure": [
     "crates/ripr-contract/src/domain/evidence_state.rs",
-    "crates/ripr/src/kani_smoke.rs"
+    "crates/ripr/src/domain.rs",
+    "crates/ripr/src/kani_smoke.rs",
+    "crates/ripr/src/proof_domains.rs"
   ],
-  "domain": "Actionable, AlreadyObserved, InternalOnly, StaticLimitation, Unknown",
+  "domain": "Every EvidenceState constructor, selected by a symbolic usize index into the exhaustive, duplicate-checked EVIDENCE_STATES domain.",
   "assumptions": [
-    "Symbolic u8 index is restricted to index < 5."
+    "The symbolic usize index is constrained below EVIDENCE_STATES.len(); the generated exhaustive match rejects omitted, duplicated, or newly added production constructors."
   ],
   "trust_dependencies": [
     "Rust/Kani translation and solver",
-    "Manually maintained constructor selection",
+    "Compiler enforcement of exhaustive, nonduplicate constructor-domain declarations",
     "Source closure must be expanded to actual consumed inputs before native applicability is established."
   ],
   "observable": "boolean return value",
   "bounds": {
-    "selection": "index < 5",
-    "unwind_policy": "No explicit unwind attribute on this harness; retain effective native configuration."
+    "selection": "symbolic usize index < EVIDENCE_STATES.len()",
+    "unwind_policy": "No explicit unwind attribute on this harness; retain effective native configuration.",
+    "evidence_state_variants": 5
   },
   "subjects": [
     "ripr::kani_smoke::evidence_state_actionable_only_for_actionable"
   ],
   "required_covers": [
-    "actionable branch reachable",
-    "non-actionable branch reachable"
+    "the Actionable constructor is explored",
+    "the AlreadyObserved constructor is explored",
+    "the InternalOnly constructor is explored",
+    "the StaticLimitation constructor is explored",
+    "the Unknown constructor is explored",
+    "an actionable state is explored",
+    "a non-actionable state is explored"
   ],
   "negative_controls": [
-    "Change one non-Actionable state to return true; require a behavioral counterexample, not compile failure or timeout."
+    "Mutation control: make a non-Actionable variant return true and require the harness to fail.",
+    "Compiler control: omit or duplicate a constructor, or add a production enum variant without extending the proof domain; the generated guard must reject compilation.",
+    "Guard-removal control: removing the exhaustive guard permits an omitted constructor while ordinary behavior tests remain green; those tests alone do not establish domain completeness.",
+    "Range control: constrain the symbolic index below EVIDENCE_STATES.len() - 1; an unsatisfied constructor cover must reject result admission even when native assertions and process exit succeed."
   ],
   "result_satisfaction": "Every selected subject has one exact current native result and every required cover is reachable.",
   "currentness_inputs": [
