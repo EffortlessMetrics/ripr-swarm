@@ -95,13 +95,14 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
-The admission job also refuses a `merge-ready` pull-request request whose PR has
-unresolved review threads, naming each thread, so the author learns in seconds
+The admission job also refuses an admitted `merge-ready` pull-request request or
+native `merge_group` request whose PR has unresolved review threads, naming each
+thread, so the author learns in seconds
 instead of after the roughly hour-long run. It is an early courtesy only: a read
 failure is a warning, and the late recheck above remains the authority.
 
-Source review disposition (#8157): a `merge-ready` request also needs a current-head
-source review attestation, read by `review_disposition.py` from the immutable trusted
+Source review disposition (#8157): both admitted request kinds need a current-head
+source review attestation for H, read by `review_disposition.py` from the immutable trusted
 admission bundle (the PR base for pull requests, the group base for queue entries; the
 script is covered by the bundle hash check). The admission job refuses at request
 time; the Result job repeats the read before the eligibility recheck. A trusted
@@ -121,6 +122,13 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+
+After an early refusal, repair or refute the findings, resolve addressed threads,
+and refresh source review for the current H. Request fresh qualification through
+the applicable [merge flow](MERGE_FLOW.md): a fresh label request for the installed
+legacy PR route, or native queue re-entry for a queue request. A label request is
+not a retry of native queue qualification. Preserve any valid queued or running
+current-subject request instead of replacing it merely to refresh status.
 
 When GitHub throttles review writes ("was submitted too quickly"; the limit is per
 account), the same attestation can be carried by the pull request description
