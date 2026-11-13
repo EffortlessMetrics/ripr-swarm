@@ -5,4 +5,4 @@
   critical provider to declare reachability obligations, and permit empty
   success explanations while retaining refusal reasons (#14471, #14472).
 - Keep the document types, admission laws and tests in one shared module;
-  the command retains its existing arguments, output and exit contract.
+  the command retains its existing arguments, output and exit contract (#14472).

@@ -6,4 +6,4 @@
   or making Kani a required check (#10745, #12109, #12904).
 - Require provider-specific critical reachability obligations and observed-row
   assumption bindings; document bounded preflight invocation, domain-specific
-  controls, and successful versus rejected result explanations.
+  controls, and successful versus rejected result explanations (#14471, #14472).
