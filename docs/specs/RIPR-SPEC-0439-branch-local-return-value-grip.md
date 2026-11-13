@@ -96,8 +96,8 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
   (`assertion_operands`), so a call bound to a local is read.
 - Exactly one operand must be a call to the owner whose arguments all fold to
   integers: the bare `owner(..)` form, `owner(..).await`, or a
-  plain-identifier wrapper (`wrapper(owner(..))`), matching the sibling
-  invisibility path. A wrapper that transforms the result is not modelled
+  single-identifier wrapper (`wrapper(owner(..))`), matching the sibling
+  invisibility path. A wrapper that changes the arguments is not modelled
   and answers `None`.
 - The owner body is parsed. Every parameter must be a plain identifier and
   the argument count must match, or the answer is `None`.
@@ -156,8 +156,8 @@ refuses.
 - No change to seam creation, seam kind or the `#14392` tail `if/else` form.
 - No modelling of iteration or closures. A parameter mutated anywhere in the
   body, including a loop body, makes the fold refuse (`None`) rather than
-  model the loop; a value-transparent wrapper is read through, a transforming
-  wrapper is not.
+  model the loop; a single-identifier wrapper is read through, a wrapper that
+  changes the arguments is not.
 - No modelling of `match` arms. `enclosing_branches_reached` walks `if`
   ancestors only, so a seam inside a `match` arm the call does not take keeps
   today's credit. That is a known limit of this contract, reported for a
