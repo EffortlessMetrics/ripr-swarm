@@ -12,6 +12,7 @@ use std::process::Command;
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
 const FAMILY_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
+const FILE_FACT_RECEIPT_PREFIX: &str = "ripr_file_fact_cache_receipt ";
 const CACHE_MISS: &str =
     "ripr: no usable cache entry for this workspace state; running the full classified walk";
 
@@ -227,8 +228,8 @@ fn assert_trace_parity(untraced: &Run, traced: &Run) -> Result<(), String> {
             traced_norm.len()
         ));
     }
-    // Beyond the receipt, the only lines a traced run may add are the trace
-    // family's own pre-existing phase lines. Everything else on stderr must be
+    // Beyond the resource receipt, a traced run may add the trace family's
+    // pre-existing phase and cache receipt lines. Everything else on stderr must be
     // identical, so the receipt does not smuggle in an unrelated diagnostic.
     let phase_prefix = "ripr_repo_exposure_latency ";
     let traced_other: Vec<&str> = traced
@@ -237,6 +238,7 @@ fn assert_trace_parity(untraced: &Run, traced: &Run) -> Result<(), String> {
         .filter(|line| {
             !line.starts_with(RECEIPT_PREFIX)
                 && !line.starts_with(FAMILY_RECEIPT_PREFIX)
+                && !line.starts_with(FILE_FACT_RECEIPT_PREFIX)
                 && !line.starts_with(phase_prefix)
                 && !is_timing_heartbeat(line)
         })
@@ -496,6 +498,39 @@ fn trace_parity_keeps_cache_state_and_unrelated_diagnostics_observable() -> Resu
     traced.stderr = "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=1\n".into();
     if assert_trace_parity(&untraced, &traced).is_ok() {
         return Err("the trace comparison ignored a cold-versus-warm cache difference".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn trace_parity_accepts_only_the_reserved_file_fact_receipt_prefix() -> Result<(), String> {
+    let untraced = Run {
+        stdout: b"{}".to_vec(),
+        stderr: format!("{CACHE_MISS}\n"),
+        status_ok: true,
+    };
+    let mut traced = Run {
+        stdout: b"{}".to_vec(),
+        // Independent literal from the observed cold-run producer output.
+        stderr: format!(
+            "{CACHE_MISS}\nripr_file_fact_cache_receipt {{\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":2,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":2}}\n"
+        ),
+        status_ok: true,
+    };
+    assert_trace_parity(&untraced, &traced)?;
+    for diagnostic in [
+        "ripr_file_fact_cache_receipt_extra {}",
+        "ripr_file_fact_cache_receipt{}",
+        "ripr_file_fact_cache_receipt\t{}",
+        "warning: ripr_file_fact_cache_receipt {}",
+        "ripr: file fact cache storage failed",
+    ] {
+        traced.stderr = format!("{CACHE_MISS}\n{diagnostic}\n");
+        if assert_trace_parity(&untraced, &traced).is_ok() {
+            return Err(format!(
+                "trace comparison suppressed an unreserved diagnostic: {diagnostic}"
+            ));
+        }
     }
     Ok(())
 }

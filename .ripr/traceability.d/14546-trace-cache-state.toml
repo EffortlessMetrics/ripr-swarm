@@ -7,5 +7,6 @@ code = [
 tests = [
   "crates/ripr/tests/resource_cost_trace.rs::tracing_off_leaves_stdout_and_stderr_byte_identical",
   "crates/ripr/tests/resource_cost_trace.rs::trace_parity_keeps_cache_state_and_unrelated_diagnostics_observable",
+  "crates/ripr/tests/resource_cost_trace.rs::trace_parity_accepts_only_the_reserved_file_fact_receipt_prefix",
   "crates/ripr/tests/resource_cost_trace.rs::trace_cache_scratch_owns_only_fresh_private_directories",
 ]
