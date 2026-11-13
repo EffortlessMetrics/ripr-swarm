@@ -208,24 +208,35 @@ It does not claim:
 
 ## Test Mapping
 
-- `xtask/src/kani_lane.rs`:
+- `xtask/src/formal_evidence/native/tests.rs`:
+  `native_document_audit_refuses_duplicate_observations_with_complete_inventory`
+  requires the document audit consumer to refuse repeated observations even when
+  the unique subject set still matches the complete inventory. This is supplied
+  document consistency, not native execution assurance.
+- `xtask/src/formal_evidence/kani_output.rs`:
   `discovery_finds_named_harnesses_past_attributes_and_docs`,
+  `discovery_ignores_harness_text_inside_raw_string_fixtures`,
   `classification_requires_an_explicit_success_verdict`,
+  `a_solver_timeout_is_not_a_counterexample`,
   `unreachable_cover_makes_the_proof_vacuous`,
   `blocks_join_to_harnesses_and_a_missing_block_is_not_established`,
   `duplicate_source_names_never_share_a_native_result`,
   `duplicate_native_blocks_are_not_first_match_wins`,
+  `unique_native_join_retains_status_time_and_separator_boundary`.
+- `xtask/src/kani_lane.rs`:
   `native_process_error_cannot_be_hidden_by_verified_rows`,
   `partial_timeout_preserves_completed_rows_but_never_passes`,
   `mixed_failure_and_absent_results_keep_distinct_dispositions`,
-  `unique_native_join_retains_status_time_and_separator_boundary`,
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,
   `report_names_every_status_word`.
 
 ## Implementation Mapping
 
-- `xtask/src/kani_lane.rs`: discovery, classification, report and verdict.
+- `xtask/src/formal_evidence/kani_output.rs`: shared discovery, classification,
+  result attribution, row-based lane verdict and report rendering.
+- `xtask/src/kani_lane.rs`: command execution and process-completion policy; it
+  imports the shared pure implementation.
 - `crates/ripr/src/kani_smoke.rs`: the smoke harness.
 - `.github/workflows/kani.yml` and `policy/ci-lane-whitelist.toml`: the lane.
 - `Cargo.toml`: `unexpected_cfgs` check-cfg for `cfg(kani)`.

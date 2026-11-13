@@ -28,6 +28,20 @@ particular, an honestly reported counterexample, timeout, stale result or tool
 absence can be a consistent document. Never use this exit code as the Kani lane
 result or as a required proof check.
 
+## Shared Kani parsing precursor
+
+`xtask/src/formal_evidence/kani_output.rs` owns the existing Kani lane's pure
+source discovery, text classification, result attribution, row-based lane verdict
+and report rendering. The lane imports these functions and retains its command
+execution and process-completion policy. The nine relocated parser tests run in the same library target
+shown below; their predicates and fixtures are unchanged.
+
+This is a partial prerequisite for #14472 and the existing #14545 native
+observation producer. It preserves the current text interpretation and does not
+activate native property admission, capture, replay or registered assurance.
+Later parser extensions must update this owner rather than add a private parser.
+The document-audit binary continues to report native assurance as `not_assessed`.
+
 ## Commands
 
 Build and exercise the isolated target with the repository-pinned toolchain:

@@ -3,6 +3,7 @@
 //! artifacts, recompute source commitments, or establish current applicability.
 //! Exit zero means the supplied documents are consistent, never proof success.
 
+pub mod kani_output;
 pub mod native;
 
 use serde::{Deserialize, Serialize};
