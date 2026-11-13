@@ -2073,6 +2073,11 @@ fn type_path_call_admits_owner(
             reexport,
             file_level_imports,
             stripped_file,
+            context
+                .index
+                .files()
+                .get(&test.file)
+                .map_or(test.body.as_ref(), |facts| facts.source.as_ref()),
             self_type,
         ));
     spelled_through_dependency
@@ -2113,6 +2118,7 @@ fn type_reexported_from_owner_dependency(
     reexport: &ReexportChain<'_>,
     file_level_imports: &str,
     stripped_file: &str,
+    test_source: &str,
     self_type: &str,
 ) -> bool {
     // A partially indexed test package may hold a competing definition or
@@ -2164,7 +2170,7 @@ fn type_reexported_from_owner_dependency(
         || use_statement_paths(stripped_file)
             .iter()
             .any(|statement| statement.contains('*'))
-        || has_reexport_guard_tokens(stripped_file, "extern", "crate")
+        || has_reexport_guard_tokens(test_source, "extern", "crate")
         || super::reveal::flattened_use_paths(stripped_file)
             .iter()
             .any(|other| {
@@ -2587,8 +2593,9 @@ fn declares_module(stripped: &str, name: &str) -> bool {
 /// Inspect original parser tokens for re-export refusals. A character such
 /// as `'"'` must not let a lossy string stripper hide subsequent code. In
 /// addition to a direct `include!`, an `include` token inside a macro token
-/// tree may be forwarded to a metavariable invocation (`$i!`). Without macro
-/// expansion that possible source splice cannot establish a re-export hop.
+/// tree may be forwarded to a metavariable invocation (`$i!`), and an import
+/// may alias the builtin (`use std::include as mount`). Without expansion or
+/// macro import resolution, either possible splice refuses the re-export hop.
 /// Unrelated macros and include text inside literals/comments remain allowed.
 fn has_reexport_guard_tokens(source: &str, first: &str, second: &str) -> bool {
     use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxToken, ast};
@@ -2609,13 +2616,13 @@ fn has_reexport_guard_tokens(source: &str, first: &str, second: &str) -> bool {
                 token.text() == first || first == "include" && token.text() == "r#include"
             };
             let found = previous.as_ref().is_some_and(is_first) && token.text() == second;
-            let forwarded_include = first == "include"
+            let unresolved_include = first == "include"
                 && is_first(&token)
-                && token
-                    .parent_ancestors()
-                    .any(|node| ast::TokenTree::can_cast(node.kind()));
+                && token.parent_ancestors().any(|node| {
+                    ast::TokenTree::can_cast(node.kind()) || ast::UseTree::can_cast(node.kind())
+                });
             previous = Some(token);
-            found || forwarded_include
+            found || unresolved_include
         })
 }
 
@@ -14118,7 +14125,7 @@ fn crate_c_score_test() {
             "[package]\nname='crate-b'\nversion='0.1.0'\nedition='2024'\n",
         )?;
         let test_source = format!(
-            "{test_prefix}\nuse crate_c::filter::LevelFilter;\n#[test]\nfn observes_current() {{ std::assert_eq!(LevelFilter::current(), 7); }}\n"
+            "use crate_c::filter::LevelFilter;\n{test_prefix}\n#[test]\nfn observes_current() {{ std::assert_eq!(LevelFilter::current(), 7); }}\n"
         );
         let mut files = vec![
             write(
@@ -14195,13 +14202,12 @@ fn crate_c_score_test() {
             root: &root,
         };
         let test = &index.tests()[0];
-        let source = strip_comments_and_strings(
-            &index
-                .files()
-                .get(&test.file)
-                .ok_or("missing test source")?
-                .source,
-        );
+        let test_source = &index
+            .files()
+            .get(&test.file)
+            .ok_or("missing test source")?
+            .source;
+        let source = strip_comments_and_strings(test_source);
         let dependencies = BTreeSet::from(["crate_a".to_string()]);
         let reexport = ReexportChain {
             owner_manifest: "crates/crate_a/Cargo.toml",
@@ -14216,6 +14222,7 @@ fn crate_c_score_test() {
                 &reexport,
                 &file_level_use_text(&source),
                 &source,
+                test_source,
                 "LevelFilter",
             ),
             admits,
@@ -14306,7 +14313,9 @@ fn crate_c_score_test() {
             ),
         ] {
             assert_parsed_reexport_case(
-                &format!("macro_rules! mount {{ {definition}; }}\n#[cfg(any())] pub mod filter;\n{invocation}"),
+                &format!(
+                    "macro_rules! mount {{ {definition}; }}\n#[cfg(any())] pub mod filter;\n{invocation}"
+                ),
                 "",
                 "pub mod filter { pub use foreign_dep::*; }",
                 false,
@@ -14318,7 +14327,11 @@ fn crate_c_score_test() {
     #[test]
     fn reexport_hop_reads_guards_after_character_literals() -> Result<(), String> {
         for literal in ["'\"'", "'\\\"'", "b'\"'", "'\\u{22}'"] {
-            let ty = if literal.starts_with('b') { "u8" } else { "char" };
+            let ty = if literal.starts_with('b') {
+                "u8"
+            } else {
+                "char"
+            };
             assert_parsed_reexport_case(
                 &format!("const QUOTE: {ty} = {literal};\npub mod filter;"),
                 "",
@@ -14327,21 +14340,62 @@ fn crate_c_score_test() {
             )?;
             for invocation in ["include!", "include /*gap*/ !", "r#include !"] {
                 assert_parsed_reexport_case(
-                    &format!("#[cfg(any())] pub mod filter;\nconst QUOTE: {ty} = {literal};\n{invocation}(\"../foreign.rs\");"),
+                    &format!(
+                        "#[cfg(any())] pub mod filter;\nconst QUOTE: {ty} = {literal};\n{invocation}(\"../foreign.rs\");"
+                    ),
                     "",
                     "pub mod filter { pub use foreign_dep::*; }",
                     false,
                 )?;
             }
             assert_parsed_reexport_case(
-                &format!("const QUOTE: {ty} = {literal};\nextern /*gap*/ crate foreign_dep as crate_a;\npub mod filter;"),
+                &format!(
+                    "const QUOTE: {ty} = {literal};\nextern /*gap*/ crate foreign_dep as crate_a;\npub mod filter;"
+                ),
                 "",
                 "pub use foreign_dep::*;",
                 false,
             )?;
             assert_parsed_reexport_case(
-                &format!("const QUOTE: {ty} = {literal};\n#[path = \"../foreign.rs\"] pub mod filter;"),
+                &format!(
+                    "const QUOTE: {ty} = {literal};\n#[path = \"../foreign.rs\"] pub mod filter;"
+                ),
                 "",
+                "pub use foreign_dep::*;",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_refuses_aliased_include_imports() -> Result<(), String> {
+        for import in [
+            "use std::include as mount;",
+            "use core::include as mount;",
+            "use std::{include as mount};",
+            "use std::include /*gap*/ as mount;",
+        ] {
+            assert_parsed_reexport_case(
+                &format!("{import}\n#[cfg(any())] pub mod filter;\nmount!(\"../foreign.rs\");"),
+                "",
+                "pub mod filter { pub use foreign_dep::*; }",
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_test_extern_after_character_literal() -> Result<(), String> {
+        // The helper writes the LevelFilter import before this prefix. Losing
+        // the extern declaration must not leave that import falsely admitted.
+        let quote = "const QUOTE: char = '\"';";
+        assert_parsed_reexport_case("pub mod filter;", quote, "pub use foreign_dep::*;", true)?;
+        for keywords in ["extern crate", "extern /*gap*/ crate", "extern\ncrate"] {
+            assert_parsed_reexport_case(
+                "pub mod filter;",
+                &format!("{quote}\n{keywords} foreign_dep as crate_c;"),
                 "pub use foreign_dep::*;",
                 false,
             )?;
@@ -14398,12 +14452,13 @@ fn crate_c_score_test() {
 
     #[test]
     fn reexport_hop_preserves_unrelated_macro_definitions() -> Result<(), String> {
-        assert_parsed_reexport_case(
+        for library_source in [
             "macro_rules! marker { ($value:expr) => { const MARKER: u32 = $value; }; }\nmarker!(2);\nmacro_rules! harmless { () => { \"include\" }; }\npub mod filter;",
-            "",
-            "pub use foreign_dep::*;",
-            true,
-        )
+            "use std::stringify as marker;\nconst LABEL: &str = marker!(2);\npub mod filter;",
+        ] {
+            assert_parsed_reexport_case(library_source, "", "pub use foreign_dep::*;", true)?;
+        }
+        Ok(())
     }
 
     const CRATE_C_MANIFEST: &str = "[package]\nname='crate-c'\nversion='0.1.0'\n";
