@@ -1315,12 +1315,16 @@ pub(crate) fn canonical_next_action_for_triage(
     // the shared render priority (`findings_priority::priority_order`, the
     // same order the `Hidden:` window uses), not the first two in report
     // order, so an `exposed` row early in the file list never displaces a
-    // gap. Equal keys keep report order.
-    let ranked_alternates = crate::output::json::findings_priority::priority_order(&triage.omitted)
+    // gap. Equal keys keep report order. Withheld routes skip the ranking.
+    let ranked_alternates = (!routes_withheld)
+        .then(|| {
+            crate::output::json::findings_priority::priority_order(&triage.omitted)
+                .into_iter()
+                .filter_map(|index| triage.omitted.get(index))
+                .take(2)
+        })
         .into_iter()
-        .filter_map(|index| triage.omitted.get(index))
-        .take(2)
-        .filter(|_| !routes_withheld);
+        .flatten();
     for omitted in ranked_alternates {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
