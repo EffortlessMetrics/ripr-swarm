@@ -71,6 +71,7 @@ use crate::analysis::extract::{
 };
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
+use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
@@ -1091,17 +1092,32 @@ impl OwnerPinSyntax {
         // deletion (they are inline `#[cfg(test)] mod tests`, so this arm does
         // not fire for them); the gated-module tests below pin this arm.
         let refusal = match refusal {
-            Some(AssertionRefusal::ModuleDeclaration { .. })
-                if family == ProbeFamily::Predicate =>
-            {
-                let skip = self.module_edge_child_for_test(test, index);
-                self.context_refusal_without_provenance(
-                    test,
-                    assertion,
-                    index,
-                    matches_context,
-                    skip.as_deref(),
-                )
+            Some(AssertionRefusal::ModuleDeclaration {
+                parent,
+                line,
+                declaration,
+            }) if family == ProbeFamily::Predicate => {
+                // Only an unknown build availability is admitted. A module no
+                // build compiles (`#[cfg(any())]`) keeps the refusal, so a
+                // test that never runs cannot credit the equality (#14537).
+                if module_declaration_build_availability(&index, &parent, &declaration, line)
+                    == Some(false)
+                {
+                    Some(AssertionRefusal::ModuleDeclaration {
+                        parent,
+                        line,
+                        declaration,
+                    })
+                } else {
+                    let skip = self.module_edge_child_for_test(test, index);
+                    self.context_refusal_without_provenance(
+                        test,
+                        assertion,
+                        index,
+                        matches_context,
+                        skip.as_deref(),
+                    )
+                }
             }
             refusal => refusal,
         };
@@ -8877,6 +8893,59 @@ fn module_declaration_cfg_gated(
         })
         .peekable();
     on_line.peek().is_none() || on_line.any(|module| has_cfg_that_may_drop(&module))
+}
+
+/// #14537: the build availability of the out-of-line `mod <name>;` that
+/// `declaration` names, with its `mod` token on `line` of `parent`.
+/// `Some(false)` is a module no build compiles (`#[cfg(any())]`), `None` is
+/// unknown (a feature or target atom), and `Some(true)` is unconditional. An
+/// unreadable parent or declaration is unknown, so the caller fails closed.
+fn module_declaration_build_availability(
+    index: &RustIndex,
+    parent: &Path,
+    declaration: &str,
+    line: usize,
+) -> Option<bool> {
+    let name = declaration
+        .split_whitespace()
+        .skip_while(|word| *word != "mod")
+        .nth(1)
+        .map(|word| word.trim_end_matches(';'))?;
+    if name.is_empty() {
+        return None;
+    }
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let facts = index.files().get(parent)?;
+    let source = &facts.source;
+    let parse = parse_clean_source_file(source)?;
+    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
+    let module = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| module.item_list().is_none())
+        .find(|module| {
+            module
+                .mod_token()
+                .is_some_and(|token| line_of(token.text_range().start().into()) == line)
+                && module.name().is_some_and(|ident| {
+                    let text = ident.text().to_string();
+                    text.strip_prefix("r#").unwrap_or(&text) == name
+                })
+        })?;
+    let mut availability = Some(true);
+    for attr in module.attrs() {
+        if !matches!(attr.meta(), Some(ast::Meta::CfgMeta(_))) {
+            continue;
+        }
+        match attribute_test_build_availability(&attr.syntax().text().to_string()) {
+            Some(false) => return Some(false),
+            None => availability = None,
+            Some(true) => {}
+        }
+    }
+    availability
 }
 
 /// #7082: whether `node` carries an attribute that may drop or relocate it

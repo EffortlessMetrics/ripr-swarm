@@ -829,6 +829,40 @@ fn a_gated_predicate_assert_eq_in_an_include_fragment_is_still_refused() -> Resu
     Ok(())
 }
 
+/// #14537 repair: the gated `mod` exception is only for an unknown build
+/// availability. A module no build compiles (`#[cfg(any())]`) keeps the
+/// refusal, so a test that never runs cannot credit the equality.
+#[test]
+fn a_predicate_assert_eq_in_a_known_disabled_module_is_still_refused() -> Result<(), String> {
+    let lib =
+        "#[cfg(any())]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    assert!(
+        matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
+        "a `#[cfg(any())]` module keeps the module-declaration refusal (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        "a predicate assert_eq! in a module no build compiles is not admitted"
+    );
+    Ok(())
+}
+
 /// #14537 repair: the gated `mod` exception is only about build availability.
 /// A dead `if false` branch and an `#[ignore]` test inside the same gated
 /// module still refuse, so the new arm is exercised by all three shapes.
