@@ -44,118 +44,114 @@ jobs:
 
           def replace_exact(path: str, old: str, new: str, count: int = 1) -> None:
               target = Path(path)
-              text = target.read_text(encoding='utf-8')
+              text = target.read_text(encoding="utf-8")
               actual = text.count(old)
               if actual != count:
-                  raise SystemExit(f'{path}: expected {count} occurrence(s) of {old!r}, found {actual}')
-              target.write_text(text.replace(old, new), encoding='utf-8')
+                  raise SystemExit(f"{path}: expected {count} occurrence(s) of {old!r}, found {actual}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
 
           replace_exact(
-              '.github/workflows/python-wheel-qualification.yml',
-              '          rustc -vV > pair/rustc-version.txt\n'
-              '          cargo -vV > pair/cargo-version.txt\n',
-              '          (cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt\n'
-              '          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n',
+              ".github/workflows/python-wheel-qualification.yml",
+              "          rustc -vV > pair/rustc-version.txt\n"
+              "          cargo -vV > pair/cargo-version.txt\n",
+              "          (cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt\n"
+              "          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n",
           )
 
           replace_exact(
-              'xtask/src/warm_ab/nightly.rs',
+              "xtask/src/warm_ab/nightly.rs",
               'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n',
               'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n\n'
               '/// Both A/B subjects are built by the repository-owned compiler.\n'
               'pub(super) const BUILD_TOOLCHAIN: &str = "+1.100.0";\n',
           )
           replace_exact(
-              'xtask/src/warm_ab/nightly.rs',
+              "xtask/src/warm_ab/nightly.rs",
               '        &["build", "--release", "--locked", "-p", "ripr"],\n',
               '        &[BUILD_TOOLCHAIN, "build", "--release", "--locked", "-p", "ripr"],\n',
           )
-          tests = Path('xtask/src/warm_ab/tests.rs')
-          text = tests.read_text(encoding='utf-8')
-          marker = '#[test]\nfn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {'
+          tests = Path("xtask/src/warm_ab/tests.rs")
+          text = tests.read_text(encoding="utf-8")
+          marker = "#[test]\nfn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {"
           if text.count(marker) != 1:
-              raise SystemExit('warm-ab tests: pin parser marker drifted')
+              raise SystemExit("warm-ab tests: pin parser marker drifted")
           inserted = (
-              '#[test]\n'
-              'fn nightly_subject_builds_use_one_explicit_compiler() {\n'
+              "#[test]\n"
+              "fn nightly_subject_builds_use_one_explicit_compiler() {\n"
               '    assert_eq!(super::nightly::BUILD_TOOLCHAIN, "+1.100.0");\n'
-              '}\n\n'
+              "}\n\n"
           )
-          tests.write_text(text.replace(marker, inserted + marker), encoding='utf-8')
+          tests.write_text(text.replace(marker, inserted + marker), encoding="utf-8")
 
           old_idle = (
-              '          idle() { printf \'%s\' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '
-              '\'[.[].runners[]? | select(.status == "online" and (.busy | not) and '
-              '([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] '
-              '| length > 0\' >/dev/null; }\n'
+              "          idle() { printf '%s' \"$runners\" | jq -s -e --arg model \"$1\" --arg cap \"$2\" "
+              "'[.[].runners[]? | select(.status == \"online\" and (.busy | not) and "
+              "([.labels[].name | ascii_downcase] | index(\"em-ci\") and index($model) and index($cap)))] "
+              "| length > 0' >/dev/null; }\n"
           )
           new_idle = (
-              '          idle() { printf \'%s\' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '
-              '--arg extra "${3:-}" \'[.[].runners[]? | select(.status == "online" and (.busy | not) and '
-              '([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap) '
-              'and ($extra == "" or index($extra))))] | length > 0\' >/dev/null; }\n'
+              "          idle() { printf '%s' \"$runners\" | jq -s -e --arg model \"$1\" --arg cap \"$2\" "
+              "--arg extra \"${3:-}\" '[.[].runners[]? | select(.status == \"online\" and (.busy | not) and "
+              "([.labels[].name | ascii_downcase] | index(\"em-ci\") and index($model) and index($cap) "
+              "and ($extra == \"\" or index($extra))))] | length > 0' >/dev/null; }\n"
           )
           old_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\n'
           new_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\n'
-          old_route = '            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n'
-          new_route = '            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n'
+          old_route = "            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n"
+          new_route = "            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n"
           for path in [
-              '.github/workflows/routed-rust.yml',
-              'fixtures/convergence/windows-subset/merge-ready.yml',
+              ".github/workflows/routed-rust.yml",
+              "fixtures/convergence/windows-subset/merge-ready.yml",
           ]:
               replace_exact(path, old_idle, new_idle)
               replace_exact(path, old_counter, new_counter)
               replace_exact(path, old_route, new_route)
 
-          workflow_tests = Path('tools/repo-policy/src/workflow_tests.rs')
-          text = workflow_tests.read_text(encoding='utf-8')
-          if 'fn routed_rust_cpx42_selection_matches_required_labels()' in text:
-              raise SystemExit('workflow regression tests already exist')
+          workflow_tests = Path("tools/repo-policy/src/workflow_tests.rs")
+          text = workflow_tests.read_text(encoding="utf-8")
+          if "fn routed_rust_cpx42_selection_matches_required_labels()" in text:
+              raise SystemExit("workflow regression tests already exist")
           addition = (
-              '\n\n#[test]\n'
-              'fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {\n'
-              '    let root = crate::test_support::workspace_root()?;\n'
+              "\n\n#[test]\n"
+              "fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {\n"
+              "    let root = crate::test_support::workspace_root()?;\n"
               '    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))\n'
-              '        .map_err(|error| error.to_string())?;\n'
-              '    let counter = text\n'
-              '        .lines()\n'
+              "        .map_err(|error| error.to_string())?;\n"
+              "    let counter = text\n"
+              "        .lines()\n"
               '        .find(|line| line.contains("cpx42_idle_ready="))\n'
               '        .ok_or_else(|| "missing CPX42 readiness counter".to_string())?;\n'
               '    assert!(counter.contains("rust-16gb"));\n'
               '    assert!(counter.contains("rust-medium"));\n'
               '    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));\n'
               '    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));\n'
-              '    Ok(())\n'
-              '}\n\n'
-              '#[test]\n'
-              'fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {\n'
-              '    let root = crate::test_support::workspace_root()?;\n'
+              "    Ok(())\n"
+              "}\n\n"
+              "#[test]\n"
+              "fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {\n"
+              "    let root = crate::test_support::workspace_root()?;\n"
               '    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))\n'
-              '        .map_err(|error| error.to_string())?;\n'
-              '    assert!(text.contains(\n'
+              "        .map_err(|error| error.to_string())?;\n"
+              "    assert!(text.contains(\n"
               '        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"\n'
-              '    ));\n'
-              '    assert!(text.contains(\n'
+              "    ));\n"
+              "    assert!(text.contains(\n"
               '        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"\n'
-              '    ));\n'
+              "    ));\n"
               '    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));\n'
-              '    Ok(())\n'
-              '}\n'
+              "    Ok(())\n"
+              "}\n"
           )
-          workflow_tests.write_text(text + addition, encoding='utf-8')
+          workflow_tests.write_text(text + addition, encoding="utf-8")
 
-          for path in [
-              'docs/swarm-development.md',
-              'docs/SWARM_RUNNER_ROLLOUT_PLAN.md',
-          ]:
+          for path in ["docs/swarm-development.md", "docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:
               target = Path(path)
-              text = target.read_text(encoding='utf-8')
-              count = text.count('runner_image_unavailable')
-              if count != 2:
-                  raise SystemExit(f'{path}: expected two stale runner reasons, found {count}')
+              text = target.read_text(encoding="utf-8")
+              if "runner_image_unavailable" not in text:
+                  raise SystemExit(f"{path}: stale runner reason was already absent")
               target.write_text(
-                  text.replace('runner_image_unavailable', 'runner_capacity_unavailable'),
-                  encoding='utf-8',
+                  text.replace("runner_image_unavailable", "runner_capacity_unavailable"),
+                  encoding="utf-8",
               )
           PY
 
@@ -166,10 +162,7 @@ jobs:
           cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
           cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
           cargo test --locked -p repo-policy --test workflow_action_pins
-
-          test "$(grep -RIl 'runner_image_unavailable' docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md | wc -l)" = 0
-          git status --short
-          git diff --stat
+          ! grep -RIl 'runner_image_unavailable' docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
