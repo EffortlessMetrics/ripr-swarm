@@ -755,7 +755,7 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_report_input_plain("assistant proof", path)),
+            .map(|path| read_report_input_plain_typed("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
@@ -1993,6 +1993,28 @@ fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
             output::baseline_delta::display_path(path),
             crate::bounded_input::read_failure_detail(&err)
         )
+    })
+}
+
+/// [`read_report_input_plain`] with the not-found case kept separate, so the
+/// front panel can say "missing" only when the path is really absent (#14553).
+fn read_report_input_plain_typed(
+    label: &str,
+    path: &Path,
+) -> Result<String, output::pr_review_front_panel::PanelInputError> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let detail = crate::bounded_input::read_failure_detail(&err);
+        let detail = match detail.find(" (os error ") {
+            Some(index) => detail[..index].to_string(),
+            None => detail,
+        };
+        output::pr_review_front_panel::PanelInputError {
+            not_found: err.kind() == std::io::ErrorKind::NotFound,
+            message: format!(
+                "read {label} {} failed: {detail}",
+                output::baseline_delta::display_path(path)
+            ),
+        }
     })
 }
 

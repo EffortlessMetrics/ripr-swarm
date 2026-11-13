@@ -236,6 +236,8 @@ Top-level `status` must be one of:
 
 - `missing_required_input`;
 - `missing_optional_input`;
+- `unreadable_input` - the path exists but could not be read; the message
+  carries the cause;
 - `stale_input`;
 - `malformed_input`;
 - `incompatible_schema`;

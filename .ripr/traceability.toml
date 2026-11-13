@@ -3284,6 +3284,8 @@ tests = [
   "crates/ripr/src/output/pr_review_front_panel.rs::pr_review_front_panel_matches_fixture_corpus",
   "crates/ripr/src/output/pr_review_front_panel.rs::pr_review_front_panel_reports_malformed_optional_input",
   "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_unusable_inputs_on_stderr",
+  "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_an_unreadable_assistant_proof",
+  "crates/ripr/tests/cli_smoke.rs::pr_review_front_panel_names_an_unreadable_non_canonical_assistant_proof",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture",
