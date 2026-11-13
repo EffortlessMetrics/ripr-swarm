@@ -92,10 +92,13 @@ NEGATION = re.compile(
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\bstatus:[ \t]*(?:blocked|not[ \t]+ready|incomplete|rejected)\b|\breview[ \t]+incomplete\b"
     # #14592: the review convention's verdict line. "VERDICT: BLOCK <sha>" after a
-    # ready marker is a blocker, though no state token carries the REVIEW_ prefix.
-    r"|\bverdict[ \t*_`]*:[ \t*_`]*(?:block(?:ed|s|ing)?|reject(?:ed|s)?|nack"
+    # ready marker is a blocker, though no state token carries the REVIEW_ prefix. The
+    # label must open the line (after list or emphasis markup), so prose that recalls
+    # an earlier verdict is narration; a refusing word anywhere in the value counts,
+    # including quoted, bracketed, compound and suffixed forms.
+    r"|^\W*verdict[ \t*_`]*:.*?(?<![a-z])(?:block(?:ed|s)?|reject(?:ed|s)?|nack"
     r"|request(?:ed|s)?[ \t_-]*changes|changes[ \t_-]*requested|repairs?[ \t_-]*required"
-    r"|fail(?:ed|s)?|not[ \t_-]*ready|no[ \t_-]*go|hold)\b"
+    r"|fail(?:ed|s|ure)?|not[ \t_-]*ready|incomplete|no[ \t_-]*go|hold)(?![a-z])"
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -678,6 +681,14 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
         ("REVIEW_READY\nVerdict: no blocking findings on this head.", True),
         ("REVIEW_READY\nThe verdict on the earlier block was reversed; the fix landed.", True),
+        ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
+        ('SOURCE_REVIEW_READY\nVERDICT: "BLOCK"', False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: [BLOCK]", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: BLOCKED_PENDING_FIX", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: FAILURE", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: INCOMPLETE", False),
+        ("REVIEW_READY\nVerdict: approve, nonblocking notes only.", True),
         ("REVIEW_READY \u2014 no findings", False),
         ("REVIEW_READY for the candidate, but repairs required", False),
         ("SOURCE_REVIEW_READY, but repairs required", False),
