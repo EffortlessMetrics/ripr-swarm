@@ -24,6 +24,7 @@ fn row(
         changed_since_labeling: false,
         observed_classifications: Vec::new(),
         outcome,
+        abstention_expected: false,
         contradictions: Vec::new(),
         findings_scored: 0,
         findings_contradicted: 0,

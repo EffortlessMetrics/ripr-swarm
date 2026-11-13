@@ -1399,7 +1399,17 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "8ef7a4bec9b0e6594e676ec9089db205ade40af3"
         );
         assert_eq!(provenance["approved"], "EffortlessMetrics/ripr-swarm#7325");
-        // Only value, status, source and samples moved.
+        // Only value, status, source and samples moved, except that #12766 moved
+        // the total abstention bar (and its title) when the avoidable rate took
+        // the 0.2 bar; scoreboards.toml is the source of both.
+        let config_moved = id == "trust.verdict_corpus_abstention";
+        if config_moved {
+            assert_eq!(metric["target"].as_f64(), Some(0.21), "{id} target");
+            assert_eq!(
+                metric["title"],
+                "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
+            );
+        }
         for key in [
             "board",
             "direction",
@@ -1409,6 +1419,9 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "unit",
             "runner_dependent",
         ] {
+            if config_moved && matches!(key, "target" | "title") {
+                continue;
+            }
             assert_eq!(metric[key], original[key], "{id} {key}");
         }
     }
@@ -1630,10 +1643,57 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         ids.retain(|id| id != "trust.verdict_corpus_spec_example_coverage");
         trust["counts"]["meets_target"] = serde_json::json!(4);
     }
+    // Seeded with the abstention split (RIPR-SPEC-0219, #12766): the
+    // avoidable-abstention row carries its own case population; verify it,
+    // then remove it before the witness equality check.
+    {
+        let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
+        let at = metrics
+            .iter()
+            .position(|metric| metric["id"] == "trust.verdict_corpus_avoidable_abstention")
+            .ok_or("avoidable abstention metric missing")?;
+        let avoidable = metrics.remove(at);
+        assert_eq!(
+            avoidable["source"],
+            "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
+        );
+        assert_eq!(avoidable["runner_dependent"], false);
+        let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
+        assert_eq!(samples.len(), 1);
+        let population: Population = serde_json::from_value(samples[0]["population"].clone())
+            .map_err(|err| err.to_string())?;
+        assert_eq!(population.rate, "avoidable_abstention_rate");
+        let (numerator, denominator) = population.totals()?;
+        assert!(numerator > 0 && numerator < denominator);
+    }
     assert_eq!(live, witness);
     assert_eq!(
         include_str!("../../../../metrics/dx-scoreboard/baseline.json"),
         include_str!("../../../../metrics/public-proof/dx-scoreboard.json")
     );
+    Ok(())
+}
+
+#[test]
+fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total()
+-> Result<(), String> {
+    let rust = population::Records::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus"),
+    )?;
+    let report = crate::reports::verdict_corpus::expected_report(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus"),
+    )?;
+    let avoidable = rust.population("avoidable_abstention_rate")?.totals()?;
+    let total = rust.population("abstention_rate")?.totals()?;
+    assert_eq!(
+        avoidable,
+        (
+            report.avoidable_abstention_rate.numerator as u64,
+            report.avoidable_abstention_rate.denominator as u64
+        )
+    );
+    assert_eq!(avoidable.1, total.1);
+    // The committed corpus has rows a spec Reject example asks to abstain.
+    assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
     Ok(())
 }

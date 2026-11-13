@@ -835,6 +835,7 @@ fn checkout_module_path_oracle_is_described_as_same_file() -> Result<(), String>
         SubjectOrigin::Authored,
         &json!({"findings": []}),
         None,
+        &BTreeSet::new(),
     )?;
     let rendered: Value =
         serde_json::from_str(&render_row_json(&row)?).map_err(|err| err.to_string())?;
@@ -898,7 +899,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     let discriminated = corpus
         .cases
         .iter()
@@ -912,7 +913,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
         report.ideal_rate.numerator,
         corpus.cases.len() - discriminated
     );
-    let missing = build_report(&corpus, &checks[1..], &BTreeMap::new())
+    let missing = build_report(&corpus, &checks[1..], &BTreeMap::new(), &BTreeSet::new())
         .err()
         .unwrap_or_default();
     assert!(missing.contains("no ripr result for case"), "{missing}");
@@ -1049,7 +1050,7 @@ fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     let authored = report
         .by_origin
         .get("authored")
@@ -1120,7 +1121,7 @@ fn contradiction_counts_use_one_per_finding_unit() -> Result<(), String> {
             (case.case_id.clone(), json!({"findings": findings}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     // Two contradicted findings in one case: the rate and the per-code count
     // agree, while the row lists the code once.
     assert_eq!(report.contradiction_rate.numerator, 2);
@@ -1432,7 +1433,7 @@ fn scored_report(corpus: &Corpus) -> Result<Report, String> {
         .iter()
         .map(|case| (case.case_id.clone(), json!({"findings": []})))
         .collect();
-    build_report(corpus, &checks, &BTreeMap::new())
+    build_report(corpus, &checks, &BTreeMap::new(), &BTreeSet::new())
 }
 
 #[test]
@@ -1562,7 +1563,7 @@ fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), Stri
             (case.case_id.clone(), check)
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         report.contradiction_rate.denominator > 0 && !report.contradictions_by_code.is_empty(),
         "fixture must exercise the contradiction counts: {:?}",
@@ -2036,7 +2037,7 @@ fn a_report_and_its_rebless_hint_name_the_corpus_language() -> Result<(), String
         .iter()
         .map(|case| (case.case_id.clone(), json!({"findings": []})))
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         render_report_markdown(&report, "typescript")
             .starts_with("# TypeScript verdict corpus report\n"),
@@ -2400,7 +2401,12 @@ fn packet_findings_count_while_their_subject_is_unresolved_and_others_do_not() {
 fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), String> {
     let dir = perl_corpus_dir();
     let corpus = load_corpus(&dir)?;
-    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let report = build_report(
+        &corpus,
+        &gap_checks(&corpus),
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+    )?;
     let producer = report
         .by_packet_provenance
         .get("producer")
@@ -2436,7 +2442,12 @@ fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), St
     assert_eq!(render_report_json(&rebuilt)?, render_report_json(&report)?);
     // A corpus without packets carries no provenance table or row field.
     let rust = load_corpus(&repo_corpus_dir())?;
-    let rust_report = build_report(&rust, &gap_checks(&rust), &BTreeMap::new())?;
+    let rust_report = build_report(
+        &rust,
+        &gap_checks(&rust),
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+    )?;
     assert!(rust_report.by_packet_provenance.is_empty());
     assert!(!render_report_json(&rust_report)?.contains("packet_provenance"));
     Ok(())
@@ -2919,7 +2930,7 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     assert!(
         report.by_origin.len() > 1,
         "the committed corpus has both origins"
@@ -2961,5 +2972,105 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     );
     assert!(count(&authored.abstention_by_cause) > 0, "{markdown}");
     assert!(markdown.contains(&row), "{row}\n{markdown}");
+    Ok(())
+}
+
+#[test]
+fn abstention_is_expected_only_for_caught_changes_whose_citations_all_require_it()
+-> Result<(), String> {
+    let corpus = load_corpus(&repo_corpus_dir())?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.case_id == "spec-b-0163-computed-argument")
+        .ok_or("case spec-b-0163-computed-argument is missing")?;
+    // Premise: tests catch the change, one Reject citation, `limited` acceptable.
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    assert_eq!(case.spec_examples, vec!["RIPR-SPEC-0163#3".to_string()]);
+    assert!(
+        case.expected
+            .acceptable_verdicts
+            .contains(&Verdict::Limited)
+    );
+    let rejects: BTreeSet<String> = ["RIPR-SPEC-0163#3".to_string()].into_iter().collect();
+    assert!(abstention_expected(case, &rejects));
+    // Not a Reject example: the abstention is avoidable.
+    assert!(!abstention_expected(case, &BTreeSet::new()));
+    // One cited Accept example alongside the Reject one: avoidable.
+    let mut mixed = case.clone();
+    mixed.spec_examples.push("RIPR-SPEC-0163#1".to_string());
+    assert!(!abstention_expected(&mixed, &rejects));
+    // `limited` not acceptable: avoidable.
+    let mut strict = case.clone();
+    strict
+        .expected
+        .acceptable_verdicts
+        .retain(|v| *v != Verdict::Limited);
+    assert!(!abstention_expected(&strict, &rejects));
+    // The tests miss the change: a gap obeys the Reject example, so the
+    // abstention stays avoidable even with every other condition met.
+    let mut missed = case.clone();
+    missed.truth.state = TruthState::NotDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
+    missed.truth.state = TruthState::PartiallyDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
+    // No citation at all: avoidable.
+    let mut bare = case.clone();
+    bare.spec_examples.clear();
+    assert!(!abstention_expected(&bare, &rejects));
+    Ok(())
+}
+
+#[test]
+fn avoidable_abstention_rate_leaves_out_only_abstained_rows_a_spec_asks_for() -> Result<(), String>
+{
+    let dir = repo_corpus_dir();
+    let read = |id: &str| -> Result<CaseRow, String> {
+        let path = dir.join(format!("expected/rows/{id}.json"));
+        let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        serde_json::from_str(&text).map_err(|err| err.to_string())
+    };
+    let expected = read("spec-b-0163-computed-argument")?;
+    let ideal = read("accounts-balance-add")?;
+    assert_eq!(expected.outcome, Outcome::Abstained);
+    assert!(
+        expected.abstention_expected,
+        "premise: committed row carries the flag"
+    );
+    assert_eq!(ideal.outcome, Outcome::Ideal);
+    let mut avoidable = expected.clone();
+    avoidable.case_id = "avoidable-twin".to_string();
+    avoidable.abstention_expected = false;
+    // A flagged row that does not abstain adds nothing to either numerator.
+    let mut flagged_ideal = ideal.clone();
+    flagged_ideal.case_id = "flagged-ideal".to_string();
+    flagged_ideal.abstention_expected = true;
+    let report = summarize(
+        String::new(),
+        Vec::new(),
+        vec![expected, avoidable, ideal, flagged_ideal],
+    );
+    assert_eq!(
+        (
+            report.abstention_rate.numerator,
+            report.abstention_rate.denominator
+        ),
+        (2, 4)
+    );
+    assert_eq!(
+        (
+            report.avoidable_abstention_rate.numerator,
+            report.avoidable_abstention_rate.denominator
+        ),
+        (1, 4)
+    );
+    let authored = report
+        .by_origin
+        .get("authored")
+        .ok_or("authored origin rates missing")?;
+    assert_eq!(authored.avoidable_abstention_rate.numerator, 1);
+    // The flag is omitted when false, so unflagged committed rows keep their bytes.
+    let unflagged = serde_json::to_string(&report.rows[1]).map_err(|err| err.to_string())?;
+    assert!(!unflagged.contains("abstention_expected"), "{unflagged}");
     Ok(())
 }
