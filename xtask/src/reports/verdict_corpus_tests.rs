@@ -3032,3 +3032,54 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     assert!(markdown.contains(&row), "{row}\n{markdown}");
     Ok(())
 }
+
+/// Observe the environment at the real process boundary, including concurrent
+/// case-local caches; comparing a list of intended environment pairs is weaker.
+#[test]
+fn corpus_child_has_one_worker_and_its_own_cache_without_mutating_parent() -> Result<(), String> {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    let parent_workers = std::env::var_os("RAYON_NUM_THREADS");
+    let parent_cache = std::env::var_os(CACHE_ENV);
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec![
+            "/D".to_string(),
+            "/C".to_string(),
+            "echo %RAYON_NUM_THREADS%:%RIPR_CACHE_DIR%".to_string(),
+        ],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = (
+        "sh",
+        vec![
+            "-c".to_string(),
+            "printf '%s:%s' \"$RAYON_NUM_THREADS\" \"$RIPR_CACHE_DIR\"".to_string(),
+        ],
+    );
+    let caches = ["corpus cache/case-a", "corpus cache/case-b"];
+    let outputs: Vec<Result<String, String>> = caches
+        .par_iter()
+        .map(|cache| run_case_output(program, &args, cache))
+        .collect();
+    for (cache, output) in caches.iter().zip(outputs) {
+        assert_eq!(output?.trim(), format!("1:{cache}"));
+    }
+    assert_eq!(std::env::var_os("RAYON_NUM_THREADS"), parent_workers);
+    assert_eq!(std::env::var_os(CACHE_ENV), parent_cache);
+    Ok(())
+}
+
+#[test]
+fn corpus_child_failure_is_not_promoted_to_a_report() {
+    let _guard = crate::acquire_test_cwd_read_guard();
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd",
+        vec!["/D".to_string(), "/C".to_string(), "exit /b 37".to_string()],
+    );
+    #[cfg(not(windows))]
+    let (program, args) = ("sh", vec!["-c".to_string(), "exit 37".to_string()]);
+    let result = run_case_output(program, &args, "failure-case-cache");
+    assert!(matches!(result, Err(ref message) if message.contains("37")));
+}
