@@ -2194,10 +2194,13 @@ fn type_reexported_from_owner_dependency(
         {
             continue;
         }
-        if facts.source.contains("#[path") || facts.source.contains("include!") {
+        let stripped = strip_comments_and_strings(&facts.source);
+        // Share the path-remapping authority with call identity. Literal
+        // spelling misses whitespace, comments and conditional attributes.
+        if super::call_identity::has_path_attribute(&stripped) || facts.source.contains("include!")
+        {
             return false;
         }
-        let stripped = strip_comments_and_strings(&facts.source);
         // No item named `T`, and no glob that could bring names in from
         // outside the crate: a glob rooted in the crate only re-exposes
         // items and imports this scan already sees.
@@ -14028,6 +14031,190 @@ fn crate_c_score_test() {
             .map(|(_, reason)| reason)
             .collect();
         Ok(related)
+    }
+
+    /// The unrelated free `current` forces the dependency-edge route rather
+    /// than the unique-name shortcut. The remapped file is indexed, while the external
+    /// dependency supplying its type is outside the workspace inventory.
+    #[test]
+    fn reexport_hop_refuses_path_remaps_with_complete_index() -> Result<(), String> {
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let scratch = temp_dir("reexport-path-remap")?;
+        let _cleanup = RemoveOnDrop(scratch.clone());
+        let root = scratch.join("workspace");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        write(
+            &scratch,
+            "foreign_dep/Cargo.toml",
+            "[package]\nname='foreign_dep'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+        )?;
+        write(
+            &scratch,
+            "foreign_dep/src/lib.rs",
+            "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 7 } }\n",
+        )?;
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers=['crates/crate_a','crates/crate_b','crates/crate_c']\nresolver='2'\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_a/Cargo.toml",
+            "[package]\nname='crate-a'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_c/Cargo.toml",
+            "[package]\nname='crate-c'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ncrate-a={path='../crate_a'}\nforeign_dep={path='../../../foreign_dep'}\n",
+        )?;
+        write(
+            &root,
+            "crates/crate_b/Cargo.toml",
+            "[package]\nname='crate-b'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        let mut files = vec![
+            write(
+                &root,
+                "crates/crate_b/src/lib.rs",
+                "pub fn current() -> u32 { 0 }\n",
+            )?,
+            write(&root, "crates/crate_a/src/lib.rs", "pub mod metadata;\n")?,
+            write(
+                &root,
+                "crates/crate_a/src/metadata.rs",
+                "pub struct LevelFilter;\nimpl LevelFilter { pub fn current() -> u32 { 2 } }\n",
+            )?,
+            write(
+                &root,
+                "crates/crate_c/src/filter.rs",
+                "pub use crate_a::metadata::LevelFilter;\n",
+            )?,
+            write(
+                &root,
+                "crates/crate_c/foreign.rs",
+                "pub use foreign_dep::*;\n",
+            )?,
+            write(
+                &root,
+                "crates/crate_c/tests/check.rs",
+                "use crate_c::filter::LevelFilter;\n#[test]\nfn observes_current() { std::assert_eq!(LevelFilter::current(), 7); }\n",
+            )?,
+        ];
+        let lib = PathBuf::from("crates/crate_c/src/lib.rs");
+        files.push(lib.clone());
+        let prefixes = crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&root);
+        let adjacency = PathDependencyAdjacency::build(
+            &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(&root),
+        );
+        assert_eq!(adjacency.status(), PathDependencyGraphStatus::Complete);
+        assert!(
+            adjacency
+                .forward_dependency_declarations(
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_a/Cargo.toml"
+                )
+                .is_some()
+        );
+        for (attribute, admits) in [
+            ("", true),
+            ("#[path = \"../foreign.rs\"]", false),
+            ("#[ path = \"../foreign.rs\"]", false),
+            ("#[cfg_attr(all(), path = \"../foreign.rs\")]", false),
+            ("#[/*comment*/path = \"../foreign.rs\"]", false),
+            (
+                "#[cfg_attr(all(), cfg_attr(all(), path = \"../foreign.rs\"))]",
+                false,
+            ),
+        ] {
+            write(
+                &root,
+                &lib.to_string_lossy(),
+                &format!("{attribute}\npub mod filter;\n"),
+            )?;
+            let index = crate::analysis::facts::build_index(&root, &files)?;
+            assert_eq!(index.files().len(), files.len());
+            assert!(
+                index
+                    .files()
+                    .contains_key(&PathBuf::from("crates/crate_c/foreign.rs"))
+            );
+            let unindexed = manifests_with_unindexed_files(&prefixes, &files, &files);
+            assert!(unindexed.is_empty());
+            assert_eq!(index.tests().len(), 1);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| {
+                    function.name == "current"
+                        && function.file == PathBuf::from("crates/crate_a/src/metadata.rs")
+                })
+                .ok_or("missing owner")?;
+            assert!(matches!(
+                owner.item.container,
+                FunctionContainer::Inherent { .. }
+            ));
+            assert_eq!(
+                index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == "current")
+                    .count(),
+                2
+            );
+            let context = DependencyEdgeContext {
+                adjacency: &adjacency,
+                manifest_dir_prefixes: &prefixes,
+                index: &index,
+                unindexed_manifests: &unindexed,
+                root: &root,
+            };
+            let test = &index.tests()[0];
+            let source = strip_comments_and_strings(
+                &index
+                    .files()
+                    .get(&test.file)
+                    .ok_or("missing test source")?
+                    .source,
+            );
+            let dependencies = BTreeSet::from(["crate_a".to_string()]);
+            let reexport = ReexportChain {
+                owner_manifest: "crates/crate_a/Cargo.toml",
+                test_manifest: "crates/crate_c/Cargo.toml",
+                library_dependency_names: &dependencies,
+            };
+            // Direct guard receipt prevents a different upstream refusal from
+            // making the relation control vacuously pass.
+            assert_eq!(
+                type_reexported_from_owner_dependency(
+                    &context,
+                    &reexport,
+                    &file_level_use_text(&source),
+                    &source,
+                    "LevelFilter"
+                ),
+                admits,
+                "guard: {attribute}"
+            );
+            let related = find_related_tests(
+                &probe("crates/crate_a/src/metadata.rs", "2"),
+                Some(owner),
+                &index,
+                true,
+                None,
+                Some(&context),
+            );
+            assert_eq!(!related.is_empty(), admits, "relation: {attribute}");
+            if admits {
+                assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+            }
+        }
+        Ok(())
     }
 
     const CRATE_C_MANIFEST: &str = "[package]\nname='crate-c'\nversion='0.1.0'\n";

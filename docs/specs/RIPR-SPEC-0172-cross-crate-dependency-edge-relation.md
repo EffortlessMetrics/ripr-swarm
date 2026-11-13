@@ -278,7 +278,7 @@ hold, or the route refuses:
   one module-level out-of-line `mod seg;` in its parent (a declaration
   nested in an inline module does not count), never declared inline, and
   resolves to exactly one of `seg.rs` / `seg/mod.rs`; no library file uses
-  `#[path]` or `include!`;
+  `#[path]` (including whitespace, comments and `cfg_attr` forms) or `include!`;
 - the module the test names holds one module-level `pub use` importing `T`
   unrenamed (brace lists are read item by item). Either it is rooted at the
   `[dependencies]` key, or it is a crate-local `self::` / `super::` /
@@ -328,6 +328,7 @@ The competitor and owner-crate foreign-import rules above still apply.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_needs_a_library_edge_and_a_whole_test_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_follows_one_crate_local_hop_to_the_dependency`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_unresolved_crate_local_chains`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_path_remaps_with_complete_index`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
