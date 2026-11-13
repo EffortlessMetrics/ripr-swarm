@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test behind a plain `#[cfg(feature = "..")]` gate (on the test, an enclosing inline module or the file) is now read like an ungated test when the feature is in its package's `default` feature closure, since a plain `cargo test` compiles it. Before, its assertion was left uncredited and a file or module gate reported "reached but not noticed" with advice to make the check run on every default test run. A feature that is off by default, a negated gate and a gate mixing in a target or custom condition are read as before (#8780).
