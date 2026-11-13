@@ -17,6 +17,7 @@ mod file_policy;
 pub(crate) mod file_policy_retained_evidence;
 mod fold_changelog;
 mod install_receipt;
+mod library_selector;
 mod local_context;
 mod network;
 mod no_panic;
