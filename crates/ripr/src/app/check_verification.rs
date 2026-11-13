@@ -19,8 +19,11 @@ pub(crate) enum VerificationRefusal {
     NoBehaviorInScope,
     /// The outcome is partial, unsupported or failed.
     AnalysisIncomplete,
-    /// Full summary findings exceed full summary exposed findings.
-    GapsRemain,
+    /// Full summary findings exceed full summary exposed findings. Named for
+    /// what it counts, not "gaps": a limited finding (`static_unknown`, ...)
+    /// is not a test-side gap in the agent header, and the record must not
+    /// contradict a `gaps=0` header (#13825).
+    UnexposedFindingsRemain,
     /// A committed-history run left uncommitted source/test edits unanalyzed.
     UnanalyzedWorkingTree,
     /// Untracked source/test files in a language enabled for this run were
@@ -40,7 +43,7 @@ impl VerificationRefusal {
             Self::OutcomeMissing => "outcome_missing",
             Self::NoBehaviorInScope => "no_behavior_in_scope",
             Self::AnalysisIncomplete => "analysis_incomplete",
-            Self::GapsRemain => "gaps_remain",
+            Self::UnexposedFindingsRemain => "unexposed_findings_remain",
             Self::UnanalyzedWorkingTree => "unanalyzed_working_tree",
             Self::UntrackedSourceExcluded => "untracked_source_excluded",
             Self::PartialScope => "partial_scope",
@@ -86,7 +89,7 @@ impl CheckOutput {
             Some(_) => refusals.push(VerificationRefusal::AnalysisIncomplete),
         }
         if self.summary.findings != self.summary.exposed {
-            refusals.push(VerificationRefusal::GapsRemain);
+            refusals.push(VerificationRefusal::UnexposedFindingsRemain);
         }
         if self.unanalyzed_working_tree {
             refusals.push(VerificationRefusal::UnanalyzedWorkingTree);
@@ -135,8 +138,8 @@ impl CheckOutput {
 #[cfg(test)]
 mod tests {
     use super::VerificationRefusal::{
-        AnalysisIncomplete, GapsRemain, NoBehaviorInScope, NoScope, OutcomeMissing,
-        UnanalyzedWorkingTree, UntrackedSourceExcluded,
+        AnalysisIncomplete, NoBehaviorInScope, NoScope, OutcomeMissing, UnanalyzedWorkingTree,
+        UnexposedFindingsRemain, UntrackedSourceExcluded,
     };
     use crate::analysis_outcome::{
         AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
@@ -200,7 +203,7 @@ mod tests {
         let mut gaps = complete_no_findings()?;
         gaps.summary.findings = 2;
         gaps.summary.exposed = 1;
-        assert_eq!(gaps.verification().refusals, vec![GapsRemain]);
+        assert_eq!(gaps.verification().refusals, vec![UnexposedFindingsRemain]);
         Ok(())
     }
 

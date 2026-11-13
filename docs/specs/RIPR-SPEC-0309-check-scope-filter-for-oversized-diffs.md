@@ -61,6 +61,9 @@ uninspected, and the language-neutral parse guards still refuse outright.
 (`src/lib.rs`, `crates/api`); a pattern with them uses the shared `/`-separated
 glob dialect. No `--path` admits every file the excludes do not remove;
 `--exclude` wins over `--path`.
+A bare argument that does not start with `-` (`ripr check src/lib.rs`) is
+the same as `--path` with that pattern; an unknown `-`-prefixed token is
+still refused (#14307).
 
 1. The filter is applied once at pipeline intake, before the diff-size guards
    and before any adapter, so the guards measure only the chosen files. It is
@@ -150,6 +153,7 @@ glob dialect. No `--path` admits every file the excludes do not remove;
   `oversized_file_sorting_first_is_left_out_of_a_partial_scope`.
 - `crates/ripr/tests/cli_smoke.rs`:
   `check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result`.
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::a_bare_argument_is_read_as_a_path_scope`.
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope`.
 - `crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
 - `crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.

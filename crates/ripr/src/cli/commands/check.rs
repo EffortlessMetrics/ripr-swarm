@@ -620,6 +620,9 @@ pub(super) fn refuse_check(
     error: impl Into<CoreError>,
 ) -> String {
     let error = error.into();
+    if format == OutputFormat::Agent {
+        return refuse_agent(&error);
+    }
     let rendered = match machine_refusal_document(envelope_input, format, &error) {
         Some(rendered) => rendered,
         // Human formats (and machine formats without an honest refusal shape)
@@ -636,6 +639,30 @@ pub(super) fn refuse_check(
         Err(render) => return render,
     }
     error.to_string()
+}
+
+/// The agent refusal (#14452): the stdout record, then the stderr prose. A
+/// timed run consumes the stashed projection once, so its bounded retry rides
+/// `next=` and stderr keeps the same requested echo and facts the human
+/// format gets.
+fn refuse_agent(error: &CoreError) -> String {
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    let projection = if notice.identity == "analysis_timeout" {
+        app::timeout_refusal::take_stashed()
+    } else {
+        None
+    };
+    let retry = projection
+        .as_ref()
+        .and_then(app::timeout_refusal::TimeoutRefusalProjection::replayable_recovery_command);
+    let document = output::human::render_agent_refusal(&notice, retry.as_deref());
+    if let Err(write) = write_stdout_chunked(&document) {
+        return write;
+    }
+    match projection {
+        Some(projection) => format!("{error}\n{}", projection.human_recovery_text()),
+        None => error.to_string(),
+    }
 }
 
 /// The stderr refusal for a format with no machine refusal document. A timed
@@ -714,6 +741,9 @@ pub(super) fn machine_refusal_document(
         OutputFormat::AgentSeamPacketsJson => {
             Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
         }
+        // Agent: the format's own refused stop/verify record, never zero
+        // bytes an agent could read as an empty result (#14452).
+        OutputFormat::Agent => Some(Ok(output::human::render_agent_refusal(&notice, None))),
         _ => None,
     }
 }
@@ -976,6 +1006,11 @@ fn check_inner(
             // `help_request` already consumed `--all` alongside `--help`; here
             // it has no `--help` to widen, so it is still an unknown argument.
             "--all" => return Err(unknown_argument("check", "--all")),
+            // #14307: a bare argument is a `--path` scope, like `git diff
+            // PATH`; it shares --path's matching and fail-closed refusal.
+            path if !path.is_empty() && !path.starts_with('-') => {
+                scope_include.push(path.to_string());
+            }
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
@@ -1665,6 +1700,11 @@ fn check_inner(
     // ripr's artifact root says so once, with the exact entry; `doctor` gives
     // the same verdict. stderr only, so stdout and machine formats are
     // unchanged, and silent when `--quiet` or when git cannot establish it.
+    // The output guard gives an existing `target/ripr` its self-ignore file
+    // before the verdict, so a tree an older ripr left unignored is judged as
+    // this run leaves it; it creates nothing. A refusal here is reported by
+    // the guard on the write path.
+    let _ = crate::atomic_file::ensure_report_output_contained(&input.root);
     if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
         eprintln!("{}", terminal_safe(note));
     }

@@ -2531,10 +2531,41 @@ impl AfterPhaseRefusalContext {
             return line;
         };
         match crate::app::task_first::repair_start_refusal(root, &manifest.seam_id) {
+            // The only hold is the uncommitted target, which the refused
+            // changes themselves may be: undoing them lifts it, so the gate
+            // has not refused the tree the recovery leaves behind.
+            Some(refusal) if refusal.held_by_uncommitted_target() => {
+                start_recipe_undecided(root, &line)
+            }
             Some(_) => crate::app::agent_status::without_start_recipe(&line),
             None => line,
         }
     }
+}
+
+/// The opening of the edit-cage recovery line for refused changes.
+const UNDO_REFUSED_CHANGES: &str = "undo the refused changes";
+
+/// A narrated recovery whose new-attempt recipe is withheld only because the
+/// attempt's inline test target has uncommitted changes. On the edit-cage
+/// line those can be the refused changes themselves, so the line points at
+/// the command that asks the gate again once they are undone, instead of
+/// stating that no new attempt is offered.
+fn start_recipe_undecided(root: &Path, line: &str) -> String {
+    let cleaned = crate::app::agent_status::without_start_recipe(line);
+    // The `ripr repair` facade has no `--store`, so for a custom-store attempt
+    // it would ask about, and start in, the default store instead; keep the
+    // withheld wording there.
+    if !line.contains(UNDO_REFUSED_CHANGES) || line.contains(" --store ") {
+        return cleaned;
+    }
+    let ask_again = format!(
+        "no new attempt can start while the refused changes are in place; once they are undone, `ripr repair --root {}` says whether one can start",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &root.to_string_lossy()
+        ))
+    );
+    cleaned.replace(crate::app::agent_status::START_RECIPE_WITHHELD, &ask_again)
 }
 
 /// The recorded refusal: the final error, then the narration that named its
@@ -2580,6 +2611,7 @@ fn run_agent_repair_phase(
         store,
         json,
         quiet,
+        facade_start,
     } = options;
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
     // and `wrote <path>` lines. Refusal prose, the attempt id and the next
@@ -2635,6 +2667,7 @@ fn run_agent_repair_phase(
                     &seam_id,
                     &root,
                     store_ref,
+                    facade_start,
                     &preflight_violations,
                 ));
             }
@@ -2770,6 +2803,7 @@ fn run_agent_repair_phase(
                     &seam_id,
                     &root,
                     store_ref,
+                    facade_start,
                     &premise_violations,
                 ));
             }
@@ -4132,7 +4166,7 @@ fn repair_after_cage_recovery_lines(
         return lines;
     }
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}{UNDO_REFUSED_CHANGES}, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }
@@ -4459,11 +4493,14 @@ fn repair_after_trusted_surface_recovery_lines(
 /// outside the allowed test surface (#5262). Names the paths, states the
 /// production-vs-test boundary, and gives the commit-first route the late
 /// receipt refusal cannot offer because the attempt no longer exists. The
-/// caller has written nothing yet, so the tail says so explicitly.
+/// caller has written nothing yet, so the tail says so explicitly. A start
+/// through the `ripr repair <item>` façade is told to rerun that command, not
+/// the advanced `ripr agent repair` route it never typed (#14394).
 fn before_phase_dirty_premise_refusal(
     seam_id: &str,
     root: &Path,
     store: Option<&Path>,
+    facade_start: bool,
     violations: &[String],
 ) -> String {
     use crate::agent::loop_commands::{bound_root, shell_arg};
@@ -4471,9 +4508,13 @@ fn before_phase_dirty_premise_refusal(
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
-    let restart = format!(
-        "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
-    );
+    let restart = if facade_start && store.is_none() {
+        format!("ripr repair {seam_arg} --root {root_arg}")
+    } else {
+        format!(
+            "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
+        )
+    };
     before_phase_dirty_premise_refusal_with_restart(&restart, violations)
 }
 
@@ -4736,6 +4777,11 @@ pub(in crate::cli) fn before_phase_stdout(
         ));
     } else {
         let follow_up = crate::agent::human_after_phase_follow_up(&continuation.next_command);
+        // #14320: name the exact native command for the suggested test, so
+        // the developer does not have to work out the cargo target filter.
+        if let Some(command) = &continuation.focused_test_command {
+            document.push_str(&format!("Run the new test: {command}\n"));
+        }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
             document.push_str(&format!("(PowerShell) {form}\n"));
@@ -5027,6 +5073,35 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// #14271 review: the `ripr repair` facade has no `--store`, so the
+    /// ask-again pointer is offered only for a default-store attempt; a
+    /// custom-store line keeps the withheld wording.
+    #[test]
+    fn refused_edit_ask_again_pointer_is_withheld_for_a_custom_store() {
+        let root = std::path::Path::new("repo");
+        let line = |store: &str| {
+            format!(
+                "to recover: {}, set your test edit aside (for example `git stash`), run `ripr agent repair --root repo --seam s{store} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints.",
+                super::UNDO_REFUSED_CHANGES
+            )
+        };
+        let default_store = super::start_recipe_undecided(root, &line(""));
+        assert!(
+            default_store.contains("`ripr repair --root"),
+            "{default_store}"
+        );
+        let custom = line(" --store /tmp/attempts");
+        let custom_store = super::start_recipe_undecided(root, &custom);
+        assert!(
+            !custom_store.contains("`ripr repair --root"),
+            "{custom_store}"
+        );
+        assert_eq!(
+            custom_store,
+            crate::app::agent_status::without_start_recipe(&custom)
+        );
+    }
 
     /// The not-found hint for a gap-shaped id mentions `ripr check` only to
     /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.
@@ -7099,6 +7174,7 @@ mod before_phase_stdout_tests {
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
             typescript_test_cache_guidance: false,
+            focused_test_command: None,
         }
     }
 
@@ -7136,6 +7212,37 @@ mod before_phase_stdout_tests {
         // A scorable baseline adds no ambiguity member: the scorable stdout
         // bytes stay exactly as before (#7204).
         assert!(value["repair_attempt"].get("baseline_ambiguous").is_none());
+        Ok(())
+    }
+
+    /// #14320: the human summary names the exact native test command just
+    /// before the continue step; `--json` stays the unchanged continuation.
+    #[test]
+    fn human_stdout_names_the_focused_test_command_when_known() -> Result<(), String> {
+        let with_command = BeforePhaseAttemptContinuation {
+            focused_test_command: Some(
+                "cargo test --manifest-path Cargo.toml --test pricing t".to_string(),
+            ),
+            ..continuation()
+        };
+        let summary = before_phase_stdout(PACKET, "p", false, &with_command)?;
+        let run = summary
+            .find("Run the new test: cargo test --manifest-path Cargo.toml --test pricing t")
+            .ok_or_else(|| format!("missing run line:\n{summary}"))?;
+        let next = summary
+            .find("Next, after the test edit:")
+            .ok_or_else(|| format!("missing next line:\n{summary}"))?;
+        assert!(run < next, "{summary}");
+        let without = before_phase_stdout(PACKET, "p", false, &continuation())?;
+        assert!(!without.contains("Run the new test"), "{without}");
+        let json = before_phase_stdout(PACKET, "p", true, &with_command)?;
+        assert!(!json.contains("Run the new test"), "{json}");
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..with_command
+        };
+        let ambiguous = before_phase_stdout(PACKET, "p", false, &ambiguous)?;
+        assert!(!ambiguous.contains("Run the new test"), "{ambiguous}");
         Ok(())
     }
 

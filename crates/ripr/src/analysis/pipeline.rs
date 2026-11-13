@@ -886,9 +886,20 @@ fn rust_excluded_by_config_limitation(
         )
         .with_affected_items(excluded as u64)?
         .with_detail(format!(
-            "rust changed {excluded} file(s), but rust is not in the effective [languages].enabled set [{enabled}], so these files were not analyzed"
+            "{RUST_EXCLUDED_DETAIL_LEAD}{excluded} file(s), {RUST_EXCLUDED_DETAIL_CAUSE} [{enabled}], so these files were not analyzed"
         ))?,
     ))
+}
+
+const RUST_EXCLUDED_DETAIL_LEAD: &str = "rust changed ";
+const RUST_EXCLUDED_DETAIL_CAUSE: &str = "but rust is not in the effective [languages].enabled set";
+
+/// Whether a limitation detail is the one [`rust_excluded_by_config_limitation`]
+/// writes (#14152). Rust is the one language that is never a preview advisory,
+/// so this limitation is the `language_adapter_unavailable` case with no
+/// preview-language note; a renderer that points at that note asks here first.
+pub(crate) fn is_rust_excluded_by_config_detail(detail: &str) -> bool {
+    detail.starts_with(RUST_EXCLUDED_DETAIL_LEAD) && detail.contains(RUST_EXCLUDED_DETAIL_CAUSE)
 }
 
 /// Changed files in languages no ripr adapter reads, counted per router
