@@ -1184,6 +1184,7 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human.rs::tests::hidden_block_window_counts_grouped_rows_and_remainder_findings`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_stub_route_findings_one_row_each`
 - `crates/ripr/src/output/human.rs::tests::hidden_block_keeps_owner_less_rows_apart_and_orders_mixed_rows`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_window_ranks_a_group_by_its_best_member`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`

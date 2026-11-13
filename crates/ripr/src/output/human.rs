@@ -4477,6 +4477,63 @@ mod tests {
         );
     }
 
+    /// #14299: at the window boundary a grouped row competes with its best
+    /// member, not its first. Within one group only the repair-route tie break
+    /// differs, so the group's first member (no next step) ranks below a
+    /// rival singleton while its later member (with one) ranks above it.
+    #[test]
+    fn hidden_block_window_ranks_a_group_by_its_best_member() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.py", 1, 1);
+        findings.push(selected);
+        let routed = Some("Add a discriminating assertion.".to_string());
+        for index in 0..19 {
+            let mut finding = sample_finding();
+            finding.id = format!("routed-{index}");
+            finding.probe.owner = Some(SymbolId(format!("python:src/b{index:02}.py::f")));
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.py"), 1, 1);
+            finding.recommended_next_step = routed.clone();
+            findings.push(finding);
+        }
+        // The rival: one unrouted singleton that sorts before the group.
+        let mut rival = sample_finding();
+        rival.id = "rival".to_string();
+        rival.probe.owner = Some(SymbolId("python:src/c_rival.py::g".to_string()));
+        rival.probe.location = SourceLocation::new("src/c_rival.py", 1, 1);
+        rival.recommended_next_step = None;
+        findings.push(rival);
+        for (line, step) in [(1, None), (2, routed.clone())] {
+            let mut finding = sample_finding();
+            finding.id = format!("group-{line}");
+            finding.probe.owner = Some(SymbolId("python:src/z.py::shorten".to_string()));
+            finding.probe.location = SourceLocation::new("src/z.py", line, 1);
+            finding.recommended_next_step = step;
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "{rendered}");
+        assert!(
+            rows[19].starts_with("    - src/z.py:1-2 (weak); 2 changed behaviors in `shorten`; "),
+            "the group's routed later member must win it the last row: {rendered}"
+        );
+        assert!(
+            !rendered.contains("src/c_rival.py"),
+            "the unrouted rival must fall to the remainder: {rendered}"
+        );
+        assert!(
+            rendered.contains("    - … and 1 more omitted finding(s): 1 "),
+            "{rendered}"
+        );
+    }
+
     /// #14299: a finding that offers its own test stub keeps its own row even
     /// when another finding shares its owner, class and reason.
     #[test]
