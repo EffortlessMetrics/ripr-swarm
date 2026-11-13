@@ -709,3 +709,32 @@ fn a_short_circuit_tail_reads_helper_calls_by_parameter() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// #14537: a predicate `assert_eq!` is admitted like the bare `assert!` for
+/// the same family. The bare `assert!` was already ungated for `Predicate`;
+/// the equality took the context gate and was refused, so a discriminating
+/// test credited the bare `assert!` instead of the equality.
+#[test]
+fn a_predicate_assert_eq_is_admitted_like_the_bare_assert() -> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    assert!(
+        syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        "a predicate assert_eq! is admitted like the bare assert!"
+    );
+    Ok(())
+}

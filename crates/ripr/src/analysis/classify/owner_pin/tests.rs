@@ -7400,15 +7400,17 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
         "{} full-index passes for 96 lookups",
         syntax.workspace_scan_passes()
     );
-    // The production refusal path pays the same bound: a predicate probe's
-    // refused disclosures across both test roots add no third pass.
+    // The production refusal path pays the same bound: a return-value probe's
+    // refused disclosures across both test roots add no third pass. A
+    // predicate `assert_eq!` is admitted ungated (#14537), so it exercises no
+    // refusal site; the return family still takes the gate.
     let owner = index
         .functions()
         .iter()
         .find(|function| function.name == "gate" && function.file == Path::new(LIB));
     assert!(owner.is_some(), "the owner must be indexed from {LIB}");
     let owner = owner.unwrap_or(index.functions().at(0));
-    let probe = predicate_probe(owner, "10 <= value");
+    let probe = return_probe(owner, "10 <= value");
     for tests_path in [TESTS, CONVERGENCE_OTHER_TESTS] {
         let test = index
             .tests()

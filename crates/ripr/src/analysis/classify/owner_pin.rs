@@ -1059,7 +1059,6 @@ impl OwnerPinSyntax {
                 ProbeFamily::ReturnValue
                     | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
-                    | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
                     | ProbeFamily::CallDeletion
             ),
