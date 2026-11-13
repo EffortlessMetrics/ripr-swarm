@@ -2130,6 +2130,87 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
+/// Argv (after the program) of the pytest importability probe. The probe
+/// runs from a private empty directory with `PYTHONSAFEPATH=1`, so neither the
+/// cwd nor a script directory reaches `sys.path`; user-site installs
+/// (`pip install --user`) stay visible, as they are for the verify command
+/// (#13617). `-P` is not used because it is rejected before Python 3.11.
+/// `PYTHONPATH` is removed so a checkout listed there cannot supply a
+/// `pytest.py` that doctor would execute; a pytest reachable only through
+/// `PYTHONPATH` is then reported as missing (advisory, exit code unchanged).
+///
+/// The probe only imports pytest; it never starts pytest itself. Running
+/// `python -m pytest --version` would let pytest search the ancestors of the
+/// probe directory for an ini file (for example a `/tmp/pytest.ini` planted by
+/// another local user), adopt that directory as rootdir and load its
+/// `conftest.py` or `-p` plugins. A bare import executes no project or temp
+/// directory code. The harness appends `--version`, which becomes an ignored
+/// `sys.argv[1]` of the `-c` script.
+const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = [
+    "-c",
+    "import sys, pytest; sys.stdout.write('pytest ' + pytest.__version__)",
+];
+
+/// The probe command: PATH `python` importing pytest in `dir` with safe-path
+/// env and no `PYTHONPATH`.
+fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
+    let mut command = doctor_tool_command("python");
+    command
+        .args(DOCTOR_PYTEST_PROBE_ARGS)
+        .env("PYTHONSAFEPATH", "1")
+        .env_remove("PYTHONPATH")
+        .current_dir(dir);
+    command
+}
+
+/// Create a fresh, unpredictable, owner-only directory with an exclusive
+/// `create_dir` (never `create_dir_all`), retrying on collision, so a
+/// pre-planted directory or symlink cannot supply a `conftest.py`.
+fn create_private_probe_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    let mut last = std::io::Error::other("no private probe directory");
+    for attempt in 0..16u32 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(attempt);
+        hasher.write_u32(std::process::id());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        hasher.write_u128(nanos);
+        let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{:016x}", hasher.finish()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => last = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last)
+}
+
+/// Probe `python -m pytest --version` on the PATH `python`: the command the
+/// printed verify command runs (#13617), not a standalone `pytest` binary.
+pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
+    let Ok(dir) = create_private_probe_dir() else {
+        return (
+            DoctorStatus::Fail,
+            "python -m pytest could not be probed: no private probe directory".to_string(),
+        );
+    };
+    let command = doctor_pytest_probe_command(&dir);
+    let (status, evidence) =
+        doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
+            .into_public();
+    let _removed = std::fs::remove_dir(&dir);
+    match (status, evidence.is_empty()) {
+        (DoctorStatus::Pass, true) => (status, "pytest importable by `python -m pytest`".into()),
+        _ => (status, evidence),
+    }
+}
+
 fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
     // Windows: std's program lookup for a bare `pnpm` only resolves
     // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
@@ -2671,6 +2752,46 @@ pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pytest_probe_command_imports_pytest_with_safe_path_in_private_dir() -> std::io::Result<()> {
+        let dir = create_private_probe_dir()?;
+        let other = create_private_probe_dir()?;
+        assert_ne!(dir, other, "probe dirs must be unpredictable and distinct");
+        let command = doctor_pytest_probe_command(&dir);
+        let args: Vec<_> = command.get_args().collect();
+        // Import-only: never `-m pytest`, which would read ancestor ini files
+        // and conftest.py from the temp directory tree.
+        assert_eq!(args.first().copied(), Some(OsStr::new("-c")));
+        assert!(!args.iter().any(|arg| *arg == OsStr::new("-m")), "{args:?}");
+        assert!(
+            args.get(1)
+                .and_then(|script| script.to_str())
+                .is_some_and(|script| script.contains("import sys, pytest")),
+            "{args:?}"
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONSAFEPATH" && v == Some(OsStr::new("1")))
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONPATH" && v.is_none()),
+            "PYTHONPATH is removed so a checkout on it cannot supply pytest.py"
+        );
+        assert_eq!(command.get_current_dir(), Some(dir.as_path()));
+        assert!(
+            std::fs::read_dir(&dir)?.next().is_none(),
+            "probe dir is empty"
+        );
+        // Exclusive create: an existing directory is refused, not reused.
+        assert!(std::fs::DirBuilder::new().create(&dir).is_err());
+        std::fs::remove_dir(&dir)?;
+        std::fs::remove_dir(&other)?;
+        Ok(())
+    }
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 

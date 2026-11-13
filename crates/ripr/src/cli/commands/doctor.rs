@@ -1331,7 +1331,11 @@ where
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
         let probe_started = std::time::Instant::now();
-        let (status, evidence) = probe(tool);
+        let (status, evidence) = if language == "python" && tool == "pytest" {
+            python_pytest_runtime_probe(root, &mut probe)
+        } else {
+            probe(tool)
+        };
         let probe_elapsed = probe_started.elapsed();
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
@@ -1352,7 +1356,59 @@ where
     ok
 }
 
+/// The pytest probe describes the command the verify route prints: PATH
+/// `python -m pytest` (#13617; project-venv selection at the producer is
+/// #13801). The project virtualenv is inspected statically (never executed)
+/// only to explain a PATH failure.
+fn python_pytest_runtime_probe<F>(
+    root: &Path,
+    probe: &mut F,
+) -> (output::doctor::DoctorStatus, String)
+where
+    F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
+{
+    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
+    if status == output::doctor::DoctorStatus::Pass {
+        return (status, format!("{evidence} (PATH `python -m pytest`)"));
+    }
+    let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
+    // `venv/bin/python` -> `venv/bin/activate`: name the detected directory.
+    let activate_rel = venv.strip_suffix("python").map_or_else(
+        || ".venv/bin/activate".to_string(),
+        |bin| format!("{bin}activate"),
+    );
+    // With `--root` elsewhere the hint must still paste from the caller's
+    // directory, so join the root and quote it for the host shell.
+    let activate = if root.as_os_str().is_empty() || root == Path::new(".") {
+        activate_rel
+    } else {
+        crate::agent::loop_commands::shell_arg(&root.join(&activate_rel).to_string_lossy())
+    };
+    let note = match project_venv_pytest(root) {
+        VenvPytest::Present(_) => format!(
+            "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source {activate}) before running the printed verify command"
+        ),
+        VenvPytest::Unknown => format!(
+            "a project virtualenv ({venv}) exists but pytest there is not verified (layout not statically readable)"
+        ),
+        VenvPytest::Missing | VenvPytest::NoVenv => String::new(),
+    };
+    if note.is_empty() {
+        (status, evidence)
+    } else {
+        (status, format!("{evidence}; {note}"))
+    }
+}
+
+/// The probe name routed through the injected probe closure for the PATH
+/// `python` interpreter (#13617); `probe_runtime` maps it to the isolated run.
+const PYTHON_PYTEST_PROBE: &str = "python -m pytest";
+
 fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
+    if tool == PYTHON_PYTEST_PROBE {
+        return output::doctor::doctor_python_pytest_check_isolated();
+    }
     // Probe every runtime outside the checkout. yarn loads project config on
     // --version (#2183 review), and pnpm fetches and runs the release a
     // project `packageManager` names; version managers read project files too.
@@ -1487,11 +1543,14 @@ fn language_runtime_probes_for_detected(
         // --features lang-rust (#2418).
         #[cfg(feature = "lang-python")]
         {
-            if analysis::detect_python_test_frameworks(root).contains(&"pytest") {
+            // #13617: the verify command is `python -m pytest` unless the
+            // project is unittest-only, so probe it without requiring config.
+            let frameworks = analysis::detect_python_test_frameworks(root);
+            if frameworks.contains(&"pytest") || !frameworks.contains(&"unittest") {
                 probes.push((
                     "python",
                     "pytest",
-                    "install pytest (e.g. pip install pytest)",
+                    "install pytest for the verify command's python (e.g. python -m pip install pytest)",
                 ));
             }
         }
@@ -3807,6 +3866,138 @@ mod tests {
             None
         );
         assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pytest_probe_without_venv_routes_python_dash_m_pytest_and_stays_advisory()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("pytest-no-venv");
+        std::fs::create_dir_all(&root).map_err(|e| format!("mkdir: {e}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
+            .map_err(|e| format!("write: {e}"))?;
+        let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+        let mut seen = Vec::new();
+        let ok = add_language_runtime_probes(
+            &root,
+            &[LanguageId::Python],
+            &[LanguageId::Rust],
+            &mut report,
+            false,
+            |tool| {
+                seen.push(tool.to_string());
+                if tool == "python -m pytest" {
+                    (
+                        output::doctor::DoctorStatus::Fail,
+                        "python -m pytest --version failed (exit status: 1): No module named pytest"
+                            .to_string(),
+                    )
+                } else {
+                    (output::doctor::DoctorStatus::Pass, format!("{tool} ok"))
+                }
+            },
+        );
+        assert!(seen.iter().any(|t| t == "python -m pytest"), "{seen:?}");
+        assert!(!seen.iter().any(|t| t == "pytest"), "{seen:?}");
+        let probe = report
+            .runtime_probes
+            .iter()
+            .find(|p| p.tool == "pytest")
+            .ok_or_else(|| "missing pytest probe".to_string())?;
+        assert_eq!(probe.status, output::doctor::DoctorStatus::Fail);
+        assert!(probe.evidence.contains("No module named pytest"));
+        assert!(!probe.required);
+        assert!(ok);
+        assert_eq!(report.status, output::doctor::DoctorStatus::Pass);
+        std::fs::remove_dir_all(&root).map_err(|e| format!("rm: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pytest_probe_reports_path_python_and_uses_venv_only_as_a_hint() -> std::io::Result<()> {
+        let make = |name: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
+            let root = std::env::temp_dir()
+                .join(format!("ripr-doctor-venv-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let site_dir = root.join(".venv/lib/python3.13/site-packages");
+            std::fs::create_dir_all(&site_dir)?;
+            std::fs::create_dir_all(root.join(".venv/bin"))?;
+            std::fs::write(root.join(".venv/bin/python"), "")?;
+            for entry in site {
+                std::fs::create_dir_all(site_dir.join(entry))?;
+            }
+            Ok(root)
+        };
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let mut path_fail = |tool: &str| {
+            calls.borrow_mut().push(tool.to_string());
+            (
+                output::doctor::DoctorStatus::Fail,
+                "python -m pytest --version failed (exit status: 1): No module named pytest"
+                    .to_string(),
+            )
+        };
+        let with = make("with", &["pytest-9.2.0.dist-info", "pytest"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(evidence.contains("No module named pytest"), "{evidence}");
+        let expected = crate::agent::loop_commands::shell_arg(
+            &with.join(".venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "root-joined activate path: {evidence}"
+        );
+        assert_eq!(*calls.borrow(), ["python -m pytest"]);
+        // Negative control: venv without pytest gives no activation advice.
+        let without = make("without", &["pip"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(!evidence.contains("activate"), "{evidence}");
+        // A `venv/` (not `.venv/`) project is told to activate `venv/`.
+        let plain =
+            std::env::temp_dir().join(format!("ripr-doctor-venv-plain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&plain);
+        std::fs::create_dir_all(plain.join("venv/bin"))?;
+        std::fs::write(plain.join("venv/bin/python"), "")?;
+        std::fs::create_dir_all(
+            plain.join("venv/lib/python3.13/site-packages/pytest-9.2.0.dist-info"),
+        )?;
+        let (_, evidence) = python_pytest_runtime_probe(&plain, &mut path_fail);
+        let expected = crate::agent::loop_commands::shell_arg(
+            &plain.join("venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "{evidence}"
+        );
+        assert!(!evidence.contains(".venv/bin/activate"), "{evidence}");
+        // A `.` root keeps the bare relative hint.
+        let (_, evidence) = python_pytest_runtime_probe(Path::new("."), &mut path_fail);
+        assert!(!evidence.contains("source /"), "{evidence}");
+        let _ = std::fs::remove_dir_all(&plain);
+        // PATH python with pytest passes and says which command was probed,
+        // regardless of the venv.
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut |_: &str| {
+            (
+                output::doctor::DoctorStatus::Pass,
+                "pytest 9.1.1".to_string(),
+            )
+        });
+        assert_eq!(status, output::doctor::DoctorStatus::Pass);
+        assert_eq!(evidence, "pytest 9.1.1 (PATH `python -m pytest`)");
+        // Unknown venv layout is surfaced as not verified, not as a pass.
+        std::fs::write(
+            with.join(".venv/pyvenv.cfg"),
+            "include-system-site-packages = true\n",
+        )?;
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(evidence.contains("not verified"), "{evidence}");
+        let _ = std::fs::remove_dir_all(with);
+        let _ = std::fs::remove_dir_all(without);
+        Ok(())
     }
 
     #[test]

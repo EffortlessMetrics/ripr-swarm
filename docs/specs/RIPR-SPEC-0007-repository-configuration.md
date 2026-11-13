@@ -498,6 +498,32 @@ then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
 
+### Doctor checks the pytest the Python verify route runs (#13617)
+
+```text
+Given a Python root that is not unittest-only,
+when ripr doctor runs,
+then doctor checks that PATH `python` (the interpreter of the printed
+`python -m pytest` verify command) imports pytest, from a fresh private
+empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
+starting pytest, so no checkout or temp-directory code is executed;
+
+Given PATH `python` cannot import pytest,
+when doctor reports the probe,
+then the result is an advisory warning that never changes the exit code;
+
+Given a project `.venv` or `venv` whose site-packages statically lists
+pytest while PATH `python` lacks it,
+when doctor reports the failure,
+then the warning names that venv's activate script, joined to the selected
+root and shell-quoted so it pastes from the caller's directory; a venv
+without pytest gives no activation advice, and an unreadable venv layout is
+reported as not verified, never as a pass.
+```
+
+The virtualenv is read statically and never executed. Choosing the venv
+interpreter for the printed verify command itself is #13801.
+
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 
 ```text
