@@ -64,8 +64,8 @@ jobs:
           PY
 
           git diff --check
-          test "$(git diff --numstat docs/RELEASE.md | awk '{print $1":"$2}')" = "2:1"
-          test "$(git diff --numstat docs/PUBLISHING.md | awk '{print $1":"$2}')" = "2:1"
+          test "$(git diff --numstat "$ORIGINAL_HEAD" -- docs/RELEASE.md | awk '{print $1":"$2}')" = "2:1"
+          test "$(git diff --numstat "$ORIGINAL_HEAD" -- docs/PUBLISHING.md | awk '{print $1":"$2}')" = "2:1"
           git add docs/RELEASE.md docs/PUBLISHING.md
           git commit -m "docs: align release metadata with Cargo 1.100"
           git push \
