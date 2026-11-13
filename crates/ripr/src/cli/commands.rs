@@ -634,6 +634,12 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    // #14548: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    crate::cli::commands_context::ensure_command_root(
+        std::path::Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()

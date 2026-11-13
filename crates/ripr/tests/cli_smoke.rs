@@ -36454,8 +36454,10 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
 
 /// #14222: `reports ci-packet` and `feedback export` used to create a mistyped
 /// `--root` as a new directory tree and exit 0, and `feedback record` shared
-/// the same unvalidated root. A missing path and a file path must both be
-/// refused by the shared root validator, and nothing may be created.
+/// the same unvalidated root. #14548: `policy readiness`, `policy waiver-aging`,
+/// `pr-comments plan`, `reports index` and `reports ci-summary` shared the same
+/// unvalidated root. A missing path and a file path must both be refused by the
+/// shared root validator, and nothing may be created.
 #[test]
 fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let scratch = unique_temp_workspace("mistyped-root");
@@ -36463,7 +36465,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let missing = scratch.join("nope").join("deep");
     let file = scratch.join("a-file");
     std::fs::write(&file, "not a directory\n")?;
-    let commands: [(&str, &[&str]); 3] = [
+    let commands: [(&str, &[&str]); 8] = [
         ("reports ci-packet", &["reports", "ci-packet"]),
         ("feedback export", &["feedback", "export"]),
         (
@@ -36477,6 +36479,11 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                 "useful_actionable",
             ],
         ),
+        ("policy readiness", &["policy", "readiness"]),
+        ("policy waiver-aging", &["policy", "waiver-aging"]),
+        ("pr-comments plan", &["pr-comments", "plan"]),
+        ("reports index", &["reports", "index"]),
+        ("reports ci-summary", &["reports", "ci-summary"]),
     ];
     let mut failures = Vec::new();
     for (name, argv) in commands {

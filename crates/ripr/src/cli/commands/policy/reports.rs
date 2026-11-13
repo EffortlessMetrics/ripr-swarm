@@ -1,3 +1,4 @@
+use crate::cli::commands_context::ensure_command_root;
 use crate::output;
 use std::path::Path;
 
@@ -27,6 +28,9 @@ fn write_policy_report_files(
 
 pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
     let options = parse_policy_readiness_options(args)?;
+    // #14548: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(Path::new(&options.root), "policy readiness")?;
     let input = output::policy_readiness::PolicyReadinessInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -318,6 +322,9 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
     let options = parse_policy_waiver_aging_options(args)?;
+    // #14548: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(Path::new(&options.root), "policy waiver-aging")?;
     let input = output::waiver_aging::WaiverAgingInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
