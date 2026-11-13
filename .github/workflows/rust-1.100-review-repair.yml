@@ -1,0 +1,201 @@
+name: Apply Rust 1.100 review repairs
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-review-repair.yml
+
+permissions: {}
+
+concurrency:
+  group: rust-1.100-review-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: build/rust-1.100-upgrade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt
+
+      - name: Apply bounded review repairs
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: build/rust-1.100-upgrade
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, count: int = 1) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrence(s) of {old!r}, found {actual}')
+              target.write_text(text.replace(old, new), encoding='utf-8')
+
+          # The historical MCP pair builds under each subject checkout's own pin.
+          # Record that same compiler rather than the migration checkout's pin.
+          replace_exact(
+              '.github/workflows/python-wheel-qualification.yml',
+              '          rustc -vV > pair/rustc-version.txt\n'
+              '          cargo -vV > pair/cargo-version.txt\n',
+              '          (cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt\n'
+              '          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n',
+          )
+
+          # Warm A/B measurements must not mix compiler differences into product
+          # timing. Cargo's explicit +toolchain selector wins over each worktree pin.
+          replace_exact(
+              'xtask/src/warm_ab/nightly.rs',
+              'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n',
+              'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n\n'
+              '/// Both A/B subjects are built by the repository-owned compiler.\n'
+              'pub(super) const BUILD_TOOLCHAIN: &str = "+1.100.0";\n',
+          )
+          replace_exact(
+              'xtask/src/warm_ab/nightly.rs',
+              '        &["build", "--release", "--locked", "-p", "ripr"],\n',
+              '        &[BUILD_TOOLCHAIN, "build", "--release", "--locked", "-p", "ripr"],\n',
+          )
+          tests = Path('xtask/src/warm_ab/tests.rs')
+          text = tests.read_text(encoding='utf-8')
+          marker = '#[test]\nfn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {'
+          if text.count(marker) != 1:
+              raise SystemExit('warm-ab tests: pin parser marker drifted')
+          inserted = (
+              '#[test]\n'
+              'fn nightly_subject_builds_use_one_explicit_compiler() {\n'
+              '    assert_eq!(super::nightly::BUILD_TOOLCHAIN, "+1.100.0");\n'
+              '}\n\n'
+          )
+          tests.write_text(text.replace(marker, inserted + marker), encoding='utf-8')
+
+          # A CPX42 runner is eligible only when it satisfies every label used by
+          # the corresponding job, otherwise selection can strand the job queued.
+          old_idle = (
+              '          idle() { printf \'%s\' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '
+              '\'[.[].runners[]? | select(.status == "online" and (.busy | not) and '
+              '([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] '
+              '| length > 0\' >/dev/null; }\n'
+          )
+          new_idle = (
+              '          idle() { printf \'%s\' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '
+              '--arg extra "${3:-}" \'[.[].runners[]? | select(.status == "online" and (.busy | not) and '
+              '([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap) '
+              'and ($extra == "" or index($extra))))] | length > 0\' >/dev/null; }\n'
+          )
+          old_counter = (
+              'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\n'
+          )
+          new_counter = (
+              'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\n'
+          )
+          old_route = '            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n'
+          new_route = '            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n'
+          for path in [
+              '.github/workflows/routed-rust.yml',
+              'fixtures/convergence/windows-subset/merge-ready.yml',
+          ]:
+              replace_exact(path, old_idle, new_idle)
+              replace_exact(path, old_counter, new_counter)
+              replace_exact(path, old_route, new_route)
+
+          workflow_tests = Path('tools/repo-policy/src/workflow_tests.rs')
+          text = workflow_tests.read_text(encoding='utf-8')
+          addition = r'''
+
+#[test]
+fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
+        .map_err(|error| error.to_string())?;
+    let counter = text
+        .lines()
+        .find(|line| line.contains("cpx42_idle_ready="))
+        .ok_or_else(|| "missing CPX42 readiness counter".to_string())?;
+    assert!(counter.contains("rust-16gb"));
+    assert!(counter.contains("rust-medium"));
+    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));
+    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));
+    Ok(())
+}
+
+#[test]
+fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))
+        .map_err(|error| error.to_string())?;
+    assert!(text.contains(
+        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"
+    ));
+    assert!(text.contains(
+        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"
+    ));
+    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));
+    Ok(())
+}
+'''
+          if 'fn routed_rust_cpx42_selection_matches_required_labels()' in text:
+              raise SystemExit('workflow regression tests already exist')
+          workflow_tests.write_text(text + addition, encoding='utf-8')
+
+          # Keep the proof vocabulary aligned with the workflow's actual output.
+          for path in [
+              'docs/swarm-development.md',
+              'docs/SWARM_RUNNER_ROLLOUT_PLAN.md',
+          ]:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              count = text.count('runner_image_unavailable')
+              if count != 2:
+                  raise SystemExit(f'{path}: expected two stale runner reasons, found {count}')
+              target.write_text(
+                  text.replace('runner_image_unavailable', 'runner_capacity_unavailable'),
+                  encoding='utf-8',
+              )
+          PY
+
+          cargo fmt --all
+          git diff --check
+          cargo test --locked -p xtask warm_ab
+          cargo test --locked -p repo-policy --lib routed_rust_cpx42_selection_matches_required_labels
+          cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
+          cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
+          cargo test --locked -p repo-policy --test workflow_action_pins
+
+          test "$(grep -RIl 'runner_image_unavailable' docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md | wc -l)" = 0
+          git status --short
+          git diff --stat
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            .github/workflows/python-wheel-qualification.yml \
+            .github/workflows/routed-rust.yml \
+            fixtures/convergence/windows-subset/merge-ready.yml \
+            xtask/src/warm_ab/nightly.rs \
+            xtask/src/warm_ab/tests.rs \
+            tools/repo-policy/src/workflow_tests.rs \
+            docs/swarm-development.md \
+            docs/SWARM_RUNNER_ROLLOUT_PLAN.md
+          git commit -m "fix(ci): preserve compiler and runner evidence integrity"
+          git push \
+            --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
+            origin "HEAD:refs/heads/$BRANCH"
