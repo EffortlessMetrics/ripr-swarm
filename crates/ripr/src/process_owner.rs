@@ -908,16 +908,16 @@ mod tests {
         };
         for state in ["R", "S", "D", "T", "I"] {
             assert!(
-                !linux_stat_group_is_quiescent(&stat(state, 42, 1), 42)
+                !linux_stat_group_is_quiescent(stat(state, 42, 1), 42)
                     .map_err(|e| e.to_string())?
             );
         }
-        assert!(linux_stat_group_is_quiescent(&stat("Z", 42, 1), 42).map_err(|e| e.to_string())?);
-        assert!(linux_stat_group_is_quiescent(&stat("X", 42, 1), 42).map_err(|e| e.to_string())?);
-        assert!(!linux_stat_group_is_quiescent(&stat("Z", 42, 2), 42).map_err(|e| e.to_string())?);
-        assert!(linux_stat_group_is_quiescent(&stat("R", 43, 1), 42).map_err(|e| e.to_string())?);
-        assert!(linux_stat_group_is_quiescent("malformed", 42).is_err());
-        assert!(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42).is_err());
+        assert!(linux_stat_group_is_quiescent(stat("Z", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(stat("X", 42, 1), 42).map_err(|e| e.to_string())?);
+        assert!(!linux_stat_group_is_quiescent(stat("Z", 42, 2), 42).map_err(|e| e.to_string())?);
+        assert!(linux_stat_group_is_quiescent(stat("R", 43, 1), 42).map_err(|e| e.to_string())?);
+        assert!(matches!(linux_stat_group_is_quiescent("malformed", 42), Err(_)));
+        assert!(matches!(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42), Err(_)));
         Ok(())
     }
 
@@ -1721,7 +1721,7 @@ mod tests {
         let mut owned = successful_group_command()?;
         owned.terminate_tree()?;
         owned.group_cleanup_error = Some("injected unproved group cleanup".to_string());
-        assert!(owned.try_wait().is_err());
+        assert!(matches!(owned.try_wait(), Err(_)));
         assert!(owned.terminate_tree().is_err());
         assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
         Ok(())
