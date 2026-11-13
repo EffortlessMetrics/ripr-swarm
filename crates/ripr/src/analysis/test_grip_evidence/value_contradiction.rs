@@ -1395,7 +1395,11 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_comparison()?;
         while self.eat_symbol("&&") {
             if !bool_value(left)? {
-                self.skip_expression()?;
+                // Only the `&&` right operand is short-circuited. Skipping at
+                // the `||` level would also eat a following `||` chain, so
+                // `a < 0 && b > 100 || c >= t` folded `false` where it is
+                // `true` (#14496 review).
+                self.skip_and()?;
                 left = Value::Bool(false);
             } else {
                 left = Value::Bool(bool_value(self.parse_comparison()?)?);
@@ -1881,10 +1885,18 @@ pub(super) fn seam_branch_reached_by_call(
     let operands = assertion_operands(oracle_text, test.body.as_str());
     let mut calls = Vec::new();
     for operand in &operands {
-        if let Some(arguments) = owner_call_arguments(&operand.text, &owner.name)
+        match owner_call_arguments(&operand.text, &owner.name)
             .or_else(|| wrapped_owner_call_arguments(&operand.text, &owner.name))
         {
-            calls.push(arguments);
+            Some(arguments) => calls.push(arguments),
+            // An operand that names an owner call neither parser resolves
+            // (`owner(50, 100) / 2`) leaves one compared value unknown, so the
+            // other operand's call must not decide the branch (#14496 review).
+            None => {
+                if super::named_call_open_paren_index(operand.text.trim(), &owner.name).is_some() {
+                    return None;
+                }
+            }
         }
     }
     let [call_arguments] = calls.as_slice() else {
@@ -1971,18 +1983,38 @@ pub(super) fn seam_branch_reached_by_call(
 /// makes the call-argument environment stale for the condition fold.
 fn parameter_is_rebound_or_mutated(block: &ast::BlockExpr, names: &[String]) -> bool {
     let targets = |name: &str| names.iter().any(|candidate| candidate == name);
+    // Every identifier a pattern binds, not only a top-level `IdentPat`:
+    // `let (amount,) = (-amount,);` and `for (amount, _) in ..` rebind the
+    // parameter too (#14496 review).
+    let pattern_binds_target = |pattern: Option<ast::Pat>| {
+        pattern.is_some_and(|pattern| {
+            pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter_map(|ident| ident.name())
+                .any(|name| targets(name.text()))
+        })
+    };
     block.syntax().descendants().any(|node| {
-        if let Some(let_stmt) = ast::LetStmt::cast(node.clone())
-            && let Some(ast::Pat::IdentPat(ident)) = let_stmt.pat()
-            && let Some(name) = ident.name()
-        {
-            return targets(name.text());
+        if let Some(let_stmt) = ast::LetStmt::cast(node.clone()) {
+            return pattern_binds_target(let_stmt.pat());
         }
-        if let Some(for_expr) = ast::ForExpr::cast(node.clone())
-            && let Some(ast::Pat::IdentPat(ident)) = for_expr.pat()
-            && let Some(name) = ident.name()
+        if let Some(for_expr) = ast::ForExpr::cast(node.clone()) {
+            return pattern_binds_target(for_expr.pat());
+        }
+        // A mutable borrow hands out an alias the assignment scan cannot see,
+        // so `let slot = &mut amount; *slot = -*slot;` changed the value the
+        // condition reads (#14496 review).
+        if let Some(ref_expr) = ast::RefExpr::cast(node.clone())
+            && ref_expr.mut_token().is_some()
         {
-            return targets(name.text());
+            return ref_expr.expr().is_some_and(|expr| {
+                expr.syntax()
+                    .descendants()
+                    .filter_map(ast::NameRef::cast)
+                    .any(|name| targets(name.text()))
+            });
         }
         if let Some(binary) = ast::BinExpr::cast(node)
             && matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
@@ -2049,7 +2081,35 @@ fn seam_expression_occurrences(block: &ast::BlockExpr, target: &str) -> usize {
         .descendants()
         .filter_map(ast::Expr::cast)
         .filter(|expr| normalized_expression(&expr.syntax().text().to_string()) == target)
+        .filter(is_seam_position)
         .count()
+}
+
+/// Whether `expr` occupies a position a `return_value` seam can be recorded
+/// at: a block's tail expression, or the value of a `return`. A same-text
+/// occurrence inside a condition (`if amount - 10 >= t`) changes a different
+/// value, so counting it made the duplicate guard answer `None` for every
+/// seam whose expression also appeared in its own guard (#14496 review).
+fn is_seam_position(expr: &ast::Expr) -> bool {
+    // A recorded seam expression may include the `return`, so the node itself
+    // is then the `return` statement.
+    if ast::ReturnExpr::cast(expr.syntax().clone()).is_some() {
+        return true;
+    }
+    let Some(parent) = expr.syntax().parent() else {
+        return false;
+    };
+    if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
+        return block
+            .tail_expr()
+            .is_some_and(|tail| tail.syntax() == expr.syntax());
+    }
+    if let Some(return_expr) = ast::ReturnExpr::cast(parent) {
+        return return_expr
+            .expr()
+            .is_some_and(|value| value.syntax() == expr.syntax());
+    }
+    false
 }
 
 /// Whitespace- and trailing-semicolon-insensitive spelling of one expression,

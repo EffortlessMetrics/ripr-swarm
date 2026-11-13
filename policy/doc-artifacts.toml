@@ -1402,7 +1402,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0439-branch-local-return-value-grip.md"
 status = "accepted"
 owner = "product-analysis"
-standalone_reason = "Pins that a branch-local `return_value` seam is credited only by an oracle whose call statically reaches that branch: the compared operands are resolved through their `let` initializers, every enclosing `if` on the path must be taken, a rebound or mutated parameter keeps today's credit, and identical arms stay ambiguous (#14496)."
+standalone_reason = "Pins that a branch-local `return_value` seam keeps strong grip only from an oracle whose call the fold establishes reaches that branch; unresolved shapes keep today's credit, so the gate only removes an established false promotion. The compared operands are resolved through their `let` initializers, every enclosing `if` on the path must be taken, a parameter rebound, destructured, mutably borrowed or assigned in the body keeps today's credit, identical arms stay ambiguous, and a sibling duplicate `return` keeps the call's grip (#14496)."
 
 [[artifact]]
 id = "RIPR-SPEC-0438"

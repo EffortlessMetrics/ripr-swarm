@@ -134,6 +134,16 @@ refuses.
 - Identical arms keep their grip.
 - A sibling duplicate `return` after the `if` keeps the grip of the call
   that reaches it.
+- A parameter rebound by a destructuring `let` keeps the reaching call's grip.
+- A parameter mutably borrowed (`let slot = &mut amount; *slot = -*slot;`)
+  keeps the reaching call's grip.
+- A condition with a short-circuited `&&` followed by `||` folds the `||`
+  comparison, so the reaching call keeps its grip.
+- An operand that holds an owner call neither parser resolves keeps today's
+  credit instead of withholding.
+- A branch-missing `Strong` oracle cannot lift the stage to `Yes` above a
+  reaching `Weak` one, and the stage summary names the branch refusal rather
+  than reporting a kind mismatch.
 - A wrapped call (`block_on(owner(..))`) from the else branch does not
   strongly grip the then-branch return.
 - The committed two-test `fixtures/boundary_gap` control stays strongly
@@ -174,6 +184,19 @@ refuses.
    (`Yes`).
 9. `loop { if amount >= threshold { return amount - 10; } amount += 10; }`
    asserted at `(50, 100) == 90`: `Yes`.
+10. `let (amount,) = (-amount,);` before the `if`, asserted at `(-50, 0) ==
+    40`: `Yes`.
+11. `let slot = &mut amount; *slot = -*slot;` before the `if`, asserted at
+    `(-50, 0) == 40`: `Yes`.
+12. `if amount < 0 && amount > 100 || amount >= discount_threshold { return
+    amount - 10; }` asserted at `(50, 0) == 40`: `Yes` — the `||` comparison
+    after the short-circuited `&&` is still folded.
+13. `assert_eq!(discounted_total(50, 100), discounted_total(110, 100) / 2)`:
+    `Yes` — an operand call neither parser resolves keeps today's credit.
+14. A test that pins the else branch exactly (branch withheld, `Strong`
+    before the gate) beside a `Weak` test that reaches the branch: the
+    discriminate stage is not `Yes`, and its summary reads "kind matches; the
+    call does not reach the seam's branch".
 
 ## Test Mapping
 
@@ -185,6 +208,12 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_for_pattern_rebind_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_identical_arms_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_destructured_rebind_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_mutable_borrow_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_behind_a_short_circuited_or_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_an_unresolved_operand_call_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_summary_names_the_branch_refusal`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_stage_is_not_stronger_than_a_missing_branch`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_record_agrees_with_the_stage`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`

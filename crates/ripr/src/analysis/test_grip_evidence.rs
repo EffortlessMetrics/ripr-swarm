@@ -4548,6 +4548,8 @@ fn discriminate_evidence(
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
+    let mut best_kind_matches = true;
+    let mut best_branch_withheld = false;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
@@ -4572,8 +4574,23 @@ fn discriminate_evidence(
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
-            if strength.rank() > best.rank() {
-                best = strength.clone();
+            // #14496: a branch-withheld return-value oracle keeps at most Weak
+            // credit, exactly as `best_oracle` grades it. Ranking the raw
+            // strength here let a Strong oracle that misses the branch set
+            // `best`, so the stage answered `Yes` while the record published
+            // `Weak` — the disagreement this PR exists to remove.
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let graded = if branch_withheld
+                && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            {
+                OracleStrength::Weak
+            } else {
+                strength.clone()
+            };
+            if graded.rank() > best.rank() {
+                best = graded;
+                best_kind_matches = oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind);
+                best_branch_withheld = branch_withheld;
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
@@ -4603,12 +4620,23 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
-    let mut summary = format!(
-        "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
-        seam.kind().as_str(),
-        best.as_str(),
-        best_matching != OracleStrength::None
-    );
+    // #14496: name the branch refusal as itself. The parenthetical used to
+    // print `best_matching != None` as "kind-match", so a branch-reach refusal
+    // read as a kind mismatch even though the kind did match.
+    let mut summary = if best_branch_withheld && best_kind_matches {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind matches; the call does not reach the seam's branch)",
+            seam.kind().as_str(),
+            best.as_str()
+        )
+    } else {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
+            seam.kind().as_str(),
+            best.as_str(),
+            best_matching != OracleStrength::None
+        )
+    };
     if !contradictions.is_empty() {
         summary.push_str("; ");
         summary.push_str(&contradictions.join("; "));
