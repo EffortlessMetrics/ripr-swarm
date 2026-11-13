@@ -24298,3 +24298,56 @@ fn branch_local_return_value_seam_stage_is_not_stronger_than_a_missing_branch() 
     );
     Ok(())
 }
+
+/// #14496 round 3: a tuple-pattern `let` rebinds the compared local, so the
+/// earlier plain initializer is stale. The gate must not fold the call's
+/// arguments through it; the asserted call takes the then branch and returns 90.
+#[test]
+fn probe_tuple_rebind_stale_initializer() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let body = "#[test]\nfn tuple_rebind_after_the_call_keeps_its_grip() {\n    let got = discounted_total(50, 100);\n    let (got,) = (discounted_total(100, 50),);\n    assert_eq!(got, 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, body)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a tuple rebind must not fold the stale initializer: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 round 3: a `while let` binding that shadows a parameter makes the
+/// call-argument environment stale, so the condition must not fold.
+#[test]
+fn probe_while_let_shadow_stale_environment() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    while let Some(amount) = Some(100) {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let body = "#[test]\nfn while_let_shadow_reaches_the_discount() {\n    assert_eq!(discounted_total(50, 100), 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, body)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a while-let shadow must not fold the parameter: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
