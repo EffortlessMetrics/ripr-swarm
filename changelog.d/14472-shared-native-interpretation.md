@@ -1,2 +1,3 @@
 <!-- section: Internal / CI -->
 - Share pinned Kani property, compiled-inventory and process-observation interpretation, preserve complete positive cover admission, and retain native format controls without promoting registered assurance (#14472).
+- Refuse contradictory, malformed or duplicate ordinary Kani summaries before admitting success, preserving cover-only, unreachable-assertion and expected-panic behavior.

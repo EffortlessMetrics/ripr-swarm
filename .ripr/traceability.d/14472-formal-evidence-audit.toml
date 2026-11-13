@@ -2,6 +2,12 @@
 id = "RIPR-SPEC-0371"
 code = ["xtask/src/formal_evidence.rs", "xtask/src/formal_evidence/native.rs", "xtask/src/formal_evidence/native_inventory.rs", "xtask/src/formal_evidence/native/profile.rs"]
 tests = [
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_failed_summary_cannot_become_verified",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summaries_reject_malformed_duplicate_and_inconsistent_counts",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_counts_unreachable_assertions_but_not_covers",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_preserves_expected_panic_and_counterexample_boundaries",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_does_not_consume_quoted_description_payload",
+  "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_accepts_native_properties_without_locations",
   "xtask/src/formal_evidence/native/tests.rs::aggregate_process_preserves_nonzero_timeout_and_unsettled_capture",
   "xtask/src/formal_evidence/native/tests.rs::native_failed_assertion_is_distinct_from_unwind_expected_panic_and_false_success",
   "xtask/src/formal_evidence/native/tests.rs::measured_multiline_assertion_description_is_retained_without_metadata_borrowing",

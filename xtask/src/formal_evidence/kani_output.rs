@@ -112,12 +112,148 @@ pub fn classify_output(output: &str) -> HarnessStatus {
     if verdicts[0] == "VERIFICATION:- SUCCESSFUL"
         || verdicts[0] == "VERIFICATION:- SUCCESSFUL (encountered one or more panics as expected)"
     {
+        if let Err(reason) =
+            validate_ordinary_summary(output, verdicts[0] != "VERIFICATION:- SUCCESSFUL")
+        {
+            return HarnessStatus::NotEstablished(reason);
+        }
         return classify_cover_evidence(output);
     }
 
     HarnessStatus::NotEstablished(
         "no successful verification verdict in the kani output".to_string(),
     )
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct OrdinarySummary {
+    failed: u64,
+    total: u64,
+    undetermined: u64,
+    unreachable: u64,
+}
+
+fn decimal_count(text: &str) -> Option<u64> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn parse_ordinary_summary(line: &str) -> Option<OrdinarySummary> {
+    let (counts, suffix) = line.trim().strip_prefix("** ")?.split_once(" failed")?;
+    let mut words = counts.split_whitespace();
+    let failed = decimal_count(words.next()?)?;
+    if words.next()? != "of" {
+        return None;
+    }
+    let total = decimal_count(words.next()?)?;
+    if words.next().is_some() || failed > total {
+        return None;
+    }
+    let mut summary = OrdinarySummary {
+        failed,
+        total,
+        ..Default::default()
+    };
+    if !suffix.is_empty() {
+        let details = suffix.strip_prefix(" (")?.strip_suffix(')')?;
+        for detail in details.split(',') {
+            if let Some(count) = detail.strip_suffix(" undetermined") {
+                if summary.undetermined != 0 || summary.unreachable != 0 {
+                    return None;
+                }
+                summary.undetermined = decimal_count(count)?;
+                if summary.undetermined == 0 {
+                    return None;
+                }
+            } else if let Some(count) = detail.strip_suffix(" unreachable") {
+                if summary.unreachable != 0 {
+                    return None;
+                }
+                summary.unreachable = decimal_count(count)?;
+                if summary.unreachable == 0 {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    if summary
+        .failed
+        .checked_add(summary.undetermined)?
+        .checked_add(summary.unreachable)?
+        > total
+    {
+        return None;
+    }
+    Some(summary)
+}
+
+/// Check an observed ordinary summary without requiring it in legacy compact
+/// inputs. Kani 0.68.0 counts non-cover properties, including unreachable ones;
+/// a cover-only harness legitimately has zero ordinary properties.
+fn validate_ordinary_summary(output: &str, expected_panic: bool) -> Result<(), String> {
+    let mut summaries = Vec::new();
+    let mut description_open = false;
+    for raw in output.lines() {
+        let line = raw.trim();
+        // Descriptions are quoted native payload, not summary metadata. The
+        // shared property parser below validates their complete structure.
+        if description_open {
+            description_open = !raw.ends_with('"');
+            continue;
+        }
+        if let Some(description) = line.strip_prefix("- Description:") {
+            let description = description.trim();
+            if !description.starts_with('"') {
+                return Err(
+                    "ordinary property summary follows malformed description metadata".to_string(),
+                );
+            }
+            description_open = description.len() == 1 || !description.ends_with('"');
+            continue;
+        }
+        if line.starts_with("**") && !line.contains(" cover properties satisfied") {
+            summaries.push(line);
+        }
+    }
+    if description_open {
+        return Err(
+            "ordinary property summary follows unterminated description metadata".to_string(),
+        );
+    }
+    let summary = match summaries.as_slice() {
+        [] => return Ok(()),
+        [line] => parse_ordinary_summary(line)
+            .ok_or("ordinary property summary is malformed or inconsistent")?,
+        _ => return Err("multiple ordinary property summaries for one harness".to_string()),
+    };
+    if summary.undetermined != 0 || (summary.failed != 0) != expected_panic {
+        return Err("ordinary property summary contradicts successful verification".to_string());
+    }
+    let properties = native_properties(output)?;
+    if !properties.is_empty() {
+        let mut observed = OrdinarySummary::default();
+        for property in properties {
+            if property.name.rsplit('.').nth(1) == Some("cover") {
+                continue;
+            }
+            observed.total += 1;
+            match property.status.as_str() {
+                "SUCCESS" => {}
+                "FAILURE" => observed.failed += 1,
+                "UNDETERMINED" => observed.undetermined += 1,
+                "UNREACHABLE" => observed.unreachable += 1,
+                _ => return Err("ordinary property has an unsupported status".to_string()),
+            }
+        }
+        if observed != summary {
+            return Err("ordinary property summary disagrees with native properties".to_string());
+        }
+    }
+    Ok(())
 }
 
 struct CoverSummary {
@@ -526,7 +662,14 @@ pub fn native_properties(
             description_open = !raw_line.ends_with('"');
             continue;
         }
-        if let Some(check) = line.strip_prefix("Check ") {
+        if line == "SUMMARY:" || line == "VERIFICATION RESULT:" {
+            // The pinned renderer omits Location when the provider has none.
+            // A closed description followed by the summary ends that property;
+            // it is not an unquoted description continuation.
+            if let Some(property) = current.take() {
+                properties.push(property);
+            }
+        } else if let Some(check) = line.strip_prefix("Check ") {
             if let Some(property) = current.take() {
                 properties.push(property);
             }
@@ -632,6 +775,173 @@ pub fn cover_property_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_failed_summary_cannot_become_verified() {
+        use crate::formal_evidence::{
+            Verdict, native::ObservationStatus, native::Subject, native_inventory,
+        };
+        let subject = Subject {
+            package: "fixture".to_string(),
+            file: "src/lib.rs".to_string(),
+            name: "proof".to_string(),
+            qualified_name: Some("m::proof".to_string()),
+            source_digest: "a".repeat(64),
+        };
+        let output = "Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nRESULTS:\nCheck 1: m::proof.assertion.1\n - Status: SUCCESS\n - Description: \"assertion\"\n - Location: src/lib.rs:1:1 in function m::proof\nCheck 2: m::proof.cover.1\n - Status: SATISFIED\n - Description: \"cover\"\n - Location: src/lib.rs:2:1 in function m::proof\nSUMMARY:\n ** 0 of 1 failed\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+        let (rows, _, _) = native_inventory::observe(std::slice::from_ref(&subject), output);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, ObservationStatus::Verified);
+        assert_eq!(rows[0].native_verdict, Verdict::Verified);
+        let contradiction = output.replace("0 of 1 failed", "1 of 1 failed");
+        let (rows, _, _) = native_inventory::observe(&[subject], &contradiction);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, ObservationStatus::NotEstablished);
+        assert_eq!(rows[0].native_verdict, Verdict::Unknown);
+    }
+
+    fn ordinary_summary_fixture(summary: &str, status: &str, verdict: &str) -> String {
+        format!(
+            "RESULTS:\nCheck 1: m::proof.assertion.1\n - Status: {status}\n - Description: \"assertion\"\n - Location: src/lib.rs:1:1 in function m::proof\nCheck 2: m::proof.cover.1\n - Status: SATISFIED\n - Description: \"cover\"\n - Location: src/lib.rs:2:1 in function m::proof\nSUMMARY:\n{summary}\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- {verdict}\n"
+        )
+    }
+
+    #[test]
+    fn ordinary_summaries_reject_malformed_duplicate_and_inconsistent_counts() {
+        for summary in [
+            " ** 1 of 1 failed",
+            " ** 0 of 2 failed",
+            " ** 0 of 0 failed",
+            " ** 2 of 1 failed",
+            " ** 0 of 1 failed\n ** 0 of 1 failed",
+            " ** 0 of 1 failed\n ** 1 of 1 failed",
+            " ** +0 of 1 failed",
+            " ** -1 of 1 failed",
+            " ** 0 / 1 failed",
+            " ** invalid of 1 failed",
+            " ** 0 of invalid failed",
+            " ** 0 of 18446744073709551616 failed",
+            " ** 0 of 1 failed unexpectedly",
+            " ** 0 of 1 failed (0 unreachable)",
+            " ** 0 of 1 failed (1 unreachable)",
+            " ** 0 of 1 failed (1 undetermined)",
+            " ** 0 of 1 failed (1 undetermined,1 unreachable)",
+            " ** 0 of 2 failed (1 unreachable,1 undetermined)",
+            " ** 0 of 2 failed (1 unreachable,1 unreachable)",
+            " ** 0 of 2 failed (1 undetermined,1 undetermined)",
+            " ** 0 of 18446744073709551615 failed (18446744073709551615 undetermined,1 unreachable)",
+            " ** 0 of 1 failed (unknown)",
+            " ** 0 of 1 passed",
+            " ** 1 of 1 failed cover properties",
+        ] {
+            let output = ordinary_summary_fixture(summary, "SUCCESS", "SUCCESSFUL");
+            let result = classify_output(&output);
+            assert!(
+                matches!(result, HarnessStatus::NotEstablished(_)),
+                "{summary}: {result:?}"
+            );
+            assert!(
+                result.detail().contains("ordinary property"),
+                "{summary}: {result:?}"
+            );
+            assert_eq!(
+                native_verdict(&output),
+                crate::formal_evidence::Verdict::Unknown
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_summary_counts_unreachable_assertions_but_not_covers() {
+        let output = ordinary_summary_fixture(
+            " ** 0 of 1 failed (1 unreachable)",
+            "UNREACHABLE",
+            "SUCCESSFUL",
+        );
+        assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        assert_eq!(
+            native_verdict(&output),
+            crate::formal_evidence::Verdict::Verified
+        );
+        let contradiction = output.replace(" (1 unreachable)", "");
+        assert!(matches!(
+            classify_output(&contradiction),
+            HarnessStatus::NotEstablished(_)
+        ));
+        let cover_only = "Check 1: m::proof.cover.1\n - Status: SATISFIED\n ** 0 of 0 failed\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+        assert_eq!(classify_output(cover_only), HarnessStatus::Verified);
+        assert!(matches!(
+            classify_output(&cover_only.replace("0 of 0 failed", "0 of 1 failed")),
+            HarnessStatus::NotEstablished(_)
+        ));
+    }
+
+    #[test]
+    fn ordinary_summary_preserves_expected_panic_and_counterexample_boundaries() {
+        let output = ordinary_summary_fixture(
+            " ** 1 of 1 failed",
+            "FAILURE",
+            "SUCCESSFUL (encountered one or more panics as expected)",
+        );
+        assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        assert_eq!(
+            native_verdict(&output),
+            crate::formal_evidence::Verdict::Unsupported
+        );
+        let contradiction = output.replace("1 of 1 failed", "0 of 1 failed");
+        assert!(matches!(
+            classify_output(&contradiction),
+            HarnessStatus::NotEstablished(_)
+        ));
+        let failure = ordinary_summary_fixture(" ** 1 of 1 failed", "FAILURE", "FAILED");
+        assert!(matches!(
+            classify_output(&failure),
+            HarnessStatus::Failed(_)
+        ));
+        assert_eq!(
+            native_verdict(&failure),
+            crate::formal_evidence::Verdict::Counterexample
+        );
+    }
+
+    #[test]
+    fn ordinary_summary_does_not_consume_quoted_description_payload() {
+        let output = ordinary_summary_fixture(" ** 0 of 1 failed", "SUCCESS", "SUCCESSFUL")
+            .replace(
+                "\"assertion\"",
+                "\"multiline assertion\n ** 1 of 1 failed\nwith quoted summary payload\"",
+            );
+        assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        assert_eq!(
+            native_verdict(&output),
+            crate::formal_evidence::Verdict::Verified
+        );
+        // Existing compact callers do not all supply an ordinary summary.
+        assert_eq!(
+            classify_output(" ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"),
+            HarnessStatus::Verified
+        );
+    }
+
+    #[test]
+    fn ordinary_summary_accepts_native_properties_without_locations() {
+        let output = ordinary_summary_fixture(" ** 0 of 1 failed", "SUCCESS", "SUCCESSFUL")
+            .lines()
+            .filter(|line| !line.trim().starts_with("- Location:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        assert_eq!(
+            native_verdict(&output),
+            crate::formal_evidence::Verdict::Verified
+        );
+        // An arbitrary unquoted continuation is still outside the format.
+        let malformed = output.replace("SUMMARY:", "unquoted description continuation\nSUMMARY:");
+        assert!(matches!(
+            classify_output(&malformed),
+            HarnessStatus::NotEstablished(_)
+        ));
+    }
 
     #[test]
     fn report_fields_cannot_add_markdown_rows_or_markup() {

@@ -143,6 +143,18 @@ or substitute `SUCCESS`, `FAILURE`, `COVERED` or `UNCOVERED` for the supported
 cover statuses; these contradictions are `NOT-ESTABLISHED`. An ordinary
 assertion's `UNREACHABLE` status does not by itself identify an unsatisfied cover.
 
+An observed ordinary `N of M failed` summary must be unique, well formed and
+consistent with the displayed ordinary properties. A positive failure count
+contradicts ordinary native success and is `NOT-ESTABLISHED`, not a newly inferred
+counterexample. Ordinary totals exclude covers but include unreachable ordinary
+properties; zero ordinary properties is valid for a cover-only harness. The
+optional nonzero undetermined/unreachable counts must agree as well. Quoted
+property descriptions are payload, not summaries. Existing compact inputs
+without an ordinary summary remain supported; this compatibility does not relax
+the positive cover requirement. Explicit expected-panic success retains its
+separate native policy, while the typed ordinary-harness observer continues to
+report expected-panic evidence as unsupported.
+
 The supported format is the pinned Kani 0.68.0 default regular output. Its
 [cover-summary renderer](https://github.com/model-checking/kani/blob/0d2328a93f0e0ff66132d6bfa1a7d884877cf862/kani-driver/src/cbmc_property_renderer.rs)
 prints `N of M cover properties satisfied` only for a positive total, with
