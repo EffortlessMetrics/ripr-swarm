@@ -33,11 +33,14 @@ allowlist and a later native review superseding the comment.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import html
 import json
 import re
 import subprocess
 import sys
+from urllib.parse import quote
 from typing import Any
 
 READINESS_MARKERS = ("SOURCE_REVIEW_READY", "REVIEW_READY")
@@ -384,12 +387,165 @@ def _latest_decisive(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _latest_by_login(decisive)
 
 
+RESOLUTION_HEADER = "RIPR_REVIEW_RESOLUTION_V1\n"
+
+
+def resolution_body(body: str) -> bool:
+    return body.startswith("RIPR_REVIEW_RESOLUTION")
+
+
+def unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate resolution field")
+        value[key] = item
+    return value
+
+
+def source_excerpt(evidence, source_reader) -> bool:
+    """Verify data from the exact-head contents API; never execute candidate data."""
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "path", "blob_sha", "start_line", "end_line", "excerpt_sha256"
+    } or source_reader is None:
+        return False
+    path = evidence["path"]
+    if (not isinstance(path, str) or not 1 <= len(path) <= 512
+            or any(ord(c) < 32 or ord(c) == 127 or c == "\\" for c in path)
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        return False
+    begin, end = evidence["start_line"], evidence["end_line"]
+    if (type(begin) is not int or type(end) is not int
+            or not 1 <= begin <= end or end - begin >= 200
+            or not re.fullmatch(r"[0-9a-f]{40}", str(evidence["blob_sha"]))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(evidence["excerpt_sha256"]))):
+        return False
+    record = source_reader(path)
+    if (not isinstance(record, dict) or record.get("type") != "file"
+            or record.get("path") != path or record.get("encoding") != "base64"
+            or record.get("sha") != evidence["blob_sha"]
+            or type(record.get("size")) is not int or not 0 < record["size"] <= 1048576
+            or not isinstance(record.get("content"), str)
+            or len(record["content"]) > 1500000):
+        return False
+    data = base64.b64decode(record["content"].replace("\n", ""), validate=True)
+    if len(data) != record["size"]:
+        return False
+    blob = hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+    if blob != evidence["blob_sha"]:
+        return False
+    data.decode("utf-8", errors="strict")
+    lines = data.splitlines(keepends=True)
+    return end <= len(lines) and hashlib.sha256(b"".join(lines[begin-1:end])).hexdigest() == evidence["excerpt_sha256"]
+
+
+def review_subject(pull, head):
+    """Return the validated same-repository subject shared by producer/consumer."""
+    if not isinstance(pull, dict) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    number = pull.get("number")
+    href, bref = pull.get("head"), pull.get("base")
+    if (type(number) is not int or number <= 0
+            or not isinstance(href, dict) or not isinstance(bref, dict)):
+        return None
+    head_repo, base_repo = href.get("repo"), bref.get("repo")
+    if not isinstance(head_repo, dict) or not isinstance(base_repo, dict):
+        return None
+    repo = base_repo.get("full_name")
+    if (not isinstance(repo, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
+            or href.get("sha") != head or head_repo.get("full_name") != repo):
+        return None
+    return repo, number
+
+
+def valid_rationale(value):
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= 4000
+
+
+def resolved_objections(reviews, *, pull, head, source_reader):
+    """Validate explicit refutations. Evidence binding is not semantic proof.
+
+    A record clears named COMMENT reviews only; it supplies no source-ready
+    attestation and cannot override native changes requested or open threads.
+    Invalid records refuse; they must be corrected, not cleared by another marker.
+    """
+    records = [r for r in reviews if resolution_body(str(r.get("body") or ""))]
+    malformed = {r.get("id") for r in records}
+    resolved = set()
+    if not records:
+        return resolved, malformed
+    ids = [r.get("id") for r in reviews]
+    if any(type(i) is not int or i <= 0 for i in ids) or len(set(ids)) != len(ids):
+        return resolved, malformed
+    by_id = {r["id"]: r for r in reviews}
+    subject = review_subject(pull, head)
+    if subject is None:
+        return resolved, malformed
+    repo, number = subject
+    # Bound unique data reads per invocation, including invalid records. The live
+    # reader is fixed to repo/H; a declaration can never choose its own fetch ref.
+    cache = {}
+    def read(path):
+        if path not in cache:
+            if len(cache) >= 16 or source_reader is None:
+                raise ValueError("resolution evidence unavailable or exceeds read budget")
+            cache[path] = None  # failed reads also consume the bounded read budget
+            cache[path] = source_reader(path)
+        return cache[path]
+    for review in records:
+        body = str(review.get("body") or "")
+        try:
+            if not body.startswith(RESOLUTION_HEADER) or len(body.encode("utf-8")) > 65536:
+                continue
+            value = json.loads(body[len(RESOLUTION_HEADER):], object_pairs_hook=unique_object)
+            if not isinstance(value, dict) or set(value) != {
+                "schema", "repository", "pull_request", "head_sha", "resolutions"
+            }:
+                continue
+            if (value["schema"] != "ripr.review-resolution.v1" or value["repository"] != repo
+                    or type(value["pull_request"]) is not int or value["pull_request"] != number
+                    or value["head_sha"] != head or not isinstance(value["resolutions"], list)
+                    or not 1 <= len(value["resolutions"]) <= 16):
+                continue
+            cleared = set()
+            for item in value["resolutions"]:
+                if not isinstance(item, dict) or set(item) != {
+                    "review_id", "body_sha256", "disposition", "rationale", "source_evidence"
+                }:
+                    raise ValueError("invalid resolution fields")
+                target_id = item["review_id"]
+                if type(target_id) is not int or target_id in cleared or target_id not in by_id:
+                    raise ValueError("missing or duplicate finding identity")
+                target = by_id[target_id]
+                login = (review.get("user") or {}).get("login")
+                target_body = str(target.get("body") or "")
+                if (not login or login != (target.get("user") or {}).get("login")
+                        or _order(review) <= _order(target)
+                        or resolution_body(target_body) or not comment_body_negative(target_body)
+                        or item["body_sha256"] != hashlib.sha256(target_body.encode("utf-8")).hexdigest()
+                        or item["disposition"] not in ("refuted", "retracted")
+                        or not valid_rationale(item["rationale"])
+                        or not isinstance(item["source_evidence"], list)
+                        or not 1 <= len(item["source_evidence"]) <= 4
+                        or not all(source_excerpt(e, read) for e in item["source_evidence"])):
+                    raise ValueError("unestablished finding resolution")
+                cleared.add(target_id)
+            resolved.update(cleared)
+            malformed.discard(review["id"])
+        except (ValueError, TypeError, KeyError, OSError, subprocess.SubprocessError):
+            continue
+    return resolved, malformed
+
+
 def reviews_allow_source_attestation(
     reviews: list[dict[str, Any]],
     *,
     head: str,
     author: str | None = None,
     pull: dict[str, Any] | None = None,
+    source_reader=None,
+    require_explicit_resolution=False,
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
@@ -407,27 +563,42 @@ def reviews_allow_source_attestation(
         and str(r.get("state") or "") == "APPROVED"
         and _trusted(r)
     ]
-    # Every positive carrier is subject to the same unresolved-negative veto.
-    # Neutral replies cannot erase a statement. A later explicit ready COMMENT
-    # or still-current native approval resolves only that reviewer's objection.
-    # Use the selected native approvals, not historical ones: a dismissed or
-    # superseded approval cannot silently clear a negative COMMENT.
-    stated = [
-        r for r in reviews
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-        and (
-            comment_body_ready(str(r.get("body") or ""))
-            or comment_body_negative(str(r.get("body") or ""))
-        )
-    ]
-    if any(
-        str(r.get("state") or "") == "COMMENTED"
-        and comment_body_negative(str(r.get("body") or ""))
-        for r in _latest_by_login(stated + approvals)
-    ):
-        return False
+    if require_explicit_resolution:
+        # #8157: the account is not a worker identity. Generic later positives do
+        # not dispose a still-present exact-head objection. A named, evidence-bound
+        # refutation is the only supported clearing path for COMMENT objections.
+        current = [r for r in reviews if str(r.get("commit_id") or "") == head
+                   and _trusted(r) and str(r.get("state") or "") == "COMMENTED"]
+        resolved, malformed = resolved_objections(current, pull=pull, head=head,
+                                                  source_reader=source_reader)
+        for r in current:
+            body = str(r.get("body") or "")
+            negative = (r.get("id") in malformed if resolution_body(body)
+                        else comment_body_negative(body))
+            if negative and r.get("id") not in resolved:
+                return False
+    else:
+        # Every positive carrier is subject to the same unresolved-negative veto.
+        # Neutral replies cannot erase a statement. A later explicit ready COMMENT
+        # or still-current native approval resolves only that reviewer's objection.
+        # Use the selected native approvals, not historical ones: a dismissed or
+        # superseded approval cannot silently clear a negative COMMENT.
+        stated = [
+            r for r in reviews
+            if str(r.get("commit_id") or "") == head
+            and _trusted(r)
+            and str(r.get("state") or "") == "COMMENTED"
+            and (
+                comment_body_ready(str(r.get("body") or ""))
+                or comment_body_negative(str(r.get("body") or ""))
+            )
+        ]
+        if any(
+            str(r.get("state") or "") == "COMMENTED"
+            and comment_body_negative(str(r.get("body") or ""))
+            for r in _latest_by_login(stated + approvals)
+        ):
+            return False
     if approvals:
         return True
     commented = [
@@ -490,6 +661,50 @@ def fetch_pull(repository: str, pr_number: str) -> dict[str, Any]:
     if not isinstance(pull, dict):
         raise ValueError("pull request response is not an object")
     return pull
+
+
+def format_resolution(reviews, pull, args, source_reader):
+    """Build an unpublished source-refutation record, never a review approval."""
+    targets = [r for r in reviews if r.get("id") == args.format_resolution]
+    if len(targets) != 1:
+        raise ValueError("target review is missing or ambiguous")
+    if review_subject(pull, args.head) != (args.repository, args.pr):
+        raise ValueError("resolution requires the exact same-repository PR subject")
+    target = targets[0]
+    body = str(target.get("body") or "")
+    if (not _trusted(target) or target.get("state") != "COMMENTED"
+            or target.get("commit_id") != args.head
+            or resolution_body(body) or not comment_body_negative(body)
+            or (pull.get("head") or {}).get("sha") != args.head
+            or not valid_rationale(args.rationale)):
+        raise ValueError("target is not a current trusted COMMENT objection or rationale is absent")
+    path = args.source_path
+    if (not isinstance(path, str) or not 1 <= len(path) <= 512
+            or any(ord(c) < 32 or ord(c) == 127 or c == "\\" for c in path)
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise ValueError("source path must be a canonical repository-relative path")
+    record = source_reader(path)
+    if (not isinstance(record, dict) or not isinstance(record.get("content"), str)
+            or len(record["content"]) > 1500000):
+        raise ValueError("source evidence is unavailable or exceeds the size limit")
+    data = base64.b64decode(record["content"].replace("\n", ""), validate=True)
+    begin, end = args.start_line, args.end_line
+    if begin is None or end is None or not 1 <= begin <= end or end - begin >= 200:
+        raise ValueError("select between 1 and 200 source lines")
+    excerpt = b"".join(data.splitlines(keepends=True)[begin-1:end])
+    evidence = dict(path=path, blob_sha=record["sha"], start_line=begin, end_line=end,
+                    excerpt_sha256=hashlib.sha256(excerpt).hexdigest())
+    if not source_excerpt(evidence, lambda _: record):
+        raise ValueError("source evidence failed exact-blob/excerpt verification")
+    body = RESOLUTION_HEADER + json.dumps(dict(
+        schema="ripr.review-resolution.v1", repository=args.repository,
+        pull_request=args.pr, head_sha=args.head, resolutions=[dict(
+            review_id=target["id"], body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            disposition=args.resolution_disposition, rationale=args.rationale,
+            source_evidence=[evidence])]), indent=2, ensure_ascii=False)
+    if len(body.encode("utf-8")) > 65536:
+        raise ValueError("formatted resolution exceeds the 64 KiB body limit")
+    return body
 
 
 def self_test() -> None:
@@ -855,8 +1070,8 @@ def self_test() -> None:
     ]
     assert not reviews_allow_source_attestation(negative_then_reply, head=head, pull=pull())
     assert not reviews_allow_source_attestation(negative_then_reply, head=head)
-    # The same reviewer replacing it with a ready statement lifts it; a negative one on
-    # an earlier head never applied to this head.
+    # The retained legacy generation allows same-account explicit reapproval.
+    # The stronger caller-selected mode is exercised by test_review_resolution.py.
     assert reviews_allow_source_attestation(
         negative_then_reply
         + [review(id=3, state="COMMENTED", commit_id=head, body="REVIEW_READY", submitted_at=stamp(3))]
@@ -969,9 +1184,18 @@ def main() -> int:
         help="pull request object (JSON) to read the Source review line from, with --check-reviews",
     )
     parser.add_argument("--repository", help="owner/name; read reviews with gh instead of a file")
-    parser.add_argument("--pr", help="Pull request number for --repository")
+    parser.add_argument("--pr", type=int, help="Pull request number for --repository")
     parser.add_argument("--head", help="Exact candidate head SHA")
     parser.add_argument("--author", help="PR author login (reserved for future custody checks)")
+    parser.add_argument("--require-explicit-resolution", action="store_true",
+                        help="trusted-caller mode: generic positives never clear COMMENT objections")
+    parser.add_argument("--format-resolution", type=int, metavar="REVIEW_ID",
+                        help="print an unpublished evidence-bound refutation; does not attest readiness")
+    parser.add_argument("--resolution-disposition", choices=("refuted", "retracted"), default="refuted")
+    parser.add_argument("--rationale")
+    parser.add_argument("--source-path")
+    parser.add_argument("--start-line", type=int)
+    parser.add_argument("--end-line", type=int)
     args = parser.parse_args()
     if args.self_test:
         self_test()
@@ -982,6 +1206,9 @@ def main() -> int:
             "--head plus --check-reviews or --repository/--pr are required unless --self-test is set"
         )
     if live:
+        if (args.pr <= 0 or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repository)
+                or not re.fullmatch(r"[0-9a-f]{40}", args.head)):
+            parser.error("live evidence requires repository, positive PR number and full head SHA")
         try:
             reviews = fetch_reviews(args.repository, args.pr)
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -1014,14 +1241,36 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+    source_reader = None
+    if live and isinstance(pull, dict) and (args.require_explicit_resolution or args.format_resolution is not None):
+        if (pull.get("number") != int(args.pr)
+                or ((pull.get("base") or {}).get("repo") or {}).get("full_name") != args.repository):
+            print("::error::source review attestation refused: PR context mismatch", file=sys.stderr)
+            return 1
+        def source_reader(path):
+            endpoint = f"repos/{args.repository}/contents/{quote(path, safe='/')}?ref={args.head}"
+            out = subprocess.run(["gh", "api", endpoint], check=True, capture_output=True,
+                                 text=True, encoding="utf-8", timeout=30).stdout
+            return json.loads(out)
+    if args.format_resolution is not None:
+        if not live or source_reader is None:
+            parser.error("resolution formatting requires live exact repository/PR/head context")
+        try:
+            print(format_resolution(reviews, pull, args, source_reader))
+            return 0
+        except (ValueError, TypeError, KeyError, OSError, subprocess.SubprocessError) as exc:
+            print(f"::error::resolution formatting refused: {exc}", file=sys.stderr)
+            return 1
     if not reviews_allow_source_attestation(
-        reviews, head=args.head, author=args.author, pull=pull
+        reviews, head=args.head, author=args.author, pull=pull, source_reader=source_reader,
+        require_explicit_resolution=args.require_explicit_resolution
     ):
         print(
             "::error::source review attestation refused: a trusted reviewer "
             "(OWNER/MEMBER/COLLABORATOR) must post a current-head COMMENT whose first line is "
             "exactly SOURCE_REVIEW_READY or REVIEW_READY (or disposition: of either) with no "
-            "contradicting disposition text, or a native APPROVED on the head; narrative "
+            "contradicting disposition text, or a native APPROVED on the head. Outstanding exact-head "
+            "COMMENT objections require evidence-bound resolution in explicit-resolution mode. Narrative "
             "tokens and quoted examples do not count (#8157). When GitHub throttles review "
             "writes, a same-repository pull request may instead carry one description line "
             f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",
