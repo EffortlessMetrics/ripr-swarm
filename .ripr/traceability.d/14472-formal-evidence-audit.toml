@@ -1,7 +1,11 @@
 [[extend]]
 id = "RIPR-SPEC-0371"
-code = ["xtask/src/formal_evidence.rs"]
+code = ["xtask/src/formal_evidence.rs", "xtask/src/formal_evidence/native.rs"]
 tests = [
+  "xtask/src/formal_evidence/native/tests.rs::required_schema_fields_cannot_be_omitted",
+  "xtask/src/formal_evidence/native/tests.rs::native_document_status_and_complete_subject_cannot_borrow_success",
+  "xtask/src/formal_evidence/native/tests.rs::native_document_admission_refuses_false_currentness_and_incomplete_covers",
+  "xtask/src/formal_evidence/native/tests.rs::source_manifest_rejects_duplicate_and_escaping_paths",
   "xtask/src/formal_evidence.rs::tests::observed_assumptions_are_exact_and_empty_set_is_committed",
   "xtask/src/formal_evidence.rs::tests::every_critical_provider_needs_reachability_obligations",
   "xtask/src/formal_evidence.rs::tests::consistent_documents_never_become_native_assurance",
