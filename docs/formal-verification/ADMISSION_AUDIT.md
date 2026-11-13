@@ -12,6 +12,11 @@ existing unpublished `xtask` package. It checks supplied draft `FormalClaimV1`
 and `NativeProofRunV1` documents for contradictions. It is not a second verifier,
 registry, result issuer, native-output parser or CI finalizer.
 
+The document types, decoder, admission predicates and their tests have one owner in
+`xtask/src/formal_evidence.rs`. The binary only handles arguments, rendering and
+exit status. Native capture and registry candidates extend this shared module;
+they must not keep a second private interpretation of these contracts.
+
 The format names and fields follow #14471. The helper adds semantic checks that
 JSON Schema alone cannot express, such as matching a result's claim generation,
 subject and required-cover count against a supplied claim. Its internal schema
@@ -29,9 +34,9 @@ Build and exercise the isolated target with the repository-pinned toolchain:
 
 ```bash
 cargo test --locked -p xtask --no-default-features \
-  --features formal-evidence-audit --bin formal-evidence-audit
+  --features formal-evidence-audit --lib
 cargo clippy --locked -p xtask --no-default-features \
-  --features formal-evidence-audit --bin formal-evidence-audit -- -D warnings
+  --features formal-evidence-audit --lib --bin formal-evidence-audit -- -D warnings
 ```
 
 Validate one or more claim documents, optionally joined to a run:
