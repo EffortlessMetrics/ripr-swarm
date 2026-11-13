@@ -8069,6 +8069,23 @@ pub(in crate::analysis) fn free_function_call_text<'text>(
     text.get(at..)
 }
 
+/// Whether one captured call's raw source text spells the bare free-function
+/// call `name(` — the only spelling an imported alias can bind to. A
+/// module-qualified path (`rival::name(`) names that module's function, not
+/// the alias, even when the module name is lowercase (#14508 review).
+pub(in crate::analysis) fn call_text_spells_bare_free_call(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let masked = mask_comments_and_strings(text);
+    let mut calls = masked
+        .match_indices(name)
+        .map(|(at, _)| at)
+        .filter(|&at| is_free_function_call_at(&masked, at, name))
+        .peekable();
+    calls.peek().is_some() && calls.all(|at| !masked[..at].trim_end().ends_with("::"))
+}
+
 /// The text a captured call named like `owner` contributes as an owner
 /// call: the whole line for an owner that may be reached through a path or
 /// receiver, the free-call suffix for a module-level `fn`, `None` when the

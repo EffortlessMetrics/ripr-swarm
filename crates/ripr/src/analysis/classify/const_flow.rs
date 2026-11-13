@@ -211,6 +211,46 @@ impl ModuleScopes {
             .iter()
             .all(|line| self.0.get(line) == Some(declared))
     }
+
+    /// The chain of inline `mod` names in force at `line`, outermost first,
+    /// ignoring non-module blocks. `None` when the line is outside the
+    /// scanned source (#14508 review).
+    pub(in crate::analysis) fn module_chain_at(&self, line: usize) -> Option<Vec<&str>> {
+        let chain = self.0.get(&line)?;
+        Some(chain.iter().filter_map(|name| name.as_deref()).collect())
+    }
+
+    /// Whether the chain of `mod` items in force at `declaration_line` is at
+    /// least as deep as `use_module_depth` and is a prefix of the chain at
+    /// `call_line`. That is a declaration in the import's module or a nested
+    /// module, and in the call's module or an enclosing one. A declaration in
+    /// an enclosing module than the import is shadowed by the import, so it
+    /// does not withhold the call (#14508 review).
+    pub(in crate::analysis) fn declaration_shadows_import(
+        &self,
+        declaration_line: usize,
+        use_module_depth: usize,
+        call_line: usize,
+    ) -> bool {
+        let (Some(declared), Some(used)) = (self.0.get(&declaration_line), self.0.get(&call_line))
+        else {
+            return false;
+        };
+        let declared = declared
+            .iter()
+            .filter_map(|name| name.as_deref())
+            .collect::<Vec<_>>();
+        let used = used
+            .iter()
+            .filter_map(|name| name.as_deref())
+            .collect::<Vec<_>>();
+        declared.len() >= use_module_depth
+            && declared.len() <= used.len()
+            && declared
+                .iter()
+                .zip(used.iter())
+                .all(|(declared, used)| declared == used)
+    }
 }
 
 /// What evaluating the related tests under the old and new value showed.

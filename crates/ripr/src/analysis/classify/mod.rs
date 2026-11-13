@@ -100,7 +100,7 @@ pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
 pub(in crate::analysis) use const_flow::{
     ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
-    shares_module_scope,
+    module_scopes, shares_module_scope,
 };
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
@@ -208,14 +208,14 @@ pub(in crate::analysis) use refusal_miss::{
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
-    body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    companion_scope_admits, declared_dependent_package_calls_owner,
-    find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
-    inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
-    owner_call_is_direct, owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed,
-    owner_trait_name, package_prefix, requires_inherent_receiver_identity,
-    resolves_method_in_prefix, test_calls_free_function,
+    body_contains_owner_call, call_text_may_call_free_function, call_text_spells_bare_free_call,
+    changes_only_string_literals, companion_scope_admits, declared_dependent_package_calls_owner,
+    find_related_tests_with_candidate_index, free_function_call_text, free_helper_call_resolves,
+    impl_self_type_name, inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor,
+    is_partial_eq_method, manifests_with_unindexed_files, method_call_resolves_to_impl,
+    module_stem, owner_call_is_direct, owner_call_text, owner_dispatch_trait,
+    owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;

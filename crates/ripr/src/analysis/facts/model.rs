@@ -1080,10 +1080,17 @@ impl FunctionSourceRole {
 /// columns: a binding defeats uses at and after its own body-relative line.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LetBindingFact {
-    /// 0-based line of the `let` token relative to the enclosing function's
+    /// 0-based line of the binding token relative to the enclosing function's
     /// body start (the same body-relative line math the lexical shadow
     /// scanners use).
     pub line: usize,
+    /// Last body-relative line where the binding is in scope (inclusive).
+    /// `None` for a `let` binding, which keeps the shipped end-of-function
+    /// over-approximation; `Some(end)` for a closure, `for`, match-arm,
+    /// `if let`/`while let` or nested-fn parameter, whose scope ends at its
+    /// body or arm (#14508 review).
+    #[serde(default)]
+    pub scope_end: Option<usize>,
     /// One whole-word identifier from the binding's pattern (`x` for
     /// `let mut x = ..`, `a` and `b` for `let (a, b) = ..`). Extracted with
     /// the lexical authority's whole-word semantics so the fact-derived and
