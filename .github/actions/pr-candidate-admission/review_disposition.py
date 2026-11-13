@@ -86,11 +86,15 @@ STATE_LINE_PREFIX = r"^(?:[ \t>*\-+_#~`]|\d{1,9}[.)]|\[[ \txX]?\])*"
 # A ``disposition`` field label anywhere on the line (``Final disposition:``, a
 # ``| Disposition | ... |`` table row) and a table cell that holds only a state token
 # also state one.
+# A short field label whose value is a state token (``Status: REPAIR_REQUIRED``,
+# ``VERDICT: CHANGES_REQUESTED``) states it too, whatever the label is called.
 STATE_LINE = re.compile(
     STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
     r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
-    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
+    r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|"
+    r"|" + STATE_LINE_PREFIX + r"[A-Za-z][\w \t/-]{0,40}?[ \t*_`]*:[ \t*_`]*(?:"
+    + STATE_TOKEN.pattern + r")\b",
     re.IGNORECASE,
 )
 # Retraction and blocker phrases for body prose after the marker (and for fenced text,
@@ -739,6 +743,13 @@ def self_test() -> None:
         # Any cell position, including the first and a sole cell.
         ("REVIEW_READY\n| State | Detail |\n| --- | --- |\n| REPAIR_REQUIRED | fix oracle |", False),
         ("REVIEW_READY\n| a | REPAIR_REQUIRED | b |", False),
+        # Any short field label whose value is a state token states it (#14592):
+        # ``VERDICT: REPAIR_REQUIRED`` and ``Status: CHANGES_REQUESTED`` refuse.
+        ("SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d", False),
+        ("REVIEW_READY\nStatus: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d", True),
         ("REVIEW_READY\n| REPAIR_REQUIRED |", False),
         ("REVIEW_READY\n| **`REPAIR_REQUIRED`** | fix oracle |", False),
         ("REVIEW_READY\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
@@ -812,6 +823,7 @@ def self_test() -> None:
         ("| Disposition | REPAIR_REQUIRED |", False),
         ("| REPAIR_REQUIRED | fix oracle |", False),
         ("| REPAIR_REQUIRED |", False),
+        ("VERDICT: CHANGES_REQUESTED 1cc13d3d", False),
         ("The earlier `SOURCE_REVIEW_READY` was for the previous head.", True),
     ):
         assert reviews_allow_source_attestation(
