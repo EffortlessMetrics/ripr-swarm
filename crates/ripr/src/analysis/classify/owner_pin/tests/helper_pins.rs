@@ -779,8 +779,12 @@ fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<
     let syntax = OwnerPinSyntax::default();
     let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
     assert!(
-        refusal.is_some(),
-        "a shadowed predicate assert_eq! is still refused (refusal={refusal:?})"
+        matches!(
+            &refusal,
+            Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)) })
+                if name == "assert_eq" && path.as_path() == Path::new("src/python.rs")
+        ),
+        "a shadowed predicate assert_eq! is still refused as MacroBinding (refusal={refusal:?})"
     );
     assert!(
         !syntax.admits_equality_assertion(&probe, test, &assertion, &index),

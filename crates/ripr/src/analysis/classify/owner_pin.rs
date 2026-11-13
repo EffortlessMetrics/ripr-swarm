@@ -1021,6 +1021,63 @@ impl OwnerPinSyntax {
         self.admits_assertion_family(ProbeFamily::SideEffect, test, assertion, index)
     }
 
+    /// The family-aware refusal for one assertion, including the #14537
+    /// gated-`mod` exception. `None` when the family admits it. Shared by the
+    /// admission and its disclosure note so the note names the refusal that
+    /// actually withheld credit.
+    fn assertion_family_refusal(
+        &self,
+        family: ProbeFamily,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+    ) -> Option<AssertionRefusal> {
+        let refusal = if matches_context {
+            self.context_refusal(test, assertion, index, true)
+        } else {
+            self.refusal(test, assertion, index)
+        };
+        // #14537: a predicate equality whose test file is composed through a
+        // gated `mod` declaration shares the bare `assert!`'s admission for
+        // that build-availability step only. Re-answer the execution context
+        // with only that Module edge skipped: shadowing, an uncalled closure,
+        // a conditional path and a non-standard macro binding still withhold
+        // credit. The RIPR-SPEC-0197 predicate fixtures pin the round-1
+        // deletion (they are inline `#[cfg(test)] mod tests`, so this arm does
+        // not fire for them); the gated-module tests below pin this arm.
+        match refusal {
+            Some(AssertionRefusal::ModuleDeclaration {
+                parent,
+                line,
+                declaration,
+            }) if family == ProbeFamily::Predicate => {
+                // Only an unknown build availability is admitted. A module no
+                // build compiles (`#[cfg(any())]`) keeps the refusal, so a
+                // test that never runs cannot credit the equality (#14537).
+                if module_declaration_build_availability(&index, &parent, &declaration, line)
+                    == Some(false)
+                {
+                    Some(AssertionRefusal::ModuleDeclaration {
+                        parent,
+                        line,
+                        declaration,
+                    })
+                } else {
+                    let skip = self.module_edge_child_for_test(test, index);
+                    self.context_refusal_without_provenance(
+                        test,
+                        assertion,
+                        index,
+                        matches_context,
+                        skip.as_deref(),
+                    )
+                }
+            }
+            refusal => refusal,
+        }
+    }
+
     fn admits_assertion_family(
         &self,
         family: ProbeFamily,
@@ -1078,49 +1135,8 @@ impl OwnerPinSyntax {
         if !gated {
             return true;
         }
-        let refusal = if matches_context {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        };
-        // #14537: a predicate equality whose test file is composed through a
-        // gated `mod` declaration shares the bare `assert!`'s admission for
-        // that build-availability step only. Re-answer the execution context
-        // with only that Module edge skipped: shadowing, an uncalled closure,
-        // a conditional path and a non-standard macro binding still withhold
-        // credit. The RIPR-SPEC-0197 predicate fixtures pin the round-1
-        // deletion (they are inline `#[cfg(test)] mod tests`, so this arm does
-        // not fire for them); the gated-module tests below pin this arm.
-        let refusal = match refusal {
-            Some(AssertionRefusal::ModuleDeclaration {
-                parent,
-                line,
-                declaration,
-            }) if family == ProbeFamily::Predicate => {
-                // Only an unknown build availability is admitted. A module no
-                // build compiles (`#[cfg(any())]`) keeps the refusal, so a
-                // test that never runs cannot credit the equality (#14537).
-                if module_declaration_build_availability(&index, &parent, &declaration, line)
-                    == Some(false)
-                {
-                    Some(AssertionRefusal::ModuleDeclaration {
-                        parent,
-                        line,
-                        declaration,
-                    })
-                } else {
-                    let skip = self.module_edge_child_for_test(test, index);
-                    self.context_refusal_without_provenance(
-                        test,
-                        assertion,
-                        index,
-                        matches_context,
-                        skip.as_deref(),
-                    )
-                }
-            }
-            refusal => refusal,
-        };
+        let refusal =
+            self.assertion_family_refusal(family.clone(), test, assertion, index, matches_context);
         match refusal {
             None => true,
             // Identical spellings on one line, one of which provably runs
@@ -1192,15 +1208,19 @@ impl OwnerPinSyntax {
         if self.admits_equality_assertion(probe, test, assertion, index) {
             return None;
         }
-        let refusal = if matches_return_assertion(&probe.family, assertion) {
-            self.context_refusal(test, assertion, index, true)
-        } else {
-            self.refusal(test, assertion, index)
-        }
-        .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
-        .unwrap_or(AssertionRefusal::Syntax(
-            AssertionContextRefusal::UnidentifiedTest,
-        ));
+        let matches_context = matches_return_assertion(&probe.family, assertion);
+        let refusal = self
+            .assertion_family_refusal(
+                probe.family.clone(),
+                test,
+                assertion,
+                index,
+                matches_context,
+            )
+            .or_else(|| self.matches_expected_panic_refusal(probe, test, assertion, index))
+            .unwrap_or(AssertionRefusal::Syntax(
+                AssertionContextRefusal::UnidentifiedTest,
+            ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
                 let site = if probe.family == ProbeFamily::FieldConstruction {
