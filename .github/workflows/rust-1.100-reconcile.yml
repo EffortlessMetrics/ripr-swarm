@@ -47,18 +47,19 @@ jobs:
 
           path = Path('.rust-1.100-rust-test-shards.yml')
           text = path.read_text(encoding='utf-8')
-          old = '''      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
-        with:
-          toolchain: 1.95.0
-'''
-          new = '''      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: 1.100.0
-'''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f'expected one Rust 1.95 shard toolchain block, found {count}')
-          path.write_text(text.replace(old, new), encoding='utf-8')
+          replacements = [
+              (
+                  'dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95',
+                  'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1',
+              ),
+              ('          toolchain: 1.95.0', '          toolchain: 1.100.0'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one occurrence of {old!r}, found {count}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
           PY
 
           grep -Fq 'toolchain: 1.100.0' .rust-1.100-rust-test-shards.yml
