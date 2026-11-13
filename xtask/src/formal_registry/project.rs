@@ -305,3 +305,16 @@ pub(super) fn render_scoreboard(
     let value = scoreboard(registry);
     render(&value, format, || markdown_scoreboard(&value))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::markdown_text;
+
+    #[test]
+    fn markdown_projection_escapes_table_and_control_syntax() {
+        assert_eq!(
+            markdown_text("owner|`claim`\n<&>"),
+            "owner&#124;&#96;claim&#96; &lt;&amp;&gt;"
+        );
+    }
+}
