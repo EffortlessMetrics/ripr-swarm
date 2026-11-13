@@ -2078,8 +2078,6 @@ fn type_path_call_admits_owner(
         type_reexported_from_owner_dependency(
             context,
             reexport,
-            file_level_imports,
-            stripped_file,
             test_source.as_deref().unwrap_or(test.body.as_ref()),
             self_type,
         )
@@ -2120,8 +2118,6 @@ struct ReexportChain<'a> {
 fn type_reexported_from_owner_dependency(
     context: &DependencyEdgeContext<'_>,
     reexport: &ReexportChain<'_>,
-    file_level_imports: &str,
-    stripped_file: &str,
     test_source: &str,
     self_type: &str,
 ) -> bool {
@@ -2142,9 +2138,15 @@ fn type_reexported_from_owner_dependency(
     ) else {
         return false;
     };
+    // Re-export admission must see every competing binding after a character
+    // literal, not only extern declarations. Keep this masking local to the
+    // re-export fallback so direct dependency-import admission is unchanged.
+    let masked_test_source = mask_comments_and_strings(test_source);
+    let stripped_file = masked_test_source.as_str();
+    let file_level_imports = file_level_use_text(stripped_file);
     // The test's import: `use <library>::m1::..::T;` and nothing else names
     // or binds the library identifier or `T` in the test file.
-    let imports = super::reveal::flattened_use_paths(file_level_imports);
+    let imports = super::reveal::flattened_use_paths(&file_level_imports);
     let named: Vec<&super::reveal::UsePath> = imports
         .iter()
         .filter(|import| {
@@ -14088,6 +14090,22 @@ fn crate_c_score_test() {
         foreign_source: &str,
         admits: bool,
     ) -> Result<(), String> {
+        assert_parsed_reexport_case_with_body(
+            library_source,
+            test_prefix,
+            foreign_source,
+            "std::assert_eq!(LevelFilter::current(), 7);",
+            admits,
+        )
+    }
+
+    fn assert_parsed_reexport_case_with_body(
+        library_source: &str,
+        test_prefix: &str,
+        foreign_source: &str,
+        test_body: &str,
+        admits: bool,
+    ) -> Result<(), String> {
         struct RemoveOnDrop(PathBuf);
         impl Drop for RemoveOnDrop {
             fn drop(&mut self) {
@@ -14129,7 +14147,7 @@ fn crate_c_score_test() {
             "[package]\nname='crate-b'\nversion='0.1.0'\nedition='2024'\n",
         )?;
         let test_source = format!(
-            "use crate_c::filter::LevelFilter;\n{test_prefix}\n#[test]\nfn observes_current() {{ std::assert_eq!(LevelFilter::current(), 7); }}\n"
+            "use crate_c::filter::LevelFilter;\n{test_prefix}\n#[test]\nfn observes_current() {{ {test_body} }}\n"
         );
         let mut files = vec![
             write(
@@ -14211,7 +14229,6 @@ fn crate_c_score_test() {
             .get(&test.file)
             .ok_or("missing test source")?
             .source;
-        let source = strip_comments_and_strings(test_source);
         let dependencies = BTreeSet::from(["crate_a".to_string()]);
         let reexport = ReexportChain {
             owner_manifest: "crates/crate_a/Cargo.toml",
@@ -14221,14 +14238,7 @@ fn crate_c_score_test() {
         // Assert the guard itself before the full relation, so an unrelated
         // refusal cannot make a negative vacuously pass.
         assert_eq!(
-            type_reexported_from_owner_dependency(
-                &context,
-                &reexport,
-                &file_level_use_text(&source),
-                &source,
-                test_source,
-                "LevelFilter",
-            ),
+            type_reexported_from_owner_dependency(&context, &reexport, test_source, "LevelFilter",),
             admits,
             "guard: library={library_source:?}, test={test_prefix:?}"
         );
@@ -14386,6 +14396,49 @@ fn crate_c_score_test() {
                 "pub mod filter { pub use foreign_dep::*; }",
                 false,
             )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reexport_hop_reads_all_test_bindings_after_character_literals() -> Result<(), String> {
+        for quote in ["const QUOTE: char = '\"';", "const QUOTE: char = '\\\"';"] {
+            for (binding, body, admits) in [
+                ("", "std::assert_eq!(LevelFilter::current(), 2);", true),
+                (
+                    "type Unrelated = foreign_dep::filter::LevelFilter;",
+                    "std::assert_eq!(LevelFilter::current(), 2);",
+                    true,
+                ),
+                (
+                    "use foreign_dep as crate_c;",
+                    "std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "mod crate_c { pub use foreign_dep::filter; }",
+                    "std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "",
+                    "type LevelFilter = foreign_dep::filter::LevelFilter; std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+                (
+                    "",
+                    "use foreign_dep::filter::*; std::assert_eq!(LevelFilter::current(), 7);",
+                    false,
+                ),
+            ] {
+                assert_parsed_reexport_case_with_body(
+                    "pub mod filter;",
+                    &format!("{quote}\n{binding}"),
+                    "pub use foreign_dep::*;",
+                    body,
+                    admits,
+                )?;
+            }
         }
         Ok(())
     }

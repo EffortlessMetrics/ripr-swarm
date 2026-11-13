@@ -431,3 +431,5 @@ a build script, so `test_grip_evidence` needs no guard. Fixture:
 
 - unit_test_pass_rate
 - golden_fixture_pass_rate
+
+Re-export admission derives test-side import, binder, glob and root-alias scans from character-aware masking of the original indexed test source. Character literals cannot hide a later competing use, type alias, local module or glob; ordinary quote and unrelated-binding controls retain the owner relation. This masking remains local to the re-export fallback.

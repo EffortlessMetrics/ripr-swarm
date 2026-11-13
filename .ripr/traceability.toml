@@ -13412,6 +13412,7 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_guards_after_character_literals",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_aliased_include_imports",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_test_extern_after_character_literal",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_reads_all_test_bindings_after_character_literals",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_extern_crate_token_spacing_with_complete_index",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_library_extern_crate_token_spacing",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_ignores_quoted_lexical_guard_text",
