@@ -70,8 +70,9 @@ fresh run whose miss-cause clause (#14077) already names the same file's
 other finding lines, that sentence is not repeated.
 The empty-scope and other-file forms claim no findings exist only when the
 run is known complete: a fresh run with an incomplete producer outcome, a
-non-`Ok` language run or unanalyzed preview files says analysis was
-incomplete (#14406), and a replayed `--from` miss says the artifact does not
+partial diff scope, a non-`Ok` language run or unanalyzed preview files says
+analysis was incomplete (#14406), stated once when the miss cause already
+says so, and a replayed `--from` miss says the artifact does not
 record whether its run was complete (#14440), so a finding there may be
 missing.
 

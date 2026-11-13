@@ -272,6 +272,9 @@ pub(in crate::app) enum ScopeCompleteness {
     Complete,
     /// A fresh run that reported an incomplete outcome or unanalyzed files.
     Incomplete,
+    /// [`Self::Incomplete`] whose incompleteness the same message already
+    /// states (the #14077 miss cause), so the hint does not repeat it.
+    IncompleteDisclosed,
     /// A replayed artifact, which records findings but not run completeness.
     Unrecorded,
 }
@@ -321,7 +324,7 @@ pub(in crate::app) fn location_miss_hint(
     };
     let analysis_incomplete = completeness != ScopeCompleteness::Complete;
     let incomplete_note = match completeness {
-        ScopeCompleteness::Complete => "",
+        ScopeCompleteness::Complete | ScopeCompleteness::IncompleteDisclosed => "",
         ScopeCompleteness::Incomplete => {
             " Analysis of this scope was incomplete, so a finding there may be missing."
         }
@@ -824,6 +827,18 @@ mod tests {
             Some(
                 " No finding was reported in \"nofile.rs\"; findings are in src/lib.rs. Analysis of this scope was incomplete, so a finding there may be missing. Selectors are file:line; drop the column."
             )
+        );
+        // An incompleteness the message already stated keeps the
+        // "reported" wording but is not repeated.
+        assert_eq!(
+            location_miss_hint(
+                &findings,
+                std::path::Path::new(""),
+                "nofile.rs:1",
+                ScopeCompleteness::IncompleteDisclosed
+            )
+            .as_deref(),
+            Some(" No finding was reported in \"nofile.rs\"; findings are in src/lib.rs.")
         );
         // #14440: a replayed artifact's completeness is unrecorded, so its
         // empty-scope and other-file wording never reads as an all-clear.
