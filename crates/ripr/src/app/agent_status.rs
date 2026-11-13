@@ -5628,7 +5628,11 @@ mod tests {
         }
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
-        let baseline = workflow.join("baseline-status-honesty.json");
+        static BASELINE_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let baseline = workflow.join(format!(
+            "baseline-status-honesty-{}.json",
+            BASELINE_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         // Evidence-grade before snapshot: legacy receipt reads bind the
         // verify document to its recomputed content commitment.
         let before_snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(

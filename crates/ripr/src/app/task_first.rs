@@ -7063,13 +7063,16 @@ pub(crate) mod tests {
         std::fs::write(&before, "{}").map_err(|error| format!("write before failed: {error}"))?;
         let binding = root.join("binding.json");
         std::fs::write(&binding, "{}").map_err(|error| format!("write binding failed: {error}"))?;
-        let baseline = root.join("baseline.json");
         let policy = edit_cage_policy_from_packet(
             r#"{"seam_id":"seam:plain","allowed_edit_surface":["tests/target.rs"],"forbidden_files":[]}"#,
             "seam:plain",
         )?;
-        write_edit_cage_baseline(&root, &baseline, &policy)?;
+        let baseline_nonce = std::cell::Cell::new(0_u64);
         let begin = |seam_id: &str, bound: bool| {
+            let nonce = baseline_nonce.get();
+            baseline_nonce.set(nonce + 1);
+            let baseline = root.join(format!("baseline-{nonce}.json"));
+            write_edit_cage_baseline(&root, &baseline, &policy)?;
             let mut sources = vec![
                 BeforeArtifactSource {
                     role: "before_snapshot",
@@ -7125,7 +7128,6 @@ pub(crate) mod tests {
         // #13216: a second, genuinely ambiguous capture cannot grant a
         // trust-bound attempt an ordinary continuation or alter its binding.
         crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
-        write_edit_cage_baseline(&root, &baseline, &policy)?;
         let limited_bound = begin("seam:limited-bound", true)?;
         let id = &limited_bound.manifest.repair_attempt_id;
         assert!(matches!(
