@@ -2239,14 +2239,38 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     )?;
     expect_result(&initialize, "initialize")?;
     session.notify("initialized", Some(serde_json::json!({})))?;
-    fire(
+    let refresh_id = fire(
         &mut session,
         "workspace/executeCommand",
         serde_json::json!({"command": "ripr.refresh", "arguments": []}),
     )?;
-    await_publish_for(&mut session, &relative, "the first diagnostics", |count| {
-        count > 0
-    })?;
+    // The refresh response and the first publish arrive in either order; both
+    // must be consumed here, or a late response is read by `shutdown` as a
+    // stray id (#14467 CI).
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let (mut refreshed, mut published) = (false, false);
+    while !(refreshed && published) {
+        let message = session.await_message(deadline, "the refresh and the first diagnostics")?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(refresh_id) {
+            expect_result(&message, "ripr.refresh")?;
+            refreshed = true;
+            continue;
+        }
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+        {
+            let names_expected = message
+                .pointer("/params/uri")
+                .and_then(serde_json::Value::as_str)
+                .and_then(editor_uri_path)
+                .is_some_and(|path| path.ends_with(&relative));
+            let count = message
+                .pointer("/params/diagnostics")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            published |= names_expected && count > 0;
+        }
+    }
 
     // Unchanged bytes: nothing to refresh. Then the real deletion.
     session.notify(

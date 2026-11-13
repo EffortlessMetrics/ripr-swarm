@@ -5674,6 +5674,69 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     Ok(())
 }
 
+/// #14452: `check --format agent` on a refused run prints the agent
+/// format's refusal record on stdout instead of zero bytes an agent could
+/// read as a clean run, keeping config file content off stdout.
+#[test]
+fn check_agent_refusal_emits_the_refused_record() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-agent-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "agent",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-14452",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.first()
+        != Some(
+            &"#ripr agent static-advisory refused run_status=base_unresolvable repair_route=analysis/base-resolution",
+        )
+    {
+        return Err(format!(
+            "agent refusal must open with the typed header:\n{stdout}"
+        ));
+    }
+    if !lines.get(1).is_some_and(|line| {
+        line.starts_with("stop=") && line.contains("definitely-not-a-real-ref-9f2a-14452")
+    }) {
+        return Err(format!(
+            "agent refusal must state the cause on stop=:\n{stdout}"
+        ));
+    }
+    if lines.last()
+        != Some(&"verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable")
+    {
+        return Err(format!(
+            "agent refusal must close with verify=refused:\n{stdout}"
+        ));
+    }
+
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14452]\n")
+        .map_err(|err| err.to_string())?;
+    let output = run_ripr(&["check", "--format", "agent", "--root", &root_arg]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    if !stdout.starts_with("#ripr agent static-advisory refused run_status=config_invalid ") {
+        return Err(format!(
+            "config refusal must name config_invalid:\n{stdout}"
+        ));
+    }
+    if stdout.contains("canary_table_14452") {
+        return Err(format!(
+            "agent stdout must not echo ripr.toml content:\n{stdout}"
+        ));
+    }
+    if !String::from_utf8_lossy(&output.stderr).contains("canary_table_14452") {
+        return Err("the full config diagnostic stays on stderr".to_string());
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #7332: `check --format repo-exposure-json` on a refused run emits the
 /// format's own run_status/limitations envelope with zeroed metrics and an
 /// empty seams array.
@@ -6189,6 +6252,40 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
     {
         return Err(format!(
             "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
+        ));
+    }
+
+    // #14452: the agent record carries the same bounded retry on `next=`,
+    // and stderr keeps the requested echo and retry the human format gets.
+    let agent = run(&["--format", "agent", "--mode", "draft"])?;
+    let agent_stdout = String::from_utf8_lossy(&agent.stdout);
+    let agent_stderr = String::from_utf8_lossy(&agent.stderr);
+    let next = agent_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or_else(|| format!("agent timeout record must carry next=: {agent_stdout}"))?;
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--format agent",
+        "--timeout 2",
+    ] {
+        if !next.contains(needle) {
+            return Err(format!("agent next= must contain `{needle}`: {next}"));
+        }
+    }
+    if agent.status.code() != Some(2)
+        || !agent_stdout
+            .starts_with("#ripr agent static-advisory refused run_status=analysis_timeout ")
+        || !agent_stdout.contains("verify=refused|")
+        || !agent_stderr.contains("bounded retry: ripr check")
+        || !agent_stderr.contains("requested input:")
+    {
+        return Err(format!(
+            "agent timeout record and stderr recovery, exit 2:\n{agent_stdout}\n{agent_stderr}"
         ));
     }
     ignore_remove_dir_all(&root);
@@ -25118,6 +25215,137 @@ fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #14384: a `file:line` miss names where the findings are, on the fresh
+/// route and on both artifact routes, and exits 2. The suggested selector
+/// then resolves, so the hint is a usable next step.
+#[test]
+fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Result<(), String> {
+    let fixture = SampleDiffFixture::new("location-miss-hint")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("last-check.json").display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--write-artifact",
+        &artifact,
+    ]);
+    assert_success(&check);
+    // Fresh route: the #14077 cause already names the file's other finding
+    // lines, so the #14384 hint does not repeat them; for a file with no
+    // finding it adds where this scope's findings are.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("No finding is at line 9999")
+        || stderr.contains("Findings in src/lib.rs are on line")
+    {
+        return Err(format!(
+            "fresh same-file miss must name lines once: {stderr}"
+        ));
+    }
+    // The cause names those lines root-relative even though a fresh run
+    // stores absolute paths.
+    if !(stderr.contains("it is at src/lib.rs:") || stderr.contains("are at src/lib.rs:")) {
+        return Err(format!(
+            "fresh same-file miss must show a root-relative path: {stderr}"
+        ));
+    }
+    // A column is named as such, never read as a misspelled path.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999:5",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("drop the column")
+        || stderr.contains("is not the path of a file")
+    {
+        return Err(format!(
+            "fresh column miss must name the column form: {stderr}"
+        ));
+    }
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/nofile.rs:3",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2) || !stderr.contains("findings are in src/lib.rs") {
+        return Err(format!(
+            "fresh other-file miss must name finding files: {stderr}"
+        ));
+    }
+    let routes: [Vec<&str>; 2] = [
+        vec![
+            "explain",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "src/lib.rs:9999",
+        ],
+        vec![
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "--at",
+            "src/lib.rs:9999",
+        ],
+    ];
+    for args in &routes {
+        let output = run_ripr(args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(2) {
+            return Err(format!("{args:?} must exit 2: {stderr}"));
+        }
+        if !stderr.contains("no finding matched \"src/lib.rs:9999\"")
+            || !stderr.contains("Findings in src/lib.rs are on line")
+        {
+            return Err(format!(
+                "{args:?} miss must name the finding lines: {stderr}"
+            ));
+        }
+        let line: String = stderr
+            .split("select one as src/lib.rs:")
+            .nth(1)
+            .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect())
+            .unwrap_or_default();
+        if line.is_empty() {
+            return Err(format!("{args:?} miss must suggest a selector: {stderr}"));
+        }
+        let suggested = format!("src/lib.rs:{line}");
+        let retry = run_ripr(&["explain", "--root", &root, "--from", &artifact, &suggested]);
+        if !retry.status.success() {
+            return Err(format!(
+                "suggested selector {suggested:?} must resolve: {}",
+                String::from_utf8_lossy(&retry.stderr)
+            ));
+        }
+    }
+    Ok(())
+}
+
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
 
 /// End-to-end three-step flow: `check --write-artifact` once, then
@@ -35850,6 +36078,58 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
         stderr.contains("read /dev/zero failed"),
         "the refusal must name the artifact path:\n{stderr}"
     );
+    Ok(())
+}
+
+/// #14222: `reports ci-packet` and `feedback export` used to create a mistyped
+/// `--root` as a new directory tree and exit 0, and `feedback record` shared
+/// the same unvalidated root. A missing path and a file path must both be
+/// refused by the shared root validator, and nothing may be created.
+#[test]
+fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
+    let scratch = unique_temp_workspace("mistyped-root");
+    std::fs::create_dir_all(&scratch)?;
+    let missing = scratch.join("nope").join("deep");
+    let file = scratch.join("a-file");
+    std::fs::write(&file, "not a directory\n")?;
+    let commands: [(&str, &[&str]); 3] = [
+        ("reports ci-packet", &["reports", "ci-packet"]),
+        ("feedback export", &["feedback", "export"]),
+        (
+            "feedback record",
+            &[
+                "feedback",
+                "record",
+                "--snapshot",
+                "snap",
+                "--reason",
+                "useful_actionable",
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, argv) in commands {
+        for root in [&missing, &file] {
+            let root_text = root.display().to_string();
+            let mut args = argv.to_vec();
+            args.extend(["--root", root_text.as_str()]);
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let expected = format!("{name} root {root_text} is not a directory");
+            if output.status.code() != Some(2) || !stderr.contains(&expected) {
+                failures.push(format!(
+                    "{name} --root {root_text}: exit {:?}, stderr: {stderr}",
+                    output.status.code()
+                ));
+            }
+        }
+    }
+    let created = scratch.join("nope").exists();
+    let file_kept = std::fs::read_to_string(&file)?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(!created, "the mistyped --root was created");
+    assert_eq!(file_kept, "not a directory\n");
     Ok(())
 }
 

@@ -1665,6 +1665,15 @@ mod sections;
 mod shared;
 mod triage;
 
+/// The agent-format refusal record for a refused check run (#14452).
+/// `retry` is a timed run's bounded replay command, when one exists.
+pub(crate) fn render_agent_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    agent::render_refusal(notice, retry)
+}
+
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
 pub(crate) fn render_agent_with_config_and_navigation(
