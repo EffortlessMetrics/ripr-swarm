@@ -1118,3 +1118,6 @@ mod tests {
 
 #[cfg(test)]
 mod inventory_tests;
+
+#[cfg(test)]
+mod retention_boundary_tests;
