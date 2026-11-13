@@ -1,7 +1,7 @@
 [[behavior]]
-id = "RIPR-SPEC-0442"
+id = "RIPR-SPEC-0443"
 name = "Branch-local return-value grip needs a reaching call"
-spec = "docs/specs/RIPR-SPEC-0442-branch-local-return-value-grip.md"
+spec = "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md"
 tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_let_bound_else_branch_call",
@@ -31,7 +31,7 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0442-branch-local-return-value-grip.md",
+  "docs/specs/RIPR-SPEC-0443-branch-local-return-value-grip.md",
 ]
 metrics = [
   "branch_local_return_value_false_promotions",
