@@ -376,6 +376,7 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_adds_binding;
 mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
@@ -2194,8 +2195,17 @@ impl PythonAdapter {
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
-                        !line_is_in_ranges(removed.line, &old_import_ranges)
-                            && !is_python_import_line(&removed.text)
+                        (!line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text))
+                            // #14157: the old import line with more names
+                            // is an added import in place.
+                            || old_source.as_deref().is_some_and(|old_source| {
+                                import_adds_binding::import_line_only_adds_bindings(
+                                    &removed.text,
+                                    &added.text,
+                                    old_source,
+                                )
+                            })
                     })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
@@ -2642,6 +2652,8 @@ pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod import_adds_binding_tests;
 #[cfg(test)]
 mod loop_walk_tests;
 #[cfg(test)]
