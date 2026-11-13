@@ -821,6 +821,15 @@ lines). It declares only, so it seeds a single `static_unknown` probe like a
 one-line `impl ... {` header (#8389) and never `field_construction` for a
 const-generic bound or `call_deletion` for a generic attribute (#10244).
 
+A one-line `type` item (a trait's associated type `type Eq: CmpEq;` or
+`type Item;`, an impl binding `type Eq = __m128i;`, or a type alias
+`pub type Map<K> = BTreeMap<K, u8>;`) declares a type and runs nothing. It
+seeds a single `static_unknown` probe, like an item header, and never
+`field_construction` for its `name: Bound` text (#14429). A line that does not
+end the item with `;`, joins a second statement, or whose type holds an
+expression (a block, a macro, or any array length such as `[T; 4]`) keeps its
+ordinary families.
+
 ## Implementation Mapping
 
 Current and planned modules:
