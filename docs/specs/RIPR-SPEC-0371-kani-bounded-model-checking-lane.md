@@ -111,6 +111,17 @@ Fixed identity strings and other bounds of existing harnesses remain unchanged;
 this does not establish packet validation, full-program behavior, or a full-lane
 qualification.
 
+The command-error exit proof uses the same constructor-domain discipline for
+`CommandError`. Its one declaration generates the empty-message input cases,
+a wildcard-free exhaustive match with duplicate patterns denied, and one cover
+per input variant. The index bound comes from that declaration's length. Literal
+expected exit codes are `Failure` = 2, `Decision` = 3 and `Interrupted` = 130,
+independent of the production method and constants. Covers name the input
+constructors rather than the resulting exit code, so an intentionally wrong
+mapping can still demonstrate all inputs were reached while the assertion fails.
+Ordinary tests use the same guarded cases and literal oracle. This claim excludes
+message handling, command dispatch, process cleanup and receipt delivery.
+
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
@@ -278,6 +289,12 @@ It does not claim:
 - Constant-only harness witnesses:
   `production_cap_is_256_mib`, `exit_code_constants_match_documented_table`,
   `generation_counter_saturates_at_max`, `default_budget_is_valid`.
+- Command-error constructor domain:
+  `crates/ripr/src/cli/exit_proof_domain.rs`:
+  `command_error_domain_is_nonempty_and_unique`,
+  `every_command_error_matches_the_documented_exit_code`;
+  `crates/ripr/src/cli/exit_kani.rs`:
+  `command_error_exit_code_total_and_matches_table`.
 
 ## Implementation Mapping
 

@@ -11,6 +11,8 @@ mod commands_timestamps;
 mod execute;
 #[cfg(kani)]
 mod exit_kani;
+#[cfg(any(test, kani))]
+mod exit_proof_domain;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
