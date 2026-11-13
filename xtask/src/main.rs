@@ -23885,6 +23885,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
     if matches!(
         path,
+        "tools/ci/shard-verifier-artifact.py" | "tools/ci/test_shard_verifier_artifact.py"
+    ) {
+        return Some(
+            "The unprivileged verifier must validate downloaded xtask before executing it, without a Rust toolchain; its stdlib Python command-entry and ZIP controls run through the Rust-owned shard_verifier_artifact integration target (#14580).",
+        );
+    }
+    if matches!(
+        path,
         "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
     ) {
         return Some(
