@@ -577,6 +577,7 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
         OutputFormat::BadgeJson,
         OutputFormat::RepoExposureJson,
         OutputFormat::AgentSeamPacketsJson,
+        OutputFormat::Agent,
     ] {
         let Some(document) = machine_refusal_document(&input, format, &error) else {
             return Err(format!("{format:?} must carry a refusal document"));
@@ -586,6 +587,13 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
             assert_eq!(
                 document,
                 "# ripr run refused: run_status=repository_root_unusable; repair_route=analysis/repository-root; synthetic refusal\n"
+            );
+            continue;
+        }
+        if matches!(format, OutputFormat::Agent) {
+            assert_eq!(
+                document,
+                "#ripr agent static-advisory refused run_status=repository_root_unusable repair_route=analysis/repository-root\nstop=synthetic refusal\nverify=refused|outcome=refused|findings=0|exposed=0|reason=repository_root_unusable\n"
             );
             continue;
         }

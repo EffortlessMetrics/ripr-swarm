@@ -1359,7 +1359,7 @@ pub(crate) fn check_build_output_precondition(
     match output.status.code() {
         Some(0) => Ok(()),
         Some(1) => Err(NotIgnored(format!(
-            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
+            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule). A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
         ))),
         _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
@@ -4694,7 +4694,13 @@ mod tests {
             match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
                 // The hold is its own variant: callers never match wording.
-                Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
+                // Each caller appends its own rerun (#14394), so the detail
+                // names no phase flag the `ripr repair` façade never takes.
+                Err(BuildOutputPreconditionError::NotIgnored(detail)) => {
+                    if detail.contains("--phase") || detail.contains("rerun") {
+                        return Err(format!("detail names a rerun: {detail}"));
+                    }
+                }
                 Err(error) => {
                     return Err(format!(
                         "unexpected precondition failure for {rule:?}: {error:?}"

@@ -110,8 +110,9 @@ not edit source or tests, run verification, or create a durable CLI attempt.
 See the [progressive MCP flow](interop/mcp.md#progressive-flow) for repair
 cards, attempt and receipt inspection, and snapshot-pinned reads.
 
-Refresh explicitly after edits. For saved tracked changes, pass
-`source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
+Refresh explicitly after edits. Like `ripr check`, `ripr_refresh` reads saved
+tracked edits when any exist; pass `source: "committed"` or
+`source: "worktree"` to force one, and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB

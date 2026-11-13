@@ -313,7 +313,8 @@ then the human diagnostic explains how to fix or remove the candidate's file
 and rerun with a new candidate-tree identity; editing only the worktree file
 cannot repair that immutable subject. A config-free candidate uses the built-in
 defaults, not a parent or worktree config. The JSON refusal retains its redacted
-first-line message, config_invalid identity and analysis/config-load route.
+first-line message plus the parser's source-free reason (#14441), its
+config_invalid identity and analysis/config-load route.
 ```
 
 ### Unknown keys name the nearest valid key (#13682)
@@ -325,6 +326,17 @@ when ripr loads the config,
 then the load fails and the error adds `did you mean `mode`?`, built only from
 the parser's fixed key names; an unrelated key gets no suggestion. The
 source-free summary keeps the hint only when it names a known key.
+The source-free summary also keeps the parser's reason without file content
+(#14441): an unknown key becomes `unknown key, expected one of ...` (the key
+is dropped; the expected list is ripr's schema), and a grammar reason such as
+`unclosed table, expected `]`` keeps its fixed wording only when every
+backticked token is punctuation. Wrong-type and value lines never pass.
+The reason is read only from the parser's own layout (an `invalid ripr.toml:
+TOML parse error at line N, column M` header with no quoted text before it,
+then the gutter, `N | ` excerpt and caret lines) and only when the message
+after it is a single line; a key or value whose newline splits the message,
+or a semantic diagnostic whose echoed value imitates that layout, keeps the
+location alone.
 
 Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,
