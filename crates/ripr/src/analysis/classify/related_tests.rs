@@ -4995,22 +4995,30 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// return type. Workspace-wide names would block a file-local unit struct
 /// `name()` when an unrelated module declares the same free fn (#8917).
 fn free_function_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
-    index.functions().iter().any(|function| {
-        function.file == file
-            && function.name == name
-            && function.item.container == FunctionContainer::Free
-    })
+    let functions = index.functions();
+    let unraw = name.strip_prefix("r#").unwrap_or(name);
+    index
+        .call_identity_memos
+        .function_positions_named(index, unraw)
+        .iter()
+        .filter_map(|&position| functions.get(position))
+        .any(|function| {
+            function.file == file
+                && function.name == name
+                && function.item.container == FunctionContainer::Free
+        })
 }
 
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
     // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
     // shadows the file-level helper.
-    let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
-    let name = unraw(name);
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let functions = index.functions();
     let mut declarations = index
-        .functions()
+        .call_identity_memos
+        .function_positions_named(index, name)
         .iter()
-        .filter(|function| unraw(&function.name) == name);
+        .filter_map(|&position| functions.get(position));
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
     };
@@ -15267,6 +15275,27 @@ let r = try_parse_summary(\"x\");",
         let index = crate::analysis::facts::build_index(&root, &files)?;
         assert!(!free_function_declared(&index, &site, "Site"));
         assert!(free_function_declared(&index, &other, "Site"));
+        Ok(())
+    }
+
+    #[test]
+    fn free_function_declared_sees_functions_pushed_after_the_bucket_was_built()
+    -> Result<(), String> {
+        let root = temp_dir("free-fn-bucket-invalidation")?;
+        write_manifest(&root)?;
+        let other = write(&root, "tests/other.rs", "fn Site() {}\n")?;
+        let files = vec![other.clone()];
+        let mut index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(!free_function_declared(&index, &other, "Later"));
+        let mut later = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "Site")
+            .cloned()
+            .ok_or("fixture declares Site")?;
+        later.name = "Later".to_string();
+        index.push_function(later);
+        assert!(free_function_declared(&index, &other, "Later"));
         Ok(())
     }
 
