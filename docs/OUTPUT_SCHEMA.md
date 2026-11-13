@@ -1183,6 +1183,19 @@ verify=complete|outcome=O|findings=N|exposed=N
   `open=` rows still print and still count), and for exposed or
   static-limited preview findings. It never adds to
   `gaps=`: preview and reach-limited evidence stays advisory.
+- `CHANGED EXPRESSION` is the probe expression. For a match-arm probe that
+  carries only the arm head (`Size::Medium =>`), it is followed by the arm's
+  result when the flow model read one from the head's own line
+  (`Size::Medium => 450`, #14420), so the row names the value a test must
+  pin. The read fails closed and leaves the head alone when the result holds
+  a brace (a block, struct literal or closure body), starts or continues on
+  another line (no trailing `,` and the match does not close on the next
+  line), holds an unterminated string, an `Err(..)` or a `/* */` comment,
+  has unbalanced brackets or is longer than 60 characters, when the line
+  holds two arms, or when the line's head is not the probe's head. The
+  match-arm `flow_sinks[].text` in JSON and the human `Changed behavior`,
+  propagation and local-flow evidence lines carry the same result; the probe
+  expression, finding ids and classes do not change.
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)
