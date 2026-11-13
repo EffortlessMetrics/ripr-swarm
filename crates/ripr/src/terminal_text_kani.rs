@@ -12,12 +12,17 @@
 use crate::agent::loop_commands::needs_terminal_escape;
 
 /// Property: for EVERY `char` (no bound), the policy escapes each control
-/// character except `\n` and `\t`, and the bidi overrides/isolates and
+/// character except `\n` and `\t`, and the Arabic letter mark, bidi overrides/isolates and
 /// invisible tag characters. Control characters can never pass through raw.
 #[kani::proof]
 fn needs_terminal_escape_covers_controls_and_bidi() {
     let ch: char = kani::any();
+    kani::cover!(ch == '\u{61c}');
     if ch.is_control() && ch != '\n' && ch != '\t' {
+        assert!(needs_terminal_escape(ch));
+    }
+    // Arabic letter mark is a format character, not an `is_control()` character.
+    if ch == '\u{61c}' {
         assert!(needs_terminal_escape(ch));
     }
     if matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}') {
