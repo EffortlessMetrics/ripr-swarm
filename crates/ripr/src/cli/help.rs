@@ -75,6 +75,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate evaluate",
+    "gate check",
     "impacted-evidence",
     "init",
     "lsp",
@@ -156,7 +158,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
-        "gate" => GATE_HELP,
+        "gate" | "gate check" | "gate evaluate" => GATE_HELP,
         "impacted-evidence" => IMPACTED_EVIDENCE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
@@ -870,6 +872,14 @@ mod tests {
         if !header.contains("this route accepts no other arguments") {
             return Err(
                 "the help --all header should name the machine catalog's strict grammar"
+                    .to_string(),
+            );
+        }
+        // The header describes the route; the refusal remedy for extra
+        // arguments belongs only in the refusal itself.
+        if header.contains("drop the extra arguments") {
+            return Err(
+                "the help --all header should not carry the extra-arguments refusal remedy"
                     .to_string(),
             );
         }
@@ -1627,11 +1637,9 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        (
-            "gate",
-            GATE_PARSER_RS,
-            &["parse_gate_options", "parse_gate_check_plan"],
-        ),
+        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate check", GATE_PARSER_RS, &["parse_gate_check_plan"]),
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
@@ -1804,7 +1812,13 @@ mod tests {
             if !line.starts_with(' ') {
                 continue;
             }
-            if let Some(rest) = trimmed.strip_prefix("--") {
+            // A comma after the opening flag continues a list of flags that
+            // share one description (`--root, --label, --out`); known_flags
+            // reads every member, so this miner does too (#14086).
+            for token in trimmed.split_whitespace() {
+                let Some(rest) = token.strip_prefix("--") else {
+                    break;
+                };
                 let name: String = rest
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -1814,6 +1828,9 @@ mod tests {
                     if !flags.contains(&flag) {
                         flags.push(flag);
                     }
+                }
+                if !token.ends_with(',') {
+                    break;
                 }
             }
         }

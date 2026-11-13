@@ -6576,6 +6576,20 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/python-bulk-discount/project/pricing/core.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason(
+            "examples/typescript-discount-threshold/strengthened/pricing.test.ts"
+        )
+        .is_some()
+    );
+    assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
+    assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
 }
 
 #[test]

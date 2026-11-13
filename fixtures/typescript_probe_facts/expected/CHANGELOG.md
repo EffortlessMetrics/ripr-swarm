@@ -917,7 +917,7 @@ Updated:
 ## Pending — typescript_probe_facts (43)
 
 Reason:
-RIPR-SPEC-0122: Hidden rows sharing file, owner, class and reason merge into one row (#14299)
+RIPR-SPEC-0027: an unrecognised plain value declaration presents family return_value, delta value (#14381)
 
 Command:
 `cargo xtask goldens bless typescript_probe_facts --reason "..."`

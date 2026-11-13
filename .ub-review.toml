@@ -12,8 +12,9 @@ head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
-# The pinned action otherwise posts only on opened/Ready. Keep repaired-head
-# and reopened review publication when Ready no longer starts advisory work.
+# Retain the original publication policy for explicit review consumers.
+# Repository Actions no longer subscribes to development review events;
+# this tool configuration does not request a workflow or authorize a merge.
 post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to

@@ -218,8 +218,16 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = read_calibration_text(&options.before, SnapshotCaptureKind::Outcome)?;
-    let after_json = read_calibration_text(&options.after, SnapshotCaptureKind::Outcome)?;
+    let before_json = read_calibration_text(
+        &options.before,
+        "outcome --before",
+        SnapshotCaptureKind::Outcome,
+    )?;
+    let after_json = read_calibration_text(
+        &options.after,
+        "outcome --after",
+        SnapshotCaptureKind::Outcome,
+    )?;
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
@@ -870,6 +878,7 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let options = parse_calibrate_cargo_mutants_options(rest)?;
     let repo_exposure_json = read_calibration_text(
         &options.repo_exposure_json,
+        "calibrate cargo-mutants --repo-exposure-json",
         SnapshotCaptureKind::RepoExposure,
     )?;
     let mutants_json = read_calibration_mutants_json(&options.mutants_json)?;
@@ -970,21 +979,37 @@ fn read_calibration_mutants_json(path: &Path) -> Result<String, String> {
         }
 
         if outcomes_exists {
-            return read_calibration_text(&outcomes_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &outcomes_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         if mutants_exists {
-            return read_calibration_text(&mutants_path, SnapshotCaptureKind::CargoMutants);
+            return read_calibration_text(
+                &mutants_path,
+                "calibrate cargo-mutants --mutants-json",
+                SnapshotCaptureKind::CargoMutants,
+            );
         }
         return Err(format!(
-            "{} is a directory but contains neither outcomes.json nor mutants.json",
+            "calibrate cargo-mutants --mutants-json {} is a directory but contains neither outcomes.json nor mutants.json; pass the cargo-mutants output directory (usually `mutants.out`) or its `outcomes.json`",
             output::outcome::display_path(path)
         ));
     }
-    read_calibration_text(path, SnapshotCaptureKind::CargoMutants)
+    read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )
 }
 
 fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_calibration_text(path, SnapshotCaptureKind::CargoMutants)?;
+    let text = read_calibration_text(
+        path,
+        "calibrate cargo-mutants --mutants-json",
+        SnapshotCaptureKind::CargoMutants,
+    )?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
             "failed to parse JSON from {}: {err}",
@@ -1022,7 +1047,22 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
     }
 }
 
-fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<String, String> {
+/// `flag` names the command and flag (`outcome --before`) so a directory
+/// passed where a JSON file belongs is named in user words (#14313).
+fn read_calibration_text(
+    path: &Path,
+    flag: &str,
+    kind: SnapshotCaptureKind,
+) -> Result<String, String> {
+    // Checked before reading: a directory read fails with a host-specific
+    // errno (`Is a directory` on Unix, access denied on Windows).
+    if path.is_dir() {
+        return Err(format!(
+            "{flag} {} is a directory, not a JSON file; pass the file itself. {}",
+            output::outcome::display_path(path),
+            snapshot_capture_hint(kind, Path::new("snapshot.json"))
+        ));
+    }
     crate::bounded_input::read_to_string(path).map_err(|err| {
         let displayed = output::outcome::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -3597,6 +3637,94 @@ mod tests {
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove policy dir: {err}"))?;
         Ok(())
     }
+    /// #14311: a supplied gate decision that is missing, not JSON, empty, or
+    /// another artifact never yields a `ready_for_*` recommendation; the run
+    /// writes `config_error` and refuses, naming the input.
+    #[test]
+    fn policy_readiness_refuses_an_unusable_supplied_input() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-readiness-unusable");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let out = dir.join("policy-readiness.json");
+        let out_md = dir.join("policy-readiness.md");
+        let gate = dir.join("gate-decision.json");
+        for body in [
+            None,
+            Some("not json {"),
+            Some("{}"),
+            Some("[]"),
+            Some(r#"{"schema":"ripr.other","x":1}"#),
+        ] {
+            if gate.exists() {
+                std::fs::remove_file(&gate).map_err(|err| format!("remove gate: {err}"))?;
+            }
+            if let Some(body) = body {
+                std::fs::write(&gate, body).map_err(|err| format!("write gate: {err}"))?;
+            }
+            let Err(err) = policy(&args(&[
+                "readiness",
+                "--gate-decision",
+                &gate.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ])) else {
+                return Err(format!("gate decision {body:?} must be refused"));
+            };
+            assert!(
+                err.contains("policy readiness could not use 1 supplied input")
+                    && err.contains("gate-decision.json")
+                    && err.contains("written as `config_error`"),
+                "{body:?}: {err}"
+            );
+            let report: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&out).map_err(|err| format!("read report: {err}"))?,
+            )
+            .map_err(|err| format!("parse report: {err}"))?;
+            assert_eq!(report["status"], "config_error", "{body:?}");
+        }
+        // Another artifact's `kind` is refused on the input it was passed to.
+        let baseline = dir.join("baseline-debt-delta.json");
+        std::fs::write(
+            &baseline,
+            r#"{"schema_version":"0.1","kind":"waiver_aging","delta":{"still_present":0}}"#,
+        )
+        .map_err(|err| format!("write baseline: {err}"))?;
+        let Err(err) = policy(&args(&[
+            "readiness",
+            "--baseline-delta",
+            &baseline.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ])) else {
+            return Err(
+                "a waiver-aging document passed as --baseline-delta must be refused".to_string(),
+            );
+        };
+        assert!(
+            err.contains("its kind is `waiver_aging`, expected `baseline_debt_delta`"),
+            "{err}"
+        );
+        // Discriminating control: a real gate decision still completes.
+        std::fs::write(
+            &gate,
+            r#"{"schema_version":"0.1","status":"advisory","mode":"visible-only","summary":{"blocking":0,"acknowledged":0,"advisory":0,"suppressed":0,"not_applicable":0},"decisions":[]}"#,
+        )
+        .map_err(|err| format!("write gate: {err}"))?;
+        policy(&args(&[
+            "readiness",
+            "--gate-decision",
+            &gate.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))?;
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
     #[test]
     fn policy_operations_command_writes_reports() -> Result<(), String> {
         let dir = unique_command_test_dir("policy-operations");
@@ -5548,7 +5676,7 @@ language = "rust"
     fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
         let missing = PathBuf::from("definitely-missing-snapshot.json");
         let outcome = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::Outcome),
             "missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5563,7 +5691,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::RepoExposure),
             "missing repo-exposure snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5574,7 +5702,7 @@ language = "rust"
         );
 
         let mutants = err_message(
-            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            read_calibration_text(&missing, "test --flag", SnapshotCaptureKind::CargoMutants),
             "missing cargo-mutants snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5601,7 +5729,7 @@ language = "rust"
             "control path must stay a bare shell token"
         );
         let plain_message = err_message(
-            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&plain, "test --flag", SnapshotCaptureKind::Outcome),
             "plain missing outcome snapshot must fail",
         )?;
         assert_missing_snapshot_named_capture(
@@ -5633,7 +5761,7 @@ language = "rust"
         );
 
         let outcome = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::Outcome),
             "spaced missing outcome snapshot must fail",
         )?;
         assert!(
@@ -5652,7 +5780,7 @@ language = "rust"
         );
 
         let repo = err_message(
-            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            read_calibration_text(&spaced, "test --flag", SnapshotCaptureKind::RepoExposure),
             "spaced missing repo-exposure snapshot must fail",
         )?;
         assert!(
@@ -5987,7 +6115,11 @@ language = "rust"
 
         // Every mode the CLI accepts is listed, derived from the help line
         // rather than from a second list kept here.
+        // `gate check` documents `--mode MODE` too, by reference to this
+        // list, so read the evaluate section that spells the modes out.
         let mode_line = gate_help
+            .split_once("Evaluate options:")
+            .map_or(gate_help, |(_, evaluate)| evaluate)
             .lines()
             .find(|line| line.trim_start().starts_with("--mode MODE"))
             .ok_or_else(|| format!("gate help does not document --mode:\n{gate_help}"))?;
@@ -6261,7 +6393,7 @@ language = "rust"
         );
         for command in [
             "--format sarif",
-            "--format repo-sarif",
+            // `--format repo-sarif` runs on manual runs only (#14300).
             "--format repo-badge-json",
             "ripr pilot",
             "ripr agent start",
@@ -6367,7 +6499,7 @@ language = "rust"
         assert!(workflow.contains("gh api --method \"$method\""));
         assert!(!workflow.contains("jq "));
         assert!(workflow.contains(
-            "env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
+            "env.RIPR_UPLOAD_SARIF == 'true' && github.event_name != 'pull_request' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
         ));
         assert!(
             workflow
@@ -6755,8 +6887,11 @@ language = "rust"
         );
         // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
         assert!(packet.contains("--format sarif"));
-        assert!(packet.contains("--format repo-sarif"));
+        // The repo seam SARIF renders on manual runs only (#14300); the
+        // recorded packet is a pull request run.
+        assert!(!packet.contains("--format repo-sarif"));
         assert!(packet_source.contains("let sarif = self.settings.upload_sarif == \"true\";"));
+        assert!(packet_source.contains("sarif && !pr,"));
 
         let artifact_check = packet_source
             .split("fn check_advisory_artifacts")
