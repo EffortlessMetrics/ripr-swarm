@@ -963,6 +963,7 @@ impl ClassifiedProbeEvidence {
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
         let pushed_path = std::cell::OnceCell::<Option<String>>::new();
+        let assigned_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -1360,6 +1361,56 @@ impl ClassifiedProbeEvidence {
                                     path,
                                     test,
                                     assertion,
+                                    context.index,
+                                )
+                            })
+                    })
+                },
+                assigned_field_observed: &|test, assertion| {
+                    // RIPR-SPEC-0228 (#14407): the one exact-read rule for a
+                    // changed field assignment, shared with activation and the
+                    // repository seam. The path depends only on the owner and
+                    // probe, so it is computed once per probe.
+                    context.owner_fn.is_some_and(|owner| {
+                        assigned_path
+                            .get_or_init(|| {
+                                crate::analysis::classify::assigned_field_of(
+                                    owner,
+                                    context.probe,
+                                    context.index,
+                                )
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
+                                // Only a receiver built by a visible struct
+                                // literal, with a literal seed that differs
+                                // from the expected literal and no other
+                                // pre-call use, has a pre-call field value
+                                // reveal can tell apart (#14407).
+                                crate::analysis::classify::owner_writes_field_only_at_probe(
+                                    &owner.body,
+                                    path,
+                                ) && crate::analysis::classify::test_binds_owner_type(
+                                    owner,
+                                    test,
+                                    context.index,
+                                ) && crate::analysis::classify::assigned_field_seed_is_visible(
+                                    test,
+                                    &owner.name,
+                                    path,
+                                    crate::analysis::classify::owner_plain_written_value(
+                                        &owner.body,
+                                        path,
+                                    )
+                                    .as_deref(),
+                                    assertion,
+                                ) && crate::analysis::classify::assigned_field_read_confirms(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    context.index,
+                                ) && !crate::analysis::classify::workspace_has_visible_non_plain_drop(
                                     context.index,
                                 )
                             })

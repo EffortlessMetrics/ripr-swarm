@@ -31,6 +31,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         root: options.root,
         base_ref: options.base_ref,
         upload_sarif: options.upload_sarif == "true",
+        pull_request: settings.pull_request(),
         gate_baseline: !options.gate_baseline.is_empty(),
         gate_configured: gate_configured(&settings.gate_mode),
         comment_mode: options.comment_mode,

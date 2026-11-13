@@ -14,8 +14,8 @@ pub(crate) use load::bare_repository_message;
 #[cfg(test)]
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
-    AnalyzedRevisions, HeadRefState, LoadedDiff, probe_head_ref_state, resolve_analyzed_revisions,
-    working_tree_has_uncommitted_changes,
+    AnalyzedRevisions, HeadRefState, LoadedDiff, default_base_unresolved_message,
+    probe_head_ref_state, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
     another_base_candidate, is_shallow_repository, load_diff_core,

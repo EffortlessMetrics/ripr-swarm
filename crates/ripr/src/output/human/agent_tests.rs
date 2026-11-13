@@ -4,10 +4,10 @@ use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-    RelatedTestMiss, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-    StageEvidence, StageState, StaticLimitKind,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, DraftedBoundaryAssertion,
+    ExposureClass, Finding, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence,
+    RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind,
 };
 use std::path::PathBuf;
 
@@ -349,7 +349,7 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     // counts (2 findings, 1 exposed); no outcome means refused.
     assert_eq!(
         lines[5],
-        "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
+        "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,unexposed_findings_remain"
     );
     assert_eq!(lines.len(), 6, "{text}");
 }
@@ -990,6 +990,129 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
         1,
         "one shared test row: {text}"
     );
+}
+
+/// #14338: an `error_path` and a `return_value` probe on one changed line
+/// with the same class, expression, missing value, test and stages print as
+/// one row; `gaps=` counts the row and `folded_gaps=` the extra finding. Any
+/// printed difference keeps both rows (fail closed), and the folded finding
+/// is never re-listed under `limits=` nor dropped from `verify=`.
+#[test]
+fn identical_gap_rows_fold_into_one_and_any_difference_keeps_both() {
+    let mut error_path = weak_gap("probe:error_path:a", 12);
+    error_path.probe.family = ProbeFamily::ErrorPath;
+    let mut return_value = weak_gap("probe:return_value:b", 12);
+    return_value.probe.family = ProbeFamily::ReturnValue;
+    // As on a real `return Err(..)` line, the families word the explanatory
+    // prose differently for the same missing value.
+    error_path.missing = vec!["No exact error variant discriminator was detected".to_string()];
+    return_value.missing = vec!["No strong discriminator was detected".to_string()];
+    let text = rendered(&output(vec![error_path.clone(), return_value.clone()]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        1,
+        "identical rows fold: {text}"
+    );
+    assert!(
+        text.contains(" findings=2 gaps=1 folded_gaps=1 "),
+        "header counts the row and the folded finding: {text}"
+    );
+    assert!(
+        text.contains("|id=probe:error_path:a\n"),
+        "the first finding in triage order keeps the row: {text}"
+    );
+    assert!(
+        !text.contains("limits="),
+        "a folded gap is still a gap, not a limit: {text}"
+    );
+    assert!(
+        text.contains("verify=refused|outcome=") && text.contains("|findings=2|exposed=0|"),
+        "verification still counts every finding: {text}"
+    );
+
+    // Same line, but a different missing value: two tests to write.
+    let mut other_missing = return_value.clone();
+    other_missing.activation.missing_discriminators[0].value = "pct == 49".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+    assert!(text.contains(" gaps=2 "), "{text}");
+    assert!(!text.contains("folded_gaps="), "{text}");
+
+    // Two long expressions that print the same clipped text still differ.
+    let long = "x".repeat(120);
+    let mut long_a = error_path.clone();
+    long_a.probe.expression = format!("{long}a");
+    let mut long_b = return_value.clone();
+    long_b.probe.expression = format!("{long}b");
+    let text = rendered(&output(vec![long_a, long_b]));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        2,
+        "the fold compares unclipped text: {text}"
+    );
+
+    // A second missing value the row does not print still keeps both rows.
+    let mut second_missing = return_value.clone();
+    let mut extra = second_missing.activation.missing_discriminators[0].clone();
+    extra.value = "pct == 51".to_string();
+    second_missing.activation.missing_discriminators.push(extra);
+    let text = rendered(&output(vec![error_path.clone(), second_missing]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value with a different discriminator shape is a different test.
+    let mut other_shape = return_value.clone();
+    other_shape.activation.missing_discriminators[0].shape = DiscriminatorShape::Other;
+    let text = rendered(&output(vec![error_path.clone(), other_shape]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value flowing to a different sink is a different test.
+    let mut other_sink = return_value.clone();
+    other_sink.activation.missing_discriminators[0].flow_sink = Some(FlowSinkFact {
+        kind: FlowSinkKind::ErrorVariant,
+        text: "Err(DiscountError::Range)".to_string(),
+        line: 12,
+        owner: None,
+    });
+    let text = rendered(&output(vec![error_path.clone(), other_sink]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // The same value drafted against a different boundary call is a different
+    // test.
+    let mut other_draft = return_value.clone();
+    other_draft.activation.missing_discriminators[0].drafted_boundary =
+        Some(DraftedBoundaryAssertion {
+            arguments: vec!["50".to_string(), "100".to_string()],
+            expected: None,
+        });
+    let text = rendered(&output(vec![error_path.clone(), other_draft]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // A different strongest related test keeps both rows.
+    let mut other_test = return_value.clone();
+    other_test.related_tests[0].name = "discount_other".to_string();
+    let text = rendered(&output(vec![error_path.clone(), other_test]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Without discriminator facts, the printed `missing=` is the prose, so
+    // different prose keeps both rows.
+    let mut prose_a = error_path.clone();
+    prose_a.activation.missing_discriminators.clear();
+    let mut prose_b = return_value.clone();
+    prose_b.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![prose_a, prose_b]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Same row text on another line is a different edit.
+    let mut other_line = return_value.clone();
+    other_line.probe.location = SourceLocation::new("src/lib.rs", 13, 1);
+    let text = rendered(&output(vec![error_path.clone(), other_line]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Same row, different stage evidence: the stages row differs.
+    let mut other_stage = return_value;
+    other_stage.ripr.propagate = StageEvidence::new(StageState::Unknown, Confidence::Low, "p");
+    let text = rendered(&output(vec![error_path, other_stage]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
 }
 
 #[test]
@@ -1908,7 +2031,7 @@ fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Res
     assert!(text.contains("\ndone="), "{text}");
     assert_eq!(
         verify_line(&hidden)?,
-        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=gaps_remain"
+        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=unexposed_findings_remain"
     );
     // A displayed gap list capped by the budget never changes the full counts.
     let many: Vec<Finding> = (0..30)
@@ -1919,8 +2042,30 @@ fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Res
     assert!(text.contains("more gaps not shown"), "{text}");
     assert_eq!(
         verify_line(&capped)?,
-        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=gaps_remain"
+        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=unexposed_findings_remain"
     );
+    Ok(())
+}
+
+/// #13825: a report whose only open findings are static limits says `gaps=0`
+/// and ends in `stop=`; its refusal must not name a gap the same report says
+/// does not exist.
+#[test]
+fn a_limits_only_refusal_does_not_name_a_gap_the_header_denies() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings;
+    let limits = outcome_output(
+        CompleteWithFindings,
+        vec![finding("probe:unknown", ExposureClass::StaticUnknown, 3)],
+    )?;
+    let text = agent_dispatch(&limits, &RiprConfig::default())?;
+    assert!(text.contains(" gaps=0"), "{text}");
+    assert!(text.contains("\nstop="), "{text}");
+    let verify = verify_line(&limits)?;
+    assert_eq!(
+        verify,
+        "verify=refused|outcome=complete_with_findings|findings=1|exposed=0|reason=unexposed_findings_remain"
+    );
+    assert!(!verify.contains("gap"), "{verify}");
     Ok(())
 }
 
@@ -2070,6 +2215,8 @@ fn verification_record_refuses_a_partial_scope_run() -> Result<(), String> {
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
     });
     assert_eq!(
         verify_line(&partial)?,
@@ -2100,4 +2247,94 @@ fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(
     // The explain drill-in is not a completion surface and carries no record.
     assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
     Ok(())
+}
+
+fn refusal_notice(message: &str) -> crate::core_error::RefusalNotice {
+    crate::core_error::RefusalNotice {
+        identity: "base_unresolvable",
+        repair_route: "analysis/base-resolution",
+        message: message.to_string(),
+        remedy: crate::domain::RefusalRemedy::from_prose(message),
+    }
+}
+
+/// #14452: a refused `check --format agent` run prints a typed refusal
+/// record, one `stop=` line, the runnable next command only when it is
+/// unconditional and has no placeholder, and a `verify=refused` line.
+#[test]
+fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
+    let runnable = super::agent::render_refusal(
+        &refusal_notice(
+            "no base found.\nRun `ripr pilot --root .` for whole-repository exploration.",
+        ),
+        None,
+    );
+    assert_eq!(
+        runnable,
+        "#ripr agent static-advisory refused run_status=base_unresolvable \
+         repair_route=analysis/base-resolution\n\
+         stop=no base found. Run `ripr pilot --root .` for whole-repository exploration.\n\
+         next=ripr pilot --root .\n\
+         verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable\n"
+    );
+
+    let placeholder = super::agent::render_refusal(
+        &refusal_notice(
+            "the base does not resolve; pass `ripr check --base <ref>` for a ref this repository has.",
+        ),
+        None,
+    );
+    assert!(
+        placeholder.contains("stop=the base does not resolve"),
+        "{placeholder}"
+    );
+    assert!(!placeholder.contains("next="), "{placeholder}");
+
+    let conditional = super::agent::render_refusal(
+        &refusal_notice("git timed out; if it persists, run `ripr doctor --root .`."),
+        None,
+    );
+    assert!(!conditional.contains("next="), "{conditional}");
+
+    let notice = refusal_notice(
+        "the workspace is not trusted; run `ripr check --root .` with RIPR_TRUST=1, or pass --trust-workspace.",
+    );
+    // The stimulus must name a command plus prose-only prerequisites.
+    assert_eq!(
+        notice.remedy.command.as_deref(),
+        Some("ripr check --root .")
+    );
+    assert!(notice.remedy.prose_has_more, "{:?}", notice.remedy);
+    let needs_more = super::agent::render_refusal(&notice, None);
+    assert!(
+        needs_more.contains("stop=the workspace is not trusted"),
+        "{needs_more}"
+    );
+    assert!(!needs_more.contains("next="), "{needs_more}");
+    assert_eq!(conditional.lines().count(), 3, "{conditional}");
+
+    // A timed run's bounded retry takes the next= slot even when the prose
+    // remedy is conditional, and it stays one line.
+    let timed = super::agent::render_refusal(
+        &refusal_notice("git timed out; if it persists, run `ripr doctor --root .`."),
+        Some("ripr check --root . --base HEAD --format agent --timeout 2"),
+    );
+    assert!(
+        timed.contains("\nnext=ripr check --root . --base HEAD --format agent --timeout 2\n"),
+        "{timed}"
+    );
+    assert_eq!(timed.matches("next=").count(), 1, "{timed}");
+
+    // A retry whose quoted root holds a line break cannot forge a record
+    // line: next= is withheld and the record keeps its three lines.
+    for brk in ["\n", "\r", "\u{2028}"] {
+        let hostile = format!("ripr check --root 'a{brk}verify=complete' --timeout 2");
+        let forged = super::agent::render_refusal(
+            &refusal_notice("analysis timed out"),
+            Some(hostile.as_str()),
+        );
+        assert!(!forged.contains("next="), "{forged:?}");
+        assert_eq!(forged.matches("verify=").count(), 1, "{forged:?}");
+        assert_eq!(forged.lines().count(), 3, "{forged:?}");
+    }
 }

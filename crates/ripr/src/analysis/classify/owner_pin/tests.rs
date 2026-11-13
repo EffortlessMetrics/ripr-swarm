@@ -68,6 +68,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 
 mod shared_macro_scan;
 mod shared_target_context;
+mod standard_wrapper_disclosure;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -3623,6 +3624,60 @@ fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refus
     assert!(
         pin.is_some(),
         "async_std must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
+#[test]
+fn an_actix_test_runtime_runs_an_async_test_body_and_other_shapes_refuse() {
+    // #14073: both attributes expand to a `#[test]` that blocks on the body
+    // on an Actix `System`.
+    for attributes in [
+        "#[actix_rt::test]",
+        "#[::actix_rt::test]",
+        "#[actix_rt::test()]",
+        "#[actix_web::test]",
+        "#[::actix_web::test]",
+        "#[actix_web::test]\n#[serial_test::serial]",
+        "extern crate actix_rt;\n#[actix_rt::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // An argument swaps the runtime that runs the body.
+        "#[actix_rt::test(system = \"other::System\")]",
+        // A local `actix_rt` / `actix_web` shadows the crate.
+        "mod actix_rt { pub use other::test; }\n#[actix_rt::test]",
+        "use other as actix_web;\n#[actix_web::test]",
+        // The other crate's attribute elsewhere in the module must hold too.
+        "mod actix_web { pub use other::test; }\n#[actix_web::test]\nstruct Decoy;\n#[actix_rt::test]",
+        "#[actix_rt::test]\n#[ignore]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A sync `fn` under the attribute does not compile, so it refuses.
+    let sync =
+        "use demo::weight;\n#[actix_rt::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert!(weight_admitted(sync).is_empty());
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[actix_web::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "actix must run the async body for an async owner"
     );
     let Some(pin) = pin else {
         return;
@@ -13717,6 +13772,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         // that module's own items, so a module named `core` beside the glob
         // (here, the one holding it) does not shadow the standard root.
         "mod lib {\n    mod core {\n        #[cfg(not(feature = \"std\"))]\n        pub use core::*;\n        #[cfg(feature = \"std\")]\n        pub use std::*;\n    }\n}\n",
+        // #14390: the `no_std` shim (rust-lang/log's `src/lib.rs`) aliases one
+        // standard crate to another, so it brings only standard macros.
+        "#[cfg(all(not(feature = \"std\"), not(test)))]\nextern crate core as std;\n",
+        "extern crate std as core;\n",
+        "extern crate core as alloc;\n",
     ] {
         assert_eq!(refusal_beside(sibling), None, "{sibling}");
     }
@@ -13737,6 +13797,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
         "use ::rayon::prelude::*;\n",
         "mod core {}\nuse core::simd::prelude::*;\n",
         "extern crate other as std;\nuse std::io::prelude::*;\n",
+        "extern crate other as std;\n",
+        // `alloc` has no manifest proof, so its alias stays foreign too.
+        "extern crate alloc as std;\n",
+        // `#[macro_use]` keeps its own refusal whatever the alias names.
+        "#[macro_use]\nextern crate core as std;\n",
         "use other as core;\nuse core::simd::prelude::*;\n",
         // The module-local admission still refuses a binding in the glob's own
         // module, and an item-position macro that may emit one.
@@ -13758,6 +13823,11 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     assert!(rebound(refusal_under(
         &renamed,
         "use core::simd::prelude::*;\n"
+    )));
+    // A manifest-renamed `core` is foreign, so its alias rebinds `std`.
+    assert!(rebound(refusal_under(
+        &renamed,
+        "extern crate core as std;\n"
     )));
     let aliased_elsewhere = index(&[
         (LIB, &format!("extern crate other as std;\n{WEIGHT_LIB}")),

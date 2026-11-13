@@ -20,15 +20,46 @@ fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, Stri
 }
 
 fn check_review_bytes(bytes: &[u8], head: &str, legacy_stdin: bool) -> Result<Output, String> {
+    check_review_bytes_with_pull(bytes, head, legacy_stdin, None)
+}
+
+/// #4984: reviews on stdin plus the pull request object read from `pull`.
+fn check_reviews_with_pull(
+    reviews: &serde_json::Value,
+    pull: &serde_json::Value,
+    head: &str,
+    tag: &str,
+) -> Result<Output, String> {
+    let path = std::env::temp_dir().join(format!(
+        "review-disposition-pull-{}-{tag}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, pull.to_string()).map_err(|e| format!("write pull: {e}"))?;
+    let output =
+        check_review_bytes_with_pull(reviews.to_string().as_bytes(), head, false, Some(&path));
+    let _ = std::fs::remove_file(&path);
+    output
+}
+
+fn check_review_bytes_with_pull(
+    bytes: &[u8],
+    head: &str,
+    legacy_stdin: bool,
+    pull: Option<&std::path::Path>,
+) -> Result<Output, String> {
     let mut command = Command::new("python3");
     command.arg("-I");
     if legacy_stdin {
         // Force the Windows legacy decoding boundary even on UTF-8 hosts.
         command.args(["-c", "import runpy,sys; sys.stdin.reconfigure(encoding='cp1252'); path=sys.argv.pop(1); runpy.run_path(path, run_name='__main__')"]);
     }
-    let mut child = command
+    command
         .arg(script()?)
-        .args(["--check-reviews", "-", "--head", head])
+        .args(["--check-reviews", "-", "--head", head]);
+    if let Some(pull) = pull {
+        child_args_pull(&mut command, pull);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -65,6 +96,10 @@ fn utf8_review_input_ignores_legacy_stdin_encoding() -> Result<(), String> {
         false,
         "malformed UTF-8 review",
     )
+}
+
+fn child_args_pull(command: &mut Command, pull: &std::path::Path) {
+    command.arg("--check-pull").arg(pull);
 }
 
 /// Admit means exit 0; refuse means exit 1 with the refusal line and no crash.
@@ -266,6 +301,240 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     Ok(())
 }
 
+/// #14355: a negated change/repair phrase is resolved work, not a blocker.
+/// The witness is the #14117 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-11T11:00:28Z";
+    let cases: [(&str, bool); 67] = [
+        // The strip-exercising control: this admits only because the strip ran.
+        ("REVIEW_READY\nResolved with no code change needed.", true),
+        (
+            "REVIEW_READY\nThree Devin threads resolved, no code changes needed.",
+            true,
+        ),
+        // Control that does not exercise the strip: no "needed"/"required".
+        ("REVIEW_READY\nResolved without a code change.", true),
+        // A comma resets the clause, so a benign cue earlier in the sentence
+        // does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nGemini isn't available, no changes needed.",
+            true,
+        ),
+        // A hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            true,
+        ),
+        ("REVIEW_READY\nCode change needed.", false),
+        ("REVIEW_READY\nA change is needed.", false),
+        ("REVIEW_READY\nChanges required.", false),
+        ("REVIEW_READY\nRepairs required.", false),
+        (
+            "REVIEW_READY\nNo code change needed, but repairs required.",
+            false,
+        ),
+        // The real #14117 line 6: mid-line phrase followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR \
+             conversation and resolved with no code change needed. Gemini had no findings. \
+             CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a \
+             review; the owning session's inline source review stands in for them.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. All threads resolved.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini had no findings.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is red.",
+            false,
+        ),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        (
+            "REVIEW_READY\nNo code change needed. Repairs required.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build fails.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is broken.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is failing.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. A fix is needed.",
+            false,
+        ),
+        // A refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", false),
+        ("REVIEW_READY\nNo changes are needed; that is false.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That is not true.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", false),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", false),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", false),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", false),
+        ("REVIEW_READY\nNo code change needed. Not so.", false),
+        ("REVIEW_READY\nNo changes are needed. Not true.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That isn't true.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This isn't correct.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The above is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The statement is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The finding is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The report is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This statement is untrue.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. All green.", true),
+        // Ordinary prose with a cue word is not a refutation.
+        (
+            "REVIEW_READY\nNo changes are needed. Nothing is wrong.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. No incorrect claims.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            true,
+        ),
+        // An unlisted refutation ahead of the phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt's not accurate that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt's not correct that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI disagree that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI don't believe no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nI doubt no changes are needed.", false),
+        // Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini isn't available.",
+            true,
+        ),
+        // A refuted phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt is not true that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nIt is false that no change is needed.", false),
+        ("REVIEW_READY\nNo changes are needed is false.", false),
+        ("REVIEW_READY\nNo code change needed is not correct.", false),
+        (
+            "REVIEW_READY\nNo changes are needed -- the build is red.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nThere is no truth to the claim that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is a lie that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is wrong to say that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNobody could say that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nno findings, code change needed", false),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]
@@ -457,7 +726,283 @@ fn live_read_merges_pages_and_fails_closed_on_gh_error() -> Result<(), String> {
     // An API error after a valid page must not admit.
     let failing = format!("#!/bin/sh\nprintf '%s\\n' '{page2}'\nexit 1\n");
     let output = run(failing);
-    let result = output.and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"));
+    let result = output
+        .and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"))
+        .and_then(|()| {
+            // #4984: with no review at all, the live read of the pull request
+            // description supplies the exact-head attestation.
+            let pull = pull_object(
+                "MEMBER",
+                "o/r",
+                &head,
+                &format!("Source review: REVIEW_READY {head}"),
+            );
+            let described = format!(
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) printf '%s\\n' '{pull}' ;; esac\n"
+            );
+            expect_outcome(&run(described)?, true, "live description attestation")
+        })
+        .and_then(|()| {
+            // A failed description read leaves only the (empty) reviews: refuse.
+            let unreadable =
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) exit 1 ;; esac\n"
+                    .to_string();
+            expect_outcome(&run(unreadable)?, false, "description read failure")
+        });
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+fn pull_object(
+    association: &str,
+    head_repo: &str,
+    head_sha: &str,
+    body: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "author_association": association,
+        "head": {"sha": head_sha, "repo": {"full_name": head_repo}},
+        "base": {"repo": {"full_name": "o/r"}},
+        "body": body,
+    })
+}
+
+/// #4984: the pull request description may carry the exact-head attestation when
+/// review writes are throttled. It is a carrier only; every review refusal stands.
+#[test]
+fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let line = format!("Source review: REVIEW_READY {head}");
+    let none = serde_json::json!([]);
+    let negative = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED"
+    )]);
+    let changes = serde_json::json!([review(
+        "r",
+        "CHANGES_REQUESTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        ""
+    )]);
+    let empty_reply =
+        serde_json::json!([review("r", "COMMENTED", &head, "2026-10-15T01:00:01Z", "")]);
+    let stale_ready = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "REVIEW_READY"
+    )]);
+    let embedded = format!("## Summary\n\n- one change\n\n{line}\n\n## Proof\n");
+    let abbreviated = format!("Source review: REVIEW_READY {}", &head[..12]);
+    let other_head = format!("Source review: REVIEW_READY {other}");
+    let fenced = format!("```\n{line}\n```");
+    let commented = format!("<!-- {line} -->");
+    let contradicted = format!("{line}\nSource review: REVIEW_INCOMPLETE");
+    let hedged = format!("{line} pending CI");
+    let quoted = format!("> {line}");
+    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 17] = [
+        (
+            "exact line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "line inside a filled template",
+            &none,
+            pull_object("OWNER", "o/r", &head, &embedded),
+            true,
+        ),
+        (
+            "empty reply review does not hide it",
+            &empty_reply,
+            pull_object("COLLABORATOR", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "unfilled template",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "Source review:"),
+            false,
+        ),
+        (
+            "no line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "## Summary"),
+            false,
+        ),
+        (
+            "abbreviated sha",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &abbreviated),
+            false,
+        ),
+        (
+            "line names another head",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &other_head),
+            false,
+        ),
+        (
+            "live head moved",
+            &none,
+            pull_object("MEMBER", "o/r", &other, &line),
+            false,
+        ),
+        (
+            "fenced example",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &fenced),
+            false,
+        ),
+        (
+            "html comment",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &commented),
+            false,
+        ),
+        (
+            "contradicting second line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &contradicted),
+            false,
+        ),
+        (
+            "hedged value",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &hedged),
+            false,
+        ),
+        (
+            "quoted line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &quoted),
+            false,
+        ),
+        (
+            "untrusted author",
+            &none,
+            pull_object("CONTRIBUTOR", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "fork head",
+            &none,
+            pull_object("MEMBER", "fork/r", &head, &line),
+            false,
+        ),
+        (
+            "trusted negative review still refuses",
+            &negative,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "changes requested still refuses",
+            &changes,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+    ];
+    for (index, (name, reviews, pull, admit)) in cases.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, pull, &head, &index.to_string())?,
+            *admit,
+            name,
+        )?;
+    }
+    // An older-head ready review plus an unfilled description admits nothing.
+    expect_outcome(
+        &check_reviews_with_pull(
+            &stale_ready,
+            &pull_object("MEMBER", "o/r", &head, "Source review:"),
+            &head,
+            "stale",
+        )?,
+        false,
+        "older-head review with unfilled description",
+    )?;
+    // Without the pull object the same reviews keep the review-only outcome.
+    expect_outcome(
+        &check_reviews(&none, &head)?,
+        false,
+        "no reviews and no pull object",
+    )?;
+    // A pull object that is not an object refuses instead of crashing.
+    expect_outcome(
+        &check_reviews_with_pull(&none, &serde_json::json!([1]), &head, "malformed")?,
+        false,
+        "malformed pull object",
+    )?;
+    // A competing state field in the description makes it ambiguous, quoted, listed,
+    // emphasised or fenced; the template's prose use of the word stays inert.
+    let competing = [
+        (format!("{line}\ndisposition: REPAIR_REQUIRED"), false),
+        (
+            format!("{line}\n- **Disposition:** REVIEW_INCOMPLETE"),
+            false,
+        ),
+        (format!("{line}\n> disposition: REVIEW_READY"), false),
+        (
+            format!("{line}\n```\ndisposition: REPAIR_REQUIRED\n```"),
+            false,
+        ),
+        (
+            format!("{line}\nLosing candidate disposition (when decided): none"),
+            true,
+        ),
+    ];
+    for (index, (body, admit)) in competing.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("MEMBER", "o/r", &head, body),
+                &head,
+                &format!("competing-{index}"),
+            )?,
+            *admit,
+            body,
+        )?;
+    }
+    // A reviewer's negative statement outlives their own later neutral reply (a thread
+    // reply creates one); only their own later ready statement replaces it, and a
+    // negative statement on an earlier head never applied to this head.
+    let at = |second: u8| format!("2026-10-15T01:00:0{second}Z");
+    let negative_then_reply = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let negative_then_ready = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+        review("r", "COMMENTED", &head, &at(3), "REVIEW_READY"),
+        review("r", "COMMENTED", &head, &at(4), ""),
+    ]);
+    let earlier_head_negative = serde_json::json!([
+        review("r", "COMMENTED", &other, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let ready_pull = pull_object("MEMBER", "o/r", &head, &line);
+    for (name, reviews, admit) in [
+        ("negative then neutral reply", &negative_then_reply, false),
+        ("negative, reply, ready, reply", &negative_then_ready, true),
+        ("negative on an earlier head", &earlier_head_negative, true),
+    ] {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, &ready_pull, &head, name)?,
+            admit,
+            name,
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&negative_then_reply, &head)?,
+        false,
+        "negative then neutral reply without a description line",
+    )
 }
