@@ -308,7 +308,7 @@ fn every_leaf_usage_flag_is_in_the_leaf_row() -> Result<(), String> {
                 continue;
             }
             assert!(
-                names.iter().any(|name| *name == flag),
+                names.contains(&flag),
                 "{path}: usage names {flag} but the catalog row lists {names:?}"
             );
             checked += 1;
