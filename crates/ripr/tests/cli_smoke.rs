@@ -6737,6 +6737,27 @@ fn pr_review_front_panel_names_unusable_inputs_on_stderr() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// #14553: the claim is "keeps the read cause", so the text after the prefix
+/// must still name the failing read operation, not just be non-empty and not
+/// merely the path the renderer appends.
+fn assert_unreadable_cause(stderr: &str) {
+    let found = stderr
+        .lines()
+        .find_map(|line| line.split_once("Assistant proof artifact is unreadable: "));
+    assert!(
+        found.is_some(),
+        "no unreadable assistant-proof warning line: {stderr}"
+    );
+    if let Some((_, cause)) = found {
+        let cause = cause.trim();
+        assert!(!cause.is_empty(), "empty read cause: {stderr}");
+        assert!(
+            cause.contains("read assistant proof "),
+            "read cause lost its operation: {stderr}"
+        );
+    }
+}
+
 /// #14553: an explicit `--assistant-proof` that exists but cannot be read (a
 /// directory here) keeps its read cause instead of the generic "missing"
 /// sentence, and the cause carries no raw `os error` text.
@@ -6768,6 +6789,7 @@ fn pr_review_front_panel_names_an_unreadable_assistant_proof()
         stderr.contains("Assistant proof artifact is unreadable: "),
         "{stderr}"
     );
+    assert_unreadable_cause(&stderr);
     assert!(
         stderr.contains("test-oracle-assistant-proof.json"),
         "{stderr}"
@@ -6808,6 +6830,7 @@ fn pr_review_front_panel_names_an_unreadable_non_canonical_assistant_proof()
         stderr.contains("Assistant proof artifact is unreadable: "),
         "{stderr}"
     );
+    assert_unreadable_cause(&stderr);
     assert!(stderr.contains("other-proof.json"), "{stderr}");
     assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
