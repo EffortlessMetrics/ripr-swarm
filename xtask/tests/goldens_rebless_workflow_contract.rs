@@ -33,13 +33,26 @@
 //!   `preflight_refuses_forks_and_conflicts` fails on the head-repo and
 //!   mergeability markers;
 //! - the allowlist budget row removed → `run_block_budget_is_registered`
-//!   fails (and `cargo xtask check-workflows` fails the PR).
+//!   fails (and `cargo xtask check-workflows` fails the PR);
+//! - the pinned toolchain step losing its `with: toolchain:` input, or any
+//!   other workflow pinning the no-default `master`/`v1` ref without one →
+//!   `bless_installs_the_pinned_toolchain` and
+//!   `every_no_default_rust_toolchain_step_pins_its_toolchain` fail (#14563).
 
 use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/goldens-rebless.yml";
 const ALLOWLIST: &str = "policy/workflow_allowlist.txt";
+
+/// `dtolnay/rust-toolchain` refs that carry no default toolchain of their own.
+///
+/// The action's `stable`, `beta`, `nightly` and version branches (`1.95`,
+/// `1.95.0`) each ship an `action.yml` whose `toolchain` input has a default.
+/// The `master`/`v1` ref does not, so a step pinned to it must pass
+/// `with: toolchain:` or the action exits 1 with "'toolchain' is a required
+/// input" before any step runs (#14563).
+const NO_DEFAULT_TOOLCHAIN_REFS: &[&str] = &["683b588c487a69d01f6c6ddf40f036ff682cc2c8"];
 
 /// Executable (non-comment) fragments that would let the route gate,
 /// dispatch, mutate review state, or exceed its write boundary.
@@ -692,6 +705,96 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
         "pull-requests: write",
         "the comment authority for claim, refusal and re-arm notes",
     )
+}
+
+#[test]
+fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    let bless = job_block(&lines, "bless");
+    require(
+        &bless,
+        "uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8",
+        "the bless job installs the toolchain the goldens are rendered with",
+    )?;
+    require(
+        &bless,
+        "toolchain: 1.95.0",
+        "the no-default `v1` ref needs an explicit input; 1.95.0 matches \
+         rust-toolchain.toml and the sibling workflows (#14563)",
+    )
+}
+
+#[test]
+fn every_no_default_rust_toolchain_step_pins_its_toolchain() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask package has a repository parent".to_string())?
+        .join(".github/workflows");
+    let mut entries: Vec<_> = fs::read_dir(&root)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
+        .collect();
+    entries.sort();
+    let mut findings = Vec::new();
+    let mut checked = 0usize;
+    for path in entries {
+        let source = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let lines: Vec<&str> = source.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            let rest = trimmed
+                .strip_prefix("- uses: dtolnay/rust-toolchain@")
+                .or_else(|| trimmed.strip_prefix("uses: dtolnay/rust-toolchain@"));
+            let Some(rest) = rest else {
+                continue;
+            };
+            let Some(reference) = rest.split_whitespace().next() else {
+                continue;
+            };
+            if !NO_DEFAULT_TOOLCHAIN_REFS.contains(&reference) {
+                continue;
+            }
+            checked += 1;
+            let step_indent = line.len() - trimmed.len();
+            let has_toolchain = lines[index + 1..]
+                .iter()
+                .take_while(|next| {
+                    let next_trimmed = next.trim_start();
+                    let indent = next.len() - next_trimmed.len();
+                    !next_trimmed.is_empty()
+                        && indent >= step_indent
+                        && !next_trimmed.starts_with("- ")
+                })
+                .any(|next| next.trim_start().starts_with("toolchain:"));
+            if !has_toolchain {
+                findings.push(format!(
+                    "{}:{}: dtolnay/rust-toolchain@{} has no `with: toolchain:` input",
+                    path.display(),
+                    index + 1,
+                    reference
+                ));
+            }
+        }
+    }
+    if checked == 0 {
+        return Err(
+            "expected at least one dtolnay/rust-toolchain step pinned to a no-default ref; \
+             the scan found none, so it cannot prove the contract"
+                .to_string(),
+        );
+    }
+    if findings.is_empty() {
+        return Ok(());
+    }
+    Err(findings.join("\n"))
 }
 
 #[test]
