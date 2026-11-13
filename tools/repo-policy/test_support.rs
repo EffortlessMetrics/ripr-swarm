@@ -209,6 +209,10 @@ mod tests {
         for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
             std::fs::write(root.join(name), name).map_err(|e| e.to_string())?;
         }
+        let shared = root.join("xtask/src/policy/user_text.rs");
+        std::fs::create_dir_all(shared.parent().ok_or("shared source parent")?)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(&shared, "shared matcher source").map_err(|e| e.to_string())?;
         let source = manifest.join("fixture.rs");
         std::fs::write(&source, "original").map_err(|e| e.to_string())?;
         let expected = source_identity::source_identity(&root)?;

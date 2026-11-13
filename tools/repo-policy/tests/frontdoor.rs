@@ -39,6 +39,7 @@ impl Fixture {
                 "Cargo.lock",
                 "rust-toolchain.toml",
                 "tools/repo-policy",
+                "xtask/src/policy/user_text.rs",
                 ".github",
                 ".agents",
                 ".claude",
@@ -904,20 +905,20 @@ fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), St
         "policy",
         "fixtures/example/expected",
         "crates/ripr/src/lsp",
-        "tools/repo-policy/src",
+        "xtask/src/policy",
     ] {
         std::fs::create_dir_all(subject.0.join(dir)).map_err(|e| e.to_string())?;
     }
     std::fs::write(subject.0.join(".gitignore"), "target/\n").map_err(|e| e.to_string())?;
     let golden = subject.0.join("fixtures/example/expected/human.txt");
-    let matcher = subject.0.join("tools/repo-policy/src/user_text.rs");
+    let matcher = subject.0.join("xtask/src/policy/user_text.rs");
     std::fs::write(
         subject.0.join("policy/user-text-baseline.toml"),
         "schema_version = \"1.0\"\n",
     )
     .map_err(|e| e.to_string())?;
     std::fs::write(&golden, "plain words\n").map_err(|e| e.to_string())?;
-    std::fs::copy(judge.0.join("tools/repo-policy/src/user_text.rs"), &matcher)
+    std::fs::copy(judge.0.join("xtask/src/policy/user_text.rs"), &matcher)
         .map_err(|e| e.to_string())?;
     let lsp: String = (0..250)
         .map(|n| format!("const F{n}: &str = \"plain words number {n}\";\n"))
@@ -998,12 +999,17 @@ fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), St
     );
     assert!(String::from_utf8_lossy(&refused.stderr).contains("plain-language term count(s) rose"));
     std::fs::write(
-        judge.0.join("tools/repo-policy/src/user_text.rs"),
+        judge.0.join("xtask/src/policy/user_text.rs"),
         "stale judge source\n",
     )
     .map_err(|e| e.to_string())?;
     let stale = run(&bad)?;
     assert!(!stale.status.success());
     assert!(String::from_utf8_lossy(&stale.stderr).contains("policy executable is stale"));
+    std::fs::remove_file(judge.0.join("xtask/src/policy/user_text.rs"))
+        .map_err(|e| e.to_string())?;
+    let missing = run(&bad)?;
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("policy source identity:"));
     Ok(())
 }

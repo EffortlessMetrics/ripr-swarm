@@ -11,6 +11,9 @@ pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;
+// Keep the shared matcher at its historical path for trusted-base compatibility.
+// Its bytes are included in source_identity.rs and the build-script watch set.
+#[path = "../../../xtask/src/policy/user_text.rs"]
 pub mod user_text;
 pub mod workflow_lifecycle;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};

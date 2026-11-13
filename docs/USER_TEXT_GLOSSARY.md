@@ -30,7 +30,7 @@ For the public-to-internal bridge used in marketing and README copy, see
 | `RIPR-SPEC-` ids | a docs link, or nothing | specs, `--verbose`, docs |
 | snake_case state tokens (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`, `infection_unknown`, `propagation_unknown`, `static_unknown`, `weakly_gripped`, `ungripped`, `partial_with_limitations`, `language_adapter_unavailable`, `unsupported_or_limited`, `choose_item`, `select_item`, `allowed_edit_surface`, ...) | the plain word: exposed, weak, reached but not noticed, no test path, unclear | JSON, `--format human-full`, schemas |
 
-The exact banned list lives in `tools/repo-policy/src/user_text.rs`. Adding a term
+The exact banned list lives in `xtask/src/policy/user_text.rs`. Adding a term
 means adding a row here and a needle there in the same PR.
 
 Terms that are fine as they are: exposed, weak, no path, static, advisory,
@@ -149,10 +149,8 @@ most lines any single golden may hold).
   health) and does not fail a PR that did not add lines.
 - Matcher pin (#11385). The delta compares both sides with the head's matcher,
   so a PR could weaken the matcher and shift both sides together. The check
-  therefore reads the banned needles from `tools/repo-policy/src/user_text.rs`
-  at the merge-base, falling back to `xtask/src/policy/user_text.rs` only for
-  older bases without the relocated owner (as text, no base build), and fails if
-  the head's matcher no longer
+  therefore reads the banned needles from `xtask/src/policy/user_text.rs` at the
+  merge-base (as text, no base build) and fails if the head's matcher no longer
   detects any of them, alone, inside a sentence, punctuated or upper-cased.
   Dropping a term or breaking the matching code for these shapes fails the PR.
   An unreadable base list fails under CI and is noted locally; a base with no
