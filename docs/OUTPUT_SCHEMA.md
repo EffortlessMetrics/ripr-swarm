@@ -1084,7 +1084,7 @@ diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
-#ripr agent static-advisory base=BASE findings=N gaps=G [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
+#ripr agent static-advisory base=BASE findings=N gaps=G [folded_gaps=F] [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
@@ -1094,6 +1094,11 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- A run refused before analysis (unresolvable base, invalid `ripr.toml`,
+  unusable root) replaces this whole record with the short refusal record
+  described under the `ripr check` refusal documents below, whose header reads
+  `#ripr agent static-advisory refused run_status=<identity> repair_route=<route>`
+  (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
   `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
@@ -1124,6 +1129,21 @@ verify=complete|outcome=O|findings=N|exposed=N
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
+- `folded_gaps=F` follows `gaps=` (#14338) when some gap findings would
+  print identical records: the same class, `FILE:LINE`, changed expression,
+  `missing=` value, strongest related test (its whole `tK=` line) and
+  `stages=` row, differing only in `id=` (for example an `error_path` and a
+  `return_value` probe on one `return Err(..)` line). The comparison uses the
+  unclipped values and every missing discriminator (its value, shape and
+  flow sink), not only the printed one; the explanatory `missing` prose is
+  compared only when no discriminator is named, since it is then what
+  `missing=` prints. One test closes all of
+  them, so they print as one row, kept by the first finding in triage order,
+  and `gaps=` counts rows: `gaps=G` is the number of tests to write and
+  `G + F` the number of gap findings. Any printed difference keeps the rows
+  separate. Folding is display-only: every folded finding is still a gap (it
+  never moves to `limits=`) and still counts in `verify=`; `--format json`
+  lists each finding.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
@@ -1754,6 +1774,17 @@ format and each carrying the same typed identity and repair route:
   class), and an empty `seams` array.
 - `--format agent-seam-packets-json` renders the same refused envelope with
   `packets_total: 0`, an empty `packets` array, and no `next` block.
+- `--format agent` renders a three- or four-line refusal record (#14452):
+  `#ripr agent static-advisory refused run_status=<identity>
+  repair_route=<route>`, then `stop=<diagnostic on one line>`, then
+  `next=<command>` only when the diagnostic names a command that runs as-is
+  (the same rule as the JSON refusal's `next`: unconditional, no placeholder,
+  no flags or environment named outside it), then
+  `verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>`.
+  An `analysis_timeout` refusal puts its bounded retry (the JSON envelope's
+  `input_context.recovery.command`) on `next=` instead, and stderr keeps the
+  requested-input echo and retry the human format prints; a stdin diff has
+  no replayable retry, so `next=` is absent there.
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
@@ -11758,7 +11789,12 @@ Field contract:
   line, omitted when empty, #9734). A non-empty or malformed
   `parser_declined_files` also adds one entry to the gate decision's
   `warnings` naming the files, so the top-level `status` is never `pass` for
-  a decision whose changed files were not all parsed (#14082). The same holds
+  a decision whose changed files were not all parsed (#14082). In
+  `calibrated-gate` mode the same condition also makes the top-level `status`
+  `blocked` (exit `3`) with an extra warning saying so, because the mode exists
+  to stop a merge and nothing was judged for that file (#14485); the other
+  modes keep the advisory outcome unless a candidate decision already sets a
+  higher status. The same warning-only rule holds
   for the optional `static_limited_omitted_seams` (an integer, present only
   when nonzero): the part of `omitted_by_policy` that was withheld because
   static evidence is opaque or unknown at a stage. Those changed seams are not

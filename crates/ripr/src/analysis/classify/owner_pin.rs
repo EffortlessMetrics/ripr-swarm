@@ -3658,6 +3658,53 @@ impl AssertionRefusal {
         matches!(self, Self::Syntax(AssertionContextRefusal::GatedItem(_)))
     }
 
+    /// The out-of-line `mod name;` declaration that refused the test's file:
+    /// the declaring file, its line and the declaration text (#14463).
+    pub(in crate::analysis) fn module_declaration_site(&self) -> Option<(&Path, usize, &str)> {
+        match self {
+            Self::ModuleDeclaration {
+                parent,
+                line,
+                declaration,
+            } => Some((parent.as_path(), *line, declaration.as_str())),
+            _ => None,
+        }
+    }
+
+    /// The test's own in-file refusal of each assertion, read without the
+    /// module provenance that refused its file first (#14463). A shared gated
+    /// declaration only explains the provenance refusal; an ignored test, an
+    /// expected panic or a conditional assertion still keeps the gap. `None`
+    /// when the test's file is not in the index, or the test is a property or
+    /// doc test whose assertions are not read from the file's own text.
+    pub(in crate::analysis) fn test_local_refusals(
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<Vec<Option<Self>>> {
+        if index.proptest_source(test).is_some() || index.doctest_source(test).is_some() {
+            return None;
+        }
+        let facts = index.files().get(&test.file)?;
+        let pins = owner_pin_assertions(
+            &expanded_assertion_view(&facts.source, facts.tests.iter()),
+            &assertion_context_macros(),
+        );
+        Some(
+            test.assertions
+                .iter()
+                .map(|assertion| {
+                    pins.refusal(
+                        (test.start_line, test.end_line, &test.name),
+                        &test.body,
+                        (assertion.line, &assertion.text),
+                        &BTreeSet::new(),
+                    )
+                    .map(Self::Syntax)
+                })
+                .collect(),
+        )
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         // Evidence text is host-independent: use the stable slash spelling
@@ -11334,12 +11381,77 @@ fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
     })
 }
 
+/// Whether `text` starts with the identifier `name`, spelled bare or raw
+/// (`r#name` is the same identifier).
+fn starts_with_ident(text: &str, name: &str) -> bool {
+    starts_with_word(text, name)
+        || text
+            .strip_prefix("r#")
+            .is_some_and(|rest| starts_with_word(rest, name))
+}
+
 /// Whether masked `text` declares a struct, enum or union named `name`.
 fn declares_type(text: &str, name: &str) -> bool {
     ["struct", "enum", "union"].iter().any(|keyword| {
         whole_word_offsets(text, keyword)
             .into_iter()
-            .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
+            .any(|offset| starts_with_ident(text[offset + keyword.len()..].trim_start(), name))
+    })
+}
+
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` anywhere,
+/// or aliases a type to that name, by a text scan of its comment- and
+/// string-masked code. Any scope counts, so a hit is only ever used to
+/// withhold credit (#14407).
+pub(in crate::analysis) fn source_declares_or_aliases_type(source: &str, name: &str) -> bool {
+    declares_type(&mask_comments_and_strings(source), name) || file_aliases_type(source, name)
+}
+
+/// How many `struct`/`enum`/`union` declarations named `name` `source`
+/// holds at any scope, by a text scan of its comment- and string-masked code,
+/// plus each `as name` rename, plus one when it aliases a type to that name. Used only to withhold credit
+/// when a test shares the owner's file (#14407).
+pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &str) -> usize {
+    if !source.contains(name) {
+        return 0;
+    }
+    let masked = mask_comments_and_strings(source);
+    let declarations = ["struct", "enum", "union"]
+        .iter()
+        .map(|keyword| {
+            whole_word_offsets(&masked, keyword)
+                .into_iter()
+                .filter(|offset| {
+                    starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
+                })
+                .count()
+        })
+        .sum::<usize>();
+    // A `use path::Other as Name;` rename brings another type in under the
+    // name, like an alias.
+    let renames = whole_word_offsets(&masked, "as")
+        .into_iter()
+        .filter(|offset| starts_with_ident(masked[offset + "as".len()..].trim_start(), name))
+        .count();
+    declarations + renames + usize::from(file_aliases_type(source, name))
+}
+
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` on a line
+/// before file line `line` (1-based), by a text scan of its comment- and
+/// string-masked code (#14407).
+pub(in crate::analysis) fn source_declares_type_before_line(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    ["struct", "enum", "union"].iter().any(|keyword| {
+        whole_word_offsets(&masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
+                    && masked[..offset].matches('\n').count() + 1 < line
+            })
     })
 }
 

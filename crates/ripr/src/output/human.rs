@@ -1665,6 +1665,15 @@ mod sections;
 mod shared;
 mod triage;
 
+/// The agent-format refusal record for a refused check run (#14452).
+/// `retry` is a timed run's bounded replay command, when one exists.
+pub(crate) fn render_agent_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    agent::render_refusal(notice, retry)
+}
+
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
 pub(crate) fn render_agent_with_config_and_navigation(
@@ -5391,6 +5400,46 @@ mod tests {
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real
     // missing discriminator keeps its own label.
+    #[test]
+    fn digest_window_skips_a_stage_detail_that_repeats_the_missing_line() -> Result<(), String> {
+        // #14308: the infection detail restates the Missing check value word
+        // for word; the window shows the fact once and the next detail instead.
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::InfectionUnknown;
+        let repeated =
+            "Changed boundary input is unresolved, so ripr cannot establish the boundary inputs";
+        finding.ripr.infect = stage(StageState::Unknown, Confidence::Low, repeated);
+        finding.missing = vec![format!("{repeated}.")];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if digest.matches(repeated).count() != 1 {
+            return Err(format!("the repeated sentence must render once:\n{digest}"));
+        }
+        if digest.contains("    - infection unknown:") {
+            return Err(format!(
+                "the restating detail must leave the window:\n{digest}"
+            ));
+        }
+        if !digest.contains("    - reach ") {
+            return Err(format!("the window keeps the other details:\n{digest}"));
+        }
+        // Control: a detail that differs keeps its slot.
+        finding.missing = vec!["Some other missing evidence".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains("    - infection unknown:") && !digest.contains("more detail line") {
+            return Err(format!("a distinct detail must stay reachable:\n{digest}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn propagation_unknown_wording_is_honest() -> Result<(), String> {
         let mut finding = sample_finding();

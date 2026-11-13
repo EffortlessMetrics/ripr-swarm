@@ -453,10 +453,11 @@ fn changed_constant_returned_whole_selects_the_same_repair_in_both() -> Result<(
         "check must name greet's returned value:\n{check}"
     );
     // The change is uncommitted, so repair selects the seam and then asks
-    // for the commit before starting; the selection is what must agree.
+    // for the commit before starting; the selection is what must agree. The
+    // refusal names the façade rerun for that seam (#14394).
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains(&format!("--seam-id {id}"))
+        repair.contains(&format!("ripr repair {id} --root "))
             && !repair.contains("shout")
             && !repair.contains("choose the change to repair"),
         "repair must select the seam check offered ({id}):\n{repair}"
@@ -777,7 +778,9 @@ fn limited_option_change_is_not_called_gripped_by_repair() -> Result<(), String>
         OPTION_OLD,
         OPTION_NEW,
         OPTION_TEST,
-        "Changed behavior: x % 2 == 0",
+        // #14266: the weak `.or(Some(0))` return gap leads Start here over
+        // the unknown predicate on the same line; both are non-exposed.
+        "Changed behavior: xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))",
         "different check than the one still open",
     )
 }

@@ -285,6 +285,13 @@ when detail remains the line
 the recovery format. `--format human-full` still renders every evidence line,
 and no machine format reads the compact line.
 
+The digest states each fact once (#14308). A stage detail whose prose equals
+the digest's `Missing check` / `Analyzer limit` value (after collapsing
+whitespace, one terminal period and ASCII case) is left out of the two-line
+window, the next detail takes its place, and the `N more detail line(s)` count
+covers only the details not shown. Classification, `--format human-full`
+and the machine formats are unchanged.
+
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
 command; for a Python preview finding it is a repair card from the Python
@@ -381,8 +388,12 @@ selector is deterministic:
    routes.
 5. `exposed` findings do not outrank non-exposed findings merely because they
    carry generic next-step text.
-6. Class, gap metadata, related tests, missing evidence, confidence, path, and
-   line provide stable tie-breakers.
+6. Gap metadata, related tests, missing evidence, confidence, exposure class,
+   path, and line provide stable tie-breakers, in that order. Class is
+   compared even when step 4 put both findings in the same repair-route
+   band, so two candidates equal through confidence order
+   `reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown
+   classes, then `exposed`, rather than by file path (#14266).
 
 Apart from the same-behavior shadowing in step 2, verdict order within one
 file role is unchanged: an unshadowed production unknown still leads a
@@ -986,6 +997,20 @@ because the caller is the test an agent edits to grip the changed value. A
 `done=` line keeps oracle strength first: it names the test that notices the
 change, never a smoke-only caller. Rows without a recorded relation rank as
 `Opaque`, so their order falls back to oracle strength.
+
+### Identical agent gap rows fold (#14338)
+
+`check --format agent` prints one gap row for findings whose records would
+print identically apart from `id=`: class, `FILE:LINE`, changed expression,
+`missing=`, the strongest related test's whole `tK=` line and the `stages=`
+row, compared unclipped and over every missing discriminator's value,
+shape and flow sink (the explanatory prose counts only when no discriminator
+is named). The first
+finding in triage order keeps the row, so the top gap and
+`next=` do not move. `gaps=` counts rows (tests to write) and `folded_gaps=`
+the extra findings. Any printed difference keeps the rows apart. Folding is
+display-only: the folded findings stay gaps for `limits=` and `stop=`, count
+in `verify=`, and stay listed in `--format json`.
 
 ### `explain --format agent` (#12104)
 
