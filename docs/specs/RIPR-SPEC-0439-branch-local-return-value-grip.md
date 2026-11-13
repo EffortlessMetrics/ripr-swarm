@@ -76,6 +76,16 @@ The same over-credit appears in four shapes the first fix missed:
 4. both arms hold the same expression, so the seam's own branch is not
    established by text.
 
+Two more shapes are in the same class:
+
+5. the seam expression also appears as a sibling `return` after the `if`, so
+   the branch scan sees one match and cannot tell which occurrence the seam
+   is; the call may reach the sibling, and withholding there is a false
+   negative;
+6. a parameter is mutated inside a loop after the `if`, so the call-argument
+   fold is stale and can withhold a branch the call reaches on a later
+   iteration.
+
 ## Behavior
 
 The gate is `seam_branch_reached_by_call` in
@@ -84,17 +94,22 @@ answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
 
 - The compared operands are resolved through their `let` initializers first
   (`assertion_operands`), so a call bound to a local is read.
-- Exactly one operand must be a bare `owner(..)` call whose arguments all
-  fold to integers. A `.await` or wrapper call is not modelled and answers
-  `None`.
+- Exactly one operand must be a call to the owner whose arguments all fold to
+  integers: the bare `owner(..)` form, `owner(..).await`, or a
+  plain-identifier wrapper (`wrapper(owner(..))`), matching the sibling
+  invisibility path. A wrapper that transforms the result is not modelled
+  and answers `None`.
 - The owner body is parsed. Every parameter must be a plain identifier and
   the argument count must match, or the answer is `None`.
 - If the owner body rebinds a parameter (`let name = ..`), assigns one
-  (`name = ..`, `name += ..`) or binds one in a `for` pattern, the answer is
-  `None`: the call-argument environment is stale.
+  (`name = ..`, `name += ..`) or binds one in a `for` pattern, anywhere in
+  the body including a loop body, the answer is `None`: the call-argument
+  environment is stale.
 - The seam expression must be the tail or a statement of exactly one `if`
-  branch. Both arms holding it, or more than one `if` holding it, answers
-  `None`.
+  branch. Both arms holding it, more than one `if` holding it, or the
+  expression appearing in more seam positions in the body than the branch
+  scan accounts for (a sibling `return` after the `if`), answers `None`:
+  the seam's own occurrence is not established by text.
 - The seam's own condition folds with the call's literal arguments. If the
   seam's branch is not the taken one, the answer is `Some(false)`.
 - Every enclosing `if` on the path must also take the branch that holds the
@@ -113,7 +128,13 @@ refuses.
 - The let-bound form of the same test does not strongly grip it.
 - The nested-guard form does not strongly grip the inner return.
 - A reaching call through a rebound parameter keeps its grip.
+- A parameter mutated inside a loop after the `if` keeps the reaching
+  call's grip.
 - Identical arms keep their grip.
+- A sibling duplicate `return` after the `if` keeps the grip of the call
+  that reaches it.
+- A wrapped call (`block_on(owner(..))`) from the else branch does not
+  strongly grip the then-branch return.
 - The committed two-test `fixtures/boundary_gap` control stays strongly
   gripped.
 - The branch-miss case is registered in the evidence-promotion honesty
@@ -122,7 +143,10 @@ refuses.
 ## Non-Goals
 
 - No change to seam creation, seam kind or the `#14392` tail `if/else` form.
-- No modelling of `.await`, wrapper calls, loops or closures.
+- No modelling of iteration or closures. A parameter mutated anywhere in the
+  body, including a loop body, makes the fold refuse (`None`) rather than
+  model the loop; a value-transparent wrapper is read through, a transforming
+  wrapper is not.
 - No change to any seam kind other than `return_value`.
 - No new JSON field or grip class.
 
@@ -138,6 +162,13 @@ refuses.
 5. `if c { return n; } else { return n; }` asserted at `(50, 100) == 50`:
    `Yes`.
 6. The two-test fixture (one call per branch): `Yes`.
+7. `assert_eq!(block_on(discounted_total(50, 100)), 50)`: the `amount - 10`
+   seam is not `Yes`.
+8. `if amount >= discount_threshold { return amount - 10; } return amount -
+   10;` asserted at `(50, 100) == 40`: the sibling seam keeps its grip
+   (`Yes`).
+9. `loop { if amount >= threshold { return amount - 10; } amount += 10; }`
+   asserted at `(50, 100) == 90`: `Yes`.
 
 ## Test Mapping
 
@@ -145,7 +176,10 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_let_bound_else_branch_call`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_behind_an_untaken_enclosing_guard_is_not_gripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_rebound_parameter_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_identical_arms_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_record_agrees_with_the_stage`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong`

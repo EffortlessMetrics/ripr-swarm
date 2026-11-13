@@ -1865,8 +1865,10 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
 /// caller can withhold credit without guessing.
 ///
 /// The call shape is the bare `owner(..)` form, read through a `let` the
-/// assertion pins when there is one. A `.await` or wrapper call
-/// (`wrapper(owner(..))`) is not modelled here and keeps today's credit.
+/// assertion pins when there is one, or through a value-transparent wrapper
+/// (`wrapper(owner(..))`, `owner(..).await`), matching the sibling
+/// invisibility path. A wrapper that transforms the result is not modelled
+/// and keeps today's credit.
 pub(super) fn seam_branch_reached_by_call(
     owner: &FunctionSummary,
     seam_expression: &str,
@@ -1879,7 +1881,9 @@ pub(super) fn seam_branch_reached_by_call(
     let operands = assertion_operands(oracle_text, test.body.as_str());
     let mut calls = Vec::new();
     for operand in &operands {
-        if let Some(arguments) = owner_call_arguments(&operand.text, &owner.name) {
+        if let Some(arguments) = owner_call_arguments(&operand.text, &owner.name)
+            .or_else(|| wrapped_owner_call_arguments(&operand.text, &owner.name))
+        {
             calls.push(arguments);
         }
     }
@@ -1935,6 +1939,14 @@ pub(super) fn seam_branch_reached_by_call(
         if in_then || in_else {
             matches.push((if_expr, in_then));
         }
+    }
+    // A duplicate of the seam expression outside an `if` branch (a sibling
+    // `return` after the `if`) is invisible to the branch scan, so one match
+    // would look unambiguous while the call may reach the sibling instead.
+    // Count every seam-position occurrence in the body and keep today's
+    // credit when the branch scan does not account for all of them.
+    if seam_expression_occurrences(&block, &target) > matches.len() {
+        return None;
     }
     // More than one `if` holding the same expression is ambiguous: the seam's
     // own branch is not established, so keep today's credit.
@@ -2024,6 +2036,20 @@ fn enclosing_branches_reached(
         current = node.parent();
     }
     Some(true)
+}
+
+/// How many times `target` is a seam position in `block`: the block's tail
+/// expression, a `return` value, or an inner block's tail expression. A
+/// `return_value` seam is one of those, so a count above the `if`-branch match
+/// count means the seam's own occurrence is not established by the branch
+/// scan and the caller keeps today's credit.
+fn seam_expression_occurrences(block: &ast::BlockExpr, target: &str) -> usize {
+    block
+        .syntax()
+        .descendants()
+        .filter_map(ast::Expr::cast)
+        .filter(|expr| normalized_expression(&expr.syntax().text().to_string()) == target)
+        .count()
 }
 
 /// Whitespace- and trailing-semicolon-insensitive spelling of one expression,

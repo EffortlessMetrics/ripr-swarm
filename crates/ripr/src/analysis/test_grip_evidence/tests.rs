@@ -23928,3 +23928,84 @@ fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), S
     );
     Ok(())
 }
+
+/// #14496: a value-transparent wrapper around the call is the sibling
+/// convention, so the gate reads through it. `block_on(owner(..))` from the
+/// else branch must not strongly grip the then-branch return.
+#[test]
+fn branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(block_on(discounted_total(50, 100)), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a wrapped else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a sibling `return` after the `if` holds the same expression, so the
+/// branch scan cannot establish which occurrence the seam is. The gate keeps
+/// today's credit, and the call that reaches the sibling keeps its grip.
+#[test]
+fn branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    return amount - 10;\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.display_line() == 5)
+        .ok_or_else(|| format!("expected the sibling return seam on line 5; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a call that reaches the sibling return keeps its grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a parameter mutated inside a loop after the `if` makes the
+/// call-argument fold stale. The gate must keep today's credit rather than
+/// withhold a branch the call reaches on a later iteration.
+#[test]
+fn branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(mut amount: i32, discount_threshold: i32) -> i32 {\n    loop {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n        amount += 10;\n    }\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn loop_reaches_the_discount() {\n    assert_eq!(discounted_total(50, 100), 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a loop-carried rebind keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
