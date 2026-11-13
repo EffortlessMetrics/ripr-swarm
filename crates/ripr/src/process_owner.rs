@@ -1833,6 +1833,44 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn linux_try_wait_refuses_expired_nonterminal_settlement() -> Result<(), String> {
+        let mut owned = pending_linux_group()?;
+        let expired = Instant::now();
+        owned.group_settlement_deadline = Some(expired);
+        // Keep the snapshot nonterminal: a false result must not bypass the
+        // deadline or give the public wait loop another unbounded iteration.
+        assert!(owned.injected_group_nonterminal);
+        let error = owned
+            .try_wait()
+            .err()
+            .ok_or("expired nonterminal poll remained pending")?;
+        assert_eq!(
+            error.to_string(),
+            "owned group settlement exceeded its deadline after SIGKILL"
+        );
+        assert_eq!(owned.group_settlement_deadline, Some(expired));
+        assert!(
+            owned
+                .observe_owned_exit()
+                .map_err(|error| error.to_string())?
+        );
+        assert!(!owned.group_quiescent);
+        assert!(matches!(owned.try_wait(), Err(_)), "failure stays sticky");
+        assert!(matches!(owned.wait(), Err(_)), "wait cannot resume polling");
+        let cleanup = owned
+            .terminate_tree()
+            .err()
+            .ok_or("fallback erased the nonterminal settlement failure")?;
+        assert!(cleanup.contains("incomplete tree cleanup"));
+        assert!(cleanup.contains("settlement exceeded its deadline after SIGKILL"));
+        assert!(cleanup.contains("primary reaped within budget: true"));
+        assert!(matches!(observe_unreaped_exit(&owned.child), Err(_)));
+        assert_eq!(owned.test_group_kills, 1, "no renewed or post-reap signal");
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn linux_wait_refuses_expired_settlement_before_reaping() -> Result<(), String> {
         let mut owned = pending_linux_group()?;
         owned.group_settlement_deadline = Some(Instant::now());

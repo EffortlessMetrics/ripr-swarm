@@ -863,6 +863,7 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   + `linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader`
   — terminal-state/thread-count and byte-safe membership refusal.
 - `crates/ripr/src/process_owner.rs::tests::linux_settlement_deadline_survives_polls_and_explicit_cleanup`
+  + `linux_try_wait_refuses_expired_nonterminal_settlement`
   + `linux_wait_refuses_expired_settlement_before_reaping`
   + `linux_pending_settlement_can_complete_within_original_deadline`
   — a real unreaped leader with a modeled nonterminal observation exercises
