@@ -12,7 +12,9 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> RegistryResult<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let temporary = std::env::temp_dir();
+        fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
             "formal-native-bindings-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
