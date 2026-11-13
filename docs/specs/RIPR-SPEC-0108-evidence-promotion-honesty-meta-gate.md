@@ -69,6 +69,29 @@ There was no standing CI gate that read the byte-pinned golden and asserted "no
 finding may be `exposed` for charter member X, regardless of what the golden
 says it was re-blessed to."
 
+## Live check controls
+
+At least one corpus case must select a real Cargo subject through
+`live_check_subject`. Paths are repository-relative; `live_check_diff` names
+its diff, defaulting to `diff.patch` inside the subject. This allows existing
+fixtures with an `input/Cargo.toml` and sibling `diff.patch` to be reused.
+A live case requires exactly one `expected_class` assertion. The current
+live contract requires exactly one finding; missing/multiple findings or a
+class mismatch fail closed. Empty selection, missing manifest/diff, launch
+failure, timeout, unsuccessful exit, invalid/duplicate-key JSON and an explicit
+analysis refusal also fail the gate. Stored reports alone cannot satisfy the
+live control.
+
+`rust_fixture_receiver_extension_iter` selects the existing compilable Rust
+subject and pins its single return-value finding to `static_unknown`. The
+opt-in `live_producer_accepts_original_rejects_changed_pin_and_accepts_restored`
+test executes the actual live gate helper, changes the in-memory pin to
+`exposed`, requires a live classification mismatch, then restores the original
+snapshot and requires success. It does not mutate the analyzer or bless a
+report. Run this test explicitly with an absolute `CARGO_TARGET_DIR`; the
+ordinary selection/output unit tests do not build a producer. Fake-output unit
+results are not producer evidence.
+
 ## Whole-wildcard discriminator controls
 
 The six `wildcard_oracle_*` fixtures cross original/wrong return values with
@@ -134,7 +157,8 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
    not a readable directory, or a directory entry that fails to enumerate,
    fails the load instead of leaving a smaller corpus that passes. The three
    consumers (the validator, the summary metadata and pinned-external
-   selection) share that one reader.
+   selection) share that one reader. The gate loads one parsed corpus snapshot
+   and passes it to these consumers and the live/report checks (#14612).
 2. For each pure case, reads exactly one byte-pinned source artifact:
    - `source_fixture` -> the fixture's `expected/check.json` (covered by
      `goldens check`);

@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+code = ["xtask/src/evidence_promotion.rs"]
+tests = [
+  "xtask/src/evidence_promotion/live_check_tests.rs::committed_corpus_selects_a_real_live_subject",
+  "xtask/src/evidence_promotion/live_check_tests.rs::selection_refuses_empty_malformed_missing_diff_and_missing_class",
+  "xtask/src/evidence_promotion/live_check_tests.rs::selection_uses_the_supplied_snapshot_and_explicit_diff",
+  "xtask/src/evidence_promotion/live_check_tests.rs::comparison_refuses_process_and_report_failures_even_with_a_matching_class",
+  "xtask/src/evidence_promotion/live_check_tests.rs::live_producer_accepts_original_rejects_changed_pin_and_accepts_restored",
+]

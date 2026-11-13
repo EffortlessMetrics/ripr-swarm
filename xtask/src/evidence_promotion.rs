@@ -389,9 +389,14 @@ pub(crate) enum ExpectedRelatedTestMissConstraint {
 
 fn run_evidence_promotion_pinned_external_cases(
     corpus_path: &Path,
+    corpus: &Value,
     options: &EvidencePromotionHonestyOptions,
 ) -> Result<Vec<EvidencePromotionExternalRun>, String> {
-    let cases = match load_evidence_promotion_pinned_external_cases(corpus_path, options) {
+    let cases = match load_evidence_promotion_pinned_external_cases_from_corpus(
+        corpus_path,
+        corpus,
+        options,
+    ) {
         Ok(cases) => cases,
         Err(err) => {
             let runs = vec![EvidencePromotionExternalRun::runner_failure(
@@ -512,11 +517,20 @@ pub(crate) fn read_evidence_promotion_corpus(corpus_path: &Path) -> Result<Value
     Ok(corpus_value)
 }
 
+#[cfg(test)]
 fn load_evidence_promotion_pinned_external_cases(
     corpus_path: &Path,
     options: &EvidencePromotionHonestyOptions,
 ) -> Result<Vec<EvidencePromotionExternalCase>, String> {
     let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
+    load_evidence_promotion_pinned_external_cases_from_corpus(corpus_path, &corpus_value, options)
+}
+
+fn load_evidence_promotion_pinned_external_cases_from_corpus(
+    corpus_path: &Path,
+    corpus_value: &Value,
+    options: &EvidencePromotionHonestyOptions,
+) -> Result<Vec<EvidencePromotionExternalCase>, String> {
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -3986,10 +4000,18 @@ pub(crate) fn write_evidence_promotion_external_report(
     Ok(())
 }
 
+#[cfg(test)]
 fn load_evidence_promotion_corpus_case_metadata(
     corpus_path: &Path,
 ) -> Result<Vec<EvidencePromotionCorpusCaseMeta>, String> {
     let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
+    load_evidence_promotion_corpus_case_metadata_from_corpus(corpus_path, &corpus_value)
+}
+
+fn load_evidence_promotion_corpus_case_metadata_from_corpus(
+    corpus_path: &Path,
+    corpus_value: &Value,
+) -> Result<Vec<EvidencePromotionCorpusCaseMeta>, String> {
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         return Err(format!(
             "{} has no `cases` array",
@@ -4174,12 +4196,13 @@ fn build_evidence_promotion_corpus_summary_cases(
 
 fn write_evidence_promotion_corpus_summary_report(
     corpus_path: &Path,
+    corpus: &Value,
     pure_violations: &[String],
     external_runs: &[EvidencePromotionExternalRun],
     options: &EvidencePromotionHonestyOptions,
 ) -> Result<(), String> {
     ensure_reports_dir()?;
-    let metadata = load_evidence_promotion_corpus_case_metadata(corpus_path)?;
+    let metadata = load_evidence_promotion_corpus_case_metadata_from_corpus(corpus_path, corpus)?;
     let cases = build_evidence_promotion_corpus_summary_cases(
         &metadata,
         pure_violations,
@@ -4298,24 +4321,27 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     let options = parse_evidence_promotion_honesty_args(args)?;
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
-    validate_evidence_promotion_honesty_corpus_at(corpus_path, &mut pure_violations)?;
+    let corpus = read_evidence_promotion_corpus(corpus_path)?;
+    validate_evidence_promotion_honesty_corpus_value(corpus_path, &corpus, &mut pure_violations)?;
     // A control that only pins a stored class cannot notice a removed guard;
     // cases that name a live subject are re-run with the current binary.
-    check_live_check_cases(&mut pure_violations)?;
+    check_live_check_cases(&corpus, &mut pure_violations)?;
     // The repo-seam reports are hand-captured; regenerate each from its
     // subject so a stale capture or an analyzer regression turns red (#12144).
-    repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
+    repo_seam_reports::check_regenerated_reports(&corpus, &mut pure_violations)?;
     // Each committed report's own `content_sha256` must still match its bytes (#12602).
-    repo_seam_reports::check_report_digests(&mut pure_violations)?;
+    repo_seam_reports::check_report_digests(&corpus, &mut pure_violations)?;
     // A capture must also record the analyzer's current cache generation,
     // or be pinned older with a reason (#12293).
-    report_cache_schema::check_report_cache_schemas(&mut pure_violations)?;
+    report_cache_schema::check_report_cache_schemas(&corpus, &mut pure_violations)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
-        external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;
+        external_runs =
+            run_evidence_promotion_pinned_external_cases(corpus_path, &corpus, &options)?;
     }
     write_evidence_promotion_corpus_summary_report(
         corpus_path,
+        &corpus,
         &pure_violations,
         &external_runs,
         &options,
@@ -4385,134 +4411,170 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     }
 }
 
-/// Cases that pin a live `ripr check --diff` class, not only a stored report.
-///
-/// A case with `live_check_subject` names a Cargo subject whose `diff.patch`
-/// the gate passes to `ripr check --diff` with the current binary; the case's
-/// `expected_class` assertion must hold on that live run. A stored report
-/// alone cannot tell a guard that still works from one that was removed,
-/// because the report is what was captured, not what the analyzer says now
-/// (#14508 review).
-fn check_live_check_cases(violations: &mut Vec<String>) -> Result<(), String> {
-    let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
-    let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
-        return Ok(());
-    };
+/// Select and validate live subjects before building or starting any producer.
+/// A missing selection is a refusal: the gate must never silently become inert.
+#[derive(Debug)]
+struct LiveCheckCase {
+    id: String,
+    subject: PathBuf,
+    diff: PathBuf,
+    expected: String,
+}
+
+fn live_check_cases(corpus: &Value, violations: &mut Vec<String>) -> Vec<LiveCheckCase> {
     let mut live = Vec::new();
-    for case in cases {
-        let Some(subject) = case.get("live_check_subject").and_then(Value::as_str) else {
+    let cases = corpus.get("cases").and_then(Value::as_array);
+    for case in cases.into_iter().flatten() {
+        let Some(subject_value) = case.get("live_check_subject") else {
             continue;
         };
         let id = case
             .get("id")
             .and_then(Value::as_str)
             .unwrap_or("<missing-id>");
-        let expected = case
+        let problem = |message: &str| format!("evidence promotion case `{id}`: {message}");
+        let Some(subject) = subject_value.as_str().filter(|s| !s.is_empty()) else {
+            violations.push(problem("live_check_subject must be a nonempty path"));
+            continue;
+        };
+        let expected: Vec<_> = case
             .get("assertions")
             .and_then(Value::as_array)
-            .and_then(|assertions| {
-                assertions.iter().find_map(|assertion| {
-                    (assertion.get("type").and_then(Value::as_str) == Some("expected_class"))
-                        .then(|| assertion.get("class").and_then(Value::as_str))
-                        .flatten()
-                })
-            });
-        let Some(expected) = expected else {
-            violations.push(format!(
-                "evidence promotion honesty case `{id}`: `live_check_subject` requires an \
-                 `expected_class` assertion so the live run has a class to check"
+            .into_iter()
+            .flatten()
+            .filter(|a| a.get("type").and_then(Value::as_str) == Some("expected_class"))
+            .collect();
+        let expected = match expected.as_slice() {
+            [assertion] => assertion.get("class").and_then(Value::as_str),
+            _ => None,
+        };
+        let Some(expected) = expected.filter(|s| !s.is_empty()) else {
+            violations.push(problem(
+                "live_check_subject requires exactly one expected_class assertion",
             ));
             continue;
         };
-        live.push((id.to_string(), subject.to_string(), expected.to_string()));
+        let subject = PathBuf::from(subject);
+        let diff = match case.get("live_check_diff") {
+            None => subject.join("diff.patch"),
+            Some(Value::String(path)) if !path.is_empty() => PathBuf::from(path),
+            _ => {
+                violations.push(problem("live_check_diff must be a nonempty path"));
+                continue;
+            }
+        };
+        if !subject.join("Cargo.toml").is_file() || !diff.is_file() {
+            violations.push(problem("live_check_subject must have Cargo.toml and an existing live_check_diff (default: subject/diff.patch)"));
+            continue;
+        }
+        live.push(LiveCheckCase {
+            id: id.to_string(),
+            subject,
+            diff,
+            expected: expected.to_string(),
+        });
     }
+    if live.is_empty() {
+        violations
+            .push("evidence promotion honesty: no valid live check subjects selected".to_string());
+    }
+    live
+}
+
+fn live_check_problem(case: &LiveCheckCase, output: Result<TimedOutput, String>) -> Option<String> {
+    let label = format!("evidence promotion case `{}`", case.id);
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => return Some(format!("{label}: live ripr check failed to start: {error}")),
+    };
+    if output.timed_out {
+        return Some(format!("{label}: live ripr check timed out"));
+    }
+    if !output.status.is_some_and(|status| status.success()) {
+        return Some(format!(
+            "{label}: live ripr check exited non-zero: {}",
+            output.stderr.trim()
+        ));
+    }
+    let parsed: Value = match parse_json_rejecting_duplicate_keys(&output.stdout) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return Some(format!(
+                "{label}: live ripr check stdout was not valid JSON: {error}"
+            ));
+        }
+    };
+    if parsed.get("error").is_some_and(|error| !error.is_null())
+        || parsed.pointer("/analysis_scope/downstream_consumable") == Some(&Value::Bool(false))
+    {
+        return Some(format!(
+            "{label}: live ripr check returned a refused analysis"
+        ));
+    }
+    let Some(findings) = parsed.get("findings").and_then(Value::as_array) else {
+        return Some(format!("{label}: live ripr check has no findings array"));
+    };
+    if findings.len() != 1 {
+        return Some(format!(
+            "{label}: live ripr check reported {} findings, but the case pins one",
+            findings.len()
+        ));
+    }
+    let actual = findings[0]
+        .get("classification")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if actual != case.expected {
+        return Some(format!(
+            "{label}: live ripr check classifies the finding as `{actual}`, but the corpus pins `{}`; the guard this control protects is not active",
+            case.expected
+        ));
+    }
+    None
+}
+
+fn check_live_check_cases(corpus: &Value, violations: &mut Vec<String>) -> Result<(), String> {
+    let live = live_check_cases(corpus, violations);
     if live.is_empty() {
         return Ok(());
     }
-    run("cargo", &["build", "-p", "ripr", "--quiet"]).map_err(|error| {
+    run("cargo", &["build", "--locked", "-p", "ripr", "--quiet"]).map_err(|error| {
         format!("failed to build ripr for live evidence-promotion checks: {error}")
     })?;
     let binary = ripr_debug_binary();
-    for (id, subject, expected) in live {
-        let case_label = format!("evidence promotion case `{id}`");
-        let subject_path = Path::new(&subject);
-        let patch = subject_path.join("diff.patch");
-        if !subject_path.join("Cargo.toml").is_file() || !patch.is_file() {
-            violations.push(format!(
-                "{case_label}: `live_check_subject` `{subject}` must be a Cargo subject with a `diff.patch`"
-            ));
-            continue;
-        }
+    for case in live {
         let args = vec![
             "check".to_string(),
             "--root".to_string(),
-            normalize_path(subject_path),
+            normalize_path(&case.subject),
             "--diff".to_string(),
-            normalize_path(&patch),
+            normalize_path(&case.diff),
             "--mode".to_string(),
             "fast".to_string(),
             "--json".to_string(),
         ];
-        let output = match capture_output_with_timeout(
+        let output = capture_output_with_timeout(
             &binary.to_string_lossy(),
             &args,
             &[],
             Duration::from_mins(2),
             "check-evidence-promotion-honesty live check",
-        ) {
-            Ok(output) => output,
-            Err(error) => {
-                violations.push(format!(
-                    "{case_label}: live ripr check failed to start: {error}"
-                ));
-                continue;
-            }
-        };
-        if output.timed_out {
-            violations.push(format!("{case_label}: live ripr check timed out"));
-            continue;
-        }
-        if !output.status.is_some_and(|status| status.success()) {
-            violations.push(format!(
-                "{case_label}: live ripr check exited non-zero: {}",
-                output.stderr.trim()
-            ));
-            continue;
-        }
-        let parsed: Value = match serde_json::from_str(&output.stdout) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                violations.push(format!(
-                    "{case_label}: live ripr check stdout was not JSON: {error}"
-                ));
-                continue;
-            }
-        };
-        let findings = parsed
-            .get("findings")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if findings.len() != 1 {
-            violations.push(format!(
-                "{case_label}: live ripr check reported {} findings, but the case pins one",
-                findings.len()
-            ));
-            continue;
-        }
-        let actual = findings[0]
-            .get("classification")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if actual != expected {
-            violations.push(format!(
-                "{case_label}: live ripr check classifies the finding as `{actual}`, but the \
-                 corpus pins `{expected}`; the guard this control protects is not active"
-            ));
+        );
+        if let Some(problem) = live_check_problem(&case, output) {
+            violations.push(problem);
+        } else {
+            println!(
+                "live evidence promotion case `{}`: one finding at `{}`",
+                case.id, case.expected
+            );
         }
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "evidence_promotion/live_check_tests.rs"]
+mod live_check_tests;
 
 pub(crate) fn validate_evidence_promotion_honesty_corpus(
     violations: &mut Vec<String>,
@@ -4828,7 +4890,14 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
     }
 
     let corpus_value = read_evidence_promotion_corpus(corpus_path)?;
+    validate_evidence_promotion_honesty_corpus_value(corpus_path, &corpus_value, violations)
+}
 
+fn validate_evidence_promotion_honesty_corpus_value(
+    corpus_path: &Path,
+    corpus_value: &Value,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     let Some(cases) = corpus_value.get("cases").and_then(Value::as_array) else {
         violations.push(format!(
             "{} has no `cases` array",

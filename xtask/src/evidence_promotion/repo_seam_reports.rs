@@ -20,7 +20,7 @@
 
 use super::{
     EVIDENCE_PROMOTION_HONESTY_CORPUS, capture_output_with_timeout, normalize_path,
-    read_evidence_promotion_corpus, ripr_debug_binary, run,
+    ripr_debug_binary, run,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -583,7 +583,10 @@ fn declared_family_problems(
 /// Verify the self-digest of every committed report in the corpus (#12602).
 /// The regeneration guard above judges seams only and ignores the producer
 /// stamps, so a hand edit of a stamp left the digest stale with every gate green.
-pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), String> {
+pub(super) fn check_report_digests(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     let reports = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS)
         .parent()
         .map_or_else(|| PathBuf::from("reports"), |dir| dir.join("reports"));
@@ -606,10 +609,9 @@ pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), S
             parsed.push((label, report));
         }
     }
-    let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
-    let exemptions = read_digest_exemptions(&corpus, violations);
+    let exemptions = read_digest_exemptions(corpus, violations);
     stamp_problems(&parsed, &exemptions, violations);
-    required_digest_problems(&corpus, &parsed, violations);
+    required_digest_problems(corpus, &parsed, violations);
     let mut ignored = Vec::new();
     let regenerable: Vec<String> = corpus
         .get("cases")
@@ -665,8 +667,10 @@ fn regenerate(subject: &Path, binary: &Path) -> Result<Value, String> {
 /// Regenerate each repo-seam report from its subject with the current binary
 /// and compare the judged fields. Violations name the case, the seam and both
 /// values, and the rerun command.
-pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<(), String> {
-    let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
+pub(super) fn check_regenerated_reports(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     let Some(cases) = corpus.get("cases").and_then(Value::as_array) else {
         return Ok(());
     };

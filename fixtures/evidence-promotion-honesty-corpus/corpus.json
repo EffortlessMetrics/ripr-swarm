@@ -716,6 +716,8 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/fixture_receiver_extension_iter",
+      "live_check_subject": "fixtures/fixture_receiver_extension_iter/input",
+      "live_check_diff": "fixtures/fixture_receiver_extension_iter/diff.patch",
       "probe_family": "return_value",
       "vector": "raw_module_associated_extension_iterator_discards_literal_fixture_data_before_projection",
       "assertions": [
