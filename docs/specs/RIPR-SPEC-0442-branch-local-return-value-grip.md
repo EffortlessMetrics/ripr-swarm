@@ -1,4 +1,4 @@
-# RIPR-SPEC-0439: Branch-local return-value grip needs a reaching call
+# RIPR-SPEC-0442: Branch-local return-value grip needs a reaching call
 
 Status: accepted
 
@@ -41,7 +41,7 @@ Support-tier impact:
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
-  `.ripr/traceability.d/RIPR-SPEC-0439.toml`.
+  `.ripr/traceability.d/RIPR-SPEC-0442.toml`.
 - No schema or JSON field change. The per-test record's `oracle_strength`
   moves with the stage, so the two records agree.
 
