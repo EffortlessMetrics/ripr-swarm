@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+tests = [
+  "xtask/src/formal_evidence/native/tests.rs::native_document_audit_refuses_duplicate_observations_with_complete_inventory",
+]
+code = [
+  "xtask/src/formal_evidence.rs",
+  "xtask/src/formal_evidence/native.rs",
+]

@@ -272,6 +272,11 @@ It does not claim:
 
 ## Test Mapping
 
+- `xtask/src/formal_evidence/native/tests.rs`:
+  `native_document_audit_refuses_duplicate_observations_with_complete_inventory`
+  requires the document audit consumer to refuse repeated observations even when
+  the unique subject set still matches the complete inventory. This is supplied
+  document consistency, not native execution assurance.
 - `xtask/src/formal_evidence/kani_output.rs`: discovery, complete-cover
   classification, native cover captures, unique attribution, and ambiguity
   controls. `lane_verdict` remains the single shared aggregate owner.

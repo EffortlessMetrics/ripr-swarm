@@ -135,6 +135,21 @@ fn native_document_admission_refuses_false_currentness_and_incomplete_covers() -
 }
 
 #[test]
+fn native_document_audit_refuses_duplicate_observations_with_complete_inventory() -> AuditResult<()>
+{
+    let mut run = complete_document()?;
+    audit(&[], Some(&run))?;
+    assert_eq!(run.unregistered_results.len(), 1);
+    assert!(run.inventory.complete);
+
+    // Exact set equality still holds after repeating this otherwise valid row.
+    // The consumer must reject the duplicate instead of silently deduplicating it.
+    run.unregistered_results
+        .push(run.unregistered_results[0].clone());
+    refusal(audit(&[], Some(&run)), "duplicate unregistered observation")
+}
+
+#[test]
 fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditResult<()> {
     let valid = complete_document()?;
     for verdict in [
