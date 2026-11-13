@@ -536,7 +536,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn subsecond_probe_retains_one_actual_invocation_and_exact_budget() -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
