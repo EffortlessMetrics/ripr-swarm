@@ -169,3 +169,45 @@ Required-check changes remain separate from this local helper.
 Rollback removes this additive helper, feature and documentation through the
 ordinary protected route. It neither deletes retained native evidence nor
 changes the existing Kani runner, workflow, branch protection or public output.
+
+## Native execution declarations (#14472)
+
+The shared `Run` type and draft run schema now also represent captured native
+execution, separate unregistered harness observations, exact byte-artifact
+commitments, source snapshots, effective configuration, installed tools,
+compiled inventory, process observations and registered-result absence. This
+is the common document contract for the native producer and registry follow-ons.
+
+The auditor checks consistency of these declarations. A successful lane
+declaration requires complete source/configuration observations, a complete
+selected inventory, successful bounded invocation records, completed cleanup
+and positive cover evidence. The declared result status must agree with its
+native verdict, full selected source identity and cover/property projection.
+A partial or not-started run can retain missing
+source identities without inventing commitments. Required nullable keys must
+still be present with explicit `null`; omission is rejected by both the shared
+decoder and schema. Observed registered results
+still require those commitments. Unregistered observations do not increase
+registered claim coverage.
+
+The existing CLI and its guarantee remain unchanged: exit zero means supplied
+documents are consistent, and the result keeps
+`native_assurance: "not_assessed"`. Neither claimed currentness nor a supplied
+VERIFIED row authenticates a verifier execution. This slice installs no native
+producer, raw-stream replay, claim registry, source-closure scanner, workflow
+subscriber or required check. Those follow-ons reuse this module instead of
+creating another admission authority.
+
+Focused maintenance continues to use the library test selector and actual
+`formal-evidence-audit` entrypoint documented above. The native document
+controls exercise false currentness, incomplete cover identities, missing
+metadata, omitted observations, abnormal aggregate exit, missing preflight,
+cleanup not observed, and duplicate or escaping manifest paths. Their fixture
+is synthetic and is never native proof evidence. The strict schema continues
+to reject unknown fields, while semantic predicates enforce relationships
+that JSON Schema cannot compare across records.
+
+Rollback removes this additive execution-declaration extension and its schema
+fields together. Preserve the parent admission laws and all historical proof
+artifacts. Any future wire-law change must update the shared DTO, schema,
+semantic controls, producers and consumers in one reviewed composition.
