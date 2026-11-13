@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/design/formal-claim-plan-v1.schema.json",
+  "title": "RIPR formal affected-critical-claim plan v1",
+  "description": "Passive plan only. The constants prevent the document from representing CI authority or native assurance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "base",
+    "group",
+    "members",
+    "registry_generation",
+    "controller_generation",
+    "producer_generation",
+    "proof_profile",
+    "selection_input_digest",
+    "classification_complete",
+    "fallback_all_critical",
+    "fallback_reasons",
+    "critical_claim_count",
+    "selected_claim_count",
+    "claims",
+    "expected_native_subjects",
+    "zero_selection_basis",
+    "execution_authority",
+    "native_assurance",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.formal-claim-plan.v1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "base": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+    },
+    "group": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+    },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pr_number",
+          "head"
+        ],
+        "properties": {
+          "pr_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "head": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+          }
+        }
+      }
+    },
+    "registry_generation": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "controller_generation": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "producer_generation": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "proof_profile": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "selection_input_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "classification_complete": {
+      "type": "boolean"
+    },
+    "fallback_all_critical": {
+      "type": "boolean"
+    },
+    "fallback_reasons": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "critical_claim_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "selected_claim_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_id",
+          "claim_generation",
+          "criticality",
+          "phase",
+          "provider",
+          "route",
+          "disposition",
+          "reasons",
+          "subjects",
+          "limitations"
+        ],
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]+$"
+          },
+          "claim_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "criticality": {
+            "enum": [
+              "critical",
+              "important",
+              "advisory",
+              "scheduled",
+              "manual"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "admitted_merge_group",
+              "ordinary_pr_critical",
+              "merge_ready",
+              "scheduled",
+              "release",
+              "manual"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "route": {
+            "enum": [
+              "native",
+              "manual",
+              "unsupported"
+            ]
+          },
+          "disposition": {
+            "enum": [
+              "selected",
+              "not_selected"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "subjects": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
+        }
+      }
+    },
+    "expected_native_subjects": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "zero_selection_basis": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "execution_authority": {
+      "const": "not_granted"
+    },
+    "native_assurance": {
+      "const": "not_assessed"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "fallback_all_critical": {
+            "const": true
+          }
+        },
+        "required": [
+          "fallback_all_critical"
+        ]
+      },
+      "then": {
+        "properties": {
+          "fallback_reasons": {
+            "minItems": 1
+          },
+          "zero_selection_basis": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "selected_claim_count": {
+            "const": 0
+          }
+        },
+        "required": [
+          "selected_claim_count"
+        ]
+      },
+      "then": {
+        "properties": {
+          "zero_selection_basis": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}
