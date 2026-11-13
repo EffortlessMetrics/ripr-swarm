@@ -110,6 +110,14 @@ first line is the readiness marker with an allowed tail; a trusted reviewer's la
 negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
 free-prose retraction on later lines is best-effort (#12835). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+All three positive carriers (native approval, ready COMMENT, and description)
+first check outstanding trusted current-head negative COMMENT statements (#14578).
+Neutral replies do not clear them. Only the same reviewer's later explicit ready
+COMMENT or current trusted native approval on this head resolves their objection;
+another reviewer cannot resolve it, and a dismissed approval cannot resolve it.
+Native `CHANGES_REQUESTED` remains a separate veto until its native decisive
+state is superseded. Review timestamp and native ID order these statements,
+independently of input-page order; missing submission timestamps still refuse.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still

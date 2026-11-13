@@ -134,6 +134,187 @@ fn review(login: &str, state: &str, head: &str, at: &str, body: &str) -> serde_j
 }
 
 #[test]
+fn issue_14578_positive_carriers_cannot_bypass_unresolved_negatives() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let make = |login, state, subject: &str, second, body| {
+        let mut value = review(
+            login,
+            state,
+            subject,
+            &format!("2026-11-13T12:00:{second:02}Z"),
+            body,
+        );
+        value["id"] = serde_json::json!(second);
+        value
+    };
+    let approved = make("a", "APPROVED", &head, 1, "");
+    let negative = make("a", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let reply = make("a", "COMMENTED", &head, 3, "");
+    let chatter = make("a", "COMMENTED", &head, 4, "Thanks for the explanation.");
+    let other_ready = make("b", "COMMENTED", &head, 5, "SOURCE_REVIEW_READY");
+    let ready = make("a", "COMMENTED", &head, 6, "SOURCE_REVIEW_READY");
+    let reapproved = make("a", "APPROVED", &head, 6, "");
+    let other_negative = make("b", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let mut untrusted = reapproved.clone();
+    untrusted["author_association"] = serde_json::json!("CONTRIBUTOR");
+    let mut untrusted_negative = other_negative.clone();
+    untrusted_negative["author_association"] = serde_json::json!("NONE");
+    let mut no_time = negative.clone();
+    no_time["submitted_at"] = serde_json::Value::Null;
+    let cases = [
+        ("native approval alone", vec![approved.clone()], true),
+        (
+            "untrusted objection adds no authority",
+            vec![approved.clone(), untrusted_negative],
+            true,
+        ),
+        (
+            "same reviewer retracts approval",
+            vec![approved.clone(), negative.clone()],
+            false,
+        ),
+        (
+            "another reviewer objects",
+            vec![approved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "empty reply does not clear objection",
+            vec![negative.clone(), reply.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "neutral prose does not clear objection",
+            vec![negative.clone(), chatter.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "same reviewer explicitly ready",
+            vec![negative.clone(), reply.clone(), ready.clone()],
+            true,
+        ),
+        (
+            "same reviewer explicitly approves",
+            vec![negative.clone(), reply.clone(), reapproved.clone()],
+            true,
+        ),
+        (
+            "reapproval cannot clear another reviewer",
+            vec![negative.clone(), reapproved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "old-head reapproval cannot clear objection",
+            vec![
+                negative.clone(),
+                make("a", "APPROVED", &other, 6, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "untrusted reapproval cannot clear objection",
+            vec![negative.clone(), untrusted, other_ready.clone()],
+            false,
+        ),
+        (
+            "dismissal is not reapproval",
+            vec![
+                negative.clone(),
+                reapproved.clone(),
+                make("a", "DISMISSED", &head, 7, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "changes requested remains independent",
+            vec![make("a", "CHANGES_REQUESTED", &head, 1, ""), ready.clone()],
+            false,
+        ),
+        (
+            "native dismissal resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                make("a", "DISMISSED", &head, 2, ""),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "native reapproval resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                reapproved.clone(),
+            ],
+            true,
+        ),
+        (
+            "old-head comment does not veto current head",
+            vec![
+                make("a", "COMMENTED", &other, 2, "REPAIR_REQUIRED"),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "missing timestamp refuses",
+            vec![approved.clone(), no_time],
+            false,
+        ),
+    ];
+    let pull = pull_object(
+        "MEMBER",
+        "o/r",
+        &head,
+        &format!("Source review: REVIEW_READY {head}"),
+    );
+    for (index, (name, rows, admit)) in cases.into_iter().enumerate() {
+        // Pagination/order must not decide precedence. All outcomes exercise the
+        // production CLI, both with and without the description carrier.
+        for reversed in [false, true] {
+            let mut ordered = rows.clone();
+            if reversed {
+                ordered.reverse();
+            }
+            let reviews = serde_json::json!(ordered);
+            expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+            expect_outcome(
+                &check_reviews_with_pull(
+                    &reviews,
+                    &pull,
+                    &head,
+                    &format!("14578-{index}-{reversed}"),
+                )?,
+                admit,
+                name,
+            )?;
+        }
+    }
+    // Equal timestamp reviews are ordered by native ID, not page/input order.
+    let mut tied_negative = negative.clone();
+    tied_negative["submitted_at"] = approved["submitted_at"].clone();
+    let mut tied_approval = reapproved.clone();
+    tied_approval["submitted_at"] = approved["submitted_at"].clone();
+    for rows in [
+        vec![approved.clone(), tied_negative.clone()],
+        vec![tied_negative.clone(), approved],
+    ] {
+        expect_outcome(
+            &check_reviews(&serde_json::json!(rows), &head)?,
+            false,
+            "higher-ID negative wins tie",
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&serde_json::json!([tied_approval, tied_negative]), &head)?,
+        true,
+        "higher-ID reapproval wins tie",
+    )
+}
+
+#[test]
 fn review_disposition_self_test_passes() -> Result<(), String> {
     let output = Command::new("python3")
         .arg("-I")
