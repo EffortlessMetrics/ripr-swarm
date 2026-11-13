@@ -1041,7 +1041,9 @@ fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
     (submodule_file_count > 0).then(|| {
         format!(
             "ripr: skipped {submodule_file_count} submodule pointer change(s); \
-             ripr does not analyze submodule contents."
+             ripr does not analyze submodule contents. To check a submodule's own changes, \
+             run `ripr check --base <old-commit>` from inside it, where <old-commit> is the \
+             submodule commit recorded before the change (`git diff --submodule=short`)."
         )
     })
 }
@@ -5766,7 +5768,10 @@ mod tests {
         assert_eq!(
             emitted.as_deref(),
             Some(
-                "ripr: skipped 1 submodule pointer change(s); ripr does not analyze submodule contents."
+                "ripr: skipped 1 submodule pointer change(s); ripr does not analyze submodule \
+                 contents. To check a submodule's own changes, run `ripr check --base \
+                 <old-commit>` from inside it, where <old-commit> is the submodule commit \
+                 recorded before the change (`git diff --submodule=short`)."
             )
         );
     }

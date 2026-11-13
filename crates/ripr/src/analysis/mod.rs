@@ -91,6 +91,7 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// analysis tree and name the type through inference.
 #[cfg(test)]
 pub(crate) use diff::LoadedDiff;
+pub(crate) use diff::bare_repository_message;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
