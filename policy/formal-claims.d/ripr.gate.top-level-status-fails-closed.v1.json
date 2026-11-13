@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
-  "claim_generation": 2,
+  "claim_generation": 3,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -9,7 +9,8 @@
   "proposition": "The top-level gate status fails exactly when configuration errors, blocking findings, or exception-policy blockers require failure.",
   "non_claims": [
     "This claim does not establish that upstream findings, acknowledgements, or configuration errors are themselves classified correctly.",
-    "This claim does not establish availability or latency of the gate command."
+    "This claim does not establish availability or latency of the gate command.",
+    "This proof does not model String contents, heap allocation, vector destruction, or addresses; only warning/configuration-error slice emptiness is observed."
   ],
   "owners": [
     "ripr::output::gate::top_level_status",
@@ -19,11 +20,12 @@
     "crates/ripr/src/output/gate.rs",
     "crates/ripr/src/output/gate/gate_kani.rs",
     "crates/ripr/src/output/gate/model.rs",
-    "crates/ripr/src/output/gate/presentation.rs"
+    "crates/ripr/src/output/gate/presentation.rs",
+    "crates/ripr/src/proof_domains.rs"
   ],
-  "domain": "All GateMode variants, symbolic GateSummary counters, bounded warning/configuration-error presence, and symbolic exception blockers.",
+  "domain": "Every GateMode constructor selected from the exhaustive, duplicate-checked GATE_MODES domain; all usize GateSummary counters and exception blockers; warning and configuration-error slices of zero or one empty String.",
   "assumptions": [
-    "The symbolic mode index is constrained below the four registered GateMode variants."
+    "The symbolic usize mode index is constrained below GATE_MODES.len(); the generated exhaustive match rejects omitted, duplicated, or newly added production constructors."
   ],
   "trust_dependencies": [
     "Kani 0.68.0 frontend and transformation semantics",
@@ -35,12 +37,18 @@
     "gate_mode_variants": 4,
     "warnings_entries_max": 1,
     "config_errors_entries_max": 1,
-    "unwind": 16
+    "unwind": 16,
+    "symbolic_index": "usize constrained to index < GATE_MODES.len()",
+    "warning_and_config_error_storage": "immutable zero/one-entry slices over an empty String; production observes slice emptiness only"
   },
   "subjects": [
     "top_level_status_fails_closed"
   ],
   "required_covers": [
+    "the VisibleOnly constructor is explored",
+    "the Acknowledgeable constructor is explored",
+    "the BaselineCheck constructor is explored",
+    "the CalibratedGate constructor is explored",
     "pass",
     "blocked",
     "config_error",
@@ -48,9 +56,11 @@
     "advisory"
   ],
   "negative_controls": [
-    "Mutation control: allow a blocking or configuration-error state to produce a non-failing status."
+    "Mutation control: allow a blocking or configuration-error state to produce a non-failing status.",
+    "Compiler control: omit or duplicate a constructor, or add a production enum variant without extending the proof domain; the generated guard must reject compilation.",
+    "Guard-removal control: removing the exhaustive guard permits an omitted constructor while ordinary behavior tests remain green; those tests alone do not establish domain completeness."
   ],
-  "result_satisfaction": "One current verified row for the registered subject with every required status cover satisfied.",
+  "result_satisfaction": "One current verified row for the registered subject with every required constructor and status cover satisfied and no unreachable cover.",
   "currentness_inputs": [
     "claim document decision digest",
     "complete registered source-closure digest",

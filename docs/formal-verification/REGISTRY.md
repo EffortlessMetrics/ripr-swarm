@@ -142,6 +142,39 @@ domain, bounds, subject, and the other four claim generations are unchanged.
 Earlier native receipts remain bound to their original claim and registry
 generations. This declaration does not establish a native result.
 
+Generation 4 increases classification to generation 2 and gate/repair to
+generation 3. Their symbolic selectors now use the actual lengths of the
+compiler-checked constructor domains in `crates/ripr/src/proof_domains.rs`,
+which is included in all three source closures. Required covers are the five
+EvidenceState constructors plus two actionability predicates, four GateMode
+constructors plus five statuses, and five FixInstructionState constructors
+plus three route predicates: 7, 9, and 8 distinct obligations respectively.
+Each constructor obligation requires its own native property, including the
+macro invocation location and exact constructor description; shared source
+lines do not make properties interchangeable.
+
+The gate proof retains its zero/one empty-String input domain and unwind 16,
+using immutable slices because production only observes emptiness. Its claim
+explicitly excludes allocation, vector destruction, String contents and
+addresses. The production predicates and propositions are unchanged. This
+transition leaves the currentness and resource claim documents unchanged.
+
+Ordinary exact-item constructor controls and isolated native positive,
+intended-production-mutant and restoration checks are qualification evidence
+for their recorded source subjects. A range-omission control demonstrates that
+native process success can coexist with an unsatisfied constructor cover;
+required-cover admission must still reject that result. These experiments do
+not establish full-package/default-profile assurance or rebind historical
+receipts. Registry-only scoreboards continue to report five
+`NOT_ESTABLISHED` claims until native binding, configuration, source and custody
+admission is complete.
+
+Registry generation changes apply to every native binding. The 3-to-4 transition
+requires re-preparation of bindings and capture/replay configuration against the
+new registry identity, including the unchanged currentness and resource claim
+decisions. Matching a claim ID, proposition or decision digest alone does not
+make an older preparation or receipt current.
+
 ## Qualification
 
 Focused commands:

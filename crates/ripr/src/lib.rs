@@ -129,6 +129,8 @@ mod command_spec_digest;
 pub mod config;
 #[cfg(kani)]
 mod kani_smoke;
+#[cfg(any(test, kani))]
+mod proof_domains;
 // Kept public for compatibility; prefer the crate-root domain type re-exports
 // for new integrations.
 #[doc(hidden)]

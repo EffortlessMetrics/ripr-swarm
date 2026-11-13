@@ -78,6 +78,19 @@ compile in both ordinary tests and Kani builds; duplicate constructors are
 rejected. This guard does not fabricate enum values or depend on numeric
 discriminants, variant counts, or a separately maintained match.
 
+The `EvidenceState` actionability, `GateMode` top-level status and
+`FixInstructionState` repair-route selectors use the same declaration/guard
+discipline in the application proof domains. Symbolic indices are bounded by
+the declared slice length. Each input constructor has its own cover before
+the production predicate runs, alongside the existing semantic outcome covers.
+The literal predicates, warning/configuration-entry bounds and gate unwind
+bound remain unchanged. The gate input helper returns immutable zero/one-entry
+slices over an empty string: the producer reads only slice emptiness, so the
+proof need not model allocation or vector cleanup to cover those same inputs.
+Native cover bindings must name the new constructor
+properties and retain their own source/configuration and claim generations;
+an older outcome-only cover receipt does not establish the new proof domain.
+
 Feedback judgment expectations are explicit per reason, preserving the five
 meanings in SPEC-0179. Useful actions, limitations, correct targets and
 discriminators, and clear explanations are useful. Wrong targets/discriminators,
@@ -217,7 +230,11 @@ It does not claim:
   remain failing lane results.
 - The smoke harness `evidence_state_actionable_only_for_actionable` proves the
   actionability predicate holds for exactly one `EvidenceState` variant, with
-  `cover!` on both outcomes.
+  `cover!` on both outcomes and every input constructor.
+- Application proof-domain ordinary tests check constructor uniqueness and the
+  literal actionability/repair-route predicates. Compiler-refusal controls must
+  separately exercise a real enum addition, an omitted row and a duplicate row;
+  a guard-removal control distinguishes compiler coverage from example tests.
 - Oracle discrimination: injecting a bug into `EvidenceState::is_actionable` makes the
   smoke harness fail (recorded in the introducing PR).
 
@@ -264,8 +281,10 @@ It does not claim:
 - `xtask/tests/kani_lane_process.rs`:
   `kani_runner_requires_observed_complete_cover_evidence` and real child-process
   controls. Their provider output is synthetic, not a native proof.
-- #14469 supplies the four constant-only harness reachability witnesses. This
-  parser stage depends on that candidate's integration before full-lane use.
+- The #14469 constant-only witnesses are composed here: `production_cap_is_256_mib`,
+  `exit_code_constants_match_documented_table`, `generation_counter_saturates_at_max`,
+  and `default_budget_is_valid`. Source composition does not itself qualify the
+  full live lane or grant protected native assurance.
 
 ## Implementation Mapping
 
@@ -276,6 +295,7 @@ It does not claim:
   aggregate process semantics; no tool installation or authenticity claim.
 - `xtask/src/kani_lane.rs`: execution and process reconciliation.
 - `crates/ripr/src/kani_smoke.rs`: the smoke harness.
+- `crates/ripr/src/proof_domains.rs`: guarded application constructor domains.
 - `.github/workflows/kani.yml` and `policy/ci-lane-whitelist.toml`: the lane.
 - `Cargo.toml`: `unexpected_cfgs` check-cfg for `cfg(kani)`.
 

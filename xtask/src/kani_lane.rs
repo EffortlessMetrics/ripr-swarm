@@ -5,9 +5,9 @@
 //! one result block per discovered `#[kani::proof]` harness:
 //!
 //! - `VERIFIED` (within the harness's documented bounds), or
-//! - `FAILED` (counterexample, or a `cover!` that is unreachable and so makes
-//!   the proof vacuous), or
-//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict in the output).
+//! - `FAILED` (native verification failure or an unsatisfied required cover), or
+//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict or no complete
+//!   positive cover evidence in the output).
 //!
 //! Absence never passes: a missing tool, zero harnesses (unless the operator
 //! passes `--allow-empty`) and every `NOT-ESTABLISHED` harness exit nonzero.

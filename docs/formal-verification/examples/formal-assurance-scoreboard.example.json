@@ -1,1 +1,108 @@
-{"schema":"ripr.formal-assurance-scoreboard.v1","repository":"EffortlessMetrics/ripr-swarm","registry_generation":"3:sha256:e7553187890ee593cb57f210ac36dc5dc731dce13eecf04f46face8daa45c144","native_result_join":"not_supplied","native_assurance":"not_established","summary":{"registered_claims":5,"established":0,"failed":0,"not_established":5,"stale":0,"unsupported":0,"not_proven":0},"claims":[{"claim_id":"ripr.classification.actionable-only-with-evidence.v1","claim_generation":1,"criticality":"critical","phase":"admitted_merge_group","provider":"kani","route":"native","status":"NOT_ESTABLISHED","reasons":["No exact admitted native proof run was supplied to this registry-only scoreboard.","Negative-control execution and currentness are not joined by this command.","Provider, toolchain, source-closure, merge-group and runner identities are not established."],"subjects":["evidence_state_actionable_only_for_actionable"],"decision_digest":"sha256:851a7aa2b660e8e21556447919a576cb09886cf46956cf8a9b70d07ded471be1"},{"claim_id":"ripr.currentness.candidate-action-requires-current.v1","claim_generation":2,"criticality":"critical","phase":"admitted_merge_group","provider":"kani","route":"native","status":"NOT_ESTABLISHED","reasons":["No exact admitted native proof run was supplied to this registry-only scoreboard.","Negative-control execution and currentness are not joined by this command.","Provider, toolchain, source-closure, merge-group and runner identities are not established."],"subjects":["currentness_action_and_base_side_are_disjoint"],"decision_digest":"sha256:1dbf915af1e4fec7109230ca73a3bba0267b509b4940a0dd860300badf2188b4"},{"claim_id":"ripr.gate.top-level-status-fails-closed.v1","claim_generation":2,"criticality":"critical","phase":"admitted_merge_group","provider":"kani","route":"native","status":"NOT_ESTABLISHED","reasons":["No exact admitted native proof run was supplied to this registry-only scoreboard.","Negative-control execution and currentness are not joined by this command.","Provider, toolchain, source-closure, merge-group and runner identities are not established."],"subjects":["top_level_status_fails_closed"],"decision_digest":"sha256:27eae2563ebf07257547d13a577b63e3e4590732f7116518d36c9e10098c9130"},{"claim_id":"ripr.repair.route-requires-ready-current-instruction.v1","claim_generation":2,"criticality":"critical","phase":"admitted_merge_group","provider":"kani","route":"native","status":"NOT_ESTABLISHED","reasons":["No exact admitted native proof run was supplied to this registry-only scoreboard.","Negative-control execution and currentness are not joined by this command.","Provider, toolchain, source-closure, merge-group and runner identities are not established."],"subjects":["route_exposable_iff_fix_site_ready_and_repair_ready"],"decision_digest":"sha256:17627309595cc67fb9a754f3b70af481cb8b525a4d77bf93bf9f4f2f1f285152"},{"claim_id":"ripr.resource.input-cap-is-exact.v1","claim_generation":1,"criticality":"critical","phase":"admitted_merge_group","provider":"kani","route":"native","status":"NOT_ESTABLISHED","reasons":["No exact admitted native proof run was supplied to this registry-only scoreboard.","Negative-control execution and currentness are not joined by this command.","Provider, toolchain, source-closure, merge-group and runner identities are not established."],"subjects":["read_cap_and_exceeds_limit_are_exact"],"decision_digest":"sha256:6270c3458d0b3062f1629d86a0c089b4dddfab037ca8266e34eb06755fc47716"}]}
+{
+  "schema": "ripr.formal-assurance-scoreboard.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "registry_generation": "4:sha256:ef747428320b18fca2fd0069c6ae1fd8761d8ae12351e58ce7a2bba0e4303e11",
+  "native_result_join": "not_supplied",
+  "native_assurance": "not_established",
+  "summary": {
+    "registered_claims": 5,
+    "established": 0,
+    "failed": 0,
+    "not_established": 5,
+    "stale": 0,
+    "unsupported": 0,
+    "not_proven": 0
+  },
+  "claims": [
+    {
+      "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+      "claim_generation": 2,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "status": "NOT_ESTABLISHED",
+      "reasons": [
+        "No exact admitted native proof run was supplied to this registry-only scoreboard.",
+        "Negative-control execution and currentness are not joined by this command.",
+        "Provider, toolchain, source-closure, merge-group and runner identities are not established."
+      ],
+      "subjects": [
+        "evidence_state_actionable_only_for_actionable"
+      ],
+      "decision_digest": "sha256:b3481ad478525705c384d8890e92ba1347118c6cb4dadbcff7e8de2b9f9ba686"
+    },
+    {
+      "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
+      "claim_generation": 2,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "status": "NOT_ESTABLISHED",
+      "reasons": [
+        "No exact admitted native proof run was supplied to this registry-only scoreboard.",
+        "Negative-control execution and currentness are not joined by this command.",
+        "Provider, toolchain, source-closure, merge-group and runner identities are not established."
+      ],
+      "subjects": [
+        "currentness_action_and_base_side_are_disjoint"
+      ],
+      "decision_digest": "sha256:1dbf915af1e4fec7109230ca73a3bba0267b509b4940a0dd860300badf2188b4"
+    },
+    {
+      "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
+      "claim_generation": 3,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "status": "NOT_ESTABLISHED",
+      "reasons": [
+        "No exact admitted native proof run was supplied to this registry-only scoreboard.",
+        "Negative-control execution and currentness are not joined by this command.",
+        "Provider, toolchain, source-closure, merge-group and runner identities are not established."
+      ],
+      "subjects": [
+        "top_level_status_fails_closed"
+      ],
+      "decision_digest": "sha256:b678c03c8a62965e9f0b16ff67af133758d1a064e7ad1e5d9437c765fd9d359c"
+    },
+    {
+      "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
+      "claim_generation": 3,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "status": "NOT_ESTABLISHED",
+      "reasons": [
+        "No exact admitted native proof run was supplied to this registry-only scoreboard.",
+        "Negative-control execution and currentness are not joined by this command.",
+        "Provider, toolchain, source-closure, merge-group and runner identities are not established."
+      ],
+      "subjects": [
+        "route_exposable_iff_fix_site_ready_and_repair_ready"
+      ],
+      "decision_digest": "sha256:38b4a04e15e39b4f42aa3eb7e1e0cfda8b5dc09890be582269c60600f57f886e"
+    },
+    {
+      "claim_id": "ripr.resource.input-cap-is-exact.v1",
+      "claim_generation": 1,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "status": "NOT_ESTABLISHED",
+      "reasons": [
+        "No exact admitted native proof run was supplied to this registry-only scoreboard.",
+        "Negative-control execution and currentness are not joined by this command.",
+        "Provider, toolchain, source-closure, merge-group and runner identities are not established."
+      ],
+      "subjects": [
+        "read_cap_and_exceeds_limit_are_exact"
+      ],
+      "decision_digest": "sha256:6270c3458d0b3062f1629d86a0c089b4dddfab037ca8266e34eb06755fc47716"
+    }
+  ]
+}

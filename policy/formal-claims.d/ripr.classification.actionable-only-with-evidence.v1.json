@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
-  "claim_generation": 1,
+  "claim_generation": 2,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -17,11 +17,12 @@
   "source_closure": [
     "crates/ripr-contract/src/domain/evidence_state.rs",
     "crates/ripr/src/domain.rs",
-    "crates/ripr/src/kani_smoke.rs"
+    "crates/ripr/src/kani_smoke.rs",
+    "crates/ripr/src/proof_domains.rs"
   ],
-  "domain": "All five registered EvidenceState variants selected by a bounded symbolic index.",
+  "domain": "Every EvidenceState constructor, selected by a symbolic usize index into the exhaustive, duplicate-checked EVIDENCE_STATES domain.",
   "assumptions": [
-    "The symbolic index is constrained below the five registered EvidenceState variants."
+    "The symbolic usize index is constrained below EVIDENCE_STATES.len(); the generated exhaustive match rejects omitted, duplicated, or newly added production constructors."
   ],
   "trust_dependencies": [
     "Kani 0.68.0 frontend and transformation semantics",
@@ -31,19 +32,27 @@
   "observable": "The boolean returned by EvidenceState::is_actionable.",
   "bounds": {
     "evidence_state_variants": 5,
-    "symbolic_index": "u8 constrained to index < 5"
+    "symbolic_index": "usize constrained to index < EVIDENCE_STATES.len()"
   },
   "subjects": [
     "evidence_state_actionable_only_for_actionable"
   ],
   "required_covers": [
+    "the Actionable constructor is explored",
+    "the AlreadyObserved constructor is explored",
+    "the InternalOnly constructor is explored",
+    "the StaticLimitation constructor is explored",
+    "the Unknown constructor is explored",
     "an actionable state is explored",
     "a non-actionable state is explored"
   ],
   "negative_controls": [
-    "Mutation control: make a non-Actionable variant return true and require the harness to fail."
+    "Mutation control: make a non-Actionable variant return true and require the harness to fail.",
+    "Compiler control: omit or duplicate a constructor, or add a production enum variant without extending the proof domain; the generated guard must reject compilation.",
+    "Guard-removal control: removing the exhaustive guard permits an omitted constructor while ordinary behavior tests remain green; those tests alone do not establish domain completeness.",
+    "Range control: constrain the symbolic index below EVIDENCE_STATES.len() - 1; an unsatisfied constructor cover must reject result admission even when native assertions and process exit succeed."
   ],
-  "result_satisfaction": "One current verified row for the registered subject with both required covers satisfied and no unreachable cover.",
+  "result_satisfaction": "One current verified row for the registered subject with every required constructor and actionability cover satisfied and no unreachable cover.",
   "currentness_inputs": [
     "claim document decision digest",
     "complete registered source-closure digest",

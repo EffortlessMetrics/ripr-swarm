@@ -6,20 +6,17 @@
 //! has a real, non-vacuous harness to run before any other proof lands.
 
 use crate::domain::EvidenceState;
+use crate::proof_domains::{EVIDENCE_STATES, cover_evidence_states};
 
 /// Every `EvidenceState` variant, selected by a symbolic index so the proof
 /// covers all of them without deriving `kani::Arbitrary` on production types.
 fn any_state() -> EvidenceState {
-    let index: u8 = kani::any();
-    // Bound: five variants; any other index is outside the modelled domain.
-    kani::assume(index < 5);
-    match index {
-        0 => EvidenceState::Actionable,
-        1 => EvidenceState::AlreadyObserved,
-        2 => EvidenceState::InternalOnly,
-        3 => EvidenceState::StaticLimitation,
-        _ => EvidenceState::Unknown,
-    }
+    let index: usize = kani::any();
+    // Bound: the compiler-checked domain contains every production constructor.
+    kani::assume(index < EVIDENCE_STATES.len());
+    let state = EVIDENCE_STATES[index];
+    cover_evidence_states(&state);
+    state
 }
 
 /// The actionability flip is fail-closed: `is_actionable` holds for exactly
