@@ -2943,23 +2943,49 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
 /// Whether the test file declares a `const` or `static` named `name` anywhere
 /// (fail-closed: scope-aware visibility is a documented known limit).
 fn declares_value_named(source: &str, name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return true;
-    };
-    parse.tree().syntax().descendants().any(|node| {
-        let named = if let Some(item) = ast::Const::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else if let Some(item) = ast::Static::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else {
-            return false;
-        };
-        named.as_deref() == Some(name)
-    })
+    // One walk of the file's tree answers every name. The helper-entry edge
+    // asks once per (probe, calling test, hop), so a diff that changes many
+    // functions of one file re-walked that file, and often re-parsed it, once
+    // per changed function (#11738).
+    let declared = crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::DeclaredValueNames,
+        0,
+        source,
+        || declared_value_names(source).map(std::rc::Rc::new),
+    );
+    declared.is_none_or(|names| names.contains(name))
+}
+
+/// The names of every `const` and `static` item in `source`, raw prefixes
+/// removed; `None` when the source does not parse cleanly.
+fn declared_value_names(source: &str) -> Option<BTreeSet<String>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    #[cfg(test)]
+    DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(walks.get() + 1));
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    Some(
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(|node| {
+                let named = if let Some(item) = ast::Const::cast(node.clone()) {
+                    item.name()
+                } else {
+                    ast::Static::cast(node)?.name()
+                };
+                named.map(|n| n.text().trim_start_matches("r#").to_string())
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-file walks [`declared_value_names`] ran on this thread, so a test
+    /// can prove the walk happens once per source within a run.
+    static DECLARED_VALUE_NAME_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the test body binds `name` (a `let`, a closure or function
@@ -8436,6 +8462,42 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 /// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
+    /// #11738: one walk of a source answers every name inside a run memo
+    /// scope, and the answers are the unscoped ones.
+    #[test]
+    fn declared_value_names_are_walked_once_per_source_in_a_scope() {
+        let source =
+            "const LIMIT: u8 = 1;\nstatic r#TABLE: [u8; 1] = [1];\nfn limit() -> u8 { LIMIT }\n";
+        let unparsable = "const LIMIT: u8 = ;\n";
+        let names = ["LIMIT", "TABLE", "r#TABLE", "limit", "missing"];
+        let walks = || super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.get());
+        let unscoped: Vec<bool> = names
+            .iter()
+            .map(|name| super::declares_value_named(source, name))
+            .collect();
+        assert_eq!(unscoped, [true, true, true, false, false]);
+        assert!(
+            super::declares_value_named(unparsable, "missing"),
+            "an unparsable source refuses every name"
+        );
+        let scope = crate::analysis::syntax::run_memo::enter();
+        super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(0));
+        for _ in 0..3 {
+            let scoped: Vec<bool> = names
+                .iter()
+                .map(|name| super::declares_value_named(source, name))
+                .collect();
+            assert_eq!(scoped, unscoped);
+        }
+        assert_eq!(walks(), 1, "one walk answers every name and repeat");
+        assert!(super::declares_value_named(unparsable, "missing"));
+        assert!(super::declares_value_named(unparsable, "LIMIT"));
+        assert_eq!(walks(), 2, "another source is walked once");
+        drop(scope);
+        assert!(super::declares_value_named(source, "LIMIT"));
+        assert!(!super::declares_value_named(source, "missing"));
+        assert_eq!(walks(), 4, "outside a scope every ask walks");
+    }
     use super::*;
     use crate::analysis::facts::{
         FileFacts, FunctionContainer, FunctionSourceRole, SourceRoleProvenance,
