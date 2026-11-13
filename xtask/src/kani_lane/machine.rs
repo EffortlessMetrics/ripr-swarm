@@ -643,6 +643,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::super::HarnessStatus;
+    use super::super::tests::refuses;
     use super::*;
 
     fn ready(report: &mut Report, allow_empty: bool) -> Result<(), String> {
@@ -728,7 +729,10 @@ mod tests {
             "ripr",
             &super::super::all_not_established(&[harness("proof")], "tool unavailable"),
         );
-        assert!(report.finish(Err("tool unavailable".to_string())).is_err());
+        refuses(
+            report.finish(Err("tool unavailable".to_string())),
+            "successful tool availability was not observed",
+        )?;
         assert_eq!(report.selected.len(), 1);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].claim_id, None);
@@ -761,7 +765,10 @@ mod tests {
             "ripr",
             &super::super::results_from_output(&[harness("proof")], &output),
         );
-        assert!(report.finish(Err("timed out".to_string())).is_err());
+        refuses(
+            report.finish(Err("timed out".to_string())),
+            "a subprocess did not complete successfully",
+        )?;
         assert!(matches!(
             report.results[0].observation.status,
             HarnessStatus::Verified
@@ -796,7 +803,10 @@ mod tests {
             "ripr",
             &super::super::results_from_output(&[harness("proof")], &output),
         );
-        assert!(report.finish(Ok(())).is_err());
+        refuses(
+            report.finish(Ok(())),
+            "native output contains harness blocks outside the source inventory",
+        )?;
         assert_eq!(
             report.invocations[1].unmatched_native_blocks,
             ["m::unexpected"]
@@ -807,14 +817,20 @@ mod tests {
     #[test]
     fn duplicate_selected_or_missing_rows_cannot_pass() -> Result<(), String> {
         let mut report = selected("proof")?;
-        assert!(report.finish(Ok(())).is_err());
+        refuses(
+            report.finish(Ok(())),
+            "selected and reported source-harness inventories do not agree uniquely",
+        )?;
         report.selected.push(report.selected[0].clone());
         let output = good_output("proof");
         report.rows(
             "ripr",
             &super::super::results_from_output(&[harness("proof"), harness("proof")], &output),
         );
-        assert!(report.finish(Ok(())).is_err());
+        refuses(
+            report.finish(Ok(())),
+            "selected and reported source-harness inventories do not agree uniquely",
+        )?;
         Ok(())
     }
 
@@ -827,7 +843,10 @@ mod tests {
             &super::super::results_from_output(&[harness("proof")], &good_output("proof")),
         );
         report.selected_files_unchanged_after_run = None;
-        assert!(report.finish(Ok(())).is_err());
+        refuses(
+            report.finish(Ok(())),
+            "discovered proof source changed or could not be rechecked",
+        )?;
         Ok(())
     }
 
@@ -912,8 +931,28 @@ mod tests {
     }
 
     #[test]
+    fn journal_normalizes_block_hash_without_rewriting_shared_native_bytes() -> Result<(), String> {
+        let mut report = selected("proof")?;
+        let raw_block = " ** 1 of 1 cover properties satisfied\r\nVERIFICATION:- SUCCESSFUL";
+        let output = format!("Checking harness m::proof...\r\n{raw_block}");
+        let raw = super::super::split_harness_blocks(&output);
+        assert_eq!(raw, [("m::proof".to_string(), raw_block.to_string())]);
+        capture_success(&mut report, &output, &[harness("proof")]);
+        let normalized = " ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+        assert_eq!(report.invocations[1].native_blocks.len(), 1);
+        assert_eq!(
+            report.invocations[1].native_blocks[0].normalized_block_sha256,
+            digest(normalized.as_bytes())
+        );
+        assert_ne!(digest(raw_block.as_bytes()), digest(normalized.as_bytes()));
+        Ok(())
+    }
+
+    #[test]
     fn journal_replaces_old_success_with_new_incomplete_run() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
+        let temporary = std::env::temp_dir();
+        fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
             "kani-machine-test-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
@@ -943,7 +982,9 @@ mod tests {
 
     #[test]
     fn source_change_stops_lane_without_erasing_historical_rows() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
+        let temporary = std::env::temp_dir();
+        fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
             "kani-source-test-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
@@ -972,7 +1013,10 @@ mod tests {
             fs::write(&path, b"after").map_err(|e| e.to_string())?;
             report.recheck_sources();
             assert_eq!(report.selected_files_unchanged_after_run, Some(false));
-            assert!(report.finish(Ok(())).is_err());
+            refuses(
+                report.finish(Ok(())),
+                "discovered proof source changed or could not be rechecked",
+            )?;
             assert!(matches!(
                 report.results[0].observation.status,
                 HarnessStatus::Verified

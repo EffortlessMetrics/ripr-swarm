@@ -185,8 +185,9 @@ native-source provenance or inventory completeness.
 
 The `cargo kani --version` availability probe uses the shared bounded child
 owner and requires both output streams to finish. Its separate deadline is the
-smaller of 10 seconds and the requested `--timeout-secs` verification budget
-(with a one-second minimum). A failed, signaled, status-less or timed-out probe
+smaller of 10 seconds and the requested `--timeout-secs` verification budget.
+The shared byte-capture API preserves a caller's subsecond remaining duration;
+it never rounds up to a one-second minimum. A failed, signaled, status-less or timed-out probe
 reports an explicit NOT-ESTABLISHED reason and never starts verification.
 This preliminary allowance is **in addition to** the subsequent
 `--timeout-secs` verification deadline. Process cleanup and bounded pipe drains
@@ -199,10 +200,12 @@ termination failure, incomplete/failed capture, descendant-cleanup failure,
 missing Kani subcommand, and unsuccessful exit. The missing-subcommand class
 requires Cargo's exact uncolored stderr line `` error: no such command: `kani` ``
 and exit code 101. Other nonzero exits stay ordinary unsuccessful exits.
-Reports contain fixed diagnostic vocabulary and process exit status, never
-arbitrary version stdout, stderr or low-level error text. Successful discovery
-retains its text capture for callers; it does not authenticate native proof or
-provide byte-exact artifact custody.
+Markdown and diagnostic projections contain fixed diagnostic vocabulary and
+process exit status, never arbitrary version stdout, stderr or low-level error
+text. The machine JSON deliberately retains the bounded probe text and its
+commitment for inspection. It drops the local byte-capture capability, so this
+serialized observation does not authenticate native proof or establish
+protected byte custody.
 
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
@@ -236,8 +239,10 @@ This is `ripr.kani-observation.v1`, not a registered-claim receipt. Claim IDs an
 generations remain null, registered claims remain zero, and claim assurance is
 not established. Proof-file rechecks are not complete or atomic consumed-source
 custody. Captured text is not guaranteed to preserve original pipe bytes.
-Provider/solver authenticity and process-tree cleanup remain unobserved.
-The existing preflight deadline repair remains separately owned by #12581.
+Provider/solver authenticity and process-tree cleanup remain unobserved in this
+legacy DTO. The #12581 preflight deadline and safe failure classification are
+composed through the shared observed byte owner; a separate version invocation
+is not used for retention.
 
 See the [observation contract and maintenance runbook](../verification/kani-observation.md)
 for byte budgets, publication/retention rules, schema, consumer requirements and

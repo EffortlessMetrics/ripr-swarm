@@ -1,6 +1,6 @@
 {
   "schema": "ripr.native-bindings.v1",
-  "registry_generation": "3:sha256:e7553187890ee593cb57f210ac36dc5dc731dce13eecf04f46face8daa45c144",
+  "registry_generation": "4:sha256:ef747428320b18fca2fd0069c6ae1fd8761d8ae12351e58ce7a2bba0e4303e11",
   "bindings": [
     {
       "claim_id": "ripr.currentness.candidate-action-requires-current.v1",

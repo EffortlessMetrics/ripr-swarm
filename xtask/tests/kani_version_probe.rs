@@ -7,6 +7,7 @@
 
 use ripr::process_owner::OwnedProcess;
 use rustix::process::{WaitId, WaitIdOptions, waitid};
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::os::unix::fs::{PermissionsExt, symlink};
 #[cfg(feature = "automation")]
@@ -60,6 +61,7 @@ struct Fixture(PathBuf);
 struct Observation {
     output: Output,
     report: String,
+    published: serde_json::Value,
     calls: Vec<String>,
     elapsed: Duration,
     watchdog_timed_out: bool,
@@ -119,6 +121,7 @@ impl Fixture {
         if observed.live_descendants_before_driver_cleanup != 0 {
             return Err("probe returned with live descendants before driver cleanup".into());
         }
+        assert_eq!(observed.published["report"]["phase"], "completed");
         #[cfg(feature = "automation")]
         assert_eq!(
             String::from_utf8_lossy(&observed.output.stdout).trim_end(),
@@ -237,13 +240,32 @@ impl Fixture {
                 "driver.stderr"
             })?,
         };
-        let report = match fs::read_to_string(self.0.join("target/ripr/reports/kani.md")) {
-            Ok(report) => report,
-            Err(error) if watchdog_timed_out && error.kind() == std::io::ErrorKind::NotFound => {
-                String::new()
-            }
-            Err(error) => return Err(format!("no persisted probe report: {error}")),
-        };
+        let report_root = self.0.join("target/ripr/reports");
+        let report = fs::read_to_string(report_root.join("kani.md"))
+            .map_err(|error| format!("no persisted probe Markdown: {error}"))?;
+        let published: serde_json::Value = serde_json::from_slice(
+            &fs::read(report_root.join("kani.json"))
+                .map_err(|error| format!("no persisted probe JSON: {error}"))?,
+        )
+        .map_err(|error| error.to_string())?;
+        let immutable = published["markdown_path"]
+            .as_str()
+            .ok_or("missing immutable Markdown path")?;
+        let run_id = published["report"]["run_id"]
+            .as_str()
+            .ok_or("missing run ID")?;
+        assert!(immutable.starts_with(&format!("kani-runs/{run_id}/checkpoint-")));
+        assert_eq!(
+            fs::read_to_string(report_root.join(immutable)).map_err(|error| error.to_string())?,
+            report
+        );
+        assert_eq!(published["markdown"].as_str(), Some(report.as_str()));
+        assert_eq!(
+            published["markdown_sha256"],
+            format!("sha256:{:x}", Sha256::digest(report.as_bytes()))
+        );
+        assert_eq!(published["report"]["registered_claims"], 0);
+        assert_eq!(published["report"]["claim_assurance"], "not_established");
         let calls = fs::read_to_string(self.0.join("calls"))
             .unwrap_or_default()
             .lines()
@@ -252,6 +274,7 @@ impl Fixture {
         Ok(Observation {
             output,
             report,
+            published,
             calls,
             elapsed: started.elapsed(),
             watchdog_timed_out,
@@ -259,6 +282,54 @@ impl Fixture {
             live_descendants_before_driver_cleanup,
         })
     }
+}
+
+fn assert_probe_refusal(
+    observed: &Observation,
+    selected: usize,
+    reason: &str,
+) -> Result<(), String> {
+    let report = &observed.published["report"];
+    assert_eq!(report["tool_available"], false);
+    assert_eq!(report["lane_success"], false);
+    assert!(
+        report["lane_error"]
+            .as_str()
+            .ok_or("missing lane error")?
+            .contains(reason)
+    );
+    assert!(observed.report.contains(reason));
+    assert_eq!(
+        report["selected"]
+            .as_array()
+            .ok_or("missing selected inventory")?
+            .len(),
+        selected
+    );
+    let rows = report["results"].as_array().ok_or("missing result rows")?;
+    assert_eq!(rows.len(), selected);
+    for row in rows {
+        assert_eq!(row["observation"]["status"]["status"], "NOT-ESTABLISHED");
+        assert!(row["claim_id"].is_null() && row["claim_generation"].is_null());
+    }
+    let invocations = report["invocations"]
+        .as_array()
+        .ok_or("missing invocations")?;
+    assert_eq!(
+        invocations.len(),
+        1,
+        "verification must not start after failed discovery"
+    );
+    assert_eq!(invocations[0]["package"], "@preflight");
+    assert_eq!(
+        invocations[0]["argv"],
+        serde_json::json!(["kani", "--version"])
+    );
+    assert_eq!(
+        invocations[0]["cleanup_state"], "not_observed",
+        "the legacy DTO drops the local capability"
+    );
+    Ok(())
 }
 
 fn same_process_is_live(before: &custody::Member) -> Result<bool, String> {
@@ -325,13 +396,15 @@ fn kani_availability_probe_deadline_prevents_a_verification_launch() -> Result<(
         assert_eq!(observed.owned_descendants_observed, 2);
         assert_eq!(observed.output.status.code(), Some(LANE_FAILURE_CODE));
         assert_eq!(observed.calls, ["kani --version".to_string()]);
-        assert!(
-            observed
-                .report
-                .contains("cargo kani --version timed out after 1 second")
+        assert_probe_refusal(
+            &observed,
+            1,
+            "cargo kani --version timed out after 1 second",
+        )?;
+        assert_eq!(
+            observed.published["report"]["invocations"][0]["timed_out"],
+            true
         );
-        assert!(observed.report.contains("no harness was run"));
-        assert!(!observed.report.contains("| `proof` |"));
     }
     Ok(())
 }
@@ -376,14 +449,7 @@ fn kani_availability_probe_refuses_nonzero_signal_and_missing_tool() -> Result<(
                 },
                 "{mode}: verification must not run after failed discovery"
             );
-            assert!(
-                observed.report.contains(&format!(
-                    "NOT-ESTABLISHED: cargo-kani unavailable: {reason}"
-                )),
-                "{mode}: {}",
-                observed.report
-            );
-            assert!(observed.report.contains("no harness was run"));
+            assert_probe_refusal(&observed, 1, reason)?;
             assert!(
                 !observed.report.contains("injected")
                     && !observed.report.contains("synthetic cargo-kani version"),
@@ -442,7 +508,20 @@ fn kani_probe_watchdog_stops_a_hung_probe_and_pipe_inheriting_descendant() -> Re
     );
     assert!(!observed.output.status.success());
     assert_eq!(observed.calls, ["kani --version"]);
-    assert!(observed.report.is_empty());
+    let report = &observed.published["report"];
+    assert_eq!(report["phase"], "started");
+    assert_eq!(report["lane_success"], false);
+    assert_eq!(report["lane_error"], "run has not completed");
+    assert!(report["tool_available"].is_null());
+    assert_eq!(report["invocations"], serde_json::json!([]));
+    assert_eq!(
+        report["selected"]
+            .as_array()
+            .ok_or("missing selected inventory")?
+            .len(),
+        1
+    );
+    assert_eq!(report["results"], serde_json::json!([]));
     Ok(())
 }
 
@@ -453,10 +532,11 @@ fn kani_empty_inventory_cannot_override_unavailable_tooling() -> Result<(), Stri
         let observed = fixture.observe("missing", allow_empty)?;
         assert_eq!(observed.output.status.code(), Some(LANE_FAILURE_CODE));
         assert!(observed.calls.is_empty());
-        assert!(observed.report.contains(
-            "NOT-ESTABLISHED: cargo-kani unavailable: cargo could not be launched: executable or interpreter not found"
-        ));
-        assert!(observed.report.contains("no harness was run"));
+        assert_probe_refusal(
+            &observed,
+            0,
+            "cargo could not be launched: executable or interpreter not found",
+        )?;
         assert!(!observed.report.contains("| `proof` |"));
     }
     Ok(())

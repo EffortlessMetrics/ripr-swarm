@@ -129,11 +129,12 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
 /// One bounded version invocation for both legacy observation and canonical
 /// capture. A subsecond remaining budget is preserved without rounding up.
 fn capture_kani_version(
+    cargo: &Path,
     root: &Path,
     budget: Duration,
 ) -> Result<run::ObservedByteCapture, run::TimedCaptureError> {
     run::capture_bytes_in_dir_with_env_budget_observed(
-        Path::new("cargo"),
+        cargo,
         &["kani".to_string(), "--version".to_string()],
         root,
         (&[("CARGO_TERM_COLOR", "never")], &[]),
@@ -156,7 +157,7 @@ fn tool_available(
         Duration::from_secs(timeout_secs).min(Duration::from_secs(MAX_KANI_VERSION_PROBE_SECS));
     let started = Instant::now();
     let argv = ["kani".to_string(), "--version".to_string()];
-    let captured = capture_kani_version(Path::new("."), budget)
+    let captured = capture_kani_version(Path::new("cargo"), Path::new("."), budget)
         .map_err(|error| probe_capture_failure_reason(error.kind).to_string())
         .and_then(|observed| {
             observed.consume(|_, output, _, _, _| {
@@ -511,6 +512,15 @@ fn run_lane_observed(
 mod tests {
     use super::*;
 
+    pub(super) fn refuses<T>(result: Result<T, String>, expected: &str) -> Result<(), String> {
+        assert!(!expected.is_empty());
+        let diagnostic = result
+            .err()
+            .ok_or_else(|| format!("expected refusal containing {expected}"))?;
+        assert!(diagnostic.contains(expected), "{diagnostic}");
+        Ok(())
+    }
+
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
     }
@@ -524,6 +534,53 @@ mod tests {
             status,
             time: "1s".to_string(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subsecond_probe_retains_one_actual_invocation_and_exact_budget() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let temporary = std::env::temp_dir();
+        fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
+            "kani-subsecond-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let cargo = root.join("cargo");
+            fs::write(
+                &cargo,
+                b"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> calls\n[ \"${CARGO_TERM_COLOR-}\" = never ] || exit 96\nexec /bin/sleep 30\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))
+                .map_err(|error| error.to_string())?;
+            let expected = Duration::from_millis(200);
+            let observed = capture_kani_version(&cargo, &root, expected)
+                .map_err(|error| format!("subsecond probe capture: {error:?}"))?;
+            observed.consume(|request, output, budget, _, _| {
+                assert_eq!(request.program, cargo);
+                assert_eq!(request.cwd, root);
+                assert_eq!(
+                    request.arguments,
+                    ["kani", "--version"].map(std::ffi::OsString::from)
+                );
+                assert_eq!(budget.timeout, expected);
+                assert!(output.timed_out);
+            });
+            assert_eq!(
+                fs::read_to_string(root.join("calls")).map_err(|error| error.to_string())?,
+                "kani --version\n"
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        result
     }
 
     #[test]
@@ -572,12 +629,9 @@ mod tests {
     }
 
     #[test]
-    fn the_per_harness_timeout_reaches_the_kani_command() {
-        let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
-        assert!(parsed.is_ok());
-        let command = parsed
-            .map(|args| kani_command(&args, "ripr"))
-            .unwrap_or_default();
+    fn the_per_harness_timeout_reaches_the_kani_command() -> Result<(), String> {
+        let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]))?;
+        let command = kani_command(&parsed, "ripr");
         let position = command.iter().position(|arg| arg == "--harness-timeout");
         assert_eq!(
             position
@@ -587,36 +641,39 @@ mod tests {
         );
         let gate = command.iter().position(|arg| arg == "unstable-options");
         assert!(gate.is_some() && gate < position);
+        Ok(())
     }
 
     #[test]
-    fn harness_timeout_flag_parses() {
+    fn harness_timeout_flag_parses() -> Result<(), String> {
         let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
         assert_eq!(parsed.map(|args| args.harness_timeout_secs), Ok(60));
-        assert!(
-            parse_args(&strings(&["--harness-timeout-secs", "0"]))
-                .err()
-                .is_some()
-        );
+        refuses(
+            parse_args(&strings(&["--harness-timeout-secs", "0"])),
+            "--harness-timeout-secs requires a positive integer",
+        )
     }
 
     #[test]
-    fn lane_never_passes_by_absence() {
-        assert!(lane_verdict(&[], false, true).is_err());
-        assert!(lane_verdict(&[], true, false).is_err());
-        assert_eq!(lane_verdict(&[], true, true).err(), None);
+    fn lane_never_passes_by_absence() -> Result<(), String> {
+        refuses(
+            lane_verdict(&[], false, true),
+            "not installed or not runnable",
+        )?;
+        refuses(lane_verdict(&[], true, false), "zero kani harnesses found")?;
+        assert_eq!(lane_verdict(&[], true, true), Ok(()));
         assert_eq!(
-            lane_verdict(&[result(HarnessStatus::Verified)], true, false).err(),
-            None
+            lane_verdict(&[result(HarnessStatus::Verified)], true, false),
+            Ok(())
         );
         let failed = result(HarnessStatus::Failed("x".to_string()));
-        assert!(lane_verdict(&[failed], true, true).is_err());
+        refuses(lane_verdict(&[failed], true, true), "1 failed")?;
         let skipped = result(HarnessStatus::NotEstablished("x".to_string()));
-        assert!(lane_verdict(&[skipped], true, true).is_err());
+        refuses(lane_verdict(&[skipped], true, true), "1 not established")
     }
 
     #[test]
-    fn arguments_parse_and_reject_unknown_flags() {
+    fn arguments_parse_and_reject_unknown_flags() -> Result<(), String> {
         let parsed = parse_args(&strings(&["--allow-empty", "--default-unwind", "8"]));
         assert_eq!(
             parsed,
@@ -628,17 +685,19 @@ mod tests {
                 harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
             })
         );
-        assert!(parse_args(&strings(&["--bogus"])).err().is_some());
-        assert!(
-            parse_args(&strings(&["--default-unwind", "0"]))
-                .err()
-                .is_some()
-        );
-        assert!(parse_args(&strings(&["--harness"])).err().is_some());
+        refuses(parse_args(&strings(&["--bogus"])), "unknown kani argument")?;
+        refuses(
+            parse_args(&strings(&["--default-unwind", "0"])),
+            "--default-unwind requires a positive integer",
+        )?;
+        refuses(
+            parse_args(&strings(&["--harness"])),
+            "--harness requires a value",
+        )
     }
 
     #[test]
-    fn native_process_error_cannot_be_hidden_by_verified_rows() {
+    fn native_process_error_cannot_be_hidden_by_verified_rows() -> Result<(), String> {
         let harnesses = [Harness {
             file: "proof.rs".to_string(),
             name: "proof".to_string(),
@@ -669,18 +728,19 @@ mod tests {
                     .contains(expected)
             );
             for allow_empty in [false, true] {
-                assert!(
+                refuses(
                     complete_lane_verdict(
                         &run.results,
                         true,
                         allow_empty,
                         run.process_problem.as_deref(),
-                    )
-                    .is_err()
-                );
+                    ),
+                    expected,
+                )?;
             }
         }
         assert!(process_completion_problem(false, Some(true), "exit status: 0", 5).is_none());
+        Ok(())
     }
 
     #[test]
@@ -753,8 +813,14 @@ mod tests {
                 .iter()
                 .all(|row| matches!(&row.status, HarnessStatus::NotEstablished(_)))
         );
-        assert!(complete_lane_verdict(&absent.results, true, false, None).is_err());
-        assert!(complete_lane_verdict(&[], true, true, Some("abnormal exit")).is_err());
+        refuses(
+            complete_lane_verdict(&absent.results, true, false, None),
+            "2 not established",
+        )?;
+        refuses(
+            complete_lane_verdict(&[], true, true, Some("abnormal exit")),
+            "abnormal exit",
+        )?;
         assert_eq!(complete_lane_verdict(&[], true, true, None).err(), None);
         Ok(())
     }

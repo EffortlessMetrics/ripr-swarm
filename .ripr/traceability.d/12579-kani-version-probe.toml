@@ -3,6 +3,7 @@
 id = "RIPR-SPEC-0371"
 code = ["xtask/src/kani_lane.rs", "xtask/src/run.rs"]
 tests = [
+  "xtask/src/kani_lane.rs::tests::subsecond_probe_retains_one_actual_invocation_and_exact_budget",
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_deadline_prevents_a_verification_launch",
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_refuses_nonzero_signal_and_missing_tool",
   "xtask/tests/kani_version_probe.rs::kani_availability_probe_preserves_success_and_the_empty_opt_out",

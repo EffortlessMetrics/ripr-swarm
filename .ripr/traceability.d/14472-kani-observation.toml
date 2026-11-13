@@ -11,6 +11,7 @@ tests = [
   "xtask/src/kani_lane/machine.rs::tests::markdown_cells_do_not_execute_control_or_markup_text",
   "xtask/src/kani_lane/machine.rs::tests::source_inventory_digest_is_order_independent",
   "xtask/src/kani_lane/machine.rs::tests::observed_cover_counts_use_existing_parser",
+  "xtask/src/kani_lane/machine.rs::tests::journal_normalizes_block_hash_without_rewriting_shared_native_bytes",
   "xtask/src/kani_lane/machine.rs::tests::journal_replaces_old_success_with_new_incomplete_run",
   "xtask/src/kani_lane/machine.rs::tests::source_change_stops_lane_without_erasing_historical_rows",
   "xtask/src/kani_lane/machine.rs::tests::markdown_is_derived_from_serialized_report_rows",

@@ -75,13 +75,16 @@ observation. Neither a deserialized `Run`, supplied producer names, successful
 exit fields, byte hashes nor this replay result can create that capability.
 Even a real local observation does not itself grant protected #14500 provenance
 or #6452/#6456 lifecycle/transition admission. Complete positive-cover admission
-continues to use the shared law and the #14469 live-lane prerequisite.
+continues to use the shared law and the composed #14469 live-lane witnesses.
 
-The committed currentness example is pinned to registry generation 3 and its
-explicit six-cover currentness decision. A later global registry generation
-requires an explicit binding update and fresh preparation even when this
-claim's own generation/digest is unchanged. Historical run/configuration/source
-receipts retain their original registry identity and cannot be relabeled.
+The committed currentness example is explicitly updated to registry generation
+4 after the constructor-domain transition. Its own six-cover decision remains
+at claim generation 2 with the same decision digest. The example requires fresh
+preparation against the resulting source/configuration closure. The original
+replay qualification used registry generation 3; those run/configuration/source
+receipts retain that identity and cannot be relabeled. Every later global
+registry transition likewise requires an explicit binding update, even when
+the individual claim's generation/digest is unchanged.
 
 ## Required controls and maintenance
 

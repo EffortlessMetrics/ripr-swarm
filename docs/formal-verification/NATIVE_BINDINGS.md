@@ -152,6 +152,12 @@ comes from the retained `currentness-mutant.stdout` format fixture with matching
 proof/domain source bytes; it claims no current positive execution. It selects
 the separately declared Rust-only candidate profile.
 
+After the constructor-domain transition, this example names registry generation
+4 explicitly. Currentness remains at claim generation 2 with its six-cover
+decision unchanged. This declaration update neither transfers the earlier
+generation-3 receipts nor establishes a current native result; rerun preparation
+against the composed tree before using it.
+
 ```sh
 cargo run --locked -p xtask --no-default-features \
   --features formal-native-bindings --bin formal-claim-registry -- \

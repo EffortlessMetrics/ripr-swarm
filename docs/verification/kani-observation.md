@@ -128,9 +128,14 @@ existing storage closeout to remove only confirmed lane-owned obsolete run
 directories. This code does not delete previous runs or introduce a new timer.
 Automatic bounded retention is not claimed.
 
-Preflight timeout composition remains with #12581. Its existing unbounded
-preflight is reported with no invented deadline. Do not call this slice a
-complete bounded execution programme or close #14472 on that basis.
+The composed #12581 availability probe uses the shared observed byte-capture
+owner once, with the smaller of ten seconds and the requested timeout. Its
+recorded deadline is observed; a subsecond remaining duration is never rounded
+up. This legacy JSON projection deliberately discards the local capture
+capability and continues to report cleanup as `not_observed`. The verification
+budget still begins after discovery and preflight. Neither these separate
+budgets nor the legacy lexical source scan establish a whole-command bound,
+complete compiler-input custody, or protected native origin.
 
 ## Maintenance and validation
 
