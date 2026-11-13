@@ -1,12 +1,6 @@
-[[behavior]]
+[[extend]]
 id = "RIPR-SPEC-0219"
-name = "Bounded verdict-corpus child worker pools"
-spec = "docs/specs/RIPR-SPEC-0219-labeled-rust-verdict-corpus.md"
 tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_child_has_one_worker_and_its_own_cache_without_mutating_parent",
   "xtask/src/reports/verdict_corpus_tests.rs::corpus_child_failure_is_not_promoted_to_a_report",
 ]
-fixtures = ["fixtures/rust-verdict-corpus/corpus.json"]
-code = ["xtask/src/reports/verdict_corpus.rs"]
-outputs = ["docs/specs/RIPR-SPEC-0219-labeled-rust-verdict-corpus.md"]
-metrics = ["unit_test_pass_rate"]
