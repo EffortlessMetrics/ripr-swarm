@@ -771,6 +771,12 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
         }
         let rest = body[at + 4..].trim_start();
         let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        // A non-plain pattern (`let (got,) = ..`, `if let Some(got) = ..`)
+        // binds `name` to a different value, so an earlier plain initializer
+        // is stale (#14496 review).
+        if let_pattern_binds_name(rest, name) {
+            return None;
+        }
         let Some(after) = rest.strip_prefix(name) else {
             continue;
         };
@@ -792,6 +798,33 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
         }
     }
     found
+}
+
+/// Whether a `let` pattern other than the plain `[mut] name[: type]` form
+/// binds `name`. `rest` is the text after `let `, past an optional `mut `.
+/// The pattern ends at the first top-level `=` or `;`.
+fn let_pattern_binds_name(rest: &str, name: &str) -> bool {
+    let plain = rest.strip_prefix(name).is_some_and(|after| {
+        let after = after.trim_start();
+        after.starts_with('=') || after.starts_with(':')
+    });
+    if plain {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = rest.len();
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' | ';' if depth == 0 => {
+                end = at;
+                break;
+            }
+            _ => {}
+        }
+    }
+    count_name_tokens(&rest[..end], name) > 0
 }
 
 /// How many whole-identifier occurrences of `name` the `text` holds.
@@ -2011,6 +2044,12 @@ fn parameter_is_rebound_or_mutated(block: &ast::BlockExpr, names: &[String]) -> 
         }
         if let Some(for_expr) = ast::ForExpr::cast(node.clone()) {
             return pattern_binds_target(for_expr.pat());
+        }
+        // An `if let` / `while let` binding shadows the parameter for the
+        // block it guards, so the call-argument environment is stale there
+        // (#14496 review).
+        if let Some(let_expr) = ast::LetExpr::cast(node.clone()) {
+            return pattern_binds_target(let_expr.pat());
         }
         // A mutable borrow hands out an alias the assignment scan cannot see,
         // so `let slot = &mut amount; *slot = -*slot;` changed the value the

@@ -24134,6 +24134,60 @@ fn branch_local_return_value_seam_with_a_destructured_rebind_keeps_its_grip() ->
     Ok(())
 }
 
+/// #14496 review: a non-plain `let` pattern in the test body rebinds the
+/// compared local, so the earlier plain initializer is stale and the gate must
+/// not fold the call's arguments through it.
+#[test]
+fn branch_local_return_value_seam_with_a_tuple_rebind_after_the_call_keeps_its_grip()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let rebinding = "#[test]\nfn tuple_rebind_after_the_call_keeps_its_grip() {\n    let got = discounted_total(50, 100);\n    let (got,) = (got + 1,);\n    assert_eq!(got, 51);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, rebinding)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a tuple rebind after the call keeps its grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 review: an `if let` binding that shadows a parameter makes the
+/// call-argument environment stale, so the condition must not fold.
+#[test]
+fn branch_local_return_value_seam_with_an_if_let_shadow_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if let Some(amount) = Some(amount) {\n        let _shadowed = amount;\n    }\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an if-let shadow keeps the call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
 /// #14496: a mutable borrow hands out an alias the assignment scan cannot
 /// follow, so the parameter's value at the `if` is unknown.
 #[test]
