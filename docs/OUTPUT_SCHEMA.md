@@ -1084,7 +1084,7 @@ diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
-#ripr agent static-advisory base=BASE findings=N gaps=G [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
+#ripr agent static-advisory base=BASE findings=N gaps=G [folded_gaps=F] [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
@@ -1094,6 +1094,11 @@ next=COMMAND
 verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- A run refused before analysis (unresolvable base, invalid `ripr.toml`,
+  unusable root) replaces this whole record with the short refusal record
+  described under the `ripr check` refusal documents below, whose header reads
+  `#ripr agent static-advisory refused run_status=<identity> repair_route=<route>`
+  (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
   `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
@@ -1116,7 +1121,7 @@ verify=complete|outcome=O|findings=N|exposed=N
   it on purpose (`node_modules/`, `.venv/`, generated output), it is almost
   never the agent's edit, and the human/GitHub notes and this JSON field keep
   disclosing it. Reasons: `outcome_missing`,
-  `no_behavior_in_scope`, `analysis_incomplete`, `gaps_remain`,
+  `no_behavior_in_scope`, `analysis_incomplete`, `unexposed_findings_remain`,
   `unanalyzed_working_tree`, `untracked_source_excluded`,
   `partial_scope`, `no_scope`. It is independent of `done=`, is static
   evidence only, and does not replace running the tests.
@@ -1124,6 +1129,21 @@ verify=complete|outcome=O|findings=N|exposed=N
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
+- `folded_gaps=F` follows `gaps=` (#14338) when some gap findings would
+  print identical records: the same class, `FILE:LINE`, changed expression,
+  `missing=` value, strongest related test (its whole `tK=` line) and
+  `stages=` row, differing only in `id=` (for example an `error_path` and a
+  `return_value` probe on one `return Err(..)` line). The comparison uses the
+  unclipped values and every missing discriminator (its value, shape and
+  flow sink), not only the printed one; the explanatory `missing` prose is
+  compared only when no discriminator is named, since it is then what
+  `missing=` prints. One test closes all of
+  them, so they print as one row, kept by the first finding in triage order,
+  and `gaps=` counts rows: `gaps=G` is the number of tests to write and
+  `G + F` the number of gap findings. Any printed difference keeps the rows
+  separate. Folding is display-only: every folded finding is still a gap (it
+  never moves to `limits=`) and still counts in `verify=`; `--format json`
+  lists each finding.
 - `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
   records the static evidence cannot confirm, so the header never reads
   `gaps=0` alone beside a listed gap. It counts every finding on the path
@@ -1625,6 +1645,20 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 - `run_limitations[]` with the same category, run status, repair route, and the
   budget diagnostic message
 
+Since #13641 the per-language changed-line limits
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`,
+`RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`) measure the files a run actually
+analyzes. A diff over them degrades into the bounded
+`analysis_scope.run_status: "limited_partial_scope"` result (RIPR-PROP-0019)
+instead of this refusal. A file that alone exceeds its own language's
+changed-line limit is never split or analyzed: it is left out, named in
+`analysis_scope.over_limit_files` (emitted only when non-empty), counted as
+uninspected and disclosed under `budget_disclosures`; when nothing else
+stopped selection the stop reason is `file_exceeds_analysis_limit`. The
+refusal remains only when no changed file fits, and for the
+language-neutral streaming parse guards and the `RIPR_MAX_DIFF_INDEX_FILES`
+index guard, which still fail closed as described here.
+
 Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
 or complete analysis. The zero summary and empty `findings` array mean analysis
 did not run far enough to classify probes, not that the diff has no findings.
@@ -1740,6 +1774,17 @@ format and each carrying the same typed identity and repair route:
   class), and an empty `seams` array.
 - `--format agent-seam-packets-json` renders the same refused envelope with
   `packets_total: 0`, an empty `packets` array, and no `next` block.
+- `--format agent` renders a three- or four-line refusal record (#14452):
+  `#ripr agent static-advisory refused run_status=<identity>
+  repair_route=<route>`, then `stop=<diagnostic on one line>`, then
+  `next=<command>` only when the diagnostic names a command that runs as-is
+  (the same rule as the JSON refusal's `next`: unconditional, no placeholder,
+  no flags or environment named outside it), then
+  `verify=refused|outcome=refused|findings=0|exposed=0|reason=<identity>`.
+  An `analysis_timeout` refusal puts its bounded retry (the JSON envelope's
+  `input_context.recovery.command`) on `next=` instead, and stderr keeps the
+  requested-input echo and retry the human format prints; a stdin diff has
+  no replayable retry, so `next=` is absent there.
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
@@ -10592,7 +10637,9 @@ Field contract:
   then) counts the skipped ones, `cap_omitted_seams` and `omitted_by_policy` (always emitted, 0 when none; #9301) count
   visible seams dropped by the brief cap and working-set seams dropped by policy
   (configured off, static limitation), which baseline diff must not read as
-  resolved, a warning says the same, and the brief-cap
+  resolved, the optional `static_limited_omitted_seams` (present only when
+  nonzero; #14082) counts the static-limitation part of `omitted_by_policy`,
+  a warning says the same, and the brief-cap
   warning reads "at least N" because it counts evaluated seams only. This makes the report useful on large repos without representing the
   scoped review as full-repo evidence. Gap-ledger rendering emits `scope =
   "gap_ledger_artifact"` and `run_status = "artifact_scope"` with `basis =
@@ -10636,7 +10683,10 @@ Field contract:
   bound to a nested function; a changed line elsewhere in the same file is
   not a placement. Gap-ledger cards use `gap_record_anchor` for their
   producer-owned stable anchor. The renderer must prefer summary-only guidance
-  over misleading line placement.
+  over misleading line placement. When the mode is not `exact_seam_line` and
+  `source_location.line` names another line, the workflow annotation starts
+  `Gap at line N (`expression`) of this function:` and the inline comment
+  names the same line under its heading (#14303).
 - `comments[].kind` - seam kind from the existing static evidence.
 - `comments[].grip_class` - seam grip class from the existing static evidence.
 - `comments[].severity` - configured report severity for the recommendation.
@@ -11736,7 +11786,21 @@ Field contract:
   extracts no seams) are excluded from it and listed in the optional
   `parser_declined_files` (present only when non-empty; the review-comments
   Markdown summary also lists them as a `limitation: parser_declined_files`
-  line, omitted when empty, #9734). A gate decision without `analysis_scope` (a build before #9301),
+  line, omitted when empty, #9734). A non-empty or malformed
+  `parser_declined_files` also adds one entry to the gate decision's
+  `warnings` naming the files, so the top-level `status` is never `pass` for
+  a decision whose changed files were not all parsed (#14082). In
+  `calibrated-gate` mode the same condition also makes the top-level `status`
+  `blocked` (exit `3`) with an extra warning saying so, because the mode exists
+  to stop a merge and nothing was judged for that file (#14485); the other
+  modes keep the advisory outcome unless a candidate decision already sets a
+  higher status. The same warning-only rule holds
+  for the optional `static_limited_omitted_seams` (an integer, present only
+  when nonzero): the part of `omitted_by_policy` that was withheld because
+  static evidence is opaque or unknown at a stage. Those changed seams are not
+  gate candidates, so a nonzero or malformed value adds a gate warning and the
+  status is never `pass`; seams omitted because they are configured off or are
+  not gaps do not count. A gate decision without `analysis_scope` (a build before #9301),
   or with a malformed one, makes every absent baseline entry `not_evaluated`.
 - `subject` - identity of the evaluation (#5263): `analyzer_version` (the
   writing binary's build identity, the same stamp `check --write-artifact`
@@ -20293,7 +20357,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.178",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.180",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21078,7 +21142,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.178",
+      "schema_version": "1.180",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

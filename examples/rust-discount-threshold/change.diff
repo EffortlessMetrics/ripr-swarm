@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,6 @@
+ pub fn discounted_total(subtotal: u32) -> u32 {
+-    if subtotal > DISCOUNT_THRESHOLD {
++    if subtotal >= DISCOUNT_THRESHOLD {
+         subtotal - 500
+     } else {
+         subtotal
+     }

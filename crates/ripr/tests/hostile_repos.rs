@@ -731,7 +731,7 @@ fn fifo_metadata_files_are_refused_instead_of_blocking() -> Result<(), String> {
 }
 
 #[test]
-fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
+fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result<(), String> {
     let scratch = Scratch::new("huge")?;
     let root = scratch.path.join("r");
     repo(&root, |root| {
@@ -748,11 +748,18 @@ fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
         &[("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "1000")],
     )?;
     assert_sane(&ran, "oversized diff")?;
-    if ran.code != Some(2)
-        || !ran.stderr.contains("diff_scope_oversized")
-        || !ran.stderr.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES")
+    // #13641: the 5,000-line `src/gen.rs` alone exceeds the limit; it is left
+    // out and named, the rest of the diff is analyzed, and the widen route
+    // names the limit instead of refusing the whole run.
+    if ran.code != Some(0)
+        || ran.stderr.contains("diff_scope_oversized")
+        || !ran.stdout.contains("over limit (not analyzed): src/gen.rs")
+        || !ran.stdout.contains("RIPR_MAX_DIFF_CHANGED_RUST_LINES")
     {
-        return Err(format!("expected oversized-diff refusal\n{}", ran.stderr));
+        return Err(format!(
+            "expected a partial scope that leaves src/gen.rs out\n{:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
     }
     Ok(())
 }

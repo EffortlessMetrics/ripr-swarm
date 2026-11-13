@@ -56,6 +56,17 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
             "unknown {command} argument {arg:?}. `ripr --version` reports the binary version. Run `{pointer}`."
         );
     }
+    // `git diff --staged`/`--cached` muscle memory: `ripr check` has no
+    // index-only mode and no near flag, so the bare refusal named nothing.
+    // Name what check already reads and the exact staged-only spelling.
+    if command == "check" && matches!(arg, "--staged" | "--cached") {
+        return format!(
+            "unknown {command} argument {arg:?}. `ripr check` already reads staged and \
+             unstaged changes together; to limit findings to the staged lines run \
+             `git diff --cached | ripr check --diff -` (source is still read from the \
+             working tree). Run `{pointer}`."
+        );
+    }
     match closest_flag(command, arg) {
         Some(suggestion) => format!(
             "unknown {command} argument {arg:?}. Did you mean `{suggestion}`? Run `{pointer}`."
@@ -115,6 +126,15 @@ fn closest_flag(command: &str, arg: &str) -> Option<String> {
     if !arg.starts_with('-') {
         return None;
     }
+    // Flags on a bare `ripr gate` are `gate evaluate`'s (#7740), and its
+    // errors keep the `gate` label. Mining under that label would own both
+    // usage lines and so propose `gate check`'s `--base` to a parser that
+    // rejects it (#14086).
+    let command = if command == "gate" {
+        "gate evaluate"
+    } else {
+        command
+    };
     let help_text = help::help_text_for(command)?;
     // #2583 review: never answer a rejected flag with itself. Section scoping
     // removes the known way this happened (a shared help body offering a
@@ -185,16 +205,21 @@ pub(in crate::cli) fn known_flags<'a>(command: &str, help_text: &'a str) -> Vec<
         if !trimmed.starts_with("--") {
             continue;
         }
-        let flag = match trimmed
-            .split(|ch: char| ch.is_whitespace() || ch == '=' || ch == ',')
-            .next()
-        {
-            Some(flag) => flag,
-            None => continue,
-        };
-        // `--` alone is the end-of-options separator, not a suggestible flag.
-        if flag.len() > 2 && !flags.contains(&flag) {
-            flags.push(flag);
+        // One flag opens the line; a comma after it continues a list of
+        // flags that share one description (`--root, --label, --out`), so
+        // every member is documented, not only the first (#14086).
+        for token in trimmed.split_whitespace() {
+            if !token.starts_with("--") {
+                break;
+            }
+            let flag = token.split(['=', ',']).next().unwrap_or(token);
+            // `--` alone is the end-of-options separator, not a suggestible flag.
+            if flag.len() > 2 && !flags.contains(&flag) {
+                flags.push(flag);
+            }
+            if !token.ends_with(',') {
+                break;
+            }
         }
     }
     flags
@@ -276,6 +301,8 @@ pub(in crate::cli) fn option_section(command: &str) -> Option<&'static str> {
     match command {
         "assistant-loop proof" => Some("Proof options:"),
         "assistant-loop health" => Some("Health options:"),
+        "gate check" => Some("Check options:"),
+        "gate" | "gate evaluate" => Some("Evaluate options:"),
         "baseline create" => Some("Create options:"),
         "baseline diff" => Some("Diff options:"),
         "baseline update" => Some("Update options:"),
@@ -304,6 +331,66 @@ pub(in crate::cli) fn option_section(command: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #14086: `gate check` and `gate evaluate` share one help body. Each
+    /// mines only its own options section and usage line, so a typo is
+    /// answered with a flag that subcommand's parser accepts.
+    #[test]
+    fn gate_subcommand_typos_are_scoped_to_the_subcommand() {
+        for (typo, expected) in [
+            ("--bse", "--base"),
+            ("--hed", "--head"),
+            ("--timeout", "--timeout-ms"),
+            ("--guidance-ou", "--guidance-out"),
+            // Members of the `--root, --label, ...` list shared with evaluate,
+            // including ones past the first and on the wrapped second line.
+            ("--labels-jsn", "--labels-json"),
+            ("--exception-polcy", "--exception-policy"),
+            ("--out-m", "--out-md"),
+        ] {
+            let message = unknown_argument("gate check", typo);
+            assert!(
+                message.contains(&format!("Did you mean `{expected}`?")),
+                "gate check {typo}: {message}"
+            );
+            assert!(
+                message.ends_with("Run `ripr gate check --help`."),
+                "{message}"
+            );
+        }
+        // Evaluate-only inputs are named in gate check's prose as rejected;
+        // they must not come back as suggestions.
+        for typo in ["--pr-guidanc", "--gap-ledgr", "--agent-verfy"] {
+            let message = unknown_argument("gate check", typo);
+            assert!(
+                !message.contains("Did you mean"),
+                "gate check {typo}: {message}"
+            );
+        }
+        // The bare `gate` label is the evaluate parser's (#7740 alias).
+        for command in ["gate", "gate evaluate"] {
+            for typo in ["--bse", "--hed", "--timeout-m", "--guidance-ou"] {
+                let message = unknown_argument(command, typo);
+                for check_only in ["--base`", "--head`", "--timeout-ms`", "--guidance-out`"] {
+                    assert!(
+                        !message.contains(check_only),
+                        "{command} {typo} suggested a gate check flag: {message}"
+                    );
+                }
+            }
+            for (typo, expected) in [
+                ("--mde", "--mode"),
+                ("--pr-guidanc", "--pr-guidance"),
+                ("--baselin", "--baseline"),
+            ] {
+                let message = unknown_argument(command, typo);
+                assert!(
+                    message.contains(&format!("Did you mean `{expected}`?")),
+                    "{command} {typo}: {message}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn unknown_argument_suggests_the_nearest_documented_flag() {

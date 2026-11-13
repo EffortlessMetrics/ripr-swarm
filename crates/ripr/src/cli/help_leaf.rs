@@ -14,13 +14,27 @@
 use crate::cli::help::{catalog_example, catalog_summary, help_text_for};
 use crate::cli::suggest::{option_section, usage_line_belongs_to_command};
 
+/// Families whose leaves get scoped help. `gate` also has per-subcommand
+/// option sections, but `gate check` documents most of its flags as "As for
+/// gate evaluate", so its body stays shared (`shared_help_body`, #14086).
+const LEAF_SCOPED_FAMILIES: &[&str] = &[
+    "assistant-loop",
+    "baseline",
+    "policy",
+    "pr-comments",
+    "reports",
+];
+
 /// The scoped help for one leaf path (`reports kani`), or `None` when the path
 /// does not share a family body (it has no `option_section`) or the body no
 /// longer carries the leaf's usage line or section.
 pub(super) fn leaf_help(path: &str) -> Option<String> {
+    let (family, _) = path.split_once(' ')?;
+    if !LEAF_SCOPED_FAMILIES.contains(&family) {
+        return None;
+    }
     let section = option_section(path)?;
     let body = help_text_for(path)?;
-    let (family, _) = path.split_once(' ')?;
     let lead = catalog_summary(path).or_else(|| body.lines().next())?;
     let usage = usage_lines(body, path);
     let options = section_block(body, section);
@@ -152,7 +166,20 @@ mod tests {
             .iter()
             .copied()
             .filter(|path| option_section(path).is_some())
+            .filter(|path| {
+                path.split_once(' ')
+                    .is_some_and(|(family, _)| LEAF_SCOPED_FAMILIES.contains(&family))
+            })
             .collect()
+    }
+
+    /// `gate` subcommands keep the shared body (#14086).
+    #[test]
+    fn gate_subcommands_keep_the_shared_body() {
+        for path in ["gate check", "gate evaluate"] {
+            assert!(option_section(path).is_some(), "{path}");
+            assert!(leaf_help(path).is_none(), "{path} must stay shared");
+        }
     }
 
     fn section_headings(text: &str) -> Vec<&str> {

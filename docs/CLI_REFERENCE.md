@@ -1357,7 +1357,7 @@ Examples:
 ```text
 Analyze the current diff and name the changed behavior your tests may not catch.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Common options:
   --base REV        Compare against this revision; when omitted, ripr uses
@@ -1385,7 +1385,7 @@ Exit status: 0 for a completed run, including findings that are `exposed` or wea
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
-  ripr check
+  ripr check [src/lib.rs]   (a PATH keeps only that changed file, like --path)
   ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
@@ -1396,7 +1396,7 @@ Every option: `ripr help check --all`
 ```text
 Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
@@ -1435,7 +1435,8 @@ Options:
                            limitation and have no finding: the outcome is
                            partial_with_limitations, never clean. A scope that
                            leaves no changed file is an error. Not supported
-                           for repo-scoped formats.
+                           for repo-scoped formats. A bare PATH argument
+                           (`ripr check src/lib.rs`) is the same as --path.
   --exclude GLOB           Skip changed files matching GLOB (repeatable;
                            wins over --path). Same pattern shapes, same
                            disclosure as --path.
@@ -1636,19 +1637,20 @@ Environment variables:
                                           non-consumable limited artifact.
                                           Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
-                                          before check stops with
-                                          diff_scope_oversized. With --json, stdout
-                                          carries a non-consumable limited artifact.
-                                          Default: 2000.
+                                          analyzed. A larger diff degrades into a
+                                          limited_partial_scope partition; check
+                                          stops with diff_scope_oversized only when
+                                          no changed file fits within it. With
+                                          --json, stdout carries a non-consumable
+                                          limited artifact. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
-                                          lines before check stops with
-                                          diff_scope_oversized (the Rust guard's
-                                          memory bound for the Python adapter).
-                                          Default: 2000.
+                                          lines analyzed (the Rust guard's memory
+                                          bound for the Python adapter); degrades
+                                          like the Rust limit. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
                                           diff lines (the routed .ts/.tsx/.mts/
-                                          .cts/.js/.jsx/.mjs/.cjs family) before
-                                          check stops with diff_scope_oversized.
+                                          .cts/.js/.jsx/.mjs/.cjs family)
+                                          analyzed; degrades like the Rust limit.
                                           Default: 2000.
   RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
                                           index before check stops with
@@ -2169,6 +2171,9 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -2478,14 +2483,15 @@ Check options:
   --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
-  --mode                              Same modes as gate evaluate, but defaults to acknowledgeable.
+  --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
   --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
   --acknowledgements, --baseline, --out, --out-md
                                       As for gate evaluate.
-  gate check produces its own guidance, so it does not accept --pr-guidance,
-  --gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
-  --agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
-  run review-comments and gate evaluate yourself to supply them.
+
+gate check produces its own guidance, so it does not accept --pr-guidance,
+--gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+--agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+run review-comments and gate evaluate yourself to supply them.
 
 Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
@@ -2755,18 +2761,15 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` analyzes the committed default-branch diff by default through
-the shared check authority; its optional `base` argument selects another
-revision. By default, staged and unstaged tracked edits and untracked files
-are outside the analyzed scope. Opt in with `source: "worktree"` to include
-saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree cards require established producer custody; otherwise
-withheld with the cause. Readiness depends on per-item gates. Refresh after
-edits. Its warm cache lives under the root's `target/ripr/`.
-`ripr check` defaults to the working tree
-when staged or unstaged tracked edits exist; shared check authority does not
-mean identical input. Use `ripr check --committed` for committed input, or
-`ripr check --worktree --format json` for saved tracked edits outside MCP.
+`ripr_refresh` analyzes the default-branch diff through the shared check
+authority; its optional `base` argument selects another revision. Like
+`ripr check`, it reads saved staged and unstaged tracked edits when any exist
+and committed input otherwise; `source: "committed"` or `source: "worktree"`
+forces one; unsaved buffers and untracked files remain outside. Worktree cards
+require established producer custody; otherwise withheld with the cause.
+Readiness depends on per-item gates. Refresh after edits. Its warm cache lives
+under the root's `target/ripr/`. Outside MCP, `ripr check --committed` reads
+committed input and `ripr check --worktree --format json` saved tracked edits.
 Gap tools read their captured snapshot and never re-run analysis.
 `ripr_list_repair_attempts` discovers durable CLI attempts before or after
 refresh, with bounded inventory-bound pages; it never creates the store.

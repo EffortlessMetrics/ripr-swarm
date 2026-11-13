@@ -220,7 +220,7 @@ const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
 
       - name: Upload RIPR repo seams
         id: sarif_seams
-        if: always() && env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
+        if: always() && env.RIPR_UPLOAD_SARIF == 'true' && github.event_name != 'pull_request' && hashFiles('target/ripr/reports/ripr-seams.sarif') != ''
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
@@ -429,13 +429,14 @@ mod template_pin_tests {
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
     /// re-measured it once more. #11206 added the fork and Dependabot guard to
-    /// the inline comment step and re-measured it.
+    /// the inline comment step and re-measured it. #14300 limited the repo
+    /// seam SARIF upload to manual runs and re-measured it.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f9221c8e19e6ececf8ef67065f86cde9814a59d16be976514540c2483b313768";
+        "6bd24dd92c8ea90fb1f54e8b5e0662f2db3f3af3b1d1c2af4760a29ff03dc8fe";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

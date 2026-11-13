@@ -52,6 +52,7 @@ pub(crate) mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
+mod agent_eval;
 mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
@@ -79,6 +80,7 @@ mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
 mod verification_plan_corpus;
 
+pub(crate) use agent_eval::agent_eval;
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
