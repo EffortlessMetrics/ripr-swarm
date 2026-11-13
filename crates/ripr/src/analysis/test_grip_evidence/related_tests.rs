@@ -610,8 +610,9 @@ fn resolve_module_chain(index: &RustIndex, root_file: &Path, module_path: &str) 
         let dir = current.parent()?;
         current = match &declaration.path_target {
             ModulePathTarget::Default => {
-                // `pricing.rs` declaring `mod x;` resolves under `pricing/`.
-                let root_like = module_stem(&current).is_none()
+                // `pricing.rs` declaring `mod x;` resolves under `pricing/`;
+                // only the compilation-unit root keeps the declaring directory.
+                let root_like = current == root_file
                     || current.ends_with("mod.rs")
                     || index.member_crates.is_binary_target_root(&current);
                 let base = if root_like {

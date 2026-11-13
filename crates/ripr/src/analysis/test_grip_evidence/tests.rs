@@ -23905,6 +23905,35 @@ fn given_direct_owner_alias_when_the_owner_is_a_nested_module_then_owner_keeps_r
 }
 
 #[test]
+fn given_direct_owner_alias_when_a_nested_main_module_declares_the_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: a nested `main.rs` is a module, not a crate root, so its
+    // `pub mod inner;` resolves under `main/`, not beside it.
+    let inner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::outer::main::inner::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let lib = "pub mod outer;\n\n#[cfg(test)]\nmod tests {\n    use crate::outer::main::inner::owner as dt;\n\n    #[test]\n    fn aliased_from_root() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", lib),
+            ("src/outer.rs", "pub mod main;\n"),
+            ("src/outer/main.rs", "pub mod inner;\n"),
+            ("src/outer/main/inner.rs", inner),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/outer.rs"),
+        PathBuf::from("src/outer/main.rs"),
+        PathBuf::from("src/outer/main/inner.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/outer/main/inner.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(related, vec!["aliased", "aliased_from_root"]);
+    Ok(())
+}
+
+#[test]
 fn given_direct_owner_alias_when_the_owner_is_a_mod_rs_then_owner_keeps_related_test()
 -> Result<(), String> {
     // #14508 review: `src/pricing/mod.rs` is the `pricing` module, whose
