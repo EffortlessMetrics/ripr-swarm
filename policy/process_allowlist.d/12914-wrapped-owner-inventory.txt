@@ -1,1 +1,2 @@
 crates/ripr/tests/wrapped_owner_pins/inventory_contract.rs|Command::new|1|wrapped-owner-inventory|Lists this test executable with complete and ignored-only native libtest selectors to conserve the frozen pre-consolidation identities; no shell or network.
+crates/ripr/tests/wrapped_owner_pins/inventory_contract.rs|use std::process::Command|1|wrapped-owner-inventory|Imports the native self-listing command used by the frozen integration-test inventory; no shell or network.
