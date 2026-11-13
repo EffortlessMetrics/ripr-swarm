@@ -2082,7 +2082,7 @@ const MCP_GIT_TIMEOUT_RECOVERY: &str = "set RIPR_GIT_TIMEOUT in the MCP server's
 
 /// The per-invocation git deadline every MCP refresh path runs with:
 /// `RIPR_GIT_TIMEOUT` when set, else the `ripr check` default (#14386).
-fn mcp_git_timeout() -> Result<Option<std::time::Duration>, String> {
+pub(crate) fn mcp_git_timeout() -> Result<Option<std::time::Duration>, String> {
     crate::app::env_or_default_git_timeout(std::env::var("RIPR_GIT_TIMEOUT"))
 }
 
