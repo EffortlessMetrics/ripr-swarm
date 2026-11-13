@@ -166,6 +166,26 @@ fn registry_membership_is_complete_and_exact() -> RegistryResult<()> {
 }
 
 #[test]
+fn claim_document_stability_rejects_changed_bytes() {
+    assert!(
+        load::require_stable_document(
+            "policy/formal-claims.d/example.json",
+            br#"{"claim_generation":1}"#,
+            br#"{"claim_generation":2}"#,
+        )
+        .is_err()
+    );
+    assert!(
+        load::require_stable_document(
+            "policy/formal-claims.d/example.json",
+            br#"{"claim_generation":1}"#,
+            br#"{"claim_generation":1}"#,
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn decision_digest_mismatch_and_duplicate_manifest_keys_reject() -> RegistryResult<()> {
     let fixture = Fixture::new()?;
     let claim = fixture.claim("example.actionability", "Only ready is actionable.")?;
@@ -257,7 +277,10 @@ fn transition_requires_generation_bumps_for_decision_changes() -> RegistryResult
         &transition::render_transition(&base, &head, OutputFormat::Json)?,
     )
     .map_err(|error| error.to_string())?;
-    assert_eq!(report["changed_claims"], serde_json::json!(["example.actionability"]));
+    assert_eq!(
+        report["changed_claims"],
+        serde_json::json!(["example.actionability"])
+    );
     Ok(())
 }
 
@@ -290,8 +313,43 @@ fn transition_requires_explicit_retirement_for_removal() -> RegistryResult<()> {
         &transition::render_transition(&base, &head, OutputFormat::Json)?,
     )
     .map_err(|error| error.to_string())?;
-    assert_eq!(report["retired_claims"], serde_json::json!(["example.actionability"]));
-    assert_eq!(report["added_claims"], serde_json::json!(["example.replacement"]));
+    assert_eq!(
+        report["retired_claims"],
+        serde_json::json!(["example.actionability"])
+    );
+    assert_eq!(
+        report["added_claims"],
+        serde_json::json!(["example.replacement"])
+    );
+    Ok(())
+}
+
+#[test]
+fn transition_rejects_retirement_without_base_authority() -> RegistryResult<()> {
+    let base_fixture = Fixture::new()?;
+    let base_claim = base_fixture.claim("example.actionability", "Stable proposition.")?;
+    let base_path = base_fixture.write_registry(&base_claim, 1)?;
+    let base = load::load_registry(&base_path)?;
+
+    let head_fixture = Fixture::new()?;
+    let head_claim = head_fixture.claim("example.actionability", "Stable proposition.")?;
+    let head_path = head_fixture.write_registry(&head_claim, 2)?;
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&head_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    manifest["retirements"] = serde_json::json!([{
+        "claim_id": "example.ghost",
+        "final_generation": 1,
+        "replacement_claim_id": "example.actionability",
+        "reason": "this claim never existed in the base registry"
+    }]);
+    fs::write(
+        &head_path,
+        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let head = load::load_registry(&head_path)?;
+    assert!(transition::validate_transition(&base, &head).is_err());
     Ok(())
 }
 
