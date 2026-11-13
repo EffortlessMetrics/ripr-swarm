@@ -28,7 +28,7 @@
 //! `unimplemented!` or `process::exit(..)` that admission sees no exit, so
 //! every oracle there is dropped.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::OracleFact;
@@ -85,6 +85,37 @@ pub(crate) fn unreached_lines(text: &str) -> BTreeMap<usize, Unreached> {
     let Some(groups) = Groups::new(bytes) else {
         return BTreeMap::new();
     };
+    lines_inside(bytes, &dead_regions(&masked, &groups))
+}
+
+/// Zero-based line offsets of `text` with any code byte that never
+/// executes, or every line when the delimiters do not balance. A positive
+/// reading that must not rest on dead code (`return; assert_eq!(..)` on one
+/// line) refuses these lines; [`unreached_lines`] keeps a mixed line reached.
+pub(crate) fn lines_touching_unreached(text: &str) -> Option<BTreeSet<usize>> {
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let groups = Groups::new(bytes)?;
+    let dead = dead_regions(&masked, &groups);
+    let mut lines = BTreeSet::new();
+    let mut line = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'\n' {
+            line += 1;
+        } else if !byte.is_ascii_whitespace()
+            && dead
+                .iter()
+                .any(|region| region.start <= index && index < region.end)
+        {
+            lines.insert(line);
+        }
+    }
+    Some(lines)
+}
+
+/// The never-executed regions of `masked`, outside macro inputs.
+fn dead_regions(masked: &str, groups: &Groups) -> Vec<Region> {
+    let bytes = masked.as_bytes();
     let mut dead: Vec<Region> = Vec::new();
     let mut previous: Option<u8> = None;
     let mut index = 0usize;
@@ -103,17 +134,17 @@ pub(crate) fn unreached_lines(text: &str) -> BTreeMap<usize, Unreached> {
         let at_statement_start = previous.is_none_or(|byte| matches!(byte, b'{' | b';' | b'}'));
         match &masked[index..end] {
             "if" | "while" => {
-                if let Some(block_end) = never_entered_block_end(bytes, end, &groups) {
+                if let Some(block_end) = never_entered_block_end(bytes, end, groups) {
                     dead.push(Region::refused(index, block_end));
                 }
             }
             "let" if at_statement_start => {
-                if let Some(statement_end) = uncalled_closure_statement_end(&masked, end, &groups) {
+                if let Some(statement_end) = uncalled_closure_statement_end(masked, end, groups) {
                     dead.push(Region::refused(index, statement_end));
                 }
             }
             _ if at_statement_start => {
-                if let Some(region) = after_diverging_statement(&masked, index, &groups) {
+                if let Some(region) = after_diverging_statement(masked, index, groups) {
                     dead.push(region);
                 }
             }
@@ -125,7 +156,7 @@ pub(crate) fn unreached_lines(text: &str) -> BTreeMap<usize, Unreached> {
     dead.retain(|region| {
         region.start < region.end && !groups.inside_macro_input(region.start, region.end)
     });
-    lines_inside(bytes, &dead)
+    dead
 }
 
 /// A never-executed byte range `start..end`.

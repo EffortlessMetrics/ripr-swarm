@@ -552,6 +552,36 @@ fn a_dead_assertion_does_not_supply_a_separating_input() -> Result<(), String> {
 }
 
 #[test]
+fn an_assertion_after_return_on_the_same_line_does_not_separate() -> Result<(), String> {
+    // `return;` ends the test before `sum_to(4)` is asserted.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("assert_eq!(sum_to(0), 0);\n    return; assert_eq!(sum_to(4), 10);"),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_live_assertion_sharing_a_line_still_separates() -> Result<(), String> {
+    // Control: no dead code on the line, so `sum_to(4)` still separates.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling("let _seed = 1; assert_eq!(sum_to(4), 10);"),
+    )?;
+    assert_eq!(classes(&findings), vec![ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
 fn a_range_passed_to_an_associated_sum_is_gated() -> Result<(), String> {
     // `Iterator::sum(0..=n)` absorbs the extra element at n = 0.
     let lib =

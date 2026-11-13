@@ -701,8 +701,10 @@ pub(in crate::analysis) fn range_change_visibility(
         }
         // An assertion in a literal-false block, an uncalled closure or
         // after a `return` stays in `assertions` for execution admission
-        // to refuse; it never runs, so it reads nothing here.
-        let unreached = crate::analysis::extract::unreached_lines(test.body.as_str());
+        // to refuse; it never runs, so it reads nothing here. A line with
+        // any dead code (`return; assert_eq!(..)`) reads nothing too, and an
+        // unbalanced body reads nothing at all.
+        let unreached = crate::analysis::extract::lines_touching_unreached(test.body.as_str());
         let mut agreed_mentions = 0usize;
         let mut note = |reading: CallReading, exact: bool| -> Option<String> {
             match reading {
@@ -723,7 +725,8 @@ pub(in crate::analysis) fn range_change_visibility(
             if oracle
                 .line
                 .checked_sub(test.start_line)
-                .is_none_or(|offset| unreached.contains_key(&offset))
+                .zip(unreached.as_ref())
+                .is_none_or(|(offset, unreached)| unreached.contains(&offset))
             {
                 note(CallReading::Unread, false);
                 continue;

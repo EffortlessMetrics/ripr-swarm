@@ -110,8 +110,8 @@ versions, reads infection `weak`. The second case is not claimed for an
 equivalent rewrite or when the owner has other callers. A range handed to a call
 (`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
 unchecked or mutable forms slice like `v[a..b]`, and an assertion that
-never runs (a literal-false block, an uncalled closure, after a `return`) reads
-nothing. Any other gated change, including an input ripr cannot fold, reads
+never runs (a literal-false block, an uncalled closure, after a `return`, even
+on the same line as live code) reads nothing. Any other gated change, including an input ripr cannot fold, reads
 `unknown`, except a moved match range pattern: whenever the fold does not
 establish what the tests see (arms it cannot read such as `&str` results, or
 rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
