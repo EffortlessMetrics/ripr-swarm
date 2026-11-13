@@ -552,9 +552,27 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
     }
     assert_starts_check_recommendation(&repo, "written-field-weak-read")?;
     // The started packet asks for the written field's FieldValue check.
+    let attempt_dir = std::fs::read_dir(repo.root.join("target/ripr/repair-attempts"))
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .find(|entry| entry.path().join("attempt.json").is_file())
+        .ok_or_else(|| "no started attempt".to_string())?
+        .path();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(attempt_dir.join("attempt.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let packet_path = manifest["artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_packet")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or_else(|| "started attempt has no agent packet".to_string())?;
     let packet: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(repo.root.join("target/ripr/workflow/agent-packet.json"))
-            .map_err(|e| e.to_string())?,
+        &std::fs::read_to_string(repo.root.join(packet_path)).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     let missing = &packet["packets"][0]["missing_discriminators"][0];

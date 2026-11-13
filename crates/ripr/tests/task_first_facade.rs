@@ -3693,9 +3693,30 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
     Ok(())
 }
 
+fn retained_packet_path(root: &Path, attempt_id: &str) -> Result<std::path::PathBuf, String> {
+    let manifest = read_manifest(root, attempt_id)?;
+    let path = manifest["artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_packet")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or_else(|| format!("attempt {attempt_id} has no agent packet"))?;
+    Ok(root.join(path))
+}
+
+fn retained_packet_target(root: &Path, attempt_id: &str) -> Result<String, String> {
+    packet_target(&retained_packet_path(root, attempt_id)?)
+}
+
 fn compatibility_packet_target(root: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(root.join("target/ripr/workflow/agent-packet.json"))
-        .map_err(|error| format!("read prepared packet: {error}"))?;
+    packet_target(&root.join("target/ripr/workflow/agent-packet.json"))
+}
+
+fn packet_target(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("read prepared packet: {error}"))?;
     let packet: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode prepared packet: {error}"))?;
     packet["packets"]
@@ -3722,7 +3743,10 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
     let before = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&before, 0, "prepare pricing attempt");
     let attempt_id = attempt_id_from_before(&before)?;
-    assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
+    assert_eq!(
+        retained_packet_target(root, &attempt_id)?,
+        "tests/pricing.rs"
+    );
 
     // Independently prepare a valid packet with the same production seam
     // but a different test target. Only the compatibility projection in the
@@ -3737,9 +3761,14 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
     git_commit(&decoy.root, "decoy test target")?;
     let decoy_before = run_ripr(&decoy.root, &["repair"])?;
     assert_exit(&decoy_before, 0, "prepare genuine decoy packet");
-    assert_eq!(compatibility_packet_target(&decoy.root)?, "tests/decoy.rs");
+    let decoy_id = attempt_id_from_before(&decoy_before)?;
+    assert_eq!(
+        retained_packet_target(&decoy.root, &decoy_id)?,
+        "tests/decoy.rs"
+    );
+    std::fs::create_dir_all(root.join("target/ripr/workflow")).map_err(|e| e.to_string())?;
     std::fs::copy(
-        decoy.root.join("target/ripr/workflow/agent-packet.json"),
+        retained_packet_path(&decoy.root, &decoy_id)?,
         root.join("target/ripr/workflow/agent-packet.json"),
     )
     .map_err(|error| format!("replace compatibility packet: {error}"))?;
@@ -3852,7 +3881,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
     let attempt_id = attempt_id_from_before(&before)?;
-    assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
+    assert_eq!(retained_packet_target(root, &attempt_id)?, "src/lib.rs");
     let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
     assert_exit(&refused, 3, "continue before inline edit");
     assert!(refused.stdout.is_empty());
