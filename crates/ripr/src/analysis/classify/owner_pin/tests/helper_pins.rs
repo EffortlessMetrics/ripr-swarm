@@ -738,3 +738,37 @@ fn a_predicate_assert_eq_is_admitted_like_the_bare_assert() -> Result<(), String
     );
     Ok(())
 }
+
+/// #14537 repair: the module-declaration exception is about the test's build
+/// availability only. A predicate equality whose test shadows `assert_eq!`
+/// with a local `macro_rules!` is still refused even though the module that
+/// composes it is `cfg`-gated.
+#[test]
+fn a_gated_predicate_assert_eq_is_still_refused_when_it_is_shadowed() -> Result<(), String> {
+    let lib = "#[cfg(feature = \"lang-python\")]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        macro_rules! assert_eq { ($($tokens:tt)*) => {{}}; }\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    assert!(
+        refusal.is_some(),
+        "a shadowed predicate assert_eq! is still refused (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        "a shadowed predicate assert_eq! is not admitted"
+    );
+    Ok(())
+}

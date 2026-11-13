@@ -1059,6 +1059,7 @@ impl OwnerPinSyntax {
                 ProbeFamily::ReturnValue
                     | ProbeFamily::FieldConstruction
                     | ProbeFamily::ErrorPath
+                    | ProbeFamily::Predicate
                     | ProbeFamily::SideEffect
                     | ProbeFamily::CallDeletion
             ),
@@ -1080,6 +1081,20 @@ impl OwnerPinSyntax {
             self.context_refusal(test, assertion, index, true)
         } else {
             self.refusal(test, assertion, index)
+        };
+        // #14537: a predicate equality whose test file is composed through a
+        // gated `mod` declaration shares the bare `assert!`'s admission for
+        // that build-availability step only. Re-answer the execution context
+        // with the provenance step skipped: shadowing, an uncalled closure, a
+        // conditional path and a non-standard macro binding still withhold
+        // credit, and the RIPR-SPEC-0197 predicate fixtures pin those.
+        let refusal = match refusal {
+            Some(AssertionRefusal::ModuleDeclaration { .. })
+                if family == ProbeFamily::Predicate =>
+            {
+                self.context_refusal_without_provenance(test, assertion, index, matches_context)
+            }
+            refusal => refusal,
         };
         match refusal {
             None => true,
@@ -1357,7 +1372,7 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        self.context_ambiguities(test, assertion.line, index)
+        self.context_ambiguities(test, assertion.line, index, true)
             .is_ok_and(|ambiguous| {
                 !["assert", "assert_ne", "matches"]
                     .iter()
@@ -1987,9 +2002,12 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         line: usize,
         index: &RustIndex,
+        provenance: bool,
     ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
-        if let Some(refusal) = self.source_provenance_refusal(test, index) {
-            return Err(Box::new(refusal));
+        if provenance {
+            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+                return Err(Box::new(refusal));
+            }
         }
         if index.proptest_source(test).is_some() {
             // These ordinary assertion spellings are a checked interpretation
@@ -2080,7 +2098,9 @@ impl OwnerPinSyntax {
             )?
             .clone()
         };
-        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        let ambiguous = self
+            .context_ambiguities(test, assertion.line, index, true)
+            .ok()?;
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
 
@@ -2154,7 +2174,7 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
-        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index, true) else {
             return Some(AssertionContextRefusal::UnidentifiedTest);
         };
         self.by_file
@@ -2201,6 +2221,30 @@ impl OwnerPinSyntax {
         index: &RustIndex,
         matches_context: bool,
     ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, true)
+    }
+
+    /// [`Self::context_refusal`] with the module-composition provenance step
+    /// skipped, so a caller that has already accounted for that step can read
+    /// the rest of the execution context (#14537).
+    fn context_refusal_without_provenance(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+    ) -> Option<AssertionRefusal> {
+        self.context_refusal_inner(test, assertion, index, matches_context, false)
+    }
+
+    fn context_refusal_inner(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        matches_context: bool,
+        provenance: bool,
+    ) -> Option<AssertionRefusal> {
         if let Some((source, offset)) = index.proptest_source(test) {
             if let Some(refusal) = self.source_provenance_refusal(test, index) {
                 return Some(refusal);
@@ -2227,7 +2271,8 @@ impl OwnerPinSyntax {
                 )
                 .map(AssertionRefusal::Syntax);
         }
-        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index) {
+        let mut ambiguous = match self.context_ambiguities(test, assertion.line, index, provenance)
+        {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
         };
