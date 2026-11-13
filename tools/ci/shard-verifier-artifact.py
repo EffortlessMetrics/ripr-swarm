@@ -32,8 +32,11 @@ def positive(value):
 
 
 def digest(path):
+    hasher = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        while chunk := stream.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def identity(repository, run_id, attempt, sha):

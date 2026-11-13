@@ -292,6 +292,11 @@ else:
         self.artifact(members=[('xtask',self.payload,0o644),('identity.json',receipt,0o644)])
         self.assertEqual(self.execute().returncode,0)
 
+    def test_digest_streams_multiple_chunks(self):
+        payload=bytes(range(256))*1025
+        path=self.root/'multi-chunk';path.write_bytes(payload)
+        self.assertEqual(MODULE.digest(path),hashlib.sha256(payload).hexdigest())
+
     def test_inventory_completeness_and_duplicate_ids(self):
         artifact=self.artifact()
         for pages in [[dict(total_count=2,artifacts=[artifact])],
