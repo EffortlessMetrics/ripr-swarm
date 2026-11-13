@@ -43,6 +43,7 @@ automation = [
     "dep:rayon",
     "dep:serde",
     "formal-evidence-audit",
+    "formal-claim-plan",
     "dep:sha2",
     "dep:toml",
     "dep:flate2",
@@ -53,6 +54,8 @@ automation = [
 ]
 # Pure document admission can be tested without compiling the product library.
 formal-evidence-audit = ["dep:serde", "dep:sha2"]
+# Passive affected-claim planning consumes supplied facts and executes no provider.
+formal-claim-plan = ["dep:serde", "dep:sha2"]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.
@@ -67,6 +70,11 @@ required-features = ["automation"]
 name = "formal-evidence-audit"
 path = "src/bin/formal-evidence-audit.rs"
 required-features = ["formal-evidence-audit"]
+
+[[bin]]
+name = "formal-claim-plan"
+path = "src/bin/formal-claim-plan.rs"
+required-features = ["formal-claim-plan"]
 
 [[example]]
 name = "contabo_product_proof"

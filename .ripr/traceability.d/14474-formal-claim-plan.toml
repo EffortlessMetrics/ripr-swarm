@@ -1,0 +1,26 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/bin/formal-claim-plan.rs",
+  "xtask/src/bin/formal_claim_plan/mod.rs",
+  "xtask/src/bin/formal_claim_plan/input.rs",
+]
+tests = [
+  "xtask/src/bin/formal_claim_plan/tests.rs::direct_owner_and_source_closure_change_selects_exact_claim",
+  "xtask/src/bin/formal_claim_plan/tests.rs::harness_or_model_only_change_selects_its_claim",
+  "xtask/src/bin/formal_claim_plan/tests.rs::global_authority_change_falls_back_to_all_critical",
+  "xtask/src/bin/formal_claim_plan/tests.rs::unknown_or_incomplete_classification_falls_back_to_all_critical",
+  "xtask/src/bin/formal_claim_plan/tests.rs::complete_nonsemantic_changes_can_select_none",
+  "xtask/src/bin/formal_claim_plan/tests.rs::formal_relevant_unmapped_change_is_rejected_or_widened",
+  "xtask/src/bin/formal_claim_plan/tests.rs::manual_and_unsupported_routes_remain_visible_in_fallback",
+  "xtask/src/bin/formal_claim_plan/tests.rs::empty_change_facts_fall_back_to_all_critical",
+  "xtask/src/bin/formal_claim_plan/tests.rs::historical_native_phase_stays_visible_without_native_subjects",
+  "xtask/src/bin/formal_claim_plan/tests.rs::index_without_critical_claims_rejects",
+  "xtask/src/bin/formal_claim_plan/tests.rs::stale_registry_or_invalid_stack_identity_rejects",
+  "xtask/src/bin/formal_claim_plan/tests.rs::unregistered_path_resemblance_cannot_enter_critical_assurance",
+  "xtask/src/bin/formal_claim_plan/tests.rs::input_order_does_not_change_semantic_plan",
+  "xtask/src/bin/formal_claim_plan/tests.rs::json_and_markdown_project_the_same_plan",
+  "xtask/src/bin/formal_claim_plan/tests.rs::duplicate_keys_unknown_fields_and_missing_values_reject",
+  "xtask/src/bin/formal_claim_plan/tests.rs::complete_ordered_stack_identity_is_preserved",
+  "xtask/src/bin/formal_claim_plan/input.rs::normalization_tests::normalization_sorts_unordered_projection_fields_without_reordering_members",
+]
