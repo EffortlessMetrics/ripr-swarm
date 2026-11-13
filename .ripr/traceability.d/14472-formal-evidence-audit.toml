@@ -2,6 +2,9 @@
 id = "RIPR-SPEC-0371"
 code = ["xtask/src/formal_evidence.rs", "xtask/src/formal_evidence/native.rs", "xtask/src/formal_evidence/native_inventory.rs", "xtask/src/formal_evidence/native/profile.rs"]
 tests = [
+  "xtask/src/formal_evidence/kani_output.rs::tests::native_multiline_description_preserves_quotes_followed_by_spaces",
+  "xtask/src/formal_evidence/native/tests.rs::incomplete_streams_preserve_observations_and_known_process_failures",
+  "xtask/src/formal_evidence/native/tests.rs::unsupported_stderr_results_cannot_leave_verified_rows",
   "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_failed_summary_cannot_become_verified",
   "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summaries_reject_malformed_duplicate_and_inconsistent_counts",
   "xtask/src/formal_evidence/kani_output.rs::tests::ordinary_summary_counts_unreachable_assertions_but_not_covers",

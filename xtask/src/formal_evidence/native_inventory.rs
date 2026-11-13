@@ -1,5 +1,5 @@
-//! Native compiled inventory and exact result attribution, shared by capture
-//! and offline replay. Source discovery itself remains a producer operation.
+//! Native compiled inventory and exact result attribution for capture and
+//! offline replay integration. Source discovery remains a producer operation.
 use super::native::{ObservationStatus, Subject, UnregisteredResult, sha256 as hash};
 use super::{self as formal, kani_output as lane};
 use serde::Deserialize;
@@ -262,38 +262,34 @@ fn observation_status(status: &lane::HarnessStatus) -> ObservationStatus {
 }
 
 /// Interpret the exact captured streams under their observed process outcome.
-/// Live collection and passive replay call this same function; valid-looking
-/// stdout cannot erase a timeout, malformed stream, or unsupported tool header.
+/// Shared seam for later live collection and passive replay integration.
+/// Valid-looking stdout cannot erase a timeout, incomplete stream, unsupported
+/// stderr result, or unsupported tool header. Available stdout remains diagnostic
+/// evidence even when the overall capture cannot establish a result.
 pub fn observe_invocation(
     subjects: &[Subject],
     invocation: &super::native::Invocation,
     stdout: Option<&[u8]>,
     stderr: Option<&[u8]>,
 ) -> (Vec<UnregisteredResult>, Vec<String>, Vec<String>) {
-    let streams = if invocation.capture_complete {
-        stdout
-            .and_then(|out| std::str::from_utf8(out).ok())
-            .zip(stderr.and_then(|err| std::str::from_utf8(err).ok()))
-    } else {
-        None
-    };
-    let (text, errors) = streams.unwrap_or(("", ""));
-    let (mut rows, observed, mut reasons) = observe(subjects, text);
-    if errors
-        .lines()
-        .any(|line| line.starts_with("Checking harness "))
-    {
+    let text = stdout.and_then(|out| std::str::from_utf8(out).ok());
+    let errors = stderr.and_then(|err| std::str::from_utf8(err).ok());
+    let capture_problem = !invocation.capture_complete || text.is_none() || errors.is_none();
+    let unsupported_stderr = errors.is_some_and(|errors| {
+        errors
+            .lines()
+            .any(|line| line.starts_with("Checking harness "))
+    });
+    let (mut rows, observed, mut reasons) = observe(subjects, text.unwrap_or(""));
+    if unsupported_stderr {
         reasons.push("result headers on unsupported stderr stream".to_string());
     }
-    if streams.is_none() {
+    if capture_problem {
         reasons.push("native streams were not completely captured as UTF-8".to_string());
-        return (rows, observed, reasons);
     }
-    let header_error = super::native::native_tool_header(text).err();
+    let header_error = text.and_then(|text| super::native::native_tool_header(text).err());
     for row in &mut rows {
-        let problem = if let Some(error) = &header_error {
-            Some(error.clone())
-        } else if invocation.timed_out {
+        let problem = if invocation.timed_out {
             if row.raw_block_digest.is_none() {
                 row.native_verdict = formal::Verdict::Timeout;
             }
@@ -303,6 +299,12 @@ pub fn observe_invocation(
                 row.native_verdict = formal::Verdict::AbnormalProcess;
             }
             Some("native verification did not have a complete normal process outcome".to_string())
+        } else if capture_problem {
+            Some("native streams were not completely captured as UTF-8".to_string())
+        } else if unsupported_stderr {
+            Some("result headers on unsupported stderr stream".to_string())
+        } else if let Some(error) = &header_error {
+            Some(error.clone())
         } else if invocation.exit_code != Some(0) && row.status == ObservationStatus::Verified {
             Some("successful result text accompanied a nonzero native package exit".to_string())
         } else {

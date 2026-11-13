@@ -567,6 +567,95 @@ fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals(
 }
 
 #[test]
+fn incomplete_streams_preserve_observations_and_known_process_failures() -> AuditResult<()> {
+    let run = complete_document()?;
+    let execution = run.execution.as_ref().ok_or("execution absent")?;
+    let invocation = execution.invocations.last().ok_or("verification absent")?;
+    let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+    let observe = |call: &Invocation, out: Option<&[u8]>, err: Option<&[u8]>| {
+        native_inventory::observe_invocation(&execution.selected_subjects, call, out, err)
+    };
+    let positive = observe(invocation, Some(stdout), Some(b""));
+    assert_eq!(positive.0[0].status, ObservationStatus::Verified);
+    for control in 0..3 {
+        let mut call = invocation.clone();
+        let stderr = match control {
+            0 => None,
+            1 => Some(&b"\xff"[..]),
+            _ => {
+                call.capture_complete = false;
+                Some(&b""[..])
+            }
+        };
+        let refused = observe(&call, Some(stdout), stderr);
+        assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
+        assert_eq!(refused.1, positive.1, "observed stdout must not disappear");
+        assert_eq!(
+            refused.0[0].raw_block_digest,
+            positive.0[0].raw_block_digest
+        );
+        assert_eq!(refused.0[0].properties.len(), 1);
+        assert!(
+            refused
+                .2
+                .iter()
+                .any(|r| r.contains("not completely captured"))
+        );
+        assert!(
+            !refused
+                .2
+                .iter()
+                .any(|r| r.contains("missing native result"))
+        );
+    }
+    for (timed_out, verdict, detail) in [
+        (true, crate::formal_evidence::Verdict::Timeout, "deadline"),
+        (
+            false,
+            crate::formal_evidence::Verdict::AbnormalProcess,
+            "normal process outcome",
+        ),
+    ] {
+        let mut call = invocation.clone();
+        call.capture_complete = false;
+        call.timed_out = timed_out;
+        call.exit_code = None;
+        call.error = Some("synthetic process/capture error".into());
+        let refused = observe(&call, None, None);
+        assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
+        assert_eq!(refused.0[0].native_verdict, verdict);
+        assert!(refused.0[0].detail.contains(detail));
+        assert!(
+            refused
+                .2
+                .iter()
+                .any(|r| r.contains("not completely captured"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unsupported_stderr_results_cannot_leave_verified_rows() -> AuditResult<()> {
+    let run = complete_document()?;
+    let execution = run.execution.as_ref().ok_or("execution absent")?;
+    let invocation = execution.invocations.last().ok_or("verification absent")?;
+    let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+    let (rows, observed, reasons) = native_inventory::observe_invocation(
+        &execution.selected_subjects,
+        invocation,
+        Some(stdout),
+        Some(b"Checking harness foreign::proof...\n"),
+    );
+    assert_eq!(rows[0].status, ObservationStatus::NotEstablished);
+    assert!(rows[0].detail.contains("unsupported stderr"));
+    assert_eq!(observed.len(), 1);
+    assert!(rows[0].raw_block_digest.is_some());
+    assert!(reasons.iter().any(|r| r.contains("unsupported stderr")));
+    Ok(())
+}
+
+#[test]
 fn required_schema_fields_cannot_be_omitted() -> AuditResult<()> {
     let schema: serde_json::Value = parse_json(include_bytes!(
         "../../../../docs/formal-verification/schema/native-proof-run-v1.schema.json"

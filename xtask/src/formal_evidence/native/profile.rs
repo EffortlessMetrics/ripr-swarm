@@ -2,7 +2,7 @@
 //! These pure checks inspect supplied observations and grant no execution authority.
 
 /// Aggregate observed verification processes without borrowing individual
-/// harness verdicts. The live producer and retained replay use this same law.
+/// harness verdicts. Shared seam for later producer and replay integration.
 pub fn aggregate_process(
     invocations: &[super::Invocation],
     raw_index_digest: &str,

@@ -924,6 +924,20 @@ mod tests {
     }
 
     #[test]
+    fn native_multiline_description_preserves_quotes_followed_by_spaces() -> Result<(), String> {
+        // The pinned renderer wraps the original description in a quote pair;
+        // an internal quote followed by spaces is payload, not its closing quote.
+        let output = "Check 1: proof.assertion.1\n - Status: SUCCESS\n - Description: \"first\ninternal quote\"  \nlast\"\nSUMMARY:\n ** 0 of 1 failed\n";
+        let properties = native_properties(output)?;
+        assert_eq!(properties.len(), 1);
+        assert_eq!(
+            properties[0].description.as_deref(),
+            Some("\"first\ninternal quote\"  \nlast\"")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ordinary_summary_accepts_native_properties_without_locations() {
         let output = ordinary_summary_fixture(" ** 0 of 1 failed", "SUCCESS", "SUCCESSFUL")
             .lines()

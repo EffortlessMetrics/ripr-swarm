@@ -172,6 +172,13 @@ agree. They do not borrow a verification time. An unrelated unique row keeps
 its own result. This is conservative name-based attribution, not a claim that
 the source path establishes the native module identity.
 
+The shared invocation interpreter retains attributable stdout observations even
+when stderr is missing, invalid UTF-8, or capture is incomplete. These observations
+remain `NOT-ESTABLISHED`; known timeout or abnormal outcomes take precedence over
+a missing-result placeholder. Unsupported result headers on stderr refuse each
+subject as well as the aggregate inventory. Producer/replay activation of these
+shared seams remains a later integration step.
+
 The native process exit is checked separately from each text verdict. A nonzero
 or absent exit status or a whole-run timeout cannot produce a successful
 aggregate even if every parsed row looks verified. On a partial run, separately
