@@ -119,6 +119,8 @@ owner where scope has become too large.
   the boundary to admitted native results.
 - [CLAIM_PLAN.md](CLAIM_PLAN.md) — passive affected-critical-claim selection,
   fail-closed fallback, queue-subject identity, and the boundary to execution.
+- [SOURCE_INPUTS.md](SOURCE_INPUTS.md) — shared passive source prerequisites,
+  supported syntax, conservative refusal and caller obligations.
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dependency-ordered
   implementation programme using the current issue and PR owners.
 - [WORK_ITEMS.md](WORK_ITEMS.md) — existing executable implementation owners

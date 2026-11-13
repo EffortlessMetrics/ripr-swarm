@@ -22,6 +22,7 @@ Linked issues:
 
 - #12109: internal Kani claim boundaries.
 - #12468: ambiguous harness-to-result joins.
+- #14460: positive cover evidence before verification admission.
 
 Linked PRs:
 
@@ -43,12 +44,12 @@ Policy impact:
 
 ## Problem
 
-`ripr` has no formal verification. Some load-bearing logic is a small pure
-core (for example the actionability flip, which must stay fail-closed) where a
+Some load-bearing logic in `ripr` is a small pure core (for example the
+actionability flip, which must stay fail-closed) where a
 bounded model check can establish a property for every input in a stated
 domain, which example-based tests cannot. Without a lane that is honest about
-what ran, a missing tool, a harness that never executed or a `cover!` that is
-unreachable would read as a pass.
+what ran, a missing tool, a harness that never executed or missing cover
+evidence could read as a pass.
 
 ## Behavior
 
@@ -59,8 +60,11 @@ unreachable would read as a pass.
 - A harness calls the production function. It does not prove a copy.
 - Input bounds are explicit `kani::assume` statements with a comment naming
   the domain they model.
-- Each harness carries at least one `kani::cover!` on its interesting path.
-  An unreachable cover makes the proof vacuous and is a failure.
+- Each harness carries at least one `kani::cover!` on its interesting path,
+  directly or through a called helper. Constant-only harnesses also witness
+  that their checked operation is reached. An unsatisfied required cover fails
+  the lane's reachability policy; it does not establish that every assertion is
+  vacuous or that the implementation has a functional counterexample.
 - Code Kani cannot model (heavy string or `HashMap` work, async, process or
   filesystem effects) is not forced through a harness. A smaller pure core is
   proved, or the limit is recorded; a pass is never fabricated.
@@ -115,13 +119,38 @@ qualification.
 with one shared whole-run deadline and writes `target/ripr/reports/kani.md` with one
 row per harness. Each row is exactly one of:
 
-- `VERIFIED`: Kani reported a successful verification and every `cover!` was
-  satisfied. The claim is bounded by the harness's assumptions.
-- `FAILED`: Kani reported a counterexample, or a `cover!` was unreachable.
+- `VERIFIED`: Kani reported a successful verification, exactly one well-formed
+  positive-total cover summary reports all covers satisfied, and no observed
+  property status contradicts or leaves that evidence undetermined. The claim
+  is bounded by the harness's assumptions and native verification policy.
+- `FAILED`: Kani reported a native verification failure, or a required cover
+  was known not to be satisfied. Inspect native properties to distinguish a
+  counterexample, unwinding failure and a reachability-policy failure.
 - `NOT-ESTABLISHED`: the tool is missing, the run timed out, the harness was
   not found, a single harness exceeded `--harness-timeout-secs` (default 900;
   CBMC reports a timeout, not a counterexample, so it is never `FAILED`), or the
-  output held no successful verdict.
+  output held no successful verdict or complete positive cover evidence.
+
+For a success-looking native result, missing, zero-total, malformed,
+inconsistent or repeated cover summaries are `NOT-ESTABLISHED`, even if repeated
+summaries agree. A summary that reports undetermined covers, or a regular
+property status of `UNDETERMINED`, `ERROR` or an unrecognized word, also stays
+`NOT-ESTABLISHED`. Raw unknown/error properties can be absent from the native
+cover count; an N-of-N summary does not override them. A known cover shortfall
+with no undetermined evidence is `FAILED`. A property identified by its final
+`.cover.<id>` class cannot report `UNREACHABLE` against a complete cover summary,
+or substitute `SUCCESS`, `FAILURE`, `COVERED` or `UNCOVERED` for the supported
+cover statuses; these contradictions are `NOT-ESTABLISHED`. An ordinary
+assertion's `UNREACHABLE` status does not by itself identify an unsatisfied cover.
+
+The supported format is the pinned Kani 0.68.0 default regular output. Its
+[cover-summary renderer](https://github.com/model-checking/kani/blob/0d2328a93f0e0ff66132d6bfa1a7d884877cf862/kani-driver/src/cbmc_property_renderer.rs)
+prints `N of M cover properties satisfied` only for a positive total, with
+optional nonzero undetermined and unreachable counts in that order. An
+unsatisfiable cover contributes to the total without an extra suffix. Native
+success can coexist with unsatisfied covers, so the lane checks reachability
+separately. A native failure retains its failing disposition; a native timeout
+retains its `NOT-ESTABLISHED` disposition.
 
 A row can consume a result only when its bare name is unique in the selected
 discovered inventory and exactly one parsed native block matches it. Duplicate
@@ -143,7 +172,8 @@ native-source provenance or inventory completeness.
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
 `--allow-empty` is passed. `--allow-empty` is a local opt-out for sparse
-checkouts; the CI lane never passes it.
+checkouts; the CI lane never passes it. It cannot admit incomplete cover
+evidence for a nonempty harness selection.
 
 ### The lane
 
@@ -154,9 +184,12 @@ touches either owning crate source, with `kani-verifier` pinned to an exact vers
 
 ## What a proof does and does not claim
 
-A `VERIFIED` row means: within the stated `kani::assume` bounds and unwinding
-depth, Kani's model checker found no assertion violation, overflow, or panic
-reachable from the harness, and the covered paths were reachable.
+A `VERIFIED` row records native verification success within the stated
+`kani::assume` bounds and unwinding depth, with a positive satisfied cover
+inventory. Ordinary harnesses check enabled assertion and safety properties;
+expected-panic harnesses use Kani's expected-panic success policy. A required
+cover witness establishes its reachability, not the correctness or completeness
+of the chosen functional specification.
 
 It does not claim:
 
@@ -171,13 +204,21 @@ It does not claim:
 ## Required Evidence
 
 - The xtask unit tests pin the status classification: an explicit success
-  verdict is required for `VERIFIED`, an unreachable cover fails, absence of a
-  verdict is `NOT-ESTABLISHED`, and the lane verdict never passes on a missing
-  tool or zero harnesses.
+  verdict and complete positive cover evidence are required for `VERIFIED`.
+  Known unsatisfied covers fail the reachability policy; missing, malformed,
+  repeated, zero-total, inconsistent and undetermined evidence stays
+  `NOT-ESTABLISHED`. Ordinary unreachable assertions and expected-panic success
+  remain compatible with complete cover evidence.
+- The real runner/process controls check exit status and persisted report for
+  positive and incomplete cover evidence, with both `--allow-empty` settings.
+  Their child output is synthetic and does not establish native verification.
+- Native compatibility evidence is bound to the actual source and pinned tool
+  separately from parser/process tests. Missing-tool and zero-harness controls
+  remain failing lane results.
 - The smoke harness `evidence_state_actionable_only_for_actionable` proves the
   actionability predicate holds for exactly one `EvidenceState` variant, with
   `cover!` on both outcomes.
-- Non-vacuity: injecting a bug into `EvidenceState::is_actionable` makes the
+- Oracle discrimination: injecting a bug into `EvidenceState::is_actionable` makes the
   smoke harness fail (recorded in the introducing PR).
 
 ## Known Limits
@@ -205,27 +246,35 @@ It does not claim:
 4. Two same-named declarations cannot consume one successful block; multiple
    matching or repeated blocks also remain `NOT-ESTABLISHED`. `--allow-empty`
    does not bypass this nonempty ambiguous result.
+5. Bare native success, zero declared covers or undetermined cover evidence
+   produces `NOT-ESTABLISHED`; the command fails even with `--allow-empty`.
+6. Complete satisfied covers can accompany an unreachable ordinary assertion
+   or an expected-panic result without changing the native policy.
 
 ## Test Mapping
 
-- `xtask/src/kani_lane.rs`:
-  `discovery_finds_named_harnesses_past_attributes_and_docs`,
-  `classification_requires_an_explicit_success_verdict`,
-  `unreachable_cover_makes_the_proof_vacuous`,
-  `blocks_join_to_harnesses_and_a_missing_block_is_not_established`,
-  `duplicate_source_names_never_share_a_native_result`,
-  `duplicate_native_blocks_are_not_first_match_wins`,
-  `native_process_error_cannot_be_hidden_by_verified_rows`,
-  `partial_timeout_preserves_completed_rows_but_never_passes`,
-  `mixed_failure_and_absent_results_keep_distinct_dispositions`,
-  `unique_native_join_retains_status_time_and_separator_boundary`,
-  `lane_never_passes_by_absence`,
-  `arguments_parse_and_reject_unknown_flags`,
-  `report_names_every_status_word`.
+- `xtask/src/formal_evidence/kani_output.rs`: discovery, complete-cover
+  classification, native cover captures, unique attribution, and ambiguity
+  controls. `lane_verdict` remains the single shared aggregate owner.
+- `xtask/src/formal_evidence/native/tests.rs`: exact native property projection,
+  multiline descriptions, pinned compiled inventory, invocation/profile refusal,
+  and consistency between typed observations and the shared document validator.
+- `xtask/src/kani_lane.rs`: process reconciliation, partial timeout, argument
+  parsing, missing-tool/empty-lane behavior and complete report rendering.
+- `xtask/tests/kani_lane_process.rs`:
+  `kani_runner_requires_observed_complete_cover_evidence` and real child-process
+  controls. Their provider output is synthetic, not a native proof.
+- #14469 supplies the four constant-only harness reachability witnesses. This
+  parser stage depends on that candidate's integration before full-lane use.
 
 ## Implementation Mapping
 
-- `xtask/src/kani_lane.rs`: discovery, classification, report and verdict.
+- `xtask/src/formal_evidence/kani_output.rs`: shared pure interpretation and report.
+- `xtask/src/formal_evidence/native_inventory.rs`: compiled inventory and exact
+  native observation attribution.
+- `xtask/src/formal_evidence/native/profile.rs`: pinned observed tool headers and
+  aggregate process semantics; no tool installation or authenticity claim.
+- `xtask/src/kani_lane.rs`: execution and process reconciliation.
 - `crates/ripr/src/kani_smoke.rs`: the smoke harness.
 - `.github/workflows/kani.yml` and `policy/ci-lane-whitelist.toml`: the lane.
 - `Cargo.toml`: `unexpected_cfgs` check-cfg for `cfg(kani)`.

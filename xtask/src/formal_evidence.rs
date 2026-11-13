@@ -3,8 +3,11 @@
 //! artifacts, recompute source commitments, or establish current applicability.
 //! Exit zero means the supplied documents are consistent, never proof success.
 
+pub mod kani_output;
+pub mod native;
+pub mod native_inventory;
+
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read;
@@ -15,29 +18,19 @@ const MAX_CLAIMS: usize = 256;
 const MAX_TOTAL_INPUT_BYTES: u64 = 16 * MAX_INPUT_BYTES;
 pub const USAGE: &str = "usage: formal-evidence-audit --claim FILE [--claim FILE ...] [--run FILE]\nExit 0: documents consistent; 2: invalid input. Native assurance is never assessed.";
 
-type AuditResult<T> = Result<T, String>;
-
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut value = String::with_capacity(71);
-    value.push_str("sha256:");
-    for byte in digest {
-        value.push_str(&format!("{byte:02x}"));
-    }
-    value
-}
+pub type AuditResult<T> = Result<T, String>;
 
 /// Exact claim-array commitment: compact UTF-8 JSON, preserving assumption
 /// order. An empty assumption set is the committed bytes `[]`, not absence.
-fn assumptions_digest(assumptions: &[String]) -> AuditResult<String> {
+pub fn assumptions_digest(assumptions: &[String]) -> AuditResult<String> {
     serde_json::to_vec(assumptions)
-        .map(|bytes| sha256(&bytes))
+        .map(|bytes| native::sha256(&bytes))
         .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Family {
+pub enum Family {
     BoundedModelCheck,
     DeductiveProof,
     StateMachineModel,
@@ -51,7 +44,7 @@ enum Family {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Criticality {
+pub enum Criticality {
     Critical,
     Important,
     Advisory,
@@ -61,7 +54,7 @@ enum Criticality {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Phase {
+pub enum Phase {
     AdmittedMergeGroup,
     // Retained for historical document inspection, not trigger authority.
     OrdinaryPrCritical,
@@ -73,7 +66,7 @@ enum Phase {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-enum BoundValue {
+pub enum BoundValue {
     Text(String),
     Number(serde_json::Number),
     Flag(bool),
@@ -81,78 +74,78 @@ enum BoundValue {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Claim {
-    schema: String,
-    claim_id: String,
-    claim_generation: u64,
-    family: Family,
-    provider: String,
-    criticality: Criticality,
-    phase: Phase,
-    proposition: String,
-    non_claims: Vec<String>,
-    owners: Vec<String>,
-    source_closure: Vec<String>,
-    domain: String,
-    assumptions: Vec<String>,
-    trust_dependencies: Vec<String>,
-    observable: String,
-    bounds: BTreeMap<String, BoundValue>,
-    subjects: Vec<String>,
-    required_covers: Vec<String>,
-    negative_controls: Vec<String>,
-    result_satisfaction: String,
-    currentness_inputs: Vec<String>,
-    transition_policy: String,
-    owner_spec: String,
-    owner_issue: u64,
+pub struct Claim {
+    pub schema: String,
+    pub claim_id: String,
+    pub claim_generation: u64,
+    pub family: Family,
+    pub provider: String,
+    pub criticality: Criticality,
+    pub phase: Phase,
+    pub proposition: String,
+    pub non_claims: Vec<String>,
+    pub owners: Vec<String>,
+    pub source_closure: Vec<String>,
+    pub domain: String,
+    pub assumptions: Vec<String>,
+    pub trust_dependencies: Vec<String>,
+    pub observable: String,
+    pub bounds: BTreeMap<String, BoundValue>,
+    pub subjects: Vec<String>,
+    pub required_covers: Vec<String>,
+    pub negative_controls: Vec<String>,
+    pub result_satisfaction: String,
+    pub currentness_inputs: Vec<String>,
+    pub transition_policy: String,
+    pub owner_spec: String,
+    pub owner_issue: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Provider {
-    family: Family,
-    name: String,
-    version: String,
-    solver_version: Option<String>,
+pub struct Provider {
+    pub family: Family,
+    pub name: String,
+    pub version: String,
+    pub solver_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Toolchain {
-    language: String,
-    target: Option<String>,
+pub struct Toolchain {
+    pub language: String,
+    pub target: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Deadlines {
-    preflight_seconds: u64,
-    whole_run_seconds: u64,
-    per_subject_seconds: u64,
+pub struct Deadlines {
+    pub preflight_seconds: u64,
+    pub whole_run_seconds: u64,
+    pub per_subject_seconds: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Runner {
-    generation: String,
-    command_digest: String,
-    deadline_policy: Deadlines,
+pub struct Runner {
+    pub generation: String,
+    pub command_digest: String,
+    pub deadline_policy: Deadlines,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Inventory {
-    expected_claim_ids: Vec<String>,
-    discovered_subjects: Vec<String>,
-    complete: bool,
+pub struct Inventory {
+    pub expected_claim_ids: Vec<String>,
+    pub discovered_subjects: Vec<String>,
+    pub complete: bool,
     #[serde(default)]
-    rejection_reasons: Vec<String>,
+    pub rejection_reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum ProcessState {
+pub enum ProcessState {
     Completed,
     Failed,
     TimedOut,
@@ -162,28 +155,29 @@ enum ProcessState {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Cleanup {
+pub enum Cleanup {
     Complete,
     Residue,
     Failed,
     NotApplicable,
+    NotObserved,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Process {
-    state: ProcessState,
+pub struct Process {
+    pub state: ProcessState,
     #[serde(deserialize_with = "required_nullable")]
-    exit_code: Option<i32>,
-    timed_out: bool,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
     #[serde(deserialize_with = "required_nullable")]
-    raw_output_digest: Option<String>,
-    cleanup_state: Cleanup,
+    pub raw_output_digest: Option<String>,
+    pub cleanup_state: Cleanup,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum Status {
+pub enum Status {
     Established,
     Failed,
     NotEstablished,
@@ -194,7 +188,7 @@ enum Status {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Verdict {
+pub enum Verdict {
     Verified,
     Counterexample,
     UnreachableCover,
@@ -209,71 +203,78 @@ enum Verdict {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Covers {
-    required: u64,
-    satisfied: u64,
-    unreachable: u64,
+pub struct Covers {
+    pub required: u64,
+    pub satisfied: u64,
+    pub unreachable: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Row {
-    claim_id: String,
-    claim_generation: u64,
-    subject: String,
-    source_digest: String,
-    status: Status,
-    native_verdict: Verdict,
-    covers: Covers,
-    assumptions_digest: Option<String>,
-    bounds_digest: String,
+pub struct Row {
+    pub claim_id: String,
+    pub claim_generation: u64,
+    pub subject: String,
+    pub source_digest: String,
+    pub status: Status,
+    pub native_verdict: Verdict,
+    pub covers: Covers,
+    pub assumptions_digest: Option<String>,
+    pub bounds_digest: String,
     #[serde(deserialize_with = "required_nullable")]
-    duration_ms: Option<u64>,
-    peak_memory_bytes: Option<u64>,
-    raw_block_digest: Option<String>,
-    current: bool,
-    reasons: Vec<String>,
-    non_claims: Vec<String>,
+    pub duration_ms: Option<u64>,
+    pub peak_memory_bytes: Option<u64>,
+    pub raw_block_digest: Option<String>,
+    pub current: bool,
+    pub reasons: Vec<String>,
+    pub non_claims: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Run {
-    schema: String,
-    run_id: String,
-    repository: String,
-    revision: String,
-    tree: String,
-    worktree_digest: Option<String>,
-    source_closure_digest: String,
-    claim_registry_generation: String,
-    provider: Provider,
-    toolchain: Toolchain,
-    runner: Runner,
-    inventory: Inventory,
-    process: Process,
-    results: Vec<Row>,
+pub struct Run {
+    pub schema: String,
+    pub run_id: String,
+    pub repository: String,
+    #[serde(deserialize_with = "required_nullable")]
+    pub revision: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub tree: Option<String>,
+    pub worktree_digest: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub source_closure_digest: Option<String>,
+    pub claim_registry_generation: String,
+    pub provider: Provider,
+    pub toolchain: Toolchain,
+    pub runner: Runner,
+    pub inventory: Inventory,
+    pub process: Process,
+    pub results: Vec<Row>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unregistered_results: Vec<native::UnregisteredResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<native::Execution>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Summary {
-    schema: &'static str,
-    document_consistency: &'static str,
-    native_assurance: &'static str,
-    registered_claims: usize,
-    selected_claims: usize,
-    observed_rows: usize,
-    declared_established_rows: usize,
-    missing_subjects: Vec<String>,
-    undiscovered_selected_subjects: Vec<String>,
-    unmapped_discovered_subjects: Vec<String>,
-    process_completed_successfully: Option<bool>,
-    inventory_declared_complete: Option<bool>,
-    cleanup_complete: Option<bool>,
-    limitations: Vec<&'static str>,
+    pub schema: &'static str,
+    pub document_consistency: &'static str,
+    pub native_assurance: &'static str,
+    pub registered_claims: usize,
+    pub selected_claims: usize,
+    pub observed_rows: usize,
+    pub declared_established_rows: usize,
+    pub missing_subjects: Vec<String>,
+    pub undiscovered_selected_subjects: Vec<String>,
+    pub unmapped_discovered_subjects: Vec<String>,
+    pub process_completed_successfully: Option<bool>,
+    pub inventory_declared_complete: Option<bool>,
+    pub cleanup_complete: Option<bool>,
+    pub limitations: Vec<&'static str>,
 }
 
-fn require(condition: bool, message: &str) -> AuditResult<()> {
+pub fn require(condition: bool, message: &str) -> AuditResult<()> {
     if condition {
         Ok(())
     } else {
@@ -281,11 +282,11 @@ fn require(condition: bool, message: &str) -> AuditResult<()> {
     }
 }
 
-fn text(value: &str, field: &str) -> AuditResult<()> {
+pub fn text(value: &str, field: &str) -> AuditResult<()> {
     require(!value.trim().is_empty(), &format!("{field}: blank value"))
 }
 
-fn strings(values: &[String], field: &str, nonempty: bool) -> AuditResult<()> {
+pub fn strings(values: &[String], field: &str, nonempty: bool) -> AuditResult<()> {
     require(
         !nonempty || !values.is_empty(),
         &format!("{field}: empty list"),
@@ -314,7 +315,7 @@ fn claim_id(value: &str) -> AuditResult<()> {
     )
 }
 
-fn digest(value: &str, field: &str) -> AuditResult<()> {
+pub fn digest(value: &str, field: &str) -> AuditResult<()> {
     let hex = value
         .strip_prefix("sha256:")
         .ok_or_else(|| format!("{field}: expected sha256 digest"))?;
@@ -331,7 +332,7 @@ fn optional_digest(value: &Option<String>, field: &str) -> AuditResult<()> {
     }
 }
 
-fn git_object(value: &str, field: &str) -> AuditResult<()> {
+pub fn git_object(value: &str, field: &str) -> AuditResult<()> {
     require(
         matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit()),
         &format!("{field}: expected full Git object ID"),
@@ -413,6 +414,12 @@ fn validate_claim(claim: &Claim) -> AuditResult<()> {
 }
 
 fn validate_row(row: &Row, claim: &Claim, run: &Run) -> AuditResult<()> {
+    if matches!(row.status, Status::Established | Status::Failed) {
+        require(
+            run.revision.is_some() && run.tree.is_some() && run.source_closure_digest.is_some(),
+            "observed registered result requires source commitments",
+        )?;
+    }
     require(
         row.claim_generation > 0,
         "result claim_generation must be positive",
@@ -531,9 +538,10 @@ fn validate_row(row: &Row, claim: &Claim, run: &Run) -> AuditResult<()> {
     Ok(())
 }
 
-fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
+pub fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
     require(
-        !claims.is_empty() && claims.len() <= MAX_CLAIMS,
+        claims.len() <= MAX_CLAIMS
+            && (!claims.is_empty() || run.is_some_and(|r| r.execution.is_some())),
         "supply between 1 and 256 claims",
     )?;
     let mut registry = BTreeMap::new();
@@ -593,9 +601,14 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
     if let Some(value) = &run.toolchain.target {
         text(value, "target")?;
     }
-    git_object(&run.revision, "revision")?;
-    git_object(&run.tree, "tree")?;
-    digest(&run.source_closure_digest, "source_closure_digest")?;
+    if let Some(value) = &run.revision {
+        git_object(value, "revision")?;
+    }
+    if let Some(value) = &run.tree {
+        git_object(value, "tree")?;
+    }
+    optional_digest(&run.source_closure_digest, "source_closure_digest")?;
+    native::validate(run)?;
     digest(&run.runner.command_digest, "command_digest")?;
     optional_digest(&run.worktree_digest, "worktree_digest")?;
     optional_digest(&run.process.raw_output_digest, "raw_output_digest")?;
@@ -648,7 +661,7 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
     }
     if run.inventory.complete {
         require(
-            !run.inventory.expected_claim_ids.is_empty()
+            (!run.inventory.expected_claim_ids.is_empty() || !run.unregistered_results.is_empty())
                 && !run.inventory.discovered_subjects.is_empty(),
             "empty inventory cannot be complete",
         )?;
@@ -690,7 +703,16 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
         .difference(&observed)
         .map(|(id, subject)| format!("{id}::{subject}"))
         .collect();
-    let selected_subjects: BTreeSet<&str> = expected.iter().map(|(_, subject)| *subject).collect();
+    let unregistered: Vec<String> = run
+        .unregistered_results
+        .iter()
+        .map(|r| r.subject.id())
+        .collect();
+    let selected_subjects: BTreeSet<&str> = expected
+        .iter()
+        .map(|(_, subject)| *subject)
+        .chain(unregistered.iter().map(String::as_str))
+        .collect();
     let discovered_subjects: BTreeSet<&str> = run
         .inventory
         .discovered_subjects
@@ -741,7 +763,7 @@ fn audit(claims: &[Claim], run: Option<&Run>) -> AuditResult<Summary> {
 }
 
 // A required nullable key must be present, even when its value is null.
-fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -751,7 +773,7 @@ where
 
 // serde_json::Value normally keeps the last duplicate map key. Reject duplicates
 // before typed decoding, including extensible bound maps, not just DTO fields.
-struct UniqueJson(serde_json::Value);
+pub struct UniqueJson(serde_json::Value);
 
 impl<'de> Deserialize<'de> for UniqueJson {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -813,7 +835,7 @@ impl<'de> Deserialize<'de> for UniqueJson {
     }
 }
 
-fn parse_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> AuditResult<T> {
+pub fn parse_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> AuditResult<T> {
     let UniqueJson(value) = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
@@ -910,6 +932,12 @@ mod tests {
             .ok_or_else(|| "missing test row".to_string())
     }
 
+    fn rejection<T>(result: AuditResult<T>) -> AuditResult<String> {
+        result.err().ok_or_else(|| {
+            "expected a diagnostic refusal, but supplied evidence was accepted".to_string()
+        })
+    }
+
     #[test]
     fn consistent_documents_never_become_native_assurance() -> AuditResult<()> {
         let (claim, run) = fixtures()?;
@@ -925,11 +953,11 @@ mod tests {
         let (claim, _) = fixtures()?;
         let encoded = serde_json::to_string(&claim).map_err(|e| e.to_string())?;
         let duplicate = encoded.replacen("{", "{\"claim_generation\":1,", 1);
-        assert!(parse_json::<Claim>(duplicate.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(duplicate.as_bytes()))?.is_empty());
         let unknown = encoded.replacen("{", "{\"native_status\":\"VERIFIED\",", 1);
-        assert!(parse_json::<Claim>(unknown.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(unknown.as_bytes()))?.is_empty());
         let bad_family = encoded.replace("bounded_model_check", "optimistic_proof");
-        assert!(parse_json::<Claim>(bad_family.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(bad_family.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -946,7 +974,7 @@ mod tests {
         let unknown = String::from_utf8(encoded)
             .map_err(|e| e.to_string())?
             .replace("admitted_merge_group", "implicit_push_qualification");
-        assert!(parse_json::<Claim>(unknown.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(unknown.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -980,10 +1008,14 @@ mod tests {
             .insert("unwind".to_string(), BoundValue::Number(0.into()));
         mutations.push(c);
         for c in mutations {
-            assert!(validate_claim(&c).is_err(), "accepted {}", c.claim_id);
+            assert!(
+                !rejection(validate_claim(&c))?.is_empty(),
+                "accepted {}",
+                c.claim_id
+            );
         }
-        assert!(audit(&[], None).is_err());
-        assert!(audit(&[claim.clone(), claim], None).is_err());
+        assert!(!rejection(audit(&[], None))?.is_empty());
+        assert!(!rejection(audit(&[claim.clone(), claim], None))?.is_empty());
         Ok(())
     }
 
@@ -1019,7 +1051,7 @@ mod tests {
         row(&mut r)?.duration_ms = None;
         mutations.push(r);
         for r in mutations {
-            assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+            assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         }
         Ok(())
     }
@@ -1029,19 +1061,19 @@ mod tests {
         let (claim, run) = fixtures()?;
         let mut r = run.clone();
         row(&mut r)?.claim_generation = 2;
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         row(&mut r)?.subject = "other::same_name".to_string();
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         r.results.extend(run.results.clone());
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run.clone();
         r.results.clear();
-        assert!(audit(std::slice::from_ref(&claim), Some(&r)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&r)))?.is_empty());
         let mut r = run;
         r.provider.name = "lookalike".to_string();
-        assert!(audit(&[claim], Some(&r)).is_err());
+        assert!(!rejection(audit(&[claim], Some(&r)))?.is_empty());
         Ok(())
     }
 
@@ -1119,7 +1151,7 @@ mod tests {
         mutations.push(candidate);
         for candidate in mutations {
             assert!(
-                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                !rejection(audit(std::slice::from_ref(&claim), Some(&candidate)))?.is_empty(),
                 "not-started row accepted native observations"
             );
         }
@@ -1143,11 +1175,11 @@ mod tests {
         let (claim, mut run) = fixtures()?;
         row(&mut run)?.native_verdict = Verdict::Timeout;
         row(&mut run)?.status = Status::Failed;
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         row(&mut run)?.status = Status::NotEstablished;
         audit(std::slice::from_ref(&claim), Some(&run))?;
         run.process.timed_out = true;
-        assert!(audit(&[claim], Some(&run)).is_err());
+        assert!(!rejection(audit(&[claim], Some(&run)))?.is_empty());
         Ok(())
     }
 
@@ -1198,13 +1230,13 @@ mod tests {
                 .ok_or("missing row")?
                 .native_verdict;
             assert!(
-                audit(std::slice::from_ref(&claim), Some(&candidate)).is_err(),
+                !rejection(audit(std::slice::from_ref(&claim), Some(&candidate)))?.is_empty(),
                 "accepted contradictory failed row: {verdict:?}"
             );
         }
         row(&mut failed)?.native_verdict = Verdict::UnreachableCover;
         assert!(
-            audit(std::slice::from_ref(&claim), Some(&failed)).is_err(),
+            !rejection(audit(std::slice::from_ref(&claim), Some(&failed)))?.is_empty(),
             "accepted unreachable verdict with zero unreachable covers"
         );
         row(&mut failed)?.covers.satisfied = 1;
@@ -1212,7 +1244,7 @@ mod tests {
         audit(std::slice::from_ref(&claim), Some(&failed))?;
         row(&mut failed)?.covers.required = 3;
         assert!(
-            audit(&[claim], Some(&failed)).is_err(),
+            !rejection(audit(&[claim], Some(&failed)))?.is_empty(),
             "accepted different required-cover inventory"
         );
         Ok(())
@@ -1237,7 +1269,7 @@ mod tests {
         let (claim, run) = fixtures()?;
         let encoded = serde_json::to_string(&claim).map_err(|e| e.to_string())?;
         let duplicate = encoded.replace("\"bounds\":{", "\"bounds\":{\"selection\":\"shadow\",");
-        assert!(parse_json::<Claim>(duplicate.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(duplicate.as_bytes()))?.is_empty());
         let mut value = serde_json::to_value(run).map_err(|e| e.to_string())?;
         value
             .get_mut("process")
@@ -1245,9 +1277,9 @@ mod tests {
             .ok_or("missing process")?
             .remove("exit_code");
         let missing = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-        assert!(parse_json::<Run>(&missing).is_err());
+        assert!(!rejection(parse_json::<Run>(&missing))?.is_empty());
         let trailing = format!("{encoded} {{}}");
-        assert!(parse_json::<Claim>(trailing.as_bytes()).is_err());
+        assert!(!rejection(parse_json::<Claim>(trailing.as_bytes()))?.is_empty());
         Ok(())
     }
 
@@ -1257,7 +1289,7 @@ mod tests {
         run.inventory
             .discovered_subjects
             .push("unmapped::proof".to_string());
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         run.inventory.complete = false;
         run.inventory
             .rejection_reasons
@@ -1281,7 +1313,7 @@ mod tests {
         missing.covers.satisfied = 0;
         run.results.push(missing);
         assert!(
-            audit(std::slice::from_ref(&claim), Some(&run)).is_err(),
+            !rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty(),
             "placeholder row hid incomplete native discovery"
         );
         run.inventory.complete = false;
@@ -1364,10 +1396,10 @@ mod tests {
         let (mut claim, mut run) = fixtures()?;
         run.results[0].reasons.clear();
         audit(std::slice::from_ref(&claim), Some(&run))?;
-        for invalid in [None, Some(sha256(b"wrong"))] {
+        for invalid in [None, Some(native::sha256(b"wrong"))] {
             let mut changed = run.clone();
             changed.results[0].assumptions_digest = invalid;
-            assert!(audit(std::slice::from_ref(&claim), Some(&changed)).is_err());
+            assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&changed)))?.is_empty());
         }
         claim.assumptions = vec!["A".to_string(), "B".to_string()];
         // Independent SHA-256 of the exact bytes ["A","B"], not the helper
@@ -1377,19 +1409,19 @@ mod tests {
         );
         audit(std::slice::from_ref(&claim), Some(&run))?;
         claim.assumptions.reverse();
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         claim.assumptions.clear();
         run.results[0].assumptions_digest = Some(assumptions_digest(&claim.assumptions)?);
         assert_eq!(
             run.results[0].assumptions_digest.as_deref(),
-            Some(sha256(b"[]").as_str())
+            Some(native::sha256(b"[]").as_str())
         );
         audit(std::slice::from_ref(&claim), Some(&run))?;
         run.results[0].status = Status::Failed;
         run.results[0].native_verdict = Verdict::Counterexample;
         run.process.state = ProcessState::Failed;
         run.process.exit_code = Some(10);
-        assert!(audit(std::slice::from_ref(&claim), Some(&run)).is_err());
+        assert!(!rejection(audit(std::slice::from_ref(&claim), Some(&run)))?.is_empty());
         run.results[0]
             .reasons
             .push("observed synthetic counterexample".to_string());
@@ -1403,7 +1435,7 @@ mod tests {
         claim.provider = "tlc".to_string();
         claim.family = Family::StateMachineModel;
         claim.required_covers.clear();
-        assert!(validate_claim(&claim).is_err());
+        assert!(!rejection(validate_claim(&claim))?.is_empty());
         claim
             .required_covers
             .push("finite terminal-state reachability".to_string());

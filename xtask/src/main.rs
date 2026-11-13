@@ -44,6 +44,7 @@ mod first_run;
 mod fixture_contracts;
 mod fixture_expected_classes;
 mod generation_pins;
+use xtask::formal_evidence;
 mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;

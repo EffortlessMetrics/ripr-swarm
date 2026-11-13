@@ -45,6 +45,7 @@ automation = [
     "formal-evidence-audit",
     "formal-claim-registry",
     "formal-claim-plan",
+    "formal-source-inputs",
     "dep:sha2",
     "dep:toml",
     "dep:flate2",
@@ -59,6 +60,8 @@ formal-evidence-audit = ["dep:serde", "dep:sha2"]
 formal-claim-registry = ["formal-evidence-audit"]
 # Passive affected-claim planning consumes supplied facts and executes no provider.
 formal-claim-plan = ["dep:serde", "dep:sha2"]
+# Passive source prerequisites share the existing parser and native DTO helpers.
+formal-source-inputs = ["formal-evidence-audit", "dep:ra_ap_syntax"]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace
 # test graph keeps the shipped `ripr` feature set.

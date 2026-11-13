@@ -28,6 +28,39 @@ particular, an honestly reported counterexample, timeout, stale result or tool
 absence can be a consistent document. Never use this exit code as the Kani lane
 result or as a required proof check.
 
+## Shared native interpretation prerequisite
+
+`xtask/src/formal_evidence/kani_output.rs` owns source discovery, text and native
+property interpretation, result attribution, the row-based lane verdict and
+escaped Markdown report rendering. The existing lane imports that same owner.
+It retains command execution and process-completion policy. Complete positive
+cover admission and its native captures from #14469 now live in the shared
+parser; bare success, contradictory or incomplete covers remain insufficient.
+
+`native_inventory.rs` decodes pinned Kani 0.68.0 list-format 0.1, compares exact
+compiled/source subjects and attributes observations to unique qualified native
+blocks. Properties and cover projections come from the same block; duplicates
+retain an explicit refusal with no borrowed property set. Native failure,
+unsupported expected panic, missing data, unwind failure and timeout remain
+distinct. Multiline descriptions preserve their native bytes and cannot hide
+metadata continuations. The profile helper checks the supplied Kani/CBMC headers
+and aggregates observed process outcomes without turning stdout into process
+success. These are pure interpretation APIs, not fresh verifier executions.
+
+Retained fixtures include native inventory/provenance and a native multiline
+counterexample. Their historical source identities and byte hashes remain
+unchanged. The library's direct controls also use explicitly synthetic source
+bindings and process observations; fixture replay never becomes a current proof.
+
+This stage depends on #14551/#14549 and #14469. The latter still owns its four
+production reachability witnesses and full-lane integration. #14545 retains
+producer activation. Cargo configuration/toolchain capture, source-closure
+discovery, raw artifact replay and registry binding remain separate adoption
+stages. No new producer, registry, workflow or authority is installed here.
+The document-audit binary keeps `native_assurance: "not_assessed"` and exit zero
+still means document consistency. Changes to the pinned native format require
+new retained captures and the direct refusal controls below before activation.
+
 ## Commands
 
 Build and exercise the isolated target with the repository-pinned toolchain:
@@ -169,3 +202,45 @@ Required-check changes remain separate from this local helper.
 Rollback removes this additive helper, feature and documentation through the
 ordinary protected route. It neither deletes retained native evidence nor
 changes the existing Kani runner, workflow, branch protection or public output.
+
+## Native execution declarations (#14472)
+
+The shared `Run` type and draft run schema now also represent captured native
+execution, separate unregistered harness observations, exact byte-artifact
+commitments, source snapshots, effective configuration, installed tools,
+compiled inventory, process observations and registered-result absence. This
+is the common document contract for the native producer and registry follow-ons.
+
+The auditor checks consistency of these declarations. A successful lane
+declaration requires complete source/configuration observations, a complete
+selected inventory, successful bounded invocation records, completed cleanup
+and positive cover evidence. The declared result status must agree with its
+native verdict, full selected source identity and cover/property projection.
+A partial or not-started run can retain missing
+source identities without inventing commitments. Required nullable keys must
+still be present with explicit `null`; omission is rejected by both the shared
+decoder and schema. Observed registered results
+still require those commitments. Unregistered observations do not increase
+registered claim coverage.
+
+The existing CLI and its guarantee remain unchanged: exit zero means supplied
+documents are consistent, and the result keeps
+`native_assurance: "not_assessed"`. Neither claimed currentness nor a supplied
+VERIFIED row authenticates a verifier execution. This slice installs no native
+producer, raw-stream replay, claim registry, source-closure scanner, workflow
+subscriber or required check. Those follow-ons reuse this module instead of
+creating another admission authority.
+
+Focused maintenance continues to use the library test selector and actual
+`formal-evidence-audit` entrypoint documented above. The native document
+controls exercise false currentness, incomplete cover identities, missing
+metadata, omitted observations, abnormal aggregate exit, missing preflight,
+cleanup not observed, and duplicate or escaping manifest paths. Their fixture
+is synthetic and is never native proof evidence. The strict schema continues
+to reject unknown fields, while semantic predicates enforce relationships
+that JSON Schema cannot compare across records.
+
+Rollback removes this additive execution-declaration extension and its schema
+fields together. Preserve the parent admission laws and all historical proof
+artifacts. Any future wire-law change must update the shared DTO, schema,
+semantic controls, producers and consumers in one reviewed composition.
