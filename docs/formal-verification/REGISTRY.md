@@ -169,6 +169,12 @@ receipts. Registry-only scoreboards continue to report five
 `NOT_ESTABLISHED` claims until native binding, configuration, source and custody
 admission is complete.
 
+Registry generation changes apply to every native binding. The 3-to-4 transition
+requires re-preparation of bindings and capture/replay configuration against the
+new registry identity, including the unchanged currentness and resource claim
+decisions. Matching a claim ID, proposition or decision digest alone does not
+make an older preparation or receipt current.
+
 ## Qualification
 
 Focused commands:
