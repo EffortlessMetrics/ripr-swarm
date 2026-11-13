@@ -1,0 +1,26 @@
+{
+  "id": "rust_test_local_rival_import_alias_external",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-alias-external.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/test-local-rival-import-alias-external",
+  "vector": "external_alias_of_the_owner_resolves_to_direct_owner_call",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= threshold",
+      "grip_class": "strongly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= threshold",
+      "test": "aliased_owner_boundary",
+      "file": "tests/control.rs",
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

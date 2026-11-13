@@ -47,7 +47,7 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assertion_pins_pushed_collection_count, call_text_may_call_free_function,
-    direct_collection_mutation_receiver, is_ignored, owner_call_text,
+    direct_collection_mutation_receiver, free_function_call_text, is_ignored, owner_call_text,
     predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
     test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
@@ -3223,12 +3223,30 @@ fn observed_value_facts_for_test(
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
     for call in indexed.test.body_calls() {
-        if call.name != owner_name {
+        let is_alias = call.name != owner_name;
+        // The alias names a free function. An associated owner resolves its
+        // own calls through its type; a free alias of the same name must not
+        // lend it arguments (#14508 review).
+        if is_alias && owner_fn.impl_context != FunctionImplContext::Free {
             continue;
         }
-        let Some(args) =
-            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, owner_name))
-        else {
+        if is_alias && !context.is_direct_owner_alias(indexed, owner_name, &owner_fn.file, call) {
+            continue;
+        }
+        let call_name = if is_alias {
+            call.name.as_str()
+        } else {
+            owner_name
+        };
+        let Some(args) = (if is_alias {
+            // The alias names a free function, so only a free-call spelling
+            // reaches it; `Rival::dt(..)` calls an associated function on
+            // another type and must not lend its arguments (#14508 review).
+            free_function_call_text(&call.text, call_name)
+                .and_then(|text| call_arguments(text, call_name))
+        } else {
+            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, call_name))
+        }) else {
             continue;
         };
         for (arg_index, arg) in args.into_iter().enumerate() {
@@ -3782,12 +3800,30 @@ fn boundary_equality_overlap_score(
 
     let mut score = 0;
     for call in indexed.test.body_calls() {
-        if call.name != owner_fn.name {
+        let is_alias = call.name != owner_fn.name;
+        // The alias names a free function; an associated owner's boundary
+        // can only be closed by its own calls (#14508 review).
+        if is_alias && owner_fn.impl_context != FunctionImplContext::Free {
             continue;
         }
-        let Some(args) = owner_call_text(&call.text, owner_fn)
-            .and_then(|text| call_arguments(text, &owner_fn.name))
-        else {
+        if is_alias && !context.is_direct_owner_alias(indexed, &owner_fn.name, &owner_fn.file, call)
+        {
+            continue;
+        }
+        let call_name = if is_alias {
+            call.name.as_str()
+        } else {
+            owner_fn.name.as_str()
+        };
+        let Some(args) = (if is_alias {
+            // Same free-call authority as the observed-value loop: a
+            // qualified `Rival::dt(..)` is not the aliased free function
+            // (#14508 review).
+            free_function_call_text(&call.text, call_name)
+                .and_then(|text| call_arguments(text, call_name))
+        } else {
+            owner_call_text(&call.text, owner_fn).and_then(|text| call_arguments(text, call_name))
+        }) else {
             continue;
         };
         let Some(left_arg) = args.get(left_operand.index) else {

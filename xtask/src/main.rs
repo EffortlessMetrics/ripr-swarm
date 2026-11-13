@@ -14927,10 +14927,15 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 14] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 15] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+        // #14508: a crate-relative direct-owner alias in an integration-test
+        // file names the test crate's own modules, never the library's; the
+        // layout authority stays `is_test_file` and the module decides no
+        // role of its own.
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
         "crates/ripr/src/analysis/source_role_corpus.rs",
         "crates/ripr/src/analysis/mod.rs",
         "crates/ripr/src/analysis/language/rust/mod.rs",

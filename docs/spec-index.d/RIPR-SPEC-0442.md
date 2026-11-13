@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0442](../specs/RIPR-SPEC-0442-aliased-owner-import-credit.md) | accepted | An aliased owner import credits the owner as a direct call only when the import names the owner's module in the same compilation unit; same-module, sibling-module, other-crate, binary and lexical bindings are refused (#14508) |

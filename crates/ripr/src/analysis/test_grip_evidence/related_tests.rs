@@ -4,7 +4,7 @@ use crate::analysis::classify::{
     inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
     owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
 };
-use crate::analysis::facts::FunctionImplContext;
+use crate::analysis::facts::{FunctionImplContext, ModulePathTarget};
 use std::sync::Arc;
 
 pub(super) mod context;
@@ -150,6 +150,9 @@ pub(super) struct OwnerContext<'index> {
     inherent_owner: Option<&'index FunctionSummary>,
     /// The seam's owning function, for the shadowed-impl-identity refusal.
     function: Option<&'index FunctionSummary>,
+    /// The owner's file, for the compilation-unit identity check (#14508
+    /// review).
+    file: Option<&'index Path>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
@@ -199,6 +202,7 @@ impl<'index> OwnerContext<'index> {
             inherent_receiver,
             inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
             function: owner_fn,
+            file: owner_file,
             impl_trait,
             same_name_count,
             identity,
@@ -324,58 +328,359 @@ pub(super) fn match_direct_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
-        return;
-    };
-    for test_index in indices {
-        let Some(indexed) = context.tests.get(*test_index) else {
-            continue;
-        };
-        if owner.inherent_receiver {
-            // Every inherent entry borrows the complete shared owner refusal,
-            // independently of the legacy impl-name ambiguity shortcut.
-            if !owner.inherent_owner.is_some_and(|function| {
-                inherent_owner_call_resolves(indexed.test, function, context.index)
+    if let Some(indices) = context.tests_by_call_name.get(&owner.name) {
+        for test_index in indices {
+            let Some(indexed) = context.tests.get(*test_index) else {
+                continue;
+            };
+            if owner.inherent_receiver {
+                // Every inherent entry borrows the complete shared owner refusal,
+                // independently of the legacy impl-name ambiguity shortcut.
+                if !owner.inherent_owner.is_some_and(|function| {
+                    inherent_owner_call_resolves(indexed.test, function, context.index)
+                }) {
+                    continue;
+                }
+            } else if owner.same_name_count > 1
+                && let Some(impl_type) = owner.impl_type.as_deref()
+                && !method_call_resolves_to_impl(
+                    indexed.test,
+                    &owner.name,
+                    impl_type,
+                    owner.impl_trait.as_deref(),
+                )
+            {
+                continue;
+            }
+            // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
+            if owner.free_function
+                && !context
+                    .tests
+                    .get(*test_index)
+                    .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
+            {
+                continue;
+            }
+            // A call spelled like a direct-owner import alias of another
+            // function binds to that import, not to a same-named local
+            // function in a sibling module (#14508 review).
+            if context.alias_spelling_binds_other_owner(indexed.test, &owner.name, &owner.name) {
+                continue;
+            }
+            // #11382: a test whose own scope rebinds the owner's impl type or
+            // trait calls the test-local item, not the production owner; the
+            // finding-level relation refuses the same call. Refusal only removes
+            // the direct-call credit, so this can only lower a relation.
+            if owner.function.is_some_and(|function| {
+                owner_impl_identity_shadowed(indexed.test, function, context.index)
             }) {
                 continue;
             }
-        } else if owner.same_name_count > 1
-            && let Some(impl_type) = owner.impl_type.as_deref()
-            && !method_call_resolves_to_impl(
-                indexed.test,
-                &owner.name,
-                impl_type,
-                owner.impl_trait.as_deref(),
-            )
-        {
-            continue;
+            insert_related_candidate(
+                candidates,
+                context,
+                prefix,
+                *test_index,
+                RelationReason::DirectOwnerCall,
+            );
         }
-        // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
-        if owner.free_function
-            && !context
-                .tests
-                .get(*test_index)
-                .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
-        {
-            continue;
-        }
-        // #11382: a test whose own scope rebinds the owner's impl type or
-        // trait calls the test-local item, not the production owner; the
-        // finding-level relation refuses the same call. Refusal only removes
-        // the direct-call credit, so this can only lower a relation.
-        if owner.function.is_some_and(|function| {
-            owner_impl_identity_shadowed(indexed.test, function, context.index)
-        }) {
-            continue;
-        }
-        insert_related_candidate(
-            candidates,
-            context,
-            prefix,
-            *test_index,
-            RelationReason::DirectOwnerCall,
-        );
     }
+    // #14508: a test that imports the owner under an alias and calls the
+    // alias reaches the owner directly. The import's module path must name
+    // the owner's module: crate-relative for `crate::` imports, or the
+    // package-qualified path for an integration test's external import.
+    if owner.impl_type.is_none()
+        && !owner.inherent_receiver
+        && let Some(aliased) = context.tests_by_direct_owner_alias.get(&owner.name)
+    {
+        let owner_module = owner.module_path.as_deref().unwrap_or("");
+        let owner_is_crate_root = owner.crate_root_file.is_some();
+        for entry in aliased {
+            let Some(indexed) = context.tests.get(entry.test_index) else {
+                continue;
+            };
+            let matches = direct_owner_alias_module_matches(
+                &entry.module_path,
+                entry.crate_relative,
+                owner_module,
+                owner_is_crate_root,
+                owner.crate_root_file.as_deref(),
+                indexed.test.file.as_path(),
+                owner.file,
+                owner.prefix.as_deref(),
+                context.index,
+            );
+            if !matches {
+                continue;
+            }
+            // A local inline module of the alias's path shadows the import, so
+            // the call binds to that module, not to the owner (#14508 review).
+            if context.local_module_shadows_alias(indexed, &entry.module_path, &owner.name) {
+                continue;
+            }
+            // A local function of the alias's name shadows the import, so the
+            // call binds to it, not to the owner (#14508 review).
+            if context.local_function_shadows_call(indexed, &entry.alias, entry.module_depth) {
+                continue;
+            }
+            // A `let`/closure/parameter binding of the alias at the call line
+            // binds the call to that local value, not to the owner.
+            if context.alias_binding_shadows_call(indexed, &entry.alias, entry.call_line) {
+                continue;
+            }
+            if owner.function.is_some_and(|function| {
+                owner_impl_identity_shadowed(indexed.test, function, context.index)
+            }) {
+                continue;
+            }
+            insert_related_candidate(
+                candidates,
+                context,
+                prefix,
+                entry.test_index,
+                RelationReason::DirectOwnerCall,
+            );
+        }
+    }
+}
+
+fn direct_owner_alias_module_matches(
+    alias_module: &str,
+    alias_crate_relative: bool,
+    owner_module: &str,
+    owner_is_crate_root: bool,
+    owner_crate_root: Option<&str>,
+    test_file: &Path,
+    owner_file: Option<&Path>,
+    owner_prefix: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    // `src/pricing/mod.rs` names the `pricing` module, but
+    // `module_path_for_index` keeps the file stem (`pricing/mod`). Fold the
+    // `mod` leaf so a `mod.rs` owner matches its `crate::pricing` import
+    // (#14508 review).
+    let owner_module = owner_module.strip_suffix("/mod").unwrap_or(owner_module);
+    if alias_crate_relative {
+        // `crate::` resolves against the crate that compiles the test file.
+        // An integration test (`tests/...`) is its own crate, so its
+        // `crate::pricing` names `tests/pricing.rs`, never the library's
+        // `src/pricing.rs`; a unit test inside `src/` shares the library
+        // crate with the owner. Requiring compilation-unit identity before
+        // the equality check is what stops a test crate's own module from
+        // crediting the library owner (#14508 review).
+        if rust_index::is_test_file(test_file) {
+            return false;
+        }
+        let owner_package = owner_prefix.unwrap_or("");
+        let Some(test_package) = package_scope(test_file) else {
+            return false;
+        };
+        if test_package != owner_package {
+            return false;
+        }
+        // Package identity alone does not establish library-versus-binary
+        // compilation-unit identity: a package can hold both a library and a
+        // binary, and `crate::` in the binary names the binary's own modules
+        // (#14508 review).
+        if !crate_relative_alias_shares_compilation_unit(
+            test_file,
+            alias_module,
+            owner_file,
+            owner_is_crate_root,
+            owner_crate_root,
+            index,
+        ) {
+            return false;
+        }
+        if alias_module.is_empty() {
+            return owner_is_crate_root;
+        }
+        // The chain resolution above already compared the resolved file with
+        // the owner file; the index's module path for a binary target
+        // (`bin/pricing`) is not the crate-relative spelling (`pricing`).
+        return true;
+    }
+    // An external import names a package first: `subject::pricing`. Only the
+    // identifiers the test's crate uses for the owner's own library count; a
+    // sibling package's name must not credit this owner (#14508 review).
+    let owner_root = match owner_crate_root {
+        Some(root) => root.to_string(),
+        None => match owner_prefix {
+            Some(prefix) => format!("{prefix}src/lib.rs"),
+            None => "src/lib.rs".to_string(),
+        },
+    };
+    let import_names = index
+        .member_crates
+        .import_names(test_file, Path::new(&owner_root));
+    let (package, rest) = match alias_module.split_once('/') {
+        Some((package, rest)) => (package, Some(rest)),
+        None => (alias_module, None),
+    };
+    if !import_names.iter().any(|name| name == package) {
+        return false;
+    }
+    match rest {
+        None => owner_is_crate_root,
+        Some(rest) => rest.strip_suffix("/mod").unwrap_or(rest) == owner_module,
+    }
+}
+
+/// Whether a `crate::`-relative alias in `test_file` can name `owner_file`
+/// (#14508 review). `crate::` resolves against the crate that compiles the
+/// test file, so package identity alone is not enough: a binary target is a
+/// separate compilation unit from the library beside it.
+///
+/// Two shapes are definite negatives:
+/// - the test file is an established binary target root, so `crate::` names
+///   that binary and never another crate root (the library root or a sibling
+///   binary's root);
+/// - the test file belongs to a `src/bin/<name>` target, whose module tree is
+///   confined to its own directory, so `crate::<module>` never names a
+///   library module.
+///
+/// A binary root that reaches a *different* file for the same module name
+/// through `#[path]` stays unresolved here; the inline-module shadow guard
+/// covers the inline spelling.
+fn crate_relative_alias_shares_compilation_unit(
+    test_file: &Path,
+    alias_module: &str,
+    owner_file: Option<&Path>,
+    owner_is_crate_root: bool,
+    owner_crate_root: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    if index.member_crates.is_binary_target_root(test_file) {
+        let test_root = context::crate_root_file_key(test_file);
+        if owner_is_crate_root && owner_crate_root != test_root.as_deref() {
+            return false;
+        }
+    }
+    if alias_module.is_empty() {
+        return true;
+    }
+    let Some(owner_file) = owner_file else {
+        return false;
+    };
+    let Some(root_file) = crate_root_file_for_test(index, test_file) else {
+        return false;
+    };
+    resolve_module_chain(index, &root_file, alias_module)
+        .is_some_and(|resolved| normalize_path(&resolved) == normalize_path(owner_file))
+}
+
+/// The crate root file that compiles `test_file` (#14508 review). A binary
+/// target root is the file itself; a module inside a `src/bin/<name>` target
+/// resolves from that target's `main.rs` or flat `<name>.rs`; a library or
+/// binary module under `src/` resolves from `src/lib.rs` or `src/main.rs`.
+fn crate_root_file_for_test(index: &RustIndex, test_file: &Path) -> Option<PathBuf> {
+    if index.member_crates.is_binary_target_root(test_file) {
+        return Some(test_file.to_path_buf());
+    }
+    if let Some(bin_dir) = binary_target_module_dir(test_file) {
+        let normalized = normalize_path(test_file);
+        if normalized == format!("{bin_dir}.rs") || normalized == format!("{bin_dir}/main.rs") {
+            return Some(test_file.to_path_buf());
+        }
+        let main = PathBuf::from(format!("{bin_dir}/main.rs"));
+        if index_has_file(index, &main) {
+            return Some(main);
+        }
+        let flat = PathBuf::from(format!("{bin_dir}.rs"));
+        if index_has_file(index, &flat) {
+            return Some(flat);
+        }
+        return None;
+    }
+    let prefix = package_prefix(test_file).unwrap_or_default();
+    let lib = PathBuf::from(format!("{prefix}src/lib.rs"));
+    if index_has_file(index, &lib) {
+        return Some(lib);
+    }
+    let main = PathBuf::from(format!("{prefix}src/main.rs"));
+    if index_has_file(index, &main) {
+        return Some(main);
+    }
+    None
+}
+
+/// Resolve a slash-separated `crate::` chain from `root_file` the way rustc
+/// does, following each declaration's `#[path]` target. A missing declaration
+/// or a non-literal `#[path]` fails closed (#14508 review).
+fn resolve_module_chain(index: &RustIndex, root_file: &Path, module_path: &str) -> Option<PathBuf> {
+    let mut current = root_file.to_path_buf();
+    for segment in module_path.split('/') {
+        let facts = index.files().get(&current)?;
+        let declaration = facts
+            .module_declarations
+            .iter()
+            .find(|declaration| declaration.name == segment)?;
+        let dir = current.parent()?;
+        current = match &declaration.path_target {
+            ModulePathTarget::Default => {
+                let file = dir.join(format!("{segment}.rs"));
+                let mod_file = dir.join(segment).join("mod.rs");
+                let file_exists = index_has_file(index, &file);
+                let mod_exists = index_has_file(index, &mod_file);
+                match (file_exists, mod_exists) {
+                    (true, false) => file,
+                    (false, true) => mod_file,
+                    _ => return None,
+                }
+            }
+            ModulePathTarget::Literal(path) => {
+                let resolved = dir.join(path);
+                if index_has_file(index, &resolved) {
+                    resolved
+                } else {
+                    return None;
+                }
+            }
+            ModulePathTarget::Unknown => return None,
+        };
+    }
+    Some(current)
+}
+
+fn index_has_file(index: &RustIndex, path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    index
+        .files()
+        .iter()
+        .any(|(key, _)| normalize_path(key) == normalized)
+}
+
+/// The `src/bin/<name>` directory a test file belongs to, when it sits in a
+/// binary target's module tree (#14508 review). `src/bin/<name>.rs`,
+/// `src/bin/<name>/main.rs` and `src/bin/<name>/<module>.rs` all name
+/// `src/bin/<name>`.
+fn binary_target_module_dir(test_file: &Path) -> Option<String> {
+    let normalized = normalize_path(test_file);
+    let at = normalized.find("src/bin/")?;
+    if at > 0 && !normalized[..at].ends_with('/') {
+        return None;
+    }
+    let after = &normalized[at + "src/bin/".len()..];
+    let first = after.split('/').next()?;
+    let name = first.strip_suffix(".rs").unwrap_or(first);
+    (!name.is_empty()).then(|| format!("{}src/bin/{name}", &normalized[..at]))
+}
+
+/// The module path a test file's own items sit under, for comparing an inline
+/// module chain with an absolute `crate::` path (#14508 review). A crate root
+/// names no module: `lib.rs`, `main.rs`, and a `src/bin` target root.
+fn test_file_module_path(index: &RustIndex, file: &Path) -> String {
+    if module_stem(file).is_none() {
+        return String::new();
+    }
+    if let Some(bin_dir) = binary_target_module_dir(file) {
+        let normalized = normalize_path(file);
+        if normalized == format!("{bin_dir}.rs") || normalized == format!("{bin_dir}/main.rs") {
+            return String::new();
+        }
+    }
+    let path = module_path_for_index(index, file).unwrap_or_default();
+    path.strip_suffix("/mod").unwrap_or(&path).to_string()
 }
 
 pub(super) fn match_helper_owner_call(
