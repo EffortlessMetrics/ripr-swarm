@@ -1,0 +1,22 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/formal_evidence/native/replay.rs",
+  "xtask/src/formal_evidence/native/profile.rs",
+  "xtask/src/formal_evidence/native.rs",
+  "xtask/src/formal_registry/native_bindings/replay.rs",
+  "xtask/src/formal_registry/native_bindings.rs",
+  "xtask/src/formal_registry.rs",
+]
+tests = [
+  "xtask/src/formal_evidence/native/replay.rs::artifact_cache_reads_once_and_refuses_conflicts_and_total_budget_excess",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::successful_forged_and_rehashed_replay_cannot_mint_native_origin_or_assurance",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::retained_artifact_corruption_and_argv_substitution_are_refused",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::recomputed_cargo_feature_metadata_cannot_borrow_the_rust_only_profile",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::retained_registration_cannot_replace_the_loader_constructed_preparation",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::fully_rehashed_source_omission_still_refuses_the_canonical_closure",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::rehashed_native_cover_text_cannot_satisfy_a_different_canonical_obligation",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::exact_native_selection_cannot_borrow_a_substring_or_foreign_generation",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::borrowed_prepared_views_keep_the_original_canonical_keys_and_source_inputs",
+  "xtask/src/formal_registry/native_bindings/replay/tests.rs::public_replay_command_preserves_the_canonical_denominator_and_refuses_repeated_calls",
+]

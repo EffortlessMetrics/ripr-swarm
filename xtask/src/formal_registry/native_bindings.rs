@@ -25,6 +25,8 @@ const COMMON_DIRECTORIES: &[&str] = &[".cargo", "xtask/src", "tools/repo-policy"
 
 pub const USAGE: &str = "formal-claim-registry prepare-native --root DIR [--bindings FILE]\nRequires formal-native-bindings. Exit 0 means passive preparation only; missing bindings remain explicit. No verifier runs and no assurance or execution authority is granted.";
 
+pub mod replay;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingInput {
@@ -125,6 +127,8 @@ struct PreparedClaim {
 
 /// Only the canonical loader and local preparation can construct this value.
 /// Its JSON is a report; deserializing that JSON cannot recover this handle.
+/// Immutable observations at preparation time, not continuously current source
+/// authority. A live capture must repeat preparation before and after execution.
 #[derive(Clone, Debug)]
 pub struct PreparedNativeInputs {
     registry: ValidatedRegistry,
@@ -133,6 +137,10 @@ pub struct PreparedNativeInputs {
 }
 
 impl PreparedNativeInputs {
+    pub fn claims(&self) -> impl Iterator<Item = PreparedClaimView<'_>> {
+        self.claims.iter().map(|claim| PreparedClaimView { claim })
+    }
+
     pub fn registry(&self) -> &ValidatedRegistry {
         &self.registry
     }
@@ -159,6 +167,46 @@ impl PreparedNativeInputs {
                 "Protected provenance, currentness and transition admission remain external prerequisites (#14500)."
             ]
         }))
+    }
+}
+
+/// Borrowed preparation facts for the maintained collector. Copying a native
+/// DTO out of this view does not create an actual process observation.
+#[derive(Clone, Copy)]
+pub struct PreparedClaimView<'a> {
+    claim: &'a PreparedClaim,
+}
+
+impl PreparedClaimView<'_> {
+    pub fn id(&self) -> &str {
+        &self.claim.claim_id
+    }
+    pub const fn generation(&self) -> u64 {
+        self.claim.claim_generation
+    }
+    pub fn decision_digest(&self) -> &str {
+        &self.claim.decision_digest
+    }
+    pub const fn binding_state(&self) -> &'static str {
+        self.claim.binding_state
+    }
+    pub fn source_manifest(&self) -> &native::SourceManifest {
+        &self.claim.source_manifest
+    }
+    pub fn explicit_inputs(&self) -> &[String] {
+        &self.claim.explicit_inputs
+    }
+    pub fn profile(&self) -> Option<&native::DeclaredKaniProfile> {
+        self.claim
+            .declaration
+            .as_ref()
+            .map(|binding| &binding.profile)
+    }
+    pub fn subjects(&self) -> impl Iterator<Item = (&str, &native::Subject)> {
+        self.claim
+            .subjects
+            .iter()
+            .map(|subject| (subject.canonical_subject.as_str(), &subject.native))
     }
 }
 

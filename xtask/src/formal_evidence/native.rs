@@ -8,7 +8,13 @@ use std::io::Read;
 use std::path::{Component, Path};
 
 mod profile;
+pub use profile::{
+    ConfigurationSnapshot, InstalledToolchain, validate_cargo_metadata, validate_configuration,
+    validate_installed_toolchain,
+};
 pub use profile::{DeclaredKaniProfile, aggregate_process, native_tool_header};
+mod replay;
+pub use replay::{RetainedReplay, verify_execution_artifacts};
 
 /// Sorted repository-relative file commitments. This is a captured input
 /// manifest, not a claim of production-body equivalence or producer identity.
@@ -342,10 +348,7 @@ pub fn validate(run: &Run) -> AuditResult<()> {
         ) && !execution.producer_arguments.is_empty(),
         "missing native producer entrypoint/arguments",
     )?;
-    require(
-        execution.configuration_policy == "kani-0.68-defaults-v1",
-        "unsupported native configuration policy",
-    )?;
+    DeclaredKaniProfile::for_policy(&execution.configuration_policy)?;
     digest(&execution.configuration_digest, "configuration digest")?;
     artifact(&execution.configuration_before)?;
     artifact(&execution.configuration_after)?;

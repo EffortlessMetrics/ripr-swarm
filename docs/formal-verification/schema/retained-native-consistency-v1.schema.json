@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/internal/retained-native-consistency-v1.schema.json",
+  "title": "RIPR passive retained native consistency v1",
+  "description": "Reproduced interpretation of supplied retained bytes. No native origin, assurance or execution authority is created.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "retained_consistency",
+    "registry_generation",
+    "bindings_digest",
+    "run_id",
+    "claims",
+    "unmapped_native_subjects",
+    "canonical_scoreboard",
+    "native_origin",
+    "native_assurance",
+    "execution_authority",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.retained-native-consistency.v1"
+    },
+    "retained_consistency": {
+      "const": "consistent"
+    },
+    "registry_generation": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*:sha256:[0-9a-fA-F]{64}$"
+    },
+    "bindings_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    },
+    "run_id": {
+      "$ref": "#/$defs/text"
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/claim"
+      },
+      "maxItems": 256
+    },
+    "unmapped_native_subjects": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "$ref": "#/$defs/text"
+      },
+      "uniqueItems": true
+    },
+    "canonical_scoreboard": {
+      "$ref": "formal-assurance-scoreboard-v1.schema.json"
+    },
+    "native_origin": {
+      "const": "not_established"
+    },
+    "native_assurance": {
+      "const": "not_assessed"
+    },
+    "execution_authority": {
+      "const": "not_granted"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/text"
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "claim_generation",
+        "decision_digest",
+        "canonical_subjects",
+        "required_covers",
+        "observations",
+        "unestablished_obligations"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/text"
+        },
+        "claim_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-fA-F]{64}$"
+        },
+        "canonical_subjects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/text"
+          },
+          "uniqueItems": true
+        },
+        "required_covers": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/text"
+          },
+          "uniqueItems": true
+        },
+        "observations": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "unestablished_obligations": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_subject",
+        "native_subject",
+        "native_status",
+        "native_verdict",
+        "covers",
+        "raw_block_digest",
+        "interpretation"
+      ],
+      "properties": {
+        "canonical_subject": {
+          "$ref": "#/$defs/text"
+        },
+        "native_subject": {
+          "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/native_subject"
+        },
+        "native_status": {
+          "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/unregistered_result/properties/status"
+        },
+        "native_verdict": {
+          "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/unregistered_result/properties/native_verdict"
+        },
+        "covers": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/cover"
+          }
+        },
+        "raw_block_digest": {
+          "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/unregistered_result/properties/raw_block_digest"
+        },
+        "interpretation": {
+          "const": "reproduced_from_supplied_bytes"
+        }
+      }
+    },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "obligation",
+        "property",
+        "native_status"
+      ],
+      "properties": {
+        "obligation": {
+          "$ref": "#/$defs/text"
+        },
+        "property": {
+          "$ref": "#/$defs/text"
+        },
+        "native_status": {
+          "$ref": "https://effortlessmetrics.dev/ripr/design/native-proof-run-v1.schema.json#/$defs/unregistered_result/properties/cover_properties/items/properties/status"
+        }
+      }
+    }
+  }
+}

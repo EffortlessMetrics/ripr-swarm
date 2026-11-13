@@ -118,6 +118,12 @@ canonical identities and ordinary claim documents. `prepare_native` returns
 an opaque `PreparedNativeInputs` value. Its JSON is a report and cannot be
 deserialized back into an authority-bearing handle.
 
+The handle and borrowed claim views are immutable observations at preparation
+time. A live capture must repeat preparation before and after execution; a
+borrowed view is not continuously current source authority. The
+[passive replay route](NATIVE_REPLAY.md) reproduces retained interpretation
+without constructing a live process observation or promoting assurance.
+
 The report includes the unchanged canonical scoreboard, every expected claim,
 binding state, missing obligations, source manifests and digests, explicit
 inputs, canonical-to-native subject correspondence, and binding declarations.

@@ -1045,7 +1045,10 @@
           "type": "boolean"
         },
         "configuration_policy": {
-          "const": "kani-0.68-defaults-v1"
+          "enum": [
+            "kani-0.68-defaults-v1",
+            "kani-0.68-rust-only-v1"
+          ]
         },
         "configuration_digest": {
           "type": "string",

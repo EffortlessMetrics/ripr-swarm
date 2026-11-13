@@ -26,6 +26,8 @@ pub const USAGE: &str = concat!(
     "[--format json|markdown]\n",
     "  formal-claim-registry prepare-native --root DIR [--bindings FILE] ",
     "(requires formal-native-bindings)\n",
+    "  formal-claim-registry replay-native --root DIR --bindings FILE --run FILE --artifacts DIR ",
+    "(requires formal-native-bindings)\n",
     "Exit 0: deterministic registry result; 2: invalid input. ",
     "No command grants native assurance or execution authority.",
 );
@@ -525,6 +527,13 @@ pub fn execute(args: &[String]) -> RegistryResult<String> {
         .is_some_and(|command| command == "prepare-native")
     {
         return native_bindings::execute(&args[1..]);
+    }
+    #[cfg(feature = "formal-native-bindings")]
+    if args
+        .first()
+        .is_some_and(|command| command == "replay-native")
+    {
+        return native_bindings::replay::execute(&args[1..]);
     }
     let command = args
         .first()

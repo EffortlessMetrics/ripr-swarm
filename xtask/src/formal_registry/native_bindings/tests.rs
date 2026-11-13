@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const SUBJECT_FILE: &str = "crates/ripr-contract/src/proof_a.rs";
 const SUBJECT_SOURCE: &str = "#[kani::proof]\nfn proof_a() {\n    kani::cover!(true);\n    kani::cover!(false);\n}\nconst DATA: &str = include_str!(\"../../../data/input.txt\");\n";
 
-struct Fixture(PathBuf);
+pub(super) struct Fixture(pub(super) PathBuf);
 
 impl Fixture {
-    fn new() -> RegistryResult<Self> {
+    pub(super) fn new() -> RegistryResult<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let temporary = std::env::temp_dir();
         fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
@@ -66,7 +66,7 @@ impl Fixture {
         Ok(fixture)
     }
 
-    fn write(&self, path: &str, contents: &str) -> RegistryResult<()> {
+    pub(super) fn write(&self, path: &str, contents: &str) -> RegistryResult<()> {
         let path = self.0.join(path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -114,11 +114,11 @@ impl Fixture {
         )
     }
 
-    fn view(&self) -> RegistryResult<ValidatedRegistry> {
+    pub(super) fn view(&self) -> RegistryResult<ValidatedRegistry> {
         ValidatedRegistry::load(&self.0)
     }
 
-    fn bindings(&self, view: &ValidatedRegistry) -> RegistryResult<BindingInput> {
+    pub(super) fn bindings(&self, view: &ValidatedRegistry) -> RegistryResult<BindingInput> {
         let claim = view
             .claims()
             .find(|claim| claim.id() == "example.a")
