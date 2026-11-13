@@ -3029,7 +3029,7 @@ assertions. This repair shares the existing callback without that larger migrati
   runtime truth for the direct, wrong-input, transformed, masked, discarded,
   opaque-input and unrelated-test shapes.
 - Claims payload equality pins (#12304):
-  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
   directions, the non-`return_value` families, and multi-line invocations: credited
   when the closing line holds only the `;` and a comment, unknown otherwise).
@@ -3042,7 +3042,7 @@ assertions. This repair shares the existing callback without that larger migrati
   `assert_some_eq!` over a hand-written `clone` owner and an `Err(..)`
   struct-variant owner stay `unknown`), with the `assert_eq!` twins credited
   on the same subjects.
-- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+- Claims payload pins (#9619): `crates/ripr/tests/wrapped_owner_pins/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
   owner-derived expected value, wrapped operand, method use, converted
@@ -3073,7 +3073,7 @@ assertions. This repair shares the existing callback without that larger migrati
   is compiled directly by the integration suite; native proc-macro removal
   controls are separate engineering evidence, not claimed by the API assertions.
 - Unwrapped `Ok`/`Some` pins (#9619):
-  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  `crates/ripr/tests/wrapped_owner_pins/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
   bound and `Option` positives; `mut`, shadowing, method use, owner-derived
   expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
   discarded unwrap and wrapper- or opposite-exit-binding negatives).

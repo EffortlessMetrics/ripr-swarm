@@ -2,5 +2,5 @@
 [[extend]]
 id = "RIPR-SPEC-0197"
 tests = [
-  "crates/ripr/tests/claims_payload_owner_pin.rs::claims_payload_pins_credit_only_on_a_verified_claims_import",
+  "crates/ripr/tests/wrapped_owner_pins/claims_payload_owner_pin.rs::claims_payload_pins_credit_only_on_a_verified_claims_import",
 ]
