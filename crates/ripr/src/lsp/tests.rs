@@ -27875,6 +27875,7 @@ fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
     scope_marker_count(params, "empty_scope")
 }
 
+#[cfg(unix)]
 fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {
     scope_marker_count(params, "incomplete_analysis")
 }
