@@ -37,7 +37,9 @@
 //! - the pinned toolchain step losing its `with: toolchain:` input, or any
 //!   other workflow pinning the no-default `master`/`v1` ref without one →
 //!   `bless_installs_the_pinned_toolchain` and
-//!   `every_no_default_rust_toolchain_step_pins_its_toolchain` fail (#14563).
+//!   `every_no_default_rust_toolchain_step_pins_its_toolchain` fail; a
+//!   `toolchain:` under `env:` or inside `run:` must not satisfy the contract
+//!   → `toolchain_contract_rejects_env_and_run_shapes` (#14563).
 
 use std::fs;
 use std::path::Path;
@@ -45,13 +47,16 @@ use std::path::Path;
 const WORKFLOW: &str = ".github/workflows/goldens-rebless.yml";
 const ALLOWLIST: &str = "policy/workflow_allowlist.txt";
 
-/// `dtolnay/rust-toolchain` refs that carry no default toolchain of their own.
+/// `dtolnay/rust-toolchain` refs whose `action.yml` has no default for the
+/// `toolchain` input, so a step pinned to one must pass `with: toolchain:` or
+/// the action exits 1 with "'toolchain' is a required input" before any step
+/// runs (#14563).
 ///
-/// The action's `stable`, `beta`, `nightly` and version branches (`1.95`,
-/// `1.95.0`) each ship an `action.yml` whose `toolchain` input has a default.
-/// The `master`/`v1` ref does not, so a step pinned to it must pass
-/// `with: toolchain:` or the action exits 1 with "'toolchain' is a required
-/// input" before any step runs (#14563).
+/// Verified against the action's refs: `683b588c…` is `refs/heads/master` and
+/// `refs/tags/v1` and has no default. `refs/heads/stable` (`b725eda5…`),
+/// `refs/heads/1.95`/`1.95.0` (`035fceb3…`) and the pinned commit
+/// `4cda84d5…` all carry a toolchain default, so they need no input. This list
+/// is maintained by hand: a new no-default ref must be added here.
 const NO_DEFAULT_TOOLCHAIN_REFS: &[&str] = &["683b588c487a69d01f6c6ddf40f036ff682cc2c8"];
 
 /// Executable (non-comment) fragments that would let the route gate,
@@ -707,22 +712,116 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
     )
 }
 
+/// The full list-item block for the step containing `index`: from its `- `
+/// line to (not including) the next sibling item or shallower key.
+fn step_lines<'a>(lines: &[&'a str], index: usize) -> Vec<&'a str> {
+    let step_indent = lines[index].len() - lines[index].trim_start().len();
+    let mut start = index;
+    if !lines[index].trim_start().starts_with("- ") {
+        for candidate in (0..index).rev() {
+            let trimmed = lines[candidate].trim_start();
+            let indent = lines[candidate].len() - trimmed.len();
+            if trimmed.starts_with("- ") && indent <= step_indent {
+                start = candidate;
+                break;
+            }
+        }
+    }
+    let item_indent = lines[start].len() - lines[start].trim_start().len();
+    let mut end = lines.len();
+    for (offset, line) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if trimmed.is_empty()
+            || indent < item_indent
+            || (indent == item_indent && trimmed.starts_with("- "))
+        {
+            end = offset;
+            break;
+        }
+    }
+    lines[start..end].to_vec()
+}
+
+/// The `toolchain:` value under the step's `with:` mapping, if any.
+///
+/// Only a key directly under `with:` counts. A `toolchain:` under `env:`,
+/// inside a `run:` block, or in a sibling step is not the action input and
+/// must not satisfy the contract (#14563 review).
+fn with_toolchain_value(step: &[&str]) -> Option<String> {
+    let first = step.first()?;
+    let item_indent = first.len() - first.trim_start().len();
+    let with_index = step.iter().position(|line| {
+        let trimmed = line.trim_start();
+        trimmed == "with:" && line.len() - trimmed.len() == item_indent + 2
+    })?;
+    let with_indent = item_indent + 2;
+    step[with_index + 1..]
+        .iter()
+        .take_while(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len() - trimmed.len() > with_indent
+        })
+        .find_map(|line| {
+            line.trim_start()
+                .strip_prefix("toolchain:")
+                .map(|value| value.trim().to_string())
+        })
+}
+
+/// Scan one workflow source for no-default rust-toolchain steps that do not
+/// set `with: toolchain:`. Returns the number of steps checked and the
+/// `(line, ref)` findings.
+fn scan_no_default_toolchain_steps(source: &str) -> (usize, Vec<(usize, String)>) {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut checked = 0usize;
+    let mut findings = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let rest = trimmed
+            .strip_prefix("- uses: dtolnay/rust-toolchain@")
+            .or_else(|| trimmed.strip_prefix("uses: dtolnay/rust-toolchain@"));
+        let Some(rest) = rest else {
+            continue;
+        };
+        let Some(reference) = rest.split_whitespace().next() else {
+            continue;
+        };
+        if !NO_DEFAULT_TOOLCHAIN_REFS.contains(&reference) {
+            continue;
+        }
+        checked += 1;
+        let step = step_lines(&lines, index);
+        if with_toolchain_value(&step).is_none() {
+            findings.push((index + 1, reference.to_string()));
+        }
+    }
+    (checked, findings)
+}
+
 #[test]
 fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
     let source = repo_file(WORKFLOW)?;
     let lines = executable_lines(&source);
     let bless = job_block(&lines, "bless");
-    require(
-        &bless,
-        "uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8",
-        "the bless job installs the toolchain the goldens are rendered with",
-    )?;
-    require(
-        &bless,
-        "toolchain: 1.95.0",
-        "the no-default `v1` ref needs an explicit input; 1.95.0 matches \
-         rust-toolchain.toml and the sibling workflows (#14563)",
-    )
+    let index = bless
+        .iter()
+        .position(|line| {
+            line.contains("uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8")
+        })
+        .ok_or_else(|| {
+            "the bless job must install the toolchain the goldens are rendered with".to_string()
+        })?;
+    let step = step_lines(&bless, index);
+    let value = with_toolchain_value(&step).ok_or_else(|| {
+        "the no-default `v1` ref needs an explicit `with: toolchain:` input (#14563)".to_string()
+    })?;
+    if value != "1.95.0" {
+        return Err(format!(
+            "the bless toolchain must be 1.95.0 to match rust-toolchain.toml; found `{value}`"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -747,41 +846,15 @@ fn every_no_default_rust_toolchain_step_pins_its_toolchain() -> Result<(), Strin
     let mut checked = 0usize;
     for path in entries {
         let source = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let lines: Vec<&str> = source.lines().collect();
-        for (index, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            let rest = trimmed
-                .strip_prefix("- uses: dtolnay/rust-toolchain@")
-                .or_else(|| trimmed.strip_prefix("uses: dtolnay/rust-toolchain@"));
-            let Some(rest) = rest else {
-                continue;
-            };
-            let Some(reference) = rest.split_whitespace().next() else {
-                continue;
-            };
-            if !NO_DEFAULT_TOOLCHAIN_REFS.contains(&reference) {
-                continue;
-            }
-            checked += 1;
-            let step_indent = line.len() - trimmed.len();
-            let has_toolchain = lines[index + 1..]
-                .iter()
-                .take_while(|next| {
-                    let next_trimmed = next.trim_start();
-                    let indent = next.len() - next_trimmed.len();
-                    !next_trimmed.is_empty()
-                        && indent >= step_indent
-                        && !next_trimmed.starts_with("- ")
-                })
-                .any(|next| next.trim_start().starts_with("toolchain:"));
-            if !has_toolchain {
-                findings.push(format!(
-                    "{}:{}: dtolnay/rust-toolchain@{} has no `with: toolchain:` input",
-                    path.display(),
-                    index + 1,
-                    reference
-                ));
-            }
+        let (file_checked, file_findings) = scan_no_default_toolchain_steps(&source);
+        checked += file_checked;
+        for (line, reference) in file_findings {
+            findings.push(format!(
+                "{}:{}: dtolnay/rust-toolchain@{} has no `with: toolchain:` input",
+                path.display(),
+                line,
+                reference
+            ));
         }
     }
     if checked == 0 {
@@ -795,6 +868,63 @@ fn every_no_default_rust_toolchain_step_pins_its_toolchain() -> Result<(), Strin
         return Ok(());
     }
     Err(findings.join("\n"))
+}
+
+#[test]
+fn toolchain_contract_rejects_env_and_run_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        (
+            "with: toolchain",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            true,
+        ),
+        (
+            "env: toolchain only",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        env:\n          toolchain: 1.95.0\n"
+            ),
+            false,
+        ),
+        (
+            "with: components plus env: toolchain",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          components: rustfmt\n        env:\n          toolchain: 1.95.0\n"
+            ),
+            false,
+        ),
+        (
+            "run block containing toolchain:",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        run: |\n          toolchain: 1.95.0\n"
+            ),
+            false,
+        ),
+        (
+            "sibling step toolchain",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n      - name: Other\n        run: |\n          toolchain: 1.95.0\n"
+            ),
+            false,
+        ),
+    ];
+    for (name, source, expected) in cases {
+        let (checked, findings) = scan_no_default_toolchain_steps(&source);
+        if checked != 1 {
+            return Err(format!(
+                "{name}: expected one scanned step, found {checked}"
+            ));
+        }
+        let accepted = findings.is_empty();
+        if accepted != expected {
+            return Err(format!(
+                "{name}: expected accepted={expected}, got accepted={accepted}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
