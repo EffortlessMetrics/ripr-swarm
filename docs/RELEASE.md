@@ -1,31 +1,157 @@
-# Release Checklist
+# Release
 
-This checklist is the canonical release procedure for ripr. It is intentionally
-more conservative than the ordinary development loop: a release must preserve
-source, artifact, metadata, and publication identity across every supported
-surface.
+This document is the release checklist for publishing `ripr`.
 
-## Release authority
+## Release identity (read this first)
 
-The release owner should start from the current release-control issue and its
-accepted candidate. Do not construct a release directly from an arbitrary local
-worktree, an unreviewed branch, or an artifact whose source SHA is not retained.
+Two repositories, two different authorities (#24, #2025):
 
-Before beginning:
+```text
+ripr-swarm              = development trunk and no-publish rehearsal authority
+EffortlessMetrics/ripr  = public release and distribution authority
+```
 
-- confirm the release version and candidate SHA;
-- confirm the candidate is reachable from the protected repository state used
-  by the release process;
-- confirm required hosted and platform qualification is terminal on that exact
-  source;
-- retain the release receipts and package/archive identities used for the
-  decision.
+- Public tags and GitHub Releases (v0.8.0 and later) live **only** in
+  `EffortlessMetrics/ripr`. Do not create mirror tags in ripr-swarm for a
+  public release; temporary mirror tags once created were removed (see the
+  corrections on #1947 and #1959).
+- A swarm `CHANGELOG.md` entry may describe a published release; it must not
+  imply the corresponding public tag lives in this repository.
+- Swarm rehearsal (proof packs, manifest generation, smoke) is a separate
+  state from source publication (#1882): rehearsal artifacts are local
+  evidence, never release proof, and "zero swarm tag-trigger runs" means
+  rehearsal stayed read-only, not that a public release is missing.
 
-## Version and public metadata
+For every public version claim, record the boundary explicitly:
+`rehearsal | promoted | tagged | published`, with the source SHA, the public
+tag/release URL in `EffortlessMetrics/ripr`, and the promotion evidence.
 
-Verify all public version declarations and package metadata before running the
-release gates.
+## Live-history release train
 
+Use the [live-history release transaction runbook](RELEASE_TRANSACTION.md) as
+the canonical operator sequence. This checklist remains the release-surface
+and packaging reference; the runbook owns exact pins, J/K expected-head guards,
+receipts, invalidation, publication authorization, and cleanup.
+
+For the 0.11.0 release train, and as the standard two-repository pattern for
+future releases, use this authority sequence:
+
+```text
+develop in ripr-swarm
+→ select exact ripr-swarm/main at the transaction boundary
+→ create an immutable swarm pin and hold ripr/main
+→ qualify that exact swarm head
+→ preflight the exact source/swarm pair
+→ construct and prove one ordered two-parent source join
+→ merge source with source parent 1 and swarm parent 2
+→ establish metadata and build source artifacts
+→ produce the immutable ship packet
+→ explicitly authorize publication
+→ publish and verify each channel
+→ ancestry-preserving source-to-swarm back-sync
+→ re-baseline the next release and resume swarm development
+```
+
+The selected swarm head includes all history reachable from that exact commit.
+Do not squash, rebase, cherry-pick, or reconstruct a tree-equivalent source
+join. The promotion PR head must itself be the reviewed join, with source as
+parent 1 and the selected swarm head as parent 2. The back-sync must preserve
+the source release ancestry through a controlled merge exception or another
+explicitly reviewed ancestry-preserving path, even when swarm branch settings
+normally disable merge commits.
+
+After the swarm pin, later `ripr-swarm/main` merges are outside the release and
+must not move the pin. Development may continue on branches, but no main merge
+enters the release until source publication and the back-sync complete. Repin
+only for an exact-candidate semantic or policy failure, or a source-preflight
+failure that prevents a required survivor or release contract. Main movement
+alone never repins.
+
+The ship packet is evidence, not authorization. Only source issue `#1470`
+authorizes tagging, publication, signing, marketplace mutation, or other
+external release operations. Re-baseline 0.11.1 only after 0.11.0 publication
+and closeout; merged current-head work belongs to 0.11.0 rather than 0.11.1.
+
+The release claims must be regenerated from the selected tree. Distinguish
+commands actually executed, evidence emitted, and any `RepairReceiptV2`
+issuance. Never copy a historical blanket no-execution sentence, and never
+claim correctness, test adequacy, mutation adequacy, requirement satisfaction,
+or merge safety.
+
+The two history-preserving joins have separate identities and parent order:
+
+```text
+J = source promotion
+J.parent[0] = exact SOURCE_PARENT
+J.parent[1] = exact SWARM_PARENT
+
+K = post-publication back-sync
+K.parent[0] = exact swarm main before back-sync
+K.parent[1] = exact released source main
+```
+
+The promotion head must itself be `J`; an appended repair commit, squash,
+rebase, cherry-pick, or tree-equivalent reconstruction fails the promotion
+contract. After public verification, review and transport `K` under an
+expected-head guard. If swarm policy has merge commits disabled, use a
+narrowly approved temporary exception for this one ancestry-preserving
+back-sync and restore the ordinary policy immediately afterward. See
+[`swarm-development.md`](swarm-development.md#promotion-back-to-source) for
+the operator commands and the separate J/K proof boundaries.
+
+## Preparing a version bump
+
+From a clean swarm checkout, use the gated version command instead of editing
+the three release manifests independently:
+
+```bash
+cargo xtask bump-version 0.11.0
+```
+
+The command requires the workspace version, editors/vscode/package.json, and
+both root version fields in editors/vscode/package-lock.json to agree before
+it writes. It preserves the existing JSON formatting, validates the resulting
+Cargo workspace with cargo metadata, and restores the original files if a
+write or validation step fails. It changes files only; review and commit the
+result as a normal release-prep PR.
+
+## Checking release state (audit contract)
+
+Any release or status audit must name the repository it queries and fail
+closed on ambiguity — never silently query the current checkout for public
+release state:
+
+```bash
+# Public releases and tags (authoritative):
+gh release list --repo EffortlessMetrics/ripr --limit 5
+gh api repos/EffortlessMetrics/ripr/tags --paginate -q '.[].name'
+
+# Swarm side (development/rehearsal only — mirror tags must not exist):
+gh api repos/EffortlessMetrics/ripr-swarm/tags --paginate -q '.[].name'
+```
+
+- A public tag existing in the source repo but not in swarm is the expected
+  state, not a defect.
+- A swarm rehearsal without a public release is rehearsal, not a release.
+- A changelog version without a source release is an unpublished draft, and
+  is named that way. 0.8.0, 0.9.0 and 0.10.0 were published from
+  `EffortlessMetrics/ripr` (GitHub Releases on 2026-06-02, 2026-06-11 and
+  2026-06-15, with matching crates.io versions). The staged 0.10.1 was never
+  published.
+- The VS Code downloader and default install documentation resolve release
+  assets from `EffortlessMetrics/ripr` only
+  (`editors/vscode/src/downloader.ts` builds URLs against that repository).
+
+
+Run the [Release copy checklist](RELEASE_COPY_CHECKLIST.md) before finalizing
+the GitHub Release body, triggering `publish-extension.yml`, or running
+`cargo publish`. It captures the public-surface rules (release body vs.
+process narrative, marketplace metadata, install truth, badge freshness,
+public vocabulary, asset verification) that the v0.5.0 release surfaced.
+
+## Preconditions
+
+- The release branch has been reviewed and merged.
 - The version in the root `Cargo.toml` `[workspace.package]` is correct. This is
   the single release-version source; `crates/ripr/Cargo.toml` inherits it with
   `version.workspace = true` and declares no version of its own (#2711).
@@ -55,104 +181,312 @@ cargo check --workspace --all-targets
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
-cargo xtask precommit
-```
-
-The commands above are local evidence only. A release still requires the
-protected hosted and platform routes identified by the release-control issue.
-Do not treat an omitted, timed-out, or infrastructure-failed lane as a passing
-product result.
-
-## Package inspection
-
-Inspect the exact package before publication:
-
-```bash
-cargo package -p ripr --locked --allow-dirty
+cargo xtask check-product-copy
+cargo xtask check-packaged-readme
+cargo xtask check-generated-clean
+cargo xtask release-readiness --version 0.11.0   # the version you are cutting
+cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run --locked
+cargo publish -p ripr --dry-run
 ```
 
-The release workflow must bind the generated `.crate`, its extracted tree, and
-its lockfile to the accepted source candidate. Cargo 1.100 uses a packaged
-lockfile by default during `cargo install`; `--locked` remains explicit intent
-and compatibility for older Cargo clients, not a substitute for package-custody
-proof. Validate the actual packaged archive rather than a separately rebuilt
-workspace directory.
+For the #1609-qualified path, the existing corpus also accepts the complete
+`--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
+Add `--candidate-manifest-sha256 <accepted-raw-sha256>` only for direct
+schema-1.1 live-head admission. Its digest comes from the trusted release
+operator's reviewed #1609 handoff, never from the candidate document or an
+auto-discovered adjacent file. Without that flag the group keeps historical
+registry mode; without the entire group the command is unqualified smoke.
+Refused or partial inputs do not fall back. See SPEC-0144 and the transaction
+runbook for accepted prerequisite packets and the no-predicted-SOURCE_PARENT
+boundary. An identity hash check alone does not establish owner acceptance.
+The direct adapter recomputes source-promotion-style ordered Git range digests,
+keeps record-set adjudication with #2768, and caps retained inputs at 64 proof
+references, 16 MiB per file and 64 MiB total. SPEC-0144 names its three supported
+origin spellings and the limits of unlocked file snapshots.
+Source custody separately caps 16,384 ordinary blobs, 16 MiB per blob and
+128 MiB retained blob bytes, with bounded Git metadata/batch output and exact
+checkout reads. SPEC-0134 defines these limits and the shared no-replacement
+Git-object contract.
 
-Check that:
+The version-only invocation above remains legacy smoke. In both explicit
+qualification modes canonical source/controller roots must not be equal or
+nested; separate worktrees may share the same repository.
+The package producer uses that source root and retains archive/executable byte
+custody for the installed doctor and authentic corpus chain. Ordinary archive
+entries must match raw committed source blobs; transformed/sparse checkouts and
+unsupported generated entries refuse. These unlocked checks do not authenticate
+provenance, select a release pin, or complete the full qualification matrix.
+Archive, extracted-input and executable rereads are bounded by their admitted
+byte lengths and require ordinary files. Initial archive/executable capture and
+archive decompression retain their separate, currently unbounded memory surface;
+the reread bound is not a total package/install memory or storage budget.
 
-- the package contains the intended source, license, README, tests, fixtures,
-  and sample workspace inputs;
-- generated build output, caches, local receipts, worktrees, and credentials are
-  absent;
-- the package version and source identity match the accepted release candidate;
-- package metadata names the canonical repository without a redundant
-  `homepage` field;
-- an extracted package can be built and installed through the release rehearsal
-  without network-dependent source drift.
+The [0.11 preparation packet at observed d7c3](handoffs/2026-10-04-0.11-candidate-preparation-d7c3.md)
+retains the complete Git range, current PR snapshot, proposed engineering
+dispositions and missing acceptance/execution inputs for #2766/#2768/#3807.
+It is inactive review input: no candidate, accepted record-set digest, pin,
+admission generation or qualification is established by that packet.
 
-## Binary and editor artifacts
+For `0.11.0`, the Rust gap-repair support claim remains `usable alpha`.
+Fixture, installed-package, packaged-editor, bounded test-only transaction, and
+before/after receipt paths are proved when a valid route exists. The governed
+real-repository corpus currently has zero eligible attempts, so release copy
+must not imply measured route yield or ordinary-user success. Run `cargo xtask
+rust-repair-trust-report` and `cargo xtask check-support-tiers`; the latter
+requires the unique canonical row and hard-caps it at `usable alpha` until one
+promotion decision covers both the full governed corpus and the installed
+CLI/packaged VS Code pilot (#3076 and #1702). A complete report with real
+movement cannot promote the release claim by itself.
 
-Qualify every release-shaped artifact from the same accepted source:
+### Crate tarball contents
 
-- server archives for each supported Linux, macOS, and Windows target;
-- checksums and extraction layout;
-- native payload identity and target architecture;
-- Linux glibc floor where applicable;
-- npm launcher metadata and resolution behavior;
-- VS Code extension package and managed-server contract;
-- Zed extension `wasm32-wasip2` build;
-- Python wheel metadata, RECORD, payload, and independent installed-consumer
-  behavior when that distribution is included in the release.
+`crates/ripr/Cargo.toml` intentionally includes `tests/**` and the tracked
+example paths (`examples/*/example.diff`, `examples/*/src/**`,
+`examples/*/tests/**`, and the examples' shared `examples/support/*.rs`) in the
+published source distribution. The package list
+therefore carries the checked integration corpus and sample workspace used by
+release and dogfood evidence. This does not change the installed binary or
+library API, but removing either surface is a release-contract change that must
+be reviewed against `cargo package -p ripr --list` and this document.
 
-Do not substitute a host-built binary for a target artifact or infer one
-platform's result from another.
-
-## Release qualification
-
-The release-control issue defines the authoritative qualification set. At a
-minimum, preserve evidence for:
-
-- exact Rust build compiler and independent source-MSRV proof;
-- strict Clippy, formatting, tests, doctests, golden and fixture contracts;
-- coverage generation with matching LLVM tools;
-- Windows and macOS terminal outcomes;
-- formal-verification/Kani outcome under its own pinned compiler identity;
-- package and archive rehearsals;
-- source, package, and artifact identities tied to the candidate SHA.
-
-Historical receipts remain historical. Never relabel an older compiler,
-candidate, or artifact as current proof.
-
-## Publication
-
-Publish only after the release-control authority admits the exact candidate and
-all required evidence is terminal.
-
-Typical publication commands are:
+The published `cli_help_hierarchy` target must compile and run from the
+extracted package without repository-root documentation. It keeps the rendered
+help and synthetic-document cases; its shared helper is packaged under
+`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
+the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
+real Cargo archive and rejects removal of the shared test helper:
 
 ```bash
-cargo publish -p ripr --locked
+cargo test -p ripr --test cli_help_hierarchy
+cargo test -p xtask --test ripr_public_guide_contract
 ```
 
-Other channels use their dedicated protected workflows. Do not publish from a
-local replacement artifact when a protected workflow owns that channel.
+These focused checks establish the help target's package boundary. Other
+packaged test targets retain their own asset requirements and are not qualified
+by this check.
 
-After publication:
+The example paths are enumerated rather than globbed as `examples/**` on
+purpose. `ripr` runs against the sample workspace during tests and writes a
+fact cache into `crates/ripr/examples/sample/target/`. That directory is
+gitignored, but a wildcard include still pulls it into the package, and
+`cargo package` then fails its uncommitted-files check after any test run.
+Widening the glob reintroduces that failure; add new example subdirectories to
+the list instead.
 
-- verify crates.io metadata and install behavior;
-- verify GitHub Release archives and checksums;
-- verify npm/editor manifests resolve the matching server release;
-- verify public documentation and changelog point at the released version;
-- retain the terminal release receipt and exact source/artifact identities.
+For the defaults-first install path, also run the local install proof from
+[Installation verification](INSTALLATION_VERIFICATION.md).
 
-## Rollback and partial publication
+For 0.8.x release claims about evidence-to-repair readiness, runtime
+completeness, or actionability projection, also run the Lane 1 evidence
+reports:
 
-If any publication step fails, stop and record exactly which immutable assets
-were published. Do not overwrite or silently replace a published crate or
-archive. Follow the release-control issue's recovery procedure, using a new
-version when ecosystem immutability requires one.
+```bash
+cargo xtask lane1-evidence-audit
+cargo xtask evidence-quality-scorecard
+```
 
-A release is not complete merely because one channel succeeded. Public status
-must distinguish complete, partial, failed, and not-yet-attempted channels.
+The release claim is supported only when the Lane 1 audit coverage section
+reports zero `static_unknown` items without named limitations, zero actionable
+canonical items without repair routes, and zero actionable canonical items
+without verify commands. Raw finding counts are diagnostic context; actionable
+aligned items are the user-facing work count.
+
+## Runtime Smoke
+
+```bash
+cargo run -p ripr -- --version
+cargo run -p ripr -- doctor
+cargo run -p ripr -- pilot --root fixtures/boundary_gap/input --out target/ripr/release-smoke/pilot
+cargo run -p ripr -- outcome --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
+cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff --json
+cargo run -p ripr -- explain --diff crates/ripr/examples/sample/example.diff probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250
+cargo run -p ripr -- context --diff crates/ripr/examples/sample/example.diff --at probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250 --json
+```
+
+The version smoke must print exactly `ripr <CARGO_PKG_VERSION> (<commit>)`
+with one trailing newline, exit 0, and leave stderr empty; `<commit>` is the
+full commit the candidate was built or packaged from (see
+[installation verification](INSTALLATION_VERIFICATION.md)). `--version`/`-V` is a
+side-effect-free identity query and takes precedence over help, JSON, and
+verbose-looking flags; it must not emit the help screen or write analysis
+artifacts. Command-local version routes such as `ripr lsp --version` retain
+their existing output contract.
+
+## Install And Release Proof
+
+Before calling an install or release-path PR complete, verify the crate package,
+the local install path, the extension package, and the published server assets:
+
+```bash
+cargo package -p ripr --list
+cargo publish -p ripr --dry-run
+cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke
+target/ripr/install-smoke/bin/ripr --version
+target/ripr/install-smoke/bin/ripr first-pr --help
+target/ripr/install-smoke/bin/ripr doctor
+target/ripr/install-smoke/bin/ripr pilot --root fixtures/boundary_gap/input --out target/ripr/install-smoke/pilot
+target/ripr/install-smoke/bin/ripr outcome --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
+npm --prefix editors/vscode ci
+npm --prefix editors/vscode run compile
+npm --prefix editors/vscode run package
+```
+
+For first-run adoption releases, also confirm the generated GitHub workflow
+summary includes `#### First-run status`, the `missing_start_here` recovery
+state, and the `target/ripr/reports/start-here.md` front door. Confirm
+`editors/vscode/package.json` contributes `ripr: Start Current Repair` so the
+installed editor path exposes the same repair loop.
+
+For a published release, confirm that GitHub Releases contains the VSIX, server
+manifest, server archives, and checksums:
+
+```bash
+gh release list --repo EffortlessMetrics/ripr --limit 5
+gh release view v0.8.0 --repo EffortlessMetrics/ripr --json name,tagName,publishedAt,assets,url,isDraft,isPrerelease
+gh release download v0.8.0 --repo EffortlessMetrics/ripr --pattern 'ripr-server-v0.8.0-x86_64-pc-windows-msvc.zip' --pattern 'ripr-server-manifest-v0.8.0.json' --dir target/ripr/release-smoke --clobber
+```
+
+For the `v0.8.0` release, the GitHub Release must have the VSIX, server
+manifest, per-target server archives, checksums, and a server archive whose
+manifest checksum matches the downloaded archive. The extracted server must run
+`ripr --version`, `ripr lsp --version`, `ripr pilot`, `ripr outcome`, and
+`ripr agent verify`. When an agent verify JSON artifact is available, also run
+`ripr agent receipt` for the top seam.
+
+## Name Gate
+
+Immediately before the first real publish:
+
+```bash
+cargo search ripr --limit 5
+```
+
+Then check the crates.io API:
+
+```bash
+curl -i https://crates.io/api/v1/crates/ripr
+```
+
+If `ripr` is taken, stop. Do not publish under a fallback name without a naming
+decision.
+
+## Publish
+
+```bash
+cargo login
+cargo publish -p ripr
+```
+
+Cargo may time out while polling the registry index after upload. If that
+happens, check crates.io manually before retrying.
+
+## Post-Publish
+
+The release commit bumps the package version and
+`LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs`
+together to the release version, and publication runs from that commit —
+never for a release candidate (#5208). The constant must travel with the
+version it names: `init --ci github` self-pins generators at or below it,
+so a constant bumped only after publication would make the just-published
+generator pin its predecessor with a spurious "not released" warning, on
+every release, permanently. The first post-release commit moves the package
+version to the next development version while the constant stays. Between
+the release commit and verified publication, a dev-built generator self-pins
+a version whose archive is not up yet — publish promptly, and refresh CI
+with the previous release until publication verifies. `cargo xtask release-readiness
+--version <version>` checks the constant as `init-pin-version`. Once CHANGELOG.md has
+the `## <version>` heading the cut's fold writes, a stable release fails until
+the constant equals the version; before the fold, the lag is the normal
+development state and the check warns, so main's push CI stays green, but a
+constant already at or past the version fails because development generators
+would pin an unpublished release. An unreadable CHANGELOG.md fails. A release
+candidate fails unless the constant names a release older than its stable
+target.
+
+```bash
+cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force
+target/ripr/install-smoke-cratesio/bin/ripr --version
+target/ripr/install-smoke-cratesio/bin/ripr first-pr --help
+target/ripr/install-smoke-cratesio/bin/ripr doctor
+target/ripr/install-smoke-cratesio/bin/ripr pilot --root fixtures/boundary_gap/input --out target/ripr/install-smoke-cratesio/pilot
+target/ripr/install-smoke-cratesio/bin/ripr outcome --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json
+mkdir -p target/ripr/install-smoke-cratesio/agent
+target/ripr/install-smoke-cratesio/bin/ripr agent verify --root . --before fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json --after fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json --json > target/ripr/install-smoke-cratesio/agent/agent-verify.json
+target/ripr/install-smoke-cratesio/bin/ripr agent receipt --root . --verify-json target/ripr/install-smoke-cratesio/agent/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/install-smoke-cratesio/agent/agent-receipt.json
+```
+
+Tag the release — in a checkout of the **source** repository
+(`EffortlessMetrics/ripr`), never in ripr-swarm (#2025):
+
+```bash
+# Run inside an EffortlessMetrics/ripr checkout; fetch AND push URLs must be that repo.
+git remote get-url origin        # expect github.com/EffortlessMetrics/ripr(.git)?
+git remote get-url --push origin # pushurl must also resolve to EffortlessMetrics/ripr (#2193 review)
+git tag v0.8.0
+git push origin v0.8.0
+```
+
+Pushing the tag publishes nothing by itself. The release workflows run only by
+`workflow_dispatch`, one channel at a time, in the order and with the receipts
+that [RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) gives: create the GitHub
+Release, then dispatch `release-server-binaries.yml`, then
+`publish-extension.yml` on the tag (`--ref v0.8.0`) with exactly one of
+`publish_vs_marketplace=true` or `publish_open_vsx=true`; the workflow refuses
+zero or two channels. The extension workflow attaches its VSIX to the existing
+`v<version>` Release without creating or replacing it.
+
+Update docs or release notes if the install command or package metadata changed.
+
+## Public-Surface Copy
+
+Before publishing, run the
+[Release copy checklist](RELEASE_COPY_CHECKLIST.md). It covers the GitHub
+Release body, marketplace metadata, README install commands, badge freshness
+disclosure, public vocabulary, and asset/dependent-channel verification.
+For 0.8.0, also compare GitHub About and repository topics with the current
+release-readiness handoff before changing repository metadata. Repository
+metadata should describe static mutation-exposure analysis for test-gap review
+without implying runtime mutation execution, generated tests, provider-backed
+analysis, default blocking, or stable preview-language gate authority.
+
+## Recovery
+
+If a release workflow fails after the tag has been pushed, prefer
+fix-forward over retagging. Workflow reruns (`gh workflow run ...`) also
+belong to the source repository: run them with `--repo EffortlessMetrics/ripr`
+from anywhere else, or from a source checkout. The tag is the release-prep snapshot; the
+release workflows can be rerun against `main` (or any commit that contains
+the fix) using `workflow_dispatch`, and uploaded assets attach to the
+existing GitHub Release rather than replacing it.
+
+1. Open a focused fix PR on `main` that reproduces the failure as a test
+   and fixes only the broken path. Merge it.
+2. Rerun the failed workflow via `workflow_dispatch` with the same
+   `version` input as the tag, for example
+   `gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr -f version=0.8.0`. The
+   asset names continue to use the original version, so they overlay
+   correctly on the existing Release.
+3. After server assets are present and verified, rerun any downstream
+   workflow that was gated on them, for example
+   `publish-extension.yml`. Its dispatch requires `source_sha` (the full 40-hex
+   release head the `v<version>` tag peels to) and `manifest_sha256` (the raw-byte
+   digest of the published server manifest) besides `version`, and the run
+   must be dispatched at `source_sha`; the second channel also needs
+   `vsix_sha256`. Exactly one channel (`publish_vs_marketplace` or
+   `publish_open_vsx`) may be `true` per dispatch; the workflow refuses zero or
+   two. Use the exact commands in
+   [RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) section 6 rather than
+   composing the inputs by hand. The VSIX attaches to the `v<version>` Release
+   named by `version`.
+4. Do not retag and do not delete the GitHub Release. Leave the tag at
+   the release-prep commit; the fix-forward commit is on `main` and any
+   subsequent point release will include it.
+5. Update the GitHub Release body to document the recovery if the failure
+   was user-visible. crates.io publish remains a manual step and should
+   only run once asset verification is complete.
+
+This pattern is what the `v0.5.0` release used after the initial Windows
+server-archive failure; see CHANGELOG `Release recovery (v0.5.0)` for the
+record.
