@@ -1617,6 +1617,10 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         .into_iter()
         .map(str::to_string)
         .collect();
+    // The disclosure count is the owner opt-out count, which equals the
+    // withheld set only while the LSP check input carries no suppression policy
+    // (#14610). It is taken before the out-of-scope partition below, so a
+    // withheld finding that the partition would also drop is still counted.
     let owner_opt_out_findings = output.owner_opt_outs.len();
     // A withheld finding that carries a static limit still limits the run: the
     // analysis was incomplete for that owner, so the status stays `limited`
