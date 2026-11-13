@@ -1,6 +1,7 @@
-name: Apply Rust 1.100 review repairs
+name: Apply Rust 1.100 final repairs
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - build/rust-1.100-upgrade
@@ -10,15 +11,16 @@ on:
 permissions: {}
 
 concurrency:
-  group: rust-1.100-review-repair
+  group: rust-1.100-final-repair
   cancel-in-progress: false
 
 jobs:
   repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -29,9 +31,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: 1.100.0
-          components: rustfmt
+          components: rustfmt,clippy
 
-      - name: Apply bounded review repairs
+      - name: Install source-floor compiler
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --no-self-update
+
+      - name: Apply bounded Rust 1.100 repairs
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
@@ -39,6 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -47,9 +54,13 @@ jobs:
               text = target.read_text(encoding="utf-8")
               actual = text.count(old)
               if actual != count:
-                  raise SystemExit(f"{path}: expected {count} occurrence(s) of {old!r}, found {actual}")
+                  raise SystemExit(
+                      f"{path}: expected {count} occurrence(s) of {old!r}, found {actual}"
+                  )
               target.write_text(text.replace(old, new), encoding="utf-8")
 
+          # Historical MCP pair evidence must record the compiler selected by
+          # the historical subject checkout, not the migration checkout.
           replace_exact(
               ".github/workflows/python-wheel-qualification.yml",
               "          rustc -vV > pair/rustc-version.txt\n"
@@ -58,6 +69,7 @@ jobs:
               "          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n",
           )
 
+          # A/B comparisons must use one explicit compiler for both subjects.
           replace_exact(
               "xtask/src/warm_ab/nightly.rs",
               'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n',
@@ -83,6 +95,7 @@ jobs:
           )
           tests.write_text(text.replace(marker, inserted + marker), encoding="utf-8")
 
+          # The CPX42 route must check every label required by the selected job.
           old_idle = (
               "          idle() { printf '%s' \"$runners\" | jq -s -e --arg model \"$1\" --arg cap \"$2\" "
               "'[.[].runners[]? | select(.status == \"online\" and (.busy | not) and "
@@ -95,10 +108,18 @@ jobs:
               "([.labels[].name | ascii_downcase] | index(\"em-ci\") and index($model) and index($cap) "
               "and ($extra == \"\" or index($extra))))] | length > 0' >/dev/null; }\n"
           )
-          old_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\n'
-          new_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\n'
-          old_route = "            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n"
-          new_route = "            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n"
+          old_counter = (
+              'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\\n'
+          )
+          new_counter = (
+              'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\\n'
+          )
+          old_route = (
+              "            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n"
+          )
+          new_route = (
+              "            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n"
+          )
           for path in [
               ".github/workflows/routed-rust.yml",
               "fixtures/convergence/windows-subset/merge-ready.yml",
@@ -142,37 +163,206 @@ jobs:
           workflow_tests.write_text(text + addition, encoding="utf-8")
 
           for path in ["docs/swarm-development.md", "docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:
-              target = Path(path)
-              text = target.read_text(encoding="utf-8")
-              if "runner_image_unavailable" not in text:
-                  raise SystemExit(f"{path}: stale runner reason was already absent")
-              target.write_text(
-                  text.replace("runner_image_unavailable", "runner_capacity_unavailable"),
-                  encoding="utf-8",
+              replace_exact(
+                  path,
+                  "runner_image_unavailable",
+                  "runner_capacity_unavailable",
               )
+
+          # A checked-out branch can override rustup's default. Pin the native
+          # subset job explicitly and retain that value in its receipt.
+          replace_exact(
+              ".github/workflows/windows-advisory.yml",
+              "    env:\n"
+              "      SELECTOR_CONSUMER_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}\n",
+              "    env:\n"
+              "      RUSTUP_TOOLCHAIN: 1.100.0\n"
+              "      SELECTOR_CONSUMER_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}\n",
+          )
+
+          # Rust 1.100 strict-Clippy findings. These are semantic-preserving
+          # repairs and remain source-compatible with the declared 1.95 floor.
+          replace_exact(
+              "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs",
+              "    assert_eq!(multi_line_string_line_ranges(source), Some(vec![2..=4]));\n",
+              "    assert_eq!(\n"
+              "        multi_line_string_line_ranges(source),\n"
+              "        Some(std::iter::once(2..=4).collect::<Vec<_>>())\n"
+              "    );\n",
+          )
+          replace_exact(
+              "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+              '            let start = body.find("spyOn").map_or(0, |idx| idx);\n',
+              '            let start = body.find("spyOn").unwrap_or(0);\n',
+          )
+          replace_exact(
+              "crates/ripr/src/git.rs",
+              "        if newline != [b'\\n'] {\n",
+              '        if newline != *b"\\n" {\n',
+          )
+          replace_exact(
+              "crates/ripr/src/cli/commands/kani_report.rs",
+              "fn paths_alias(left: &Path, right: &Path) -> bool {\n"
+              "    if left == right {\n"
+              "        return true;\n"
+              "    }\n"
+              "    #[cfg(unix)]\n"
+              "    {\n"
+              "        use std::os::unix::fs::MetadataExt;\n"
+              "        if let (Ok(left), Ok(right)) = (left.metadata(), right.metadata()) {\n"
+              "            return left.dev() == right.dev() && left.ino() == right.ino();\n"
+              "        }\n"
+              "    }\n"
+              "    false\n"
+              "}\n",
+              "fn paths_alias(left: &Path, right: &Path) -> bool {\n"
+              "    #[cfg(unix)]\n"
+              "    {\n"
+              "        use std::os::unix::fs::MetadataExt;\n"
+              "        left == right\n"
+              "            || matches!(\n"
+              "                (left.metadata(), right.metadata()),\n"
+              "                (Ok(left), Ok(right))\n"
+              "                    if left.dev() == right.dev() && left.ino() == right.ino()\n"
+              "            )\n"
+              "    }\n"
+              "    #[cfg(not(unix))]\n"
+              "    {\n"
+              "        left == right\n"
+              "    }\n"
+              "}\n",
+          )
+          replace_exact(
+              "crates/ripr/src/cli/commands/doctor.rs",
+              "fn path_command_exists(path: &Path) -> bool {\n"
+              "    let Ok(meta) = path.metadata() else {\n"
+              "        return false;\n"
+              "    };\n"
+              "    if !meta.is_file() {\n"
+              "        return false;\n"
+              "    }\n"
+              "    #[cfg(unix)]\n"
+              "    {\n"
+              "        use std::os::unix::fs::PermissionsExt;\n"
+              "        meta.permissions().mode() & 0o111 != 0\n"
+              "    }\n"
+              "    #[cfg(not(unix))]\n"
+              "    {\n"
+              "        true\n"
+              "    }\n"
+              "}\n",
+              "fn path_command_exists(path: &Path) -> bool {\n"
+              "    #[cfg(unix)]\n"
+              "    {\n"
+              "        use std::os::unix::fs::PermissionsExt;\n"
+              "        path.metadata().is_ok_and(|meta| {\n"
+              "            meta.is_file() && meta.permissions().mode() & 0o111 != 0\n"
+              "        })\n"
+              "    }\n"
+              "    #[cfg(not(unix))]\n"
+              "    {\n"
+              "        path.is_file()\n"
+              "    }\n"
+              "}\n",
+          )
+
+          # Ratchets and policy prose must describe the current source.
+          replace_exact(
+              "policy/evidence-state-literals.txt",
+              "crates/ripr/src/lsp/gap_artifacts.rs|4\n",
+              "crates/ripr/src/lsp/gap_artifacts.rs|3\n",
+          )
+          replace_exact(
+              "policy/clippy-debt.toml",
+              "# `[[planned]]` lints in policy/clippy-lints.toml (indexing_slicing,\n"
+              "# string_slice, disallowed_fields, manual_pop_if) stay there — they are\n"
+              "# already dual-railed with Cargo.toml. Do not duplicate them here.\n",
+              "# `[[planned]]` lints in policy/clippy-lints.toml (indexing_slicing,\n"
+              "# string_slice, disallowed_fields) stay there; `manual_pop_if` is active\n"
+              "# in that ledger. All are already dual-railed with Cargo.toml. Do not\n"
+              "# duplicate them here.\n",
+          )
+
+          # The compiler upgrade does not require changing package homepage
+          # metadata. Restore the mainline publishing contract.
+          replace_exact(
+              "Cargo.toml",
+              'repository = "https://github.com/EffortlessMetrics/ripr/"\n\n'
+              "[workspace.lints.rust]\n",
+              'repository = "https://github.com/EffortlessMetrics/ripr/"\n'
+              'homepage = "https://github.com/EffortlessMetrics/ripr/"\n\n'
+              "[workspace.lints.rust]\n",
+          )
+          for path in ["crates/ripr/Cargo.toml", "crates/ripr-contract/Cargo.toml"]:
+              replace_exact(
+                  path,
+                  "repository.workspace = true\n"
+                  "description = ",
+                  "repository.workspace = true\n"
+                  "homepage.workspace = true\n"
+                  "description = ",
+              )
+          replace_exact(
+              "docs/PUBLISHING.md",
+              "Verify `repository` points at the canonical GitHub repository and that the\n"
+              "packaged manifest does not reintroduce a duplicate `homepage` before publishing.\n",
+              "Verify `repository` and `homepage` point at the canonical GitHub repository before publishing.\n",
+          )
           PY
 
           cargo fmt --all
+          cargo fmt --all -- --check
           git diff --check
+
+          cargo test --locked -p ripr --lib
           cargo test --locked -p xtask warm_ab
           cargo test --locked -p repo-policy --lib routed_rust_cpx42_selection_matches_required_labels
           cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
           cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
+          cargo xtask check-architecture
+          cargo +1.95.0 check --locked --workspace --all-targets
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+          # The temporary applicator is itself an extra compiler setup. Remove
+          # it only while testing the permanent workflow inventory, then restore
+          # it so this run can finish and the connector can delete it separately.
+          workflow_tmp="$(mktemp)"
+          mv .github/workflows/rust-1.100-review-repair.yml "$workflow_tmp"
+          restore_workflow() {
+            mv "$workflow_tmp" .github/workflows/rust-1.100-review-repair.yml
+          }
+          trap restore_workflow EXIT
           cargo test --locked -p repo-policy --test workflow_action_pins
-          ! grep -RIl 'runner_image_unavailable' docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md
+          restore_workflow
+          trap - EXIT
+
+          ! grep -RIl 'runner_image_unavailable' \
+            docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             .github/workflows/python-wheel-qualification.yml \
             .github/workflows/routed-rust.yml \
+            .github/workflows/windows-advisory.yml \
             fixtures/convergence/windows-subset/merge-ready.yml \
             xtask/src/warm_ab/nightly.rs \
             xtask/src/warm_ab/tests.rs \
             tools/repo-policy/src/workflow_tests.rs \
             docs/swarm-development.md \
-            docs/SWARM_RUNNER_ROLLOUT_PLAN.md
-          git commit -m "fix(ci): preserve compiler and runner evidence integrity"
+            docs/SWARM_RUNNER_ROLLOUT_PLAN.md \
+            crates/ripr/src/analysis/language/python/trailing_comment_tests.rs \
+            crates/ripr/src/analysis/language/typescript/related_tests.rs \
+            crates/ripr/src/git.rs \
+            crates/ripr/src/cli/commands/kani_report.rs \
+            crates/ripr/src/cli/commands/doctor.rs \
+            policy/evidence-state-literals.txt \
+            policy/clippy-debt.toml \
+            Cargo.toml \
+            crates/ripr/Cargo.toml \
+            crates/ripr-contract/Cargo.toml \
+            docs/PUBLISHING.md
+          git commit -m "fix(build): complete Rust 1.100 migration repairs"
           git push \
             --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
             origin "HEAD:refs/heads/$BRANCH"
