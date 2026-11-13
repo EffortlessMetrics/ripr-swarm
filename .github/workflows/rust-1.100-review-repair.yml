@@ -50,8 +50,6 @@ jobs:
                   raise SystemExit(f'{path}: expected {count} occurrence(s) of {old!r}, found {actual}')
               target.write_text(text.replace(old, new), encoding='utf-8')
 
-          # The historical MCP pair builds under each subject checkout's own pin.
-          # Record that same compiler rather than the migration checkout's pin.
           replace_exact(
               '.github/workflows/python-wheel-qualification.yml',
               '          rustc -vV > pair/rustc-version.txt\n'
@@ -60,8 +58,6 @@ jobs:
               '          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n',
           )
 
-          # Warm A/B measurements must not mix compiler differences into product
-          # timing. Cargo's explicit +toolchain selector wins over each worktree pin.
           replace_exact(
               'xtask/src/warm_ab/nightly.rs',
               'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n',
@@ -87,8 +83,6 @@ jobs:
           )
           tests.write_text(text.replace(marker, inserted + marker), encoding='utf-8')
 
-          # A CPX42 runner is eligible only when it satisfies every label used by
-          # the corresponding job, otherwise selection can strand the job queued.
           old_idle = (
               '          idle() { printf \'%s\' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '
               '\'[.[].runners[]? | select(.status == "online" and (.busy | not) and '
@@ -101,12 +95,8 @@ jobs:
               '([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap) '
               'and ($extra == "" or index($extra))))] | length > 0\' >/dev/null; }\n'
           )
-          old_counter = (
-              'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\n'
-          )
-          new_counter = (
-              'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\n'
-          )
+          old_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\n'
+          new_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\n'
           old_route = '            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n'
           new_route = '            elif idle cpx42 rust-16gb rust-medium; then target=cpx42 reason=cpx42_idle\n'
           for path in [
@@ -119,44 +109,41 @@ jobs:
 
           workflow_tests = Path('tools/repo-policy/src/workflow_tests.rs')
           text = workflow_tests.read_text(encoding='utf-8')
-          addition = r'''
-
-#[test]
-fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {
-    let root = crate::test_support::workspace_root()?;
-    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
-        .map_err(|error| error.to_string())?;
-    let counter = text
-        .lines()
-        .find(|line| line.contains("cpx42_idle_ready="))
-        .ok_or_else(|| "missing CPX42 readiness counter".to_string())?;
-    assert!(counter.contains("rust-16gb"));
-    assert!(counter.contains("rust-medium"));
-    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));
-    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));
-    Ok(())
-}
-
-#[test]
-fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {
-    let root = crate::test_support::workspace_root()?;
-    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))
-        .map_err(|error| error.to_string())?;
-    assert!(text.contains(
-        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"
-    ));
-    assert!(text.contains(
-        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"
-    ));
-    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));
-    Ok(())
-}
-'''
           if 'fn routed_rust_cpx42_selection_matches_required_labels()' in text:
               raise SystemExit('workflow regression tests already exist')
+          addition = (
+              '\n\n#[test]\n'
+              'fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {\n'
+              '    let root = crate::test_support::workspace_root()?;\n'
+              '    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))\n'
+              '        .map_err(|error| error.to_string())?;\n'
+              '    let counter = text\n'
+              '        .lines()\n'
+              '        .find(|line| line.contains("cpx42_idle_ready="))\n'
+              '        .ok_or_else(|| "missing CPX42 readiness counter".to_string())?;\n'
+              '    assert!(counter.contains("rust-16gb"));\n'
+              '    assert!(counter.contains("rust-medium"));\n'
+              '    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));\n'
+              '    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));\n'
+              '    Ok(())\n'
+              '}\n\n'
+              '#[test]\n'
+              'fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {\n'
+              '    let root = crate::test_support::workspace_root()?;\n'
+              '    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))\n'
+              '        .map_err(|error| error.to_string())?;\n'
+              '    assert!(text.contains(\n'
+              '        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"\n'
+              '    ));\n'
+              '    assert!(text.contains(\n'
+              '        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"\n'
+              '    ));\n'
+              '    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));\n'
+              '    Ok(())\n'
+              '}\n'
+          )
           workflow_tests.write_text(text + addition, encoding='utf-8')
 
-          # Keep the proof vocabulary aligned with the workflow's actual output.
           for path in [
               'docs/swarm-development.md',
               'docs/SWARM_RUNNER_ROLLOUT_PLAN.md',
