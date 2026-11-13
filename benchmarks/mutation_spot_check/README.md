@@ -76,6 +76,11 @@ per-crate `spot-<name>` receipts keep them). It runs only on explicit
 advisory: it never writes the default branch, and its numbers gate nothing.
 
 A crate whose job times out, is lost, or fails before finishing is excluded from the final scoreboard receipt (only legs that wrote `LEG_COMPLETE` with full `outcomes.json` and `mutants.json` are scored) and is named in the `score` job's warnings; the others are still scored.
+On 2026-11-13 the corpus was cut from 12 to nine crates: `glob`, `bitflags`, and
+`rust-shlex` lost their hosted runners with exit 143 during full-corpus run
+42521117016 and wrote no `LEG_COMPLETE`. The remaining population comprises the
+eight legs that completed in that run plus `itoa`, which completed in diagnostic
+run 43375450639. This is a hosted-reliability cut, not an analyzer recall change.
 A `repos` batch is for trying a crate, not for promotion: before promoting, check
 that the receipt's repository names and revisions exactly match `corpus.json`,
 and never promote a filtered receipt while the manifest still lists more crates.
