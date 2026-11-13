@@ -1,0 +1,95 @@
+{
+  "schema": "ripr.formal-claim-plan.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "base": "1111111111111111111111111111111111111111",
+  "group": "2222222222222222222222222222222222222222",
+  "members": [
+    {
+      "pr_number": 14471,
+      "head": "3333333333333333333333333333333333333333"
+    },
+    {
+      "pr_number": 14478,
+      "head": "4444444444444444444444444444444444444444"
+    }
+  ],
+  "registry_generation": "example-registry-1",
+  "controller_generation": "example-controller-1",
+  "producer_generation": "example-producer-1",
+  "proof_profile": "kani-critical-v1",
+  "selection_input_digest": "sha256:8a5ee9652b52819d74ab79bde34dd30f48534a378128cfb2b4ab8d4ddcc60fd6",
+  "classification_complete": false,
+  "fallback_all_critical": true,
+  "fallback_reasons": [
+    "change_classification_incomplete"
+  ],
+  "critical_claim_count": 2,
+  "selected_claim_count": 2,
+  "claims": [
+    {
+      "claim_id": "ripr.actionability",
+      "claim_generation": 1,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "kani",
+      "route": "native",
+      "disposition": "selected",
+      "reasons": [
+        "all_critical_fallback",
+        "change_classification_incomplete"
+      ],
+      "subjects": [
+        "ripr::kani_smoke::evidence_state_actionable_only_for_actionable"
+      ],
+      "limitations": [
+        "Illustrative projected claim; not a governed registry record."
+      ]
+    },
+    {
+      "claim_id": "ripr.advisory-helper",
+      "claim_generation": 1,
+      "criticality": "advisory",
+      "phase": "manual",
+      "provider": "manual",
+      "route": "manual",
+      "disposition": "not_selected",
+      "reasons": [
+        "not_a_critical_claim"
+      ],
+      "subjects": [],
+      "limitations": [
+        "Not a critical claim."
+      ]
+    },
+    {
+      "claim_id": "ripr.repair-finish",
+      "claim_generation": 1,
+      "criticality": "critical",
+      "phase": "admitted_merge_group",
+      "provider": "tla_plus",
+      "route": "unsupported",
+      "disposition": "selected",
+      "reasons": [
+        "all_critical_fallback",
+        "change_classification_incomplete"
+      ],
+      "subjects": [],
+      "limitations": [
+        "Native provider route is not admitted in the critical lane."
+      ]
+    }
+  ],
+  "expected_native_subjects": [
+    "ripr::kani_smoke::evidence_state_actionable_only_for_actionable"
+  ],
+  "zero_selection_basis": null,
+  "execution_authority": "not_granted",
+  "native_assurance": "not_assessed",
+  "limitations": [
+    "A selected manual or unsupported route remains visible and cannot be converted into native success.",
+    "Illustrative supplied facts; no Git or registry authentication occurred.",
+    "Input registry, change facts, Git identities and generations are supplied declarations and are not authenticated by this tool.",
+    "Source closure, semantic classification and provider applicability must be established by their owning producers.",
+    "The plan executes no provider and grants no CI or merge authority."
+  ]
+}
