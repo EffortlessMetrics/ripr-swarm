@@ -130,6 +130,7 @@ impl Fixture {
             root: self.root.clone(),
             base_ref: base_ref.to_string(),
             upload_sarif: upload_sarif == "true",
+            pull_request: true,
             gate_baseline: !gate_baseline.is_empty(),
             gate_configured: false,
             comment_mode: comment_mode.to_string(),
@@ -376,6 +377,7 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
         "Baseline debt delta was not run. Set `RIPR_GATE_BASELINE`",
         "RIPR Zero status was not run.",
         "- Diff SARIF: missing or skipped",
+        "- Repo seam SARIF: not generated (manual runs only; on a pull request the diff SARIF covers the changed lines)",
         "- Badge JSON: missing or skipped",
         "No PR test guidance report was generated.",
         "- Mode: `off`",
@@ -1320,6 +1322,7 @@ fn render_gate(
         root: fixture.root.clone(),
         base_ref: "trunk".to_string(),
         upload_sarif: true,
+        pull_request: true,
         gate_baseline: false,
         gate_configured,
         comment_mode: String::new(),
@@ -1699,6 +1702,34 @@ fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
     assert!(
         !start.contains("Open `target/ripr/reports/start-here.md`"),
         "{start}"
+    );
+    Ok(())
+}
+
+/// #14300: on a manual run the packet renders only the repo seam SARIF, so
+/// an absent seam file is the anomaly and an absent diff file is expected;
+/// a pull request is the reverse (pinned in the empty-root test above).
+#[test]
+fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
+    let fixture = Fixture::new("manual-sarif")?;
+    let input = CiSummaryInput {
+        root: fixture.root.clone(),
+        base_ref: "trunk".to_string(),
+        upload_sarif: true,
+        pull_request: false,
+        gate_baseline: false,
+        gate_configured: false,
+        comment_mode: String::new(),
+        configured_languages: vec!["rust".to_string()],
+    };
+    let summary = String::from_utf8(render_ci_summary(&input))?;
+    assert!(
+        summary.contains("- Diff SARIF: not generated (pull request runs only)\n"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("- Repo seam SARIF: missing or skipped\n"),
+        "{summary}"
     );
     Ok(())
 }

@@ -6,7 +6,9 @@
 //! cannot know which feature set a run enables, so the refused `assert_eq!`
 //! reads `static_unknown` with `rust_assertion_context_unresolved`, never as a
 //! gap and never as credit. A gate only the test carries, a different gate, a
-//! provably disabled gate and an `#[ignore]` test keep the gap.
+//! provably disabled gate and an `#[ignore]` test keep the gap. The same
+//! holds for an out-of-line `mod name;` declaration that brings in both the
+//! owner and the test (#14463).
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -274,5 +276,227 @@ fn the_ungated_owner_control_refuses_for_the_gate_not_for_a_comment() -> Result<
         "the test's gate must be the named refusal: {:?}",
         found.evidence
     );
+    Ok(())
+}
+
+/// A repository of `files` with `changed` holding `stamp`'s changed tail on
+/// `line`, diffed without context (#14463).
+fn finding_in_files(files: &[(&str, &str)], changed: &str, line: usize) -> Result<Finding, String> {
+    let repo = TempRepo::create("")?;
+    for (path, text) in files {
+        let path = repo.root.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(path, text).map_err(|error| error.to_string())?;
+    }
+    let diff = format!(
+        "diff --git a/{changed} b/{changed}\nindex 1111111..2222222 100644\n--- a/{changed}\n+++ b/{changed}\n@@ -{line},1 +{line},1 @@\n-    (raw & 0x0fff) | 0x4000\n+    0x4000 | (raw & 0x0fff)\n"
+    );
+    std::fs::write(repo.root.join("diff.patch"), diff).map_err(|error| error.to_string())?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let mut on_line = output.findings.iter().filter(|finding| {
+        finding.probe.location.line == line
+            && finding.probe.family == ripr::ProbeFamily::ReturnValue
+    });
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding.clone()),
+        other => Err(format!(
+            "premise: one return_value finding in {changed}:{line}, got {other:?} in {:?}",
+            output.findings
+        )),
+    }
+}
+
+const STAMP: &str = "pub fn stamp(raw: u16) -> u16 {\n    0x4000 | (raw & 0x0fff)\n}\n";
+
+const STAMP_TEST: &str = "    #[test]
+    fn stamp_sets_the_version_nibble() {
+        assert_eq!(stamp(0xffff), 0x4fff);
+        assert_eq!(stamp(0x0000), 0x4000);
+    }
+";
+
+#[test]
+fn an_out_of_line_module_gate_shared_with_the_owner_is_unknown_not_a_gap() -> Result<(), String> {
+    // `#[cfg(feature = "v4")] mod v4;` brings in both the owner and its test
+    // module: the test is compiled exactly when the owner is.
+    let same_file =
+        format!("{STAMP}\n#[cfg(test)]\nmod tests {{\n    use super::stamp;\n\n{STAMP_TEST}}}\n");
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            ("src/v4.rs", &same_file),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_withheld(&found, "owner and test in the gated module's file");
+    assert!(
+        found
+            .evidence
+            .iter()
+            .any(|line| line.contains("`mod v4;` at src/lib.rs:2")),
+        "the gated declaration must stay the disclosed refusal: {:?}",
+        found.evidence
+    );
+
+    // The owner and the test in sibling files under the one gated declaration.
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            (
+                "src/v4/mod.rs",
+                "pub mod stamp;\n#[cfg(test)]\nmod tests;\n",
+            ),
+            ("src/v4/stamp.rs", STAMP),
+            (
+                "src/v4/tests.rs",
+                &format!("use super::stamp::stamp;\n\n{STAMP_TEST}"),
+            ),
+        ],
+        "src/v4/stamp.rs",
+        2,
+    )?;
+    assert_withheld(
+        &found,
+        "owner and test in sibling files of the gated module",
+    );
+    Ok(())
+}
+
+#[test]
+fn an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap() -> Result<(), String> {
+    // The owner is ungated; only the test file's declaration carries the
+    // feature, so a default run never compiles the test.
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "pub mod v4;\n"),
+            (
+                "src/v4.rs",
+                &format!("{STAMP}\n#[cfg(test)]\n#[cfg(feature = \"v4\")]\nmod extra;\n"),
+            ),
+            (
+                "src/v4/extra.rs",
+                &format!("use super::stamp;\n\n{STAMP_TEST}"),
+            ),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_gap(&found, "a gated declaration only the test's chain carries");
+
+    // Owner under one gated declaration, test under a different one.
+    let found = finding_in_files(
+        &[
+            (
+                "src/lib.rs",
+                "#[cfg(feature = \"v4\")]\npub mod v4;\n#[cfg(feature = \"v7\")]\nmod v7;\n",
+            ),
+            ("src/v4.rs", STAMP),
+            (
+                "src/v7.rs",
+                &format!(
+                    "#[cfg(test)]\nmod tests {{\n    use crate::v4::stamp;\n\n{STAMP_TEST}}}\n"
+                ),
+            ),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_gap(&found, "owner and test under different gated declarations");
+
+    // A shared declaration gate that is provably off: neither ever runs.
+    let same_file =
+        format!("{STAMP}\n#[cfg(test)]\nmod tests {{\n    use super::stamp;\n\n{STAMP_TEST}}}\n");
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(any())]\nmod v4;\n"),
+            ("src/v4.rs", &same_file),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_gap(&found, "a shared declaration gate that is provably off");
+
+    // A shared gated declaration, plus a gate only the test carries below it:
+    // the test needs `slow`, which the owner does not.
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            (
+                "src/v4/mod.rs",
+                "pub mod stamp;\n#[cfg(test)]\n#[cfg(feature = \"slow\")]\nmod tests;\n",
+            ),
+            ("src/v4/stamp.rs", STAMP),
+            (
+                "src/v4/tests.rs",
+                &format!("use super::stamp::stamp;\n\n{STAMP_TEST}"),
+            ),
+        ],
+        "src/v4/stamp.rs",
+        2,
+    )?;
+    assert_gap(&found, "a test-only declaration gate below the shared one");
+
+    // The same extra gate written on the test's inline module.
+    let extra_inline = format!(
+        "{STAMP}\n#[cfg(test)]\n#[cfg(feature = \"slow\")]\nmod tests {{\n    use super::stamp;\n\n{STAMP_TEST}}}\n"
+    );
+    let found = finding_in_files(
+        &[
+            ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+            ("src/v4.rs", &extra_inline),
+        ],
+        "src/v4.rs",
+        2,
+    )?;
+    assert_gap(
+        &found,
+        "a test-only inline gate under the shared declaration",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_shared_module_gate_never_hides_the_tests_own_refusal() -> Result<(), String> {
+    // The gated declaration binds owner and test alike, but the test's own
+    // shape still keeps its assertion from settling the outcome: ignored, an
+    // expected panic, or an assertion only one path reaches (#14463).
+    let shapes = [
+        (
+            "an ignored test",
+            "    #[test]\n    #[ignore]\n    fn stamp_sets_the_version_nibble() {\n        assert_eq!(stamp(0xffff), 0x4fff);\n    }\n",
+        ),
+        (
+            "an expected-panic test",
+            "    #[test]\n    #[should_panic]\n    fn stamp_sets_the_version_nibble() {\n        assert_eq!(stamp(0xffff), 0x4fff);\n    }\n",
+        ),
+        (
+            "an assertion behind a condition",
+            "    #[test]\n    fn stamp_sets_the_version_nibble() {\n        if std::env::var(\"STAMP\").is_ok() {\n            assert_eq!(stamp(0xffff), 0x4fff);\n        }\n    }\n",
+        ),
+    ];
+    for (what, test) in shapes {
+        let same_file =
+            format!("{STAMP}\n#[cfg(test)]\nmod tests {{\n    use super::stamp;\n\n{test}}}\n");
+        let found = finding_in_files(
+            &[
+                ("src/lib.rs", "#[cfg(feature = \"v4\")]\nmod v4;\n"),
+                ("src/v4.rs", &same_file),
+            ],
+            "src/v4.rs",
+            2,
+        )?;
+        assert_gap(&found, what);
+    }
     Ok(())
 }

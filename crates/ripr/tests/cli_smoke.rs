@@ -4339,6 +4339,8 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     for flags in [
         vec!["--exclude", "src/big.rs"],
         vec!["--path", "src/lib.rs"],
+        // #14307: a bare path argument is the same scope as --path.
+        vec!["src/lib.rs"],
     ] {
         let output = run(&flags);
         assert_success(&output);
@@ -4417,6 +4419,15 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
             && message.contains("--path nowhere/**")
             && message.contains("src/big.rs"),
         "{message}"
+    );
+
+    // The bare path spelling fails closed the same way (#14307).
+    let bare_nothing = run(&["nowhere/**"]);
+    assert_eq!(bare_nothing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bare_nothing.stderr).contains("scope_filter_matched_nothing"),
+        "{}",
+        String::from_utf8_lossy(&bare_nothing.stderr)
     );
 
     // A scope that keeps only the oversized file leaves nothing that fits,
@@ -5674,6 +5685,69 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     Ok(())
 }
 
+/// #14452: `check --format agent` on a refused run prints the agent
+/// format's refusal record on stdout instead of zero bytes an agent could
+/// read as a clean run, keeping config file content off stdout.
+#[test]
+fn check_agent_refusal_emits_the_refused_record() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-agent-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "agent",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-14452",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.first()
+        != Some(
+            &"#ripr agent static-advisory refused run_status=base_unresolvable repair_route=analysis/base-resolution",
+        )
+    {
+        return Err(format!(
+            "agent refusal must open with the typed header:\n{stdout}"
+        ));
+    }
+    if !lines.get(1).is_some_and(|line| {
+        line.starts_with("stop=") && line.contains("definitely-not-a-real-ref-9f2a-14452")
+    }) {
+        return Err(format!(
+            "agent refusal must state the cause on stop=:\n{stdout}"
+        ));
+    }
+    if lines.last()
+        != Some(&"verify=refused|outcome=refused|findings=0|exposed=0|reason=base_unresolvable")
+    {
+        return Err(format!(
+            "agent refusal must close with verify=refused:\n{stdout}"
+        ));
+    }
+
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14452]\n")
+        .map_err(|err| err.to_string())?;
+    let output = run_ripr(&["check", "--format", "agent", "--root", &root_arg]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    if !stdout.starts_with("#ripr agent static-advisory refused run_status=config_invalid ") {
+        return Err(format!(
+            "config refusal must name config_invalid:\n{stdout}"
+        ));
+    }
+    if stdout.contains("canary_table_14452") {
+        return Err(format!(
+            "agent stdout must not echo ripr.toml content:\n{stdout}"
+        ));
+    }
+    if !String::from_utf8_lossy(&output.stderr).contains("canary_table_14452") {
+        return Err("the full config diagnostic stays on stderr".to_string());
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #7332: `check --format repo-exposure-json` on a refused run emits the
 /// format's own run_status/limitations envelope with zeroed metrics and an
 /// empty seams array.
@@ -6191,6 +6265,40 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             "human timeout recovery on stderr, exit 2, empty stdout: {stderr}"
         ));
     }
+
+    // #14452: the agent record carries the same bounded retry on `next=`,
+    // and stderr keeps the requested echo and retry the human format gets.
+    let agent = run(&["--format", "agent", "--mode", "draft"])?;
+    let agent_stdout = String::from_utf8_lossy(&agent.stdout);
+    let agent_stderr = String::from_utf8_lossy(&agent.stderr);
+    let next = agent_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or_else(|| format!("agent timeout record must carry next=: {agent_stdout}"))?;
+    for needle in [
+        "ripr check",
+        root_flag.as_str(),
+        "--base HEAD",
+        "--committed",
+        "--mode draft",
+        "--format agent",
+        "--timeout 2",
+    ] {
+        if !next.contains(needle) {
+            return Err(format!("agent next= must contain `{needle}`: {next}"));
+        }
+    }
+    if agent.status.code() != Some(2)
+        || !agent_stdout
+            .starts_with("#ripr agent static-advisory refused run_status=analysis_timeout ")
+        || !agent_stdout.contains("verify=refused|")
+        || !agent_stderr.contains("bounded retry: ripr check")
+        || !agent_stderr.contains("requested input:")
+    {
+        return Err(format!(
+            "agent timeout record and stderr recovery, exit 2:\n{agent_stdout}\n{agent_stderr}"
+        ));
+    }
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&shim_dir);
     Ok(())
@@ -6495,6 +6603,133 @@ fn assistant_loop_health_cli_writes_multi_proof_report() -> Result<(), Box<dyn s
         normalize_newlines(&expected_md),
         "assistant-loop health Markdown fixture drifted"
     );
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn assistant_loop_health_names_missing_and_malformed_proofs_on_stderr()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #14371: a mistyped or non-JSON --proof stays advisory (exit 0), but
+    // stderr names the path and the real cause instead of only `Proofs: 1`.
+    let workspace = unique_temp_workspace("assistant-loop-health-bad-proof");
+    std::fs::create_dir_all(&workspace)?;
+    let missing = workspace.join("no-such-proof.json");
+    let malformed = workspace.join("not-json-proof.json");
+    std::fs::write(&malformed, "not json")?;
+    let out = workspace.join("health.json");
+    let out_md = workspace.join("health.md");
+    let missing_arg = missing.display().to_string();
+    let malformed_arg = malformed.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "assistant-loop",
+        "health",
+        "--proof",
+        &missing_arg,
+        "--proof",
+        &malformed_arg,
+        "--proof",
+        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/missing-required-proof.json",
+        "--proof",
+        "fixtures/boundary_gap/expected/assistant-loop-health/proofs/unchanged-proof.json",
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Three unusable proofs warn; the usable unchanged proof's movement
+    // warning is analysis, not an input problem, and stays in the report.
+    assert!(stderr.contains("Warnings: 3"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "missing-required-proof.json: Proof input is missing selected seam and before/after movement context; regenerate it with `ripr assistant-loop proof`"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("unchanged-proof.json"), "{stderr}");
+    assert!(!stderr.contains(".;"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "no-such-proof.json: Proof input is unreadable: not found; pass the proof JSON"
+        ),
+        "a missing proof must say it is not found: {stderr}"
+    );
+    assert!(
+        stderr.contains("not-json-proof.json: Proof input is malformed"),
+        "a non-JSON proof must say it is malformed: {stderr}"
+    );
+    assert!(
+        stderr.contains("`ripr assistant-loop proof`"),
+        "each warning names the producer: {stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
+    let report = std::fs::read_to_string(&out)?;
+    assert!(
+        !report.contains("missing required selected seam and movement evidence"),
+        "the repair reason must carry the specific cause: {report}"
+    );
+    assert!(
+        report.contains("Proof input is unreadable: not found"),
+        "{report}"
+    );
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn pr_review_front_panel_names_unusable_inputs_on_stderr() -> Result<(), Box<dyn std::error::Error>>
+{
+    // #14371: a mistyped or non-JSON input stays advisory (exit 0), but
+    // stderr names the input and the cause in plain words.
+    let workspace = unique_temp_workspace("front-panel-bad-input");
+    std::fs::create_dir_all(&workspace)?;
+    let missing = workspace.join("no-such-guidance.json");
+    let malformed = workspace.join("not-json-gate.json");
+    std::fs::write(&malformed, "not json")?;
+    let out = workspace.join("panel.json");
+    let out_md = workspace.join("panel.md");
+    let missing_proof = workspace.join("typo/test-oracle-assistant-proof.json");
+    let missing_proof_arg = missing_proof.display().to_string();
+    let missing_arg = missing.display().to_string();
+    let malformed_arg = malformed.display().to_string();
+    let out_arg = out.display().to_string();
+    let out_md_arg = out_md.display().to_string();
+    let output = run_ripr_in_workspace(&[
+        "pr-review",
+        "front-panel",
+        "--assistant-proof",
+        &missing_proof_arg,
+        "--pr-guidance",
+        &missing_arg,
+        "--gate-decision",
+        &malformed_arg,
+        "--out",
+        &out_arg,
+        "--out-md",
+        &out_md_arg,
+    ])?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Warnings: 3"), "{stderr}");
+    assert!(
+        stderr.contains("Assistant proof artifact is missing: ")
+            && stderr.contains("typo/test-oracle-assistant-proof.json"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Optional PR guidance input is unreadable: read PR guidance")
+            && stderr.contains("no-such-guidance.json failed: not found"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Optional gate decision input is malformed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("os error"), "{stderr}");
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -25118,6 +25353,137 @@ fn explain_unknown_probe_fails_with_clear_error() -> sample_output::TestResult {
     Ok(())
 }
 
+/// #14384: a `file:line` miss names where the findings are, on the fresh
+/// route and on both artifact routes, and exits 2. The suggested selector
+/// then resolves, so the hint is a usable next step.
+#[test]
+fn location_miss_names_where_findings_are_on_fresh_and_artifact_routes() -> Result<(), String> {
+    let fixture = SampleDiffFixture::new("location-miss-hint")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("last-check.json").display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--write-artifact",
+        &artifact,
+    ]);
+    assert_success(&check);
+    // Fresh route: the #14077 cause already names the file's other finding
+    // lines, so the #14384 hint does not repeat them; for a file with no
+    // finding it adds where this scope's findings are.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("No finding is at line 9999")
+        || stderr.contains("Findings in src/lib.rs are on line")
+    {
+        return Err(format!(
+            "fresh same-file miss must name lines once: {stderr}"
+        ));
+    }
+    // The cause names those lines root-relative even though a fresh run
+    // stores absolute paths.
+    if !(stderr.contains("it is at src/lib.rs:") || stderr.contains("are at src/lib.rs:")) {
+        return Err(format!(
+            "fresh same-file miss must show a root-relative path: {stderr}"
+        ));
+    }
+    // A column is named as such, never read as a misspelled path.
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/lib.rs:9999:5",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2)
+        || !stderr.contains("drop the column")
+        || stderr.contains("is not the path of a file")
+    {
+        return Err(format!(
+            "fresh column miss must name the column form: {stderr}"
+        ));
+    }
+    let fresh = run_ripr(&[
+        "explain",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "src/nofile.rs:3",
+    ]);
+    let stderr = String::from_utf8_lossy(&fresh.stderr);
+    if fresh.status.code() != Some(2) || !stderr.contains("findings are in src/lib.rs") {
+        return Err(format!(
+            "fresh other-file miss must name finding files: {stderr}"
+        ));
+    }
+    let routes: [Vec<&str>; 2] = [
+        vec![
+            "explain",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "src/lib.rs:9999",
+        ],
+        vec![
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact,
+            "--at",
+            "src/lib.rs:9999",
+        ],
+    ];
+    for args in &routes {
+        let output = run_ripr(args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() != Some(2) {
+            return Err(format!("{args:?} must exit 2: {stderr}"));
+        }
+        if !stderr.contains("no finding matched \"src/lib.rs:9999\"")
+            || !stderr.contains("Findings in src/lib.rs are on line")
+        {
+            return Err(format!(
+                "{args:?} miss must name the finding lines: {stderr}"
+            ));
+        }
+        let line: String = stderr
+            .split("select one as src/lib.rs:")
+            .nth(1)
+            .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect())
+            .unwrap_or_default();
+        if line.is_empty() {
+            return Err(format!("{args:?} miss must suggest a selector: {stderr}"));
+        }
+        let suggested = format!("src/lib.rs:{line}");
+        let retry = run_ripr(&["explain", "--root", &root, "--from", &artifact, &suggested]);
+        if !retry.status.success() {
+            return Err(format!(
+                "suggested selector {suggested:?} must resolve: {}",
+                String::from_utf8_lossy(&retry.stderr)
+            ));
+        }
+    }
+    Ok(())
+}
+
 // -------- check-artifact reuse smoke (RIPR-SPEC-0140, #2107) --------
 
 /// End-to-end three-step flow: `check --write-artifact` once, then
@@ -35853,6 +36219,58 @@ fn outcome_artifacts_from_endless_device_are_refused_at_input_limit() -> Result<
     Ok(())
 }
 
+/// #14222: `reports ci-packet` and `feedback export` used to create a mistyped
+/// `--root` as a new directory tree and exit 0, and `feedback record` shared
+/// the same unvalidated root. A missing path and a file path must both be
+/// refused by the shared root validator, and nothing may be created.
+#[test]
+fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
+    let scratch = unique_temp_workspace("mistyped-root");
+    std::fs::create_dir_all(&scratch)?;
+    let missing = scratch.join("nope").join("deep");
+    let file = scratch.join("a-file");
+    std::fs::write(&file, "not a directory\n")?;
+    let commands: [(&str, &[&str]); 3] = [
+        ("reports ci-packet", &["reports", "ci-packet"]),
+        ("feedback export", &["feedback", "export"]),
+        (
+            "feedback record",
+            &[
+                "feedback",
+                "record",
+                "--snapshot",
+                "snap",
+                "--reason",
+                "useful_actionable",
+            ],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, argv) in commands {
+        for root in [&missing, &file] {
+            let root_text = root.display().to_string();
+            let mut args = argv.to_vec();
+            args.extend(["--root", root_text.as_str()]);
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let expected = format!("{name} root {root_text} is not a directory");
+            if output.status.code() != Some(2) || !stderr.contains(&expected) {
+                failures.push(format!(
+                    "{name} --root {root_text}: exit {:?}, stderr: {stderr}",
+                    output.status.code()
+                ));
+            }
+        }
+    }
+    let created = scratch.join("nope").exists();
+    let file_kept = std::fs::read_to_string(&file)?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert!(!created, "the mistyped --root was created");
+    assert_eq!(file_kept, "not a directory\n");
+    Ok(())
+}
+
 /// The artifact flags below read their file with an unbounded
 /// `std::fs::read`/`read_to_string`: pointed at an endless device, each grew
 /// until the kernel ended the process (about six seconds on a 16 GB host)
@@ -36712,6 +37130,86 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert!(
         suggested.status.success(),
         "the suggested base must load through `check`: {suggested:?}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #14238: a revision range typed where one revision is expected is answered
+/// as a range. A fixture with one configured remote would otherwise send the
+/// reader to `git fetch origin` for a branch name Git forbids. The suggested
+/// base then loads, and a misspelt plain branch keeps the fetch advice.
+#[test]
+fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("base-revision-range");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    assert!(add.status.success(), "fixture must gain `origin`: {add:?}");
+    let root_arg = root.display().to_string();
+
+    let control = run_ripr(&["check", "--root", &root_arg, "--base", "no-such-branch"]);
+    assert_eq!(control.status.code(), Some(2), "{control:?}");
+    let control_stderr = String::from_utf8_lossy(&control.stderr);
+    assert!(
+        control_stderr.contains("git fetch origin") && !control_stderr.contains("revision range"),
+        "fixture precondition: a misspelt plain branch gets the fetch advice: {control_stderr}"
+    );
+
+    for (range, start) in [
+        ("HEAD..HEAD", "HEAD"),
+        ("HEAD...HEAD", "HEAD"),
+        ("HEAD~0..", "HEAD~0"),
+    ] {
+        let output = run_ripr(&["check", "--root", &root_arg, "--base", range]);
+        assert_eq!(output.status.code(), Some(2), "{range}: {output:?}");
+        assert!(output.stdout.is_empty(), "{range}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("`{range}` is a revision range"))
+                && stderr.contains("`--base` takes one revision")
+                && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
+            "{range}: the refusal must name the range and the base to pass: {stderr}"
+        );
+        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+            assert!(
+                !stderr.contains(wrong),
+                "{range}: a range must get no `{wrong}` advice: {stderr}"
+            );
+        }
+        let suggested = run_ripr(&["check", "--root", &root_arg, "--base", start]);
+        assert!(
+            suggested.status.success(),
+            "{range}: the suggested `--base {start}` must load: {suggested:?}"
+        );
+    }
+
+    let head = run_ripr(&[
+        "diff",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD..HEAD~0",
+    ]);
+    assert_eq!(head.status.code(), Some(2), "{head:?}");
+    let head_stderr = String::from_utf8_lossy(&head.stderr);
+    assert!(
+        head_stderr.contains("`--head` takes one revision")
+            && head_stderr.contains("Pass the range's end: `--head HEAD~0`")
+            && !head_stderr.contains("git fetch"),
+        "the head refusal must name its own flag and the range's end: {head_stderr}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())

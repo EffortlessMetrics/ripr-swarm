@@ -47,13 +47,47 @@ pub(super) const ADVERTISED_CODE_ACTION_KINDS: [&str; 3] = [
     "source.ripr.refresh",
 ];
 
+/// Which pull-diagnostic provider the server advertises to one client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PullDiagnosticAdvertisement {
+    /// The client did not advertise `textDocument.diagnostic`: push only.
+    None,
+    /// Document pull without `workspaceDiagnostics`. A generic pull client
+    /// that sees `workspaceDiagnostics` may answer
+    /// `workspace/diagnostic/refresh` with a workspace pull alone and ignore
+    /// that report for every buffer it already pulls by document, so a save
+    /// or `ripr.refresh` never reaches the open file (Neovim 0.12, #1630).
+    /// Without the workspace provider the same client re-pulls each open
+    /// document on refresh.
+    DocumentOnly,
+    /// Document and workspace pull, for the ripr VS Code extension, whose
+    /// client re-pulls both on refresh and uses the workspace report for
+    /// changed files that are not open.
+    DocumentAndWorkspace,
+}
+
+impl PullDiagnosticAdvertisement {
+    /// Workspace pull is advertised only to the enhanced ripr editor client
+    /// (`experimental.riprEditor`), never inferred from the client name.
+    pub(super) fn for_client(pull_diagnostics: bool, ripr_editor_client: bool) -> Self {
+        match (pull_diagnostics, ripr_editor_client) {
+            (false, _) => Self::None,
+            (true, false) => Self::DocumentOnly,
+            (true, true) => Self::DocumentAndWorkspace,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(super) fn initialize_result() -> InitializeResult {
-    initialize_result_for_client(true, PositionEncodingKind::UTF16)
+    initialize_result_for_client(
+        PullDiagnosticAdvertisement::DocumentAndWorkspace,
+        PositionEncodingKind::UTF16,
+    )
 }
 
 pub(super) fn initialize_result_for_client(
-    supports_pull_diagnostics: bool,
+    pull_diagnostics: PullDiagnosticAdvertisement,
     position_encoding: PositionEncodingKind,
 ) -> InitializeResult {
     InitializeResult {
@@ -77,10 +111,11 @@ pub(super) fn initialize_result_for_client(
                 },
             )),
             position_encoding: Some(position_encoding),
-            diagnostic_provider: supports_pull_diagnostics.then_some(
+            diagnostic_provider: (pull_diagnostics != PullDiagnosticAdvertisement::None).then_some(
                 DiagnosticServerCapabilities::Options(DiagnosticOptions {
                     inter_file_dependencies: true,
-                    workspace_diagnostics: true,
+                    workspace_diagnostics: pull_diagnostics
+                        == PullDiagnosticAdvertisement::DocumentAndWorkspace,
                     ..DiagnosticOptions::default()
                 }),
             ),
@@ -345,7 +380,10 @@ mod tests {
 
     #[test]
     fn initialize_result_echoes_the_negotiated_position_encoding() {
-        let result = initialize_result_for_client(true, PositionEncodingKind::UTF8);
+        let result = initialize_result_for_client(
+            PullDiagnosticAdvertisement::DocumentAndWorkspace,
+            PositionEncodingKind::UTF8,
+        );
         assert_eq!(
             result.capabilities.position_encoding,
             Some(PositionEncodingKind::UTF8)
@@ -397,20 +435,63 @@ mod tests {
 
     #[test]
     fn push_only_client_does_not_receive_pull_provider_advertisement() -> Result<(), String> {
-        if initialize_result_for_client(false, PositionEncodingKind::UTF16)
-            .capabilities
-            .diagnostic_provider
-            .is_some()
+        if initialize_result_for_client(
+            PullDiagnosticAdvertisement::None,
+            PositionEncodingKind::UTF16,
+        )
+        .capabilities
+        .diagnostic_provider
+        .is_some()
         {
             return Err("push-only client received a pull provider".to_string());
         }
-        if initialize_result_for_client(true, PositionEncodingKind::UTF16)
-            .capabilities
-            .diagnostic_provider
-            .is_none()
+        if initialize_result_for_client(
+            PullDiagnosticAdvertisement::DocumentOnly,
+            PositionEncodingKind::UTF16,
+        )
+        .capabilities
+        .diagnostic_provider
+        .is_none()
         {
             return Err("pull-capable client lost pull provider".to_string());
         }
+        Ok(())
+    }
+
+    fn advertised_workspace_diagnostics(
+        pull_diagnostics: PullDiagnosticAdvertisement,
+    ) -> Result<bool, String> {
+        match initialize_result_for_client(pull_diagnostics, PositionEncodingKind::UTF16)
+            .capabilities
+            .diagnostic_provider
+        {
+            Some(DiagnosticServerCapabilities::Options(options)) => {
+                Ok(options.workspace_diagnostics)
+            }
+            other => Err(format!("expected static diagnostic options, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn generic_pull_client_gets_document_pull_without_workspace_pull() -> Result<(), String> {
+        // #1630: Neovim 0.12 answers `workspace/diagnostic/refresh` with a
+        // workspace pull only when the server advertises it, and ignores
+        // that report for buffers it pulls by document, so the open file
+        // never refreshes. A generic client is offered document pull only.
+        let generic = PullDiagnosticAdvertisement::for_client(true, false);
+        assert_eq!(generic, PullDiagnosticAdvertisement::DocumentOnly);
+        if advertised_workspace_diagnostics(generic)? {
+            return Err("generic pull client was offered workspace pull".to_string());
+        }
+        let enhanced = PullDiagnosticAdvertisement::for_client(true, true);
+        assert_eq!(enhanced, PullDiagnosticAdvertisement::DocumentAndWorkspace);
+        if !advertised_workspace_diagnostics(enhanced)? {
+            return Err("the ripr editor client lost workspace pull".to_string());
+        }
+        assert_eq!(
+            PullDiagnosticAdvertisement::for_client(false, true),
+            PullDiagnosticAdvertisement::None
+        );
         Ok(())
     }
 

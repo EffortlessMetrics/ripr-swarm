@@ -438,6 +438,14 @@ not shadow the real root and no longer makes every assertion macro ambiguous
 workspace-wide; a binding of the root name in that module, or an item-position
 macro call that may emit one, keeps the whole-file refusal.
 
+An `extern crate` alias from one standard crate to another standard name
+(`extern crate core as std;`, the common `no_std` shim, or
+`extern crate std as core;`) is not a macro-binding site: every macro it can
+bring is the standard one (#14390). The exemption holds only while the
+manifest proves the aliased crate is the standard one, so a Cargo-renamed
+`core`, an `alloc` alias (which has no such proof) and an alias of any other
+crate (`extern crate other as std;`) still refuse.
+
 ### Constructor-field observation linkage
 
 For a `field_construction` seam, repo-scoped evidence may link an exact-field

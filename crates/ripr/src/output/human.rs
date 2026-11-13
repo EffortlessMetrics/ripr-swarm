@@ -1665,6 +1665,15 @@ mod sections;
 mod shared;
 mod triage;
 
+/// The agent-format refusal record for a refused check run (#14452).
+/// `retry` is a timed run's bounded replay command, when one exists.
+pub(crate) fn render_agent_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    agent::render_refusal(notice, retry)
+}
+
 /// `ripr check --format agent` (#11580): the compact agent projection of the
 /// human triage. Library callers without navigation get bare finding ids.
 pub(crate) fn render_agent_with_config_and_navigation(
@@ -4261,7 +4270,7 @@ mod tests {
         );
         assert!(
             rendered.contains(
-                "    - … and 5 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+                "    - … and 5 more omitted finding(s): 5 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
             ),
             "{rendered}"
         );
@@ -4269,6 +4278,114 @@ mod tests {
             rendered.lines().count() < 150,
             "the default surface stays bounded with many findings"
         );
+    }
+
+    /// On a diff with more omitted findings than the `Hidden:` window, the
+    /// window names the gap-class findings rather than the first files in
+    /// path order, keeps file and line order among the rows it names, and the
+    /// remainder line says which classes fell outside it.
+    #[test]
+    fn hidden_block_window_names_gap_findings_before_already_noticed_ones() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 24 already-noticed findings in the alphabetically first files.
+        for index in 0..24 {
+            let mut finding = sample_finding();
+            finding.id = format!("exposed-{index}");
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/b{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        // Three gaps in files that sort after every one of them.
+        for index in 0..3 {
+            let mut finding = sample_finding();
+            finding.id = format!("late-gap-{index}");
+            finding.probe.location = SourceLocation::new(format!("src/z{index}.rs"), 7, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let rows: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("    - src/"))
+            .collect();
+        assert_eq!(rows.len(), 20, "the window stays bounded:\n{rendered}");
+        for index in 0..3 {
+            assert!(
+                rows.iter()
+                    .any(|row| row.starts_with(&format!("    - src/z{index}.rs:7 (weak)"))),
+                "gap in src/z{index}.rs is named:\n{rendered}"
+            );
+        }
+        // The first 17 already-noticed rows fill the rest of the window, and
+        // the named rows keep the report's file order (gaps last here).
+        assert!(rows[0].starts_with("    - src/b00.rs:1 "), "{rendered}");
+        assert!(rows[16].starts_with("    - src/b16.rs:1 "), "{rendered}");
+        assert!(rows[17].starts_with("    - src/z0.rs:7 "), "{rendered}");
+        assert!(!rendered.contains("    - src/b17.rs:"), "{rendered}");
+        let exposed_label = ExposureClass::Exposed.plain_label_with_stage();
+        assert!(
+            rendered.contains(&format!(
+                "    - … and 7 more omitted finding(s): 7 {exposed_label}; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"
+            )),
+            "{rendered}"
+        );
+    }
+
+    /// The remainder line counts every finding outside the window by class,
+    /// including findings that share an id with a listed row.
+    #[test]
+    fn hidden_block_remainder_names_each_unlisted_class_by_position() {
+        let mut findings = Vec::new();
+        let mut selected = sample_finding();
+        selected.id = "selected-gap".to_string();
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
+        findings.push(selected);
+        // 20 gaps fill the window; every other finding reuses one of their ids.
+        for index in 0..20 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.probe.location = SourceLocation::new(format!("src/g{index:02}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..2 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::StaticUnknown;
+            finding.probe.location = SourceLocation::new(format!("src/u{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+        for index in 0..4 {
+            let mut finding = sample_finding();
+            finding.id = "shared-id".to_string();
+            finding.class = ExposureClass::Exposed;
+            finding.probe.location = SourceLocation::new(format!("src/x{index}.rs"), 1, 1);
+            findings.push(finding);
+        }
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        let remainder = rendered
+            .lines()
+            .find(|line| line.contains("more omitted finding(s)"))
+            .unwrap_or_default();
+        let exposed = format!("4 {}", ExposureClass::Exposed.plain_label_with_stage());
+        let unknown = format!(
+            "2 {}",
+            ExposureClass::StaticUnknown.plain_label_with_stage()
+        );
+        assert!(
+            remainder.contains("… and 6 more omitted finding(s): "),
+            "{rendered}"
+        );
+        assert!(remainder.contains(&exposed), "{rendered}");
+        assert!(remainder.contains(&unknown), "{rendered}");
+        assert!(!rendered.contains("    - src/u0.rs:"), "{rendered}");
+        assert!(!rendered.contains("    - src/x0.rs:"), "{rendered}");
     }
 
     #[test]
@@ -5283,6 +5400,46 @@ mod tests {
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real
     // missing discriminator keeps its own label.
+    #[test]
+    fn digest_window_skips_a_stage_detail_that_repeats_the_missing_line() -> Result<(), String> {
+        // #14308: the infection detail restates the Missing check value word
+        // for word; the window shows the fact once and the next detail instead.
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::InfectionUnknown;
+        let repeated =
+            "Changed boundary input is unresolved, so ripr cannot establish the boundary inputs";
+        finding.ripr.infect = stage(StageState::Unknown, Confidence::Low, repeated);
+        finding.missing = vec![format!("{repeated}.")];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if digest.matches(repeated).count() != 1 {
+            return Err(format!("the repeated sentence must render once:\n{digest}"));
+        }
+        if digest.contains("    - infection unknown:") {
+            return Err(format!(
+                "the restating detail must leave the window:\n{digest}"
+            ));
+        }
+        if !digest.contains("    - reach ") {
+            return Err(format!("the window keeps the other details:\n{digest}"));
+        }
+        // Control: a detail that differs keeps its slot.
+        finding.missing = vec!["Some other missing evidence".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains("    - infection unknown:") && !digest.contains("more detail line") {
+            return Err(format!("a distinct detail must stay reachable:\n{digest}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn propagation_unknown_wording_is_honest() -> Result<(), String> {
         let mut finding = sample_finding();
