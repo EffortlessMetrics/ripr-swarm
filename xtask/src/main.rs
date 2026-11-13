@@ -1106,9 +1106,15 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
-                        .iter()
-                        .any(|root| f.starts_with(root)))
+                    && [
+                        "crates/ripr/",
+                        "xtask/",
+                        "tools/repo-policy/",
+                        "tools/repo-policy-contracts/",
+                        "tools/repo-policy-test-identity/",
+                    ]
+                    .iter()
+                    .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -1233,6 +1239,10 @@ mod check_fast_selector_tests {
             "tools/repo-policy/tests/frontdoor.rs",
             "tools/repo-policy/build.rs",
             "tools/repo-policy/examples/inventory.rs",
+            "tools/repo-policy-contracts/tests/workflow_contracts.rs",
+            "tools/repo-policy-contracts/tests/workflow_contracts/rust_only_routing.rs",
+            "tools/repo-policy-test-identity/src/lib.rs",
+            "tools/repo-policy-test-identity/build.rs",
             "Cargo.toml",
             "Cargo.lock",
             "crates/ripr/Cargo.toml",
@@ -1253,6 +1263,8 @@ mod check_fast_selector_tests {
             "crates/ripr-not/src/lib.rs",
             "xtask-not/src/main.rs",
             "tools/repo-policy-not/src/lib.rs",
+            "tools/repo-policy-contracts-not/tests/workflow_contracts.rs",
+            "tools/repo-policy-test-identity-not/src/lib.rs",
             "fixtures/crates/ripr/src/lib.rs",
             "fixtures/xtask/src/main.rs",
             "fixtures/control/input/src/lib.rs",

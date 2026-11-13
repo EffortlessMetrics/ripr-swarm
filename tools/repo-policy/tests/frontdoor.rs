@@ -489,6 +489,43 @@ fn preflight_receipt_rejects_changed_ignored_inputs_missing_and_failed_producers
 }
 
 #[test]
+fn sibling_only_resource_edit_invalidates_receipt_but_not_retained_cli() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let sibling = fixture.0.join("tools/repo-policy-contracts");
+    std::fs::create_dir_all(&sibling).map_err(|e| e.to_string())?;
+    let resource = sibling.join("resource.txt");
+    std::fs::write(&resource, "before").map_err(|e| e.to_string())?;
+    assert!(fixture.run("preflight")?.status.success());
+    assert!(fixture.run("verify-preflight")?.status.success());
+    std::fs::write(&resource, "after").map_err(|e| e.to_string())?;
+    let verification = fixture.run("verify-preflight")?;
+    assert!(!verification.status.success(), "stale receipt accepted");
+    let retained = fixture.run("check-workflows")?;
+    assert!(
+        retained.status.success(),
+        "retained CLI refused sibling-only edit: {retained:?}"
+    );
+    assert!(fixture.run("preflight")?.status.success());
+    assert!(fixture.run("verify-preflight")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn unknown_production_input_invalidates_retained_cli() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    assert!(fixture.run("check-workflows")?.status.success());
+    std::fs::write(fixture.0.join("tools/repo-policy/new-unknown-input"), "new")
+        .map_err(|e| e.to_string())?;
+    let retained = fixture.run("check-workflows")?;
+    assert!(
+        !retained.status.success(),
+        "retained CLI accepted unknown input"
+    );
+    assert!(String::from_utf8_lossy(&retained.stderr).contains("source"));
+    Ok(())
+}
+
+#[test]
 fn partial_fixture_is_removed_after_copy_error() -> Result<(), String> {
     let source = Fixture::new()?;
     let root = source.0.join("partial-copy");

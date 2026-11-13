@@ -177,6 +177,33 @@ reason = "Product-independent workflow and agent policy package manifest."
 covered_by = ["cargo check -p repo-policy --locked"]
 
 [[allow]]
+glob = "tools/repo-policy-contracts/Cargo.toml"
+kind = "rust_manifest"
+owner = "repo-policy"
+surface = "rust"
+classification = "config"
+reason = "Unpublished pure workflow-contract test package manifest (#14433)."
+covered_by = ["cargo check -p repo-policy-contracts --tests --locked"]
+
+[[allow]]
+glob = "tools/repo-policy-test-identity/Cargo.toml"
+kind = "rust_manifest"
+owner = "repo-policy"
+surface = "rust"
+classification = "config"
+reason = "Unpublished dev-only resource identity macro manifest (#14433)."
+covered_by = ["cargo check -p repo-policy-test-identity --locked"]
+
+[[allow]]
+glob = "tools/repo-policy-contracts/tests/workflow_contracts/fixtures/inventory-map.json"
+kind = "workflow_contract_fixture"
+owner = "repo-policy"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen baseline test identities and ignored states for workflow-contract conservation (#14433)."
+covered_by = ["cargo test -p repo-policy-contracts --test workflow_contracts inventory_contract"]
+
+[[allow]]
 glob = "tools/activate-rust.sh"
 kind = "shell_activation"
 owner = "rust"
@@ -1039,7 +1066,7 @@ owner = "ci/admission"
 surface = "ci"
 classification = "tooling"
 reason = "Stdlib Python decision logic extracted from the pre-allocation admission action so the hard-cut and candidate decisions are testable outside embedded YAML shell (#5391, #2022)."
-covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo test -p repo-policy --test review_disposition_admission"]
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo test -p repo-policy-contracts --test workflow_contracts review_disposition_admission"]
 
 [[allow]]
 glob = "policy/release-ledger-overrides.json"

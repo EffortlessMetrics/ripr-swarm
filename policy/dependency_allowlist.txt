@@ -87,6 +87,9 @@ fixtures/owner_return_pin_json_shadowed_constructor/input/Cargo.lock|fixture_inp
 fixtures/owner_return_pin_json_shadowed_owner/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
 fixtures/owner_return_pin_json_uncalled_closure/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
 fixtures/owner_return_pin_json_unrelated_equality/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
+
+tools/repo-policy-contracts/Cargo.toml|rust_tool_manifest|repo-policy|#14433 unpublished workflow contract tests.
+tools/repo-policy-test-identity/Cargo.toml|rust_tool_manifest|repo-policy|#14433 unpublished dev-only resource identity macro.
 examples/*/project/Cargo.toml|starter_example|docs|Standalone starter example manifest users run ripr and cargo test on (#14151); no dependencies, own empty [workspace], never a member.
 examples/*/project/pyproject.toml|starter_example|docs|Starter Python example project metadata (#14151); no dependencies, pytest configuration only.
 examples/*/project/package.json|starter_example|docs|Starter TypeScript example (#14151); one devDependency (vitest) so a user can run the example's own tests; never installed by repository automation or CI.

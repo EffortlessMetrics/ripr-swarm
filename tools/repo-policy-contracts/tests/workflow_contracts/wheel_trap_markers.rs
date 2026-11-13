@@ -5,7 +5,7 @@ use std::fs;
 use std::process::Command;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-const WORKFLOW: &str = include_str!("../../../.github/workflows/python-wheel-qualification.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/python-wheel-qualification.yml");
 
 #[test]
 fn wheel_traps_preserve_literal_marker_paths_and_native_status() -> TestResult {

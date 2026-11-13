@@ -13,7 +13,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-const WORKFLOW: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
 const STEP: &str = "      - name: Verify admitted integration before proof\n";
 const GENERATION: &str = "5555555555555555555555555555555555555555";
 const REPO: &str = "EffortlessMetrics/ripr-swarm";

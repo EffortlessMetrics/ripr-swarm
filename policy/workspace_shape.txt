@@ -23,4 +23,9 @@ workspace_member|crates/ripr-contract|internal contract crate published in locks
 workspace_member|xtask|unpublished Rust automation
 cargo_manifest|tools/repo-policy/Cargo.toml|unpublished workflow and agent policy boundary (#7158)
 workspace_member|tools/repo-policy|product-independent Rust repository policy (#7158)
+
+cargo_manifest|tools/repo-policy-contracts/Cargo.toml|unpublished pure workflow contract tests (#14433)
+workspace_member|tools/repo-policy-contracts|unpublished pure workflow contract tests (#14433)
+cargo_manifest|tools/repo-policy-test-identity/Cargo.toml|unpublished dev-only test resource identity (#14433)
+workspace_member|tools/repo-policy-test-identity|unpublished dev-only test resource identity (#14433)
 cargo_manifest|examples/**/Cargo.toml|standalone starter example projects users run ripr on; each declares its own empty [workspace], never a member (#14151)

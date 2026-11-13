@@ -3,7 +3,7 @@
 //! No hosted run or caller is exercised.
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-const WORKFLOW: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
 
 fn input_block<'a>(name: &str) -> TestResult<&'a str> {
     let marker = format!("\n      {name}:\n");

@@ -12,7 +12,7 @@ manual dispatch remains available but does not establish an automatic lifecycle.
 Other rust-cache users have separate keys and are not evidence that this
 producer persists its cache.
 
-`tools/repo-policy/tests/hosted_cache_continuity.rs` binds the real caller,
+`tools/repo-policy-contracts/tests/workflow_contracts/hosted_cache_continuity.rs` binds the real caller,
 reusable producer, caller dependencies, caller/producer job admission, sole
 Swatinem cache action, scratch opt-out and main-only save guard. Removal, missing
 producer, scratch rebinding and broad-save controls reject plausible accidental
@@ -23,13 +23,13 @@ refactoring requires review of the changed contract.
 Run the focused integration target with:
 
 ```text
-cargo test --locked -p repo-policy --test hosted_cache_continuity -j 2
+cargo test --locked -p repo-policy-contracts --test workflow_contracts hosted_cache_continuity -j 2
 ```
 
 The std-only target can also run without building the workspace:
 
 ```text
-rustc --test --edition 2024 tools/repo-policy/tests/hosted_cache_continuity.rs -o <task-owned-output>
+rustc --test --edition 2024 tools/repo-policy-contracts/tests/workflow_contracts/hosted_cache_continuity.rs -o <task-owned-output>
 <task-owned-output>
 ```
 

@@ -24,6 +24,9 @@ fn repo_policy_package_is_enforced_and_proposed() -> Result<(), String> {
             "tools/repo-policy/source_identity.rs",
             "tools/repo-policy/src/lib.rs",
             "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy-contracts/tests/workflow_contracts.rs",
+            "tools/repo-policy-test-identity/src/lib.rs",
+            "tools/repo-policy-test-identity/build.rs",
         ];
         std::fs::create_dir_all(root.join("policy")).map_err(|e| e.to_string())?;
         let policy = root.join("policy/no-panic-allowlist.toml");

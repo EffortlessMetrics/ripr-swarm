@@ -798,6 +798,9 @@ mod tests {
             "xtask/examples/mandatory_partitions.rs",
             "tools/repo-policy/build.rs",
             "tools/repo-policy/examples/inventory.rs",
+            "tools/repo-policy-contracts/tests/workflow_contracts.rs",
+            "tools/repo-policy-test-identity/src/lib.rs",
+            "tools/repo-policy-test-identity/build.rs",
         ] {
             require_rust_receipts(&[path])?;
         }

@@ -1621,9 +1621,27 @@ name = "repo-policy"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "repo-policy-test-identity",
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "repo-policy-contracts"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "repo-policy-test-identity"
+version = "0.1.0"
+dependencies = [
  "sha2 0.10.9",
 ]
 

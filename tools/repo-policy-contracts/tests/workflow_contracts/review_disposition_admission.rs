@@ -540,7 +540,8 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 #[test]
 fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
     let head = "a".repeat(40);
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/review_bodies");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../repo-policy/tests/fixtures/review_bodies");
     let mut ready = 0;
     let mut refused = 0;
     for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
