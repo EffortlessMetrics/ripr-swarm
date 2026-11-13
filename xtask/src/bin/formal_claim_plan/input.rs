@@ -97,6 +97,25 @@ fn read_input(path: &Path) -> PlanResult<Vec<u8>> {
     Ok(bytes)
 }
 
+fn normalize_input(input: &mut SelectionInput) {
+    input.claim_index.global_authority_paths.sort();
+    for claim in &mut input.claim_index.claims {
+        claim.owners.sort();
+        claim.source_closure.sort();
+        claim.authority_paths.sort();
+        claim.subjects.sort();
+        claim.limitations.sort();
+    }
+    for changed in &mut input.change_set.changes {
+        changed.semantic_subjects.sort();
+    }
+    input
+        .change_set
+        .changes
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    input.change_set.limitations.sort();
+}
+
 fn execute(args: &[String]) -> PlanResult<String> {
     let mut input_path = None;
     let mut format = OutputFormat::Json;
@@ -122,7 +141,8 @@ fn execute(args: &[String]) -> PlanResult<String> {
     }
     let path = input_path.ok_or_else(|| format!("--input is required; {USAGE}"))?;
     let bytes = read_input(Path::new(path))?;
-    let input = parse_input(&bytes)?;
+    let mut input = parse_input(&bytes)?;
+    normalize_input(&mut input);
     let plan = plan(&input, sha256(&bytes))?;
     match format {
         OutputFormat::Json => {
