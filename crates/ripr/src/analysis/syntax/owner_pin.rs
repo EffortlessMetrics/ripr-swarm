@@ -3154,7 +3154,9 @@ fn owner_pin_assertions_with_matches(
         } else if function.async_token().is_some()
             && !function.attrs().any(|attr| {
                 let test = function.syntax();
-                tokio_test_runs_body(&attr, test) || argument_free_async_test_runs_body(&attr, test)
+                tokio_test_runs_body(&attr, test)
+                    || argument_free_async_test_runs_body(&attr, test)
+                    || test_log_test_runs_body(&attr, test)
             })
         {
             Some(AssertionContextRefusal::AsyncTest)
@@ -4277,6 +4279,13 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if argument_free_async_test_crate(&path).is_some() {
         return argument_free_async_test_runs_body(attr, test);
     }
+    if is_test_log_test_path(&path) {
+        return test_log_test_runs_body(attr, test);
+    }
+    if is_traced_test_attribute(&path, &module) {
+        return matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
+            && extern_crate_path_holds(&module, "tracing_test");
+    }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
     }
@@ -4542,6 +4551,107 @@ fn async_test_has_no_arguments(attr: &ast::Attr) -> bool {
         },
         _ => false,
     }
+}
+
+/// Whether `path` names `tracing_test::traced_test` in `module`: the
+/// crate-qualified path (rooted or not), or the bare name `traced_test`
+/// bound by exactly one explicit, unrenamed `use tracing_test::traced_test`
+/// that is a direct item of the module. The macro keeps the test's other
+/// attributes and signature, and runs the unchanged body after installing a
+/// capturing subscriber and entering a span, so an assertion in the body
+/// still fails the test. It takes no arguments; the caller refuses any, and
+/// still checks that `tracing_test` is the crate.
+fn is_traced_test_attribute(path: &str, module: &SyntaxNode) -> bool {
+    if path.contains("::") {
+        return path.strip_prefix("::").unwrap_or(path) == "tracing_test::traced_test";
+    }
+    if path != "traced_test" {
+        return false;
+    }
+    let mut bound = false;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != "traced_test" {
+            continue;
+        }
+        let is_macro =
+            leaf.path.len() == 2 && leaf.path[0] == "tracing_test" && leaf.path[1] == "traced_test";
+        if !is_macro || bound {
+            return false;
+        }
+        bound = true;
+    }
+    bound
+}
+
+fn is_test_log_test_path(path: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "test_log::test"
+}
+
+/// Whether `attr` is `#[test_log::test]` on `test` and runs the body
+/// unchanged. The macro re-emits the function under an inner test
+/// attribute with a logging initializer placed before the unchanged body:
+/// libtest's `#[test]` when it takes no argument, or the attribute it is
+/// given. Admitted only as the bare attribute (or empty `()`) on a sync
+/// `fn`, and as exactly `#[test_log::test(tokio::test)]` on an `async fn`
+/// with `tokio` the crate in the test's module. Any other inner attribute,
+/// and an inner attribute with arguments, refuses; so does a
+/// `#[test_log(..)]` configuration attribute beside it, which this check
+/// never admits. `test_log` must be the crate in the test's module under
+/// the same rule as `tokio`.
+fn test_log_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    if !is_test_log_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+        return false;
+    }
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    if !extern_crate_path_holds(&module, "test_log") {
+        return false;
+    }
+    let is_async = function.async_token().is_some();
+    if async_test_has_no_arguments(attr) {
+        return !is_async;
+    }
+    is_async && test_log_inner_is_bare_tokio_test(attr) && extern_crate_path_holds(&module, "tokio")
+}
+
+/// Whether the argument list of a `#[test_log::test(..)]` is exactly the
+/// path `tokio::test` (rooted or not), with no arguments of its own.
+fn test_log_inner_is_bare_tokio_test(attr: &ast::Attr) -> bool {
+    let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+        return false;
+    };
+    let Some(tree) = meta.token_tree() else {
+        return false;
+    };
+    let tokens: Vec<String> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| token.text().to_string())
+        .collect();
+    let texts: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    // The lexer may hand `::` over as one token or as two `:` tokens.
+    let joined = texts.concat();
+    matches!(texts.first(), Some(&"("))
+        && matches!(texts.last(), Some(&")"))
+        && texts
+            .iter()
+            .all(|text| matches!(*text, "(" | ")" | "::" | ":" | "tokio" | "test"))
+        && matches!(joined.as_str(), "(tokio::test)" | "(::tokio::test)")
 }
 
 /// An rstest attribute on a test function.
@@ -4994,6 +5104,8 @@ const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &[
     "async_std",
     "actix_rt",
     "actix_web",
+    "test_log",
+    "tracing_test",
     "rstest",
     "test_case",
 ];
@@ -5015,6 +5127,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                 || (krate == "serial_test"
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
+                || (krate == "tracing_test" && is_traced_test_attribute(&path, module))
                 || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
                 || (krate == "test_case" && test_case_attribute_trusted(&attr, module))
         })
@@ -5153,6 +5266,12 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
             .is_some_and(|rest| rest.starts_with("::"))
     }) {
         return trusted.contains(krate) && argument_free_async_test_crate(&path) == Some(*krate);
+    }
+    if unrooted.starts_with("test_log::") {
+        return trusted.contains(&"test_log") && is_test_log_test_path(&path);
+    }
+    if unrooted.starts_with("tracing_test::") || path == "traced_test" {
+        return trusted.contains(&"tracing_test") && is_traced_test_attribute(&path, module);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
