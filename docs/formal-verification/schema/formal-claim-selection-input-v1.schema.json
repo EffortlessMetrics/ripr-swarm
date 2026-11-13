@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.dev/ripr/design/formal-claim-selection-input-v1.schema.json",
+  "title": "RIPR formal affected-claim selection input v1",
+  "description": "Passive supplied-fact snapshot. Validation does not authenticate Git, the claim registry, change facts, or provider execution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "claim_index",
+    "change_set"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ripr.formal-claim-selection-input.v1"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "claim_index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "global_authority_paths",
+        "claims"
+      ],
+      "properties": {
+        "generation": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "global_authority_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+          }
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "claim_id",
+              "claim_generation",
+              "criticality",
+              "phase",
+              "provider",
+              "route",
+              "owners",
+              "source_closure",
+              "authority_paths",
+              "subjects",
+              "limitations"
+            ],
+            "properties": {
+              "claim_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]+$"
+              },
+              "claim_generation": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "criticality": {
+                "enum": [
+                  "critical",
+                  "important",
+                  "advisory",
+                  "scheduled",
+                  "manual"
+                ]
+              },
+              "phase": {
+                "enum": [
+                  "admitted_merge_group",
+                  "ordinary_pr_critical",
+                  "merge_ready",
+                  "scheduled",
+                  "release",
+                  "manual"
+                ]
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "route": {
+                "enum": [
+                  "native",
+                  "manual",
+                  "unsupported"
+                ]
+              },
+              "owners": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "source_closure": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+                }
+              },
+              "authority_paths": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+                }
+              },
+              "subjects": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "limitations": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              }
+            },
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "source_closure": {
+                        "minItems": 1
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "authority_paths": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "if": {
+                  "properties": {
+                    "route": {
+                      "const": "native"
+                    }
+                  },
+                  "required": [
+                    "route"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "provider": {
+                      "const": "kani"
+                    },
+                    "subjects": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "contains": {
+            "properties": {
+              "criticality": {
+                "const": "critical"
+              }
+            },
+            "required": [
+              "criticality"
+            ]
+          }
+        }
+      }
+    },
+    "change_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "group",
+        "members",
+        "expected_registry_generation",
+        "controller_generation",
+        "producer_generation",
+        "proof_profile",
+        "classification_complete",
+        "changes",
+        "limitations"
+      ],
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+        },
+        "group": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pr_number",
+              "head"
+            ],
+            "properties": {
+              "pr_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+              }
+            }
+          }
+        },
+        "expected_registry_generation": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "controller_generation": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "producer_generation": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "proof_profile": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "classification_complete": {
+          "type": "boolean"
+        },
+        "changes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "impact",
+              "semantic_subjects"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:\\x00-\\x1f\\x7f-\\x9f])(?=.*\\S)(?!.*\\/$).+$"
+              },
+              "impact": {
+                "enum": [
+                  "non_semantic",
+                  "formal_irrelevant",
+                  "formal_relevant",
+                  "unknown"
+                ]
+              },
+              "semantic_subjects": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              }
+            }
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      }
+    }
+  }
+}
