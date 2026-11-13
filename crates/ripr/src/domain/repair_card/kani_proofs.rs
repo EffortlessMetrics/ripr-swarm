@@ -5,20 +5,17 @@
 //! every instruction state and every `usize` budget value.
 
 use super::*;
+use crate::proof_domains::{FIX_INSTRUCTION_STATES, cover_fix_instruction_states};
 
 /// Every `FixInstructionState` variant, selected by a symbolic index so the
-/// harness covers the whole closed vocabulary. The index is assumed `< 5`,
-/// the number of variants.
+/// harness covers the whole compiler-checked constructor domain.
 fn any_instruction_state() -> FixInstructionState {
-    let index: u8 = kani::any();
-    kani::assume(index < 5);
-    match index {
-        0 => FixInstructionState::FixSiteReady,
-        1 => FixInstructionState::StaticLimitation,
-        2 => FixInstructionState::Stale,
-        3 => FixInstructionState::Unavailable,
-        _ => FixInstructionState::InspectOnly,
-    }
+    let index: usize = kani::any();
+    // Bound: the compiler-checked domain contains every production constructor.
+    kani::assume(index < FIX_INSTRUCTION_STATES.len());
+    let instruction = FIX_INSTRUCTION_STATES[index];
+    cover_fix_instruction_states(&instruction);
+    instruction
 }
 
 /// The route is exposable exactly when the instruction is `FixSiteReady` and

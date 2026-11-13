@@ -6,16 +6,15 @@ use super::presentation::status_fails_gate;
 use super::{
     GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR, GateMode, GateSummary, top_level_status,
 };
+use crate::proof_domains::{GATE_MODES, cover_gate_modes};
 
 fn any_mode() -> GateMode {
-    let which: u8 = kani::any();
-    kani::assume(which < 4); // exactly the four GateMode variants
-    match which {
-        0 => GateMode::VisibleOnly,
-        1 => GateMode::Acknowledgeable,
-        2 => GateMode::BaselineCheck,
-        _ => GateMode::CalibratedGate,
-    }
+    let index: usize = kani::any();
+    // Bound: the compiler-checked domain contains every production constructor.
+    kani::assume(index < GATE_MODES.len());
+    let mode = GATE_MODES[index];
+    cover_gate_modes(&mode);
+    mode
 }
 
 /// Bound: 0 or 1 entries (production reads only emptiness).

@@ -26,10 +26,18 @@ tests = [
   "crates/ripr/src/cli/exit_kani.rs::exit_code_constants_match_documented_table",
   "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs::generation_counter_saturates_at_max",
   "crates/ripr/src/domain/repair_card/kani_proofs.rs::default_budget_is_valid",
+  "crates/ripr/src/kani_smoke.rs::evidence_state_actionable_only_for_actionable",
+  "crates/ripr/src/output/gate/gate_kani.rs::top_level_status_fails_closed",
+  "crates/ripr/src/domain/repair_card/kani_proofs.rs::route_exposable_iff_fix_site_ready_and_repair_ready",
+  "crates/ripr/src/proof_domains.rs::tests::constructor_domains_are_nonempty_and_unique",
+  "crates/ripr/src/proof_domains.rs::tests::actionability_matches_the_literal_constructor_predicate",
+  "crates/ripr/src/proof_domains.rs::tests::repair_route_requires_ready_instruction_and_readiness",
 ]
 code = [
   "xtask/src/kani_lane.rs",
   "crates/ripr/src/kani_smoke.rs",
+  "crates/ripr/src/proof_domains.rs",
+  "crates/ripr/src/output/gate/gate_kani.rs",
   "crates/ripr/src/bounded_input_kani.rs",
   "crates/ripr/src/cli/exit_kani.rs",
   "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs",
