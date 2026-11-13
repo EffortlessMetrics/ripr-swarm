@@ -1005,7 +1005,7 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
 }
 
 /// The owner call's arguments when `operand` is `owner(..).await` or
-/// `wrapper(owner(..))` with a plain identifier wrapper and nothing else
+/// `wrapper(owner(..))` with a single-identifier wrapper and nothing else
 /// around the call.
 fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
@@ -1869,9 +1869,9 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
 /// caller can withhold credit without guessing.
 ///
 /// The call shape is the bare `owner(..)` form, read through a `let` the
-/// assertion pins when there is one, or through a value-transparent wrapper
+/// assertion pins when there is one, or through a single-identifier wrapper
 /// (`wrapper(owner(..))`, `owner(..).await`), matching the sibling
-/// invisibility path. A wrapper that transforms the result is not modelled
+/// invisibility path. A wrapper that changes the arguments is not modelled
 /// and keeps today's credit.
 pub(super) fn seam_branch_reached_by_call(
     owner: &FunctionSummary,
