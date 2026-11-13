@@ -14183,7 +14183,7 @@ fn crate_c_score_test() {
             .iter()
             .find(|function| {
                 function.name == "current"
-                    && function.file == "crates/crate_a/src/metadata.rs"
+                    && function.file == std::path::Path::new("crates/crate_a/src/metadata.rs")
             })
             .ok_or("missing owner")?;
         assert!(matches!(
