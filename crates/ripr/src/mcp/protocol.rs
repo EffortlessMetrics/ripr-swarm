@@ -3180,7 +3180,11 @@ mod tests {
         // #13803 made the slim listing the default and cut the descriptions:
         // the default budget is what every session pays; the full budget is
         // the opt-in a validating host pays.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_000)] {
+        // #14327 budget decision: the full listing's `ripr_list_gaps`
+        // output schema gains the additive `exposed_omitted`/`exposed_route`
+        // disclosure (+83 bytes, measured 41,065); the slim default every
+        // session pays is unchanged, so only the opt-in full budget moves.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_200)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?
