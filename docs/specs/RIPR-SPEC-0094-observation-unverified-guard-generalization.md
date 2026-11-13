@@ -851,6 +851,12 @@ Known limits:
   one-argument helper is read as #14206 reads it, without the field rule.
 - A nested literal (`Outer { inner: Inner { big: n >= 10 } }`) reads
   `outer(..).inner.big` as `Masked`, an underclaim.
+- "Builds a literal of it" is a text check: it does not confirm that the
+  literal holding the predicate is the returned one. A mismatch can only
+  mask credit, never add it.
+- `matches!` reads a pattern that names the field without constraining it
+  (`Opts { big: _, retries: 3 }`, a shorthand `big` binding) as naming it,
+  so it still reaches.
 - A destructuring `let Opts { retries, .. } = opts(10);` is not followed
   (#14206 follows only a plain `let name =`), so an assertion on `retries`
   keeps its earlier credit.
