@@ -1,0 +1,167 @@
+name: Repair Rust 1.100 Windows lint surface
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-windows-repair.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: rust-1.100-windows-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: build/rust-1.100-upgrade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.100.0
+          components: rustfmt,clippy
+
+      - name: Install exact source-floor compiler
+        shell: bash
+        run: rustup toolchain install 1.95.0 --profile minimal --no-self-update
+
+      - name: Apply platform-owned lint repairs
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: build/rust-1.100-upgrade
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, count: int = 1) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(
+                      f"{path}: expected {count} occurrence(s) of {old!r}, found {actual}"
+                  )
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          # The staged hard-link exception is Unix-only. On other platforms
+          # retain the shared signature but make the intentional non-use explicit.
+          replace_exact(
+              "crates/ripr/src/edit_cage/mod.rs",
+              "fn writable_path_components_are_safe_in(\n"
+              "    root: &Path,\n"
+              "    relative: &str,\n"
+              "    explicit_store_scopes: &[&CagePathRule],\n"
+              ") -> Result<bool, String> {\n"
+              "    let mut current = root.to_path_buf();\n",
+              "fn writable_path_components_are_safe_in(\n"
+              "    root: &Path,\n"
+              "    relative: &str,\n"
+              "    explicit_store_scopes: &[&CagePathRule],\n"
+              ") -> Result<bool, String> {\n"
+              "    #[cfg(not(unix))]\n"
+              "    let _ = explicit_store_scopes;\n"
+              "    let mut current = root.to_path_buf();\n",
+          )
+
+          # This compatibility helper is exercised only by Unix symlink tests.
+          replace_exact(
+              "crates/ripr/src/edit_cage/mod.rs",
+              "fn delta_from_repository_states(\n",
+              "#[cfg(unix)]\nfn delta_from_repository_states(\n",
+          )
+
+          # Linux owns mount-table detection. Keep the pure parsers available
+          # to unit tests on every host without compiling dead production code.
+          backend = "crates/ripr/src/lsp/backend.rs"
+          for needle in [
+              "const REMOTE_FILESYSTEM_TYPES: &[&str] = &[\n",
+              "fn unescape_mountinfo_field(field: &str) -> String {\n",
+              "fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {\n",
+              "fn fstype_is_remote(fstype: &str) -> bool {\n",
+          ]:
+              replace_exact(
+                  backend,
+                  needle,
+                  '#[cfg(any(target_os = "linux", test))]\n' + needle,
+              )
+
+          # The only users are the Unix file-mode incomplete-analysis tests.
+          replace_exact(
+              "crates/ripr/src/lsp/tests.rs",
+              "fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {\n",
+              "#[cfg(unix)]\n"
+              "fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {\n",
+          )
+
+          # Cargo 1.100 detects this dependency as unused off Linux because the
+          # entire coverage-diagnostics implementation is Linux-gated.
+          replace_exact(
+              "tools/repo-policy/Cargo.toml",
+              "[dependencies]\nlibc = \"0.2\"\n",
+              "[dependencies]\n",
+          )
+          replace_exact(
+              "tools/repo-policy/Cargo.toml",
+              "[target.'cfg(target_os = \"linux\")'.dependencies]\n"
+              "# Match the existing workspace variant; retain PID custody until group cleanup.\n",
+              "[target.'cfg(target_os = \"linux\")'.dependencies]\n"
+              "libc = \"0.2\"\n"
+              "# Match the existing workspace variant; retain PID custody until group cleanup.\n",
+          )
+
+          # Cargo 1.100's redundant_homepage lint makes this duplicate metadata
+          # noisy on every package command. Repository remains the canonical URL.
+          replace_exact(
+              "Cargo.toml",
+              'repository = "https://github.com/EffortlessMetrics/ripr/"\n'
+              'homepage = "https://github.com/EffortlessMetrics/ripr/"\n',
+              'repository = "https://github.com/EffortlessMetrics/ripr/"\n',
+          )
+          for path in ["crates/ripr/Cargo.toml", "crates/ripr-contract/Cargo.toml"]:
+              replace_exact(path, "homepage.workspace = true\n", "")
+          replace_exact(
+              "docs/PUBLISHING.md",
+              "Verify `repository` and `homepage` point at the canonical GitHub repository before publishing.\n",
+              "Verify `repository` points at the canonical GitHub repository and that the\n"
+              "packaged manifest does not reintroduce a duplicate `homepage` before publishing.\n",
+          )
+          PY
+
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff --check
+          cargo check --locked --workspace --all-targets --all-features
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo +1.95.0 check --locked --workspace --all-targets
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            crates/ripr/src/edit_cage/mod.rs \
+            crates/ripr/src/lsp/backend.rs \
+            crates/ripr/src/lsp/tests.rs \
+            tools/repo-policy/Cargo.toml \
+            Cargo.toml \
+            crates/ripr/Cargo.toml \
+            crates/ripr-contract/Cargo.toml \
+            docs/PUBLISHING.md
+          git commit -m "fix(build): make Rust 1.100 lints platform-correct"
+          git push \
+            --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
+            origin "HEAD:refs/heads/$BRANCH"
