@@ -11733,7 +11733,13 @@ Field contract:
 
 - `schema_version` - currently `"0.1"`.
 - `status` - one of `pass`, `advisory`, `acknowledged`, `blocked`, or
-  `config_error`.
+  `config_error`. `visible-only` mode never blocks on findings, so every completed
+  visible-only run that is not `blocked` or `config_error` reads `advisory`,
+  including one with every `summary` count at zero and no `warnings`; `pass`
+  is emitted only by the enforcing modes. Consumers that need "was anything
+  found" should read `summary` and `warnings` together with `mode`, not
+  `status` alone. The Markdown projection adds a one-paragraph note under the
+  counts when a visible-only report reads `advisory` with nothing recorded.
 - `mode` - one of `visible-only`, `acknowledgeable`, `baseline-check`, or
   `calibrated-gate`.
 - `inputs` - normalized paths and labels used by the evaluator. Optional inputs

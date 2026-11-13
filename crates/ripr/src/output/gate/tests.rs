@@ -7449,3 +7449,80 @@ fn top_level_status_precedence_orders_config_error_blocked_acknowledged_advisory
         "pass"
     );
 }
+
+/// #7445: `advisory_from_visible_only_posture_alone` is true only for a
+/// visible-only `advisory` report that recorded nothing. Any advisory
+/// evidence, a non-blocking exception-policy violation, an enforcing mode, or
+/// another status withholds the Markdown posture note.
+#[test]
+fn visible_only_posture_note_requires_an_evidence_free_advisory_report() -> Result<(), String> {
+    let note = presentation::VISIBLE_ONLY_POSTURE_NOTE;
+    let dir = temp_dir("gate-posture-note")?;
+    let guidance = write_temp_json(
+        &dir,
+        "clean-comments.json",
+        r#"{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[]}"#,
+    )?;
+    let (_fixture, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+
+    let clean = build_gate_decision_report(&input)?;
+    assert_eq!(clean.summary, GateSummary::default());
+    assert!(clean.warnings.is_empty(), "{:?}", clean.warnings);
+    assert_eq!(clean.status, "advisory");
+    assert!(advisory_from_visible_only_posture_alone(&clean));
+    let markdown = render_gate_decision_markdown(&clean);
+    assert_eq!(markdown.matches(note).count(), 1, "{markdown}");
+    assert!(!render_gate_decision_json(&clean)?.contains(note));
+
+    let mut warned = build_gate_decision_report(&input)?;
+    warned.warnings.push("optional input missing".to_string());
+    assert!(!advisory_from_visible_only_posture_alone(&warned));
+    assert!(!render_gate_decision_markdown(&warned).contains(note));
+
+    let mut suppressed = build_gate_decision_report(&input)?;
+    suppressed.summary.suppressed = 1;
+    assert!(!advisory_from_visible_only_posture_alone(&suppressed));
+    let mut unknown = build_gate_decision_report(&input)?;
+    unknown.summary.unknown_confidence = 1;
+    assert!(!advisory_from_visible_only_posture_alone(&unknown));
+    let mut advisory = build_gate_decision_report(&input)?;
+    advisory.summary.advisory = 1;
+    assert!(!advisory_from_visible_only_posture_alone(&advisory));
+
+    // A non-blocking exception-policy violation is something to read.
+    let mut reviewed = build_gate_decision_report(&input)?;
+    reviewed.exception_policy = Some(exception_policy::ExceptionPolicyReport {
+        path: "policy/quality-gate-exceptions.toml".to_string(),
+        ledger_status: "active".to_string(),
+        ledger_owner: None,
+        due_review: exception_policy::DueReview::Warn,
+        active: Vec::new(),
+        violations: Vec::new(),
+    });
+    assert!(advisory_from_visible_only_posture_alone(&reviewed));
+    if let Some(policy) = reviewed.exception_policy.as_mut() {
+        policy
+            .violations
+            .push(exception_policy::ExceptionViolation {
+                kind: "review_due".to_string(),
+                exception_id: "EX-1".to_string(),
+                detail: "review_after has passed".to_string(),
+                blocking: false,
+            });
+    }
+    assert!(!advisory_from_visible_only_posture_alone(&reviewed));
+    assert!(!render_gate_decision_markdown(&reviewed).contains(note));
+
+    // Another status, or an enforcing mode, never gets the note.
+    let mut blocked = build_gate_decision_report(&input)?;
+    blocked.status = GATE_STATUS_BLOCKED.to_string();
+    assert!(!advisory_from_visible_only_posture_alone(&blocked));
+    input.mode = GateMode::Acknowledgeable;
+    let enforcing = build_gate_decision_report(&input)?;
+    assert_eq!(enforcing.status, "pass");
+    assert!(!advisory_from_visible_only_posture_alone(&enforcing));
+    assert!(!render_gate_decision_markdown(&enforcing).contains(note));
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
