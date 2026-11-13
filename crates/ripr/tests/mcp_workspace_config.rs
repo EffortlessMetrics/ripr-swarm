@@ -732,8 +732,10 @@ fn refresh_honors_ripr_git_timeout_from_the_server_environment() -> Result<(), S
 /// git call the refresh makes is cut at the 1000 ms deadline and the failure
 /// names it. If the refresh substituted the 300 s default for the configured
 /// value, the shim would finish its sleep instead and no 1000 ms deadline
-/// could appear. The committed-source probe receives the same resolved value
-/// from `run_check`, so this one deadline binds both consumers.
+/// could appear. This reaches the findings producer only: with every git call
+/// cut, the refresh fails before the committed-source probe runs. The probe
+/// takes the same resolved value from `run_check` by construction and is not
+/// separately exercised here.
 #[cfg(unix)]
 #[test]
 fn refresh_cuts_git_at_the_configured_ripr_git_timeout() -> Result<(), String> {
