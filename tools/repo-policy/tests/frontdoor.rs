@@ -967,6 +967,14 @@ fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), St
         String::from_utf8_lossy(&passed.stderr)
     );
     assert!(String::from_utf8_lossy(&passed.stdout).contains("Status: pass"));
+    let wrong_subject = run(&base)?;
+    assert!(!wrong_subject.status.success());
+    let wrong_report = String::from_utf8_lossy(&wrong_subject.stdout);
+    assert!(
+        wrong_report.contains("Status: fail")
+            && wrong_report.contains("does not match event checkout"),
+        "{wrong_report}"
+    );
     subject.git(&["checkout", "-q", "candidate"])?;
     std::fs::write(&golden, "open the seam list\n").map_err(|e| e.to_string())?;
     let mut weakened = std::fs::read_to_string(&matcher).map_err(|e| e.to_string())?;
@@ -989,9 +997,6 @@ fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), St
         "{report}"
     );
     assert!(String::from_utf8_lossy(&refused.stderr).contains("plain-language term count(s) rose"));
-    let wrong_subject = run(&base)?;
-    assert!(!wrong_subject.status.success());
-    assert!(String::from_utf8_lossy(&wrong_subject.stdout).contains("Status: fail"));
     std::fs::write(
         judge.0.join("tools/repo-policy/src/user_text.rs"),
         "stale judge source\n",
