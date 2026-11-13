@@ -112,8 +112,8 @@ qualification.
 `terminal_text::kani_proofs::needs_terminal_escape_covers_controls_and_bidi` retains
 an unrestricted symbolic `char`. Its independent assertions include U+061C
 (Arabic letter mark), which is a format character rather than an
-`is_control()` character. A separate input-only cover witnesses U+061C even
-when the production escape decision is wrong. Existing control, bidi, tag,
+`is_control()` character. An input-only cover before the assertions witnesses
+U+061C even when the production escape decision is wrong. Existing control, bidi, tag,
 ZWSP/BOM, printable-ASCII and newline/tab assertions and covers remain intact.
 
 The focused wrong-implementation control removes only U+061C from the actual

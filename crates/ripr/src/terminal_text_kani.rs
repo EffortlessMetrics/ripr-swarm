@@ -17,6 +17,7 @@ use crate::agent::loop_commands::needs_terminal_escape;
 #[kani::proof]
 fn needs_terminal_escape_covers_controls_and_bidi() {
     let ch: char = kani::any();
+    kani::cover!(ch == '\u{61c}');
     if ch.is_control() && ch != '\n' && ch != '\t' {
         assert!(needs_terminal_escape(ch));
     }
@@ -36,7 +37,6 @@ fn needs_terminal_escape_covers_controls_and_bidi() {
     }
     kani::cover!(ch == '\u{1b}' && needs_terminal_escape(ch));
     kani::cover!(ch == 'a' && !needs_terminal_escape(ch));
-    kani::cover!(ch == '\u{61c}');
 }
 
 /// Property (idempotence core): every character of the escape spelling
