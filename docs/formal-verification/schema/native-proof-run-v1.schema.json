@@ -187,17 +187,18 @@
         "peak_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
         "raw_block_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
         "current": {"type": "boolean"},
-        "reasons": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "pattern": "\\S"}},
+        "reasons": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "\\S"}},
         "non_claims": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "\\S"}, "minItems": 1}
       },
       "allOf": [
         {
           "if": {"properties": {"status": {"const": "ESTABLISHED"}}, "required": ["status"]},
           "then": {
-            "required": ["raw_block_digest"],
+            "required": ["raw_block_digest", "assumptions_digest"],
             "properties": {
               "native_verdict": {"const": "verified"},
               "current": {"const": true},
+              "assumptions_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
               "raw_block_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
               "duration_ms": {"type": "integer", "minimum": 0},
               "covers": {"properties": {"unreachable": {"const": 0}}}
@@ -207,14 +208,19 @@
         {
           "if": {"properties": {"status": {"const": "FAILED"}}, "required": ["status"]},
           "then": {
-            "required": ["raw_block_digest"],
+            "required": ["raw_block_digest", "assumptions_digest"],
             "properties": {
               "native_verdict": {"enum": ["counterexample", "unreachable_cover"]},
               "current": {"const": true},
+              "assumptions_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
               "raw_block_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
               "duration_ms": {"type": "integer", "minimum": 0}
             }
           }
+        },
+        {
+          "if": {"properties": {"status": {"not": {"const": "ESTABLISHED"}}}, "required": ["status"]},
+          "then": {"properties": {"reasons": {"minItems": 1}}}
         },
         {
           "if": {"properties": {"status": {"const": "FAILED"}, "native_verdict": {"const": "unreachable_cover"}}, "required": ["status", "native_verdict"]},

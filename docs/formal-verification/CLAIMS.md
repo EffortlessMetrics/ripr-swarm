@@ -92,6 +92,12 @@ proof harness
 
 `cover!` is not decoration. A critical claim identifies the interesting
 partitions whose reachability is required for the proof to be useful.
+Every critical provider requires a nonempty `required_covers` obligation list.
+For Kani, those obligations map to native `cover!` properties. For a state-machine
+model, name the finite states/actions or transitions whose reachability must be
+observed, and define their provider-native evidence mapping. An unsupported
+mapping remains visible and unestablished; a zero-obligation list cannot stand
+in for a provider-specific reachability contract.
 
 Examples:
 

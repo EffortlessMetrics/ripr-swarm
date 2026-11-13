@@ -119,8 +119,8 @@
   "allOf": [
     {
       "if": {
-        "properties": {"provider": {"const": "kani"}, "criticality": {"const": "critical"}},
-        "required": ["provider", "criticality"]
+        "properties": {"criticality": {"const": "critical"}},
+        "required": ["criticality"]
       },
       "then": {"properties": {"required_covers": {"minItems": 1}}}
     },

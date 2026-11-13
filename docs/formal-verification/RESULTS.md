@@ -59,7 +59,7 @@ assumption and bound digest
 duration/resource telemetry
 semantic claim status
 currentness
-rejection reasons
+status explanations and rejection reasons where applicable
 raw output block reference
 limitations and nonclaims
 ```
@@ -67,6 +67,19 @@ limitations and nonclaims
 One successful native block cannot satisfy two ambiguous source declarations.
 Duplicate source identities, duplicate result blocks, missing expected rows,
 and neighboring same-name results are not first-match-wins.
+
+Every `ESTABLISHED` or `FAILED` row requires a non-null `assumptions_digest`.
+Compute it as `sha256:` plus the lowercase SHA-256 of the compact UTF-8 JSON
+encoding of the exact registered `assumptions` array, preserving array order.
+The shared Rust DTO uses `serde_json::to_vec(&claim.assumptions)` for these bytes.
+The empty array uses the digest of the two bytes `[]`; it does not use `null`.
+The semantic validator must compare the digest with the registered claim;
+the schema only checks its presence and shape. Unobserved rows may use `null`.
+
+`reasons` contains status explanations. An `ESTABLISHED` row may use `[]` or
+retain useful success diagnostics. Every other status requires at least one
+nonempty explanation; successful evidence does not need an invented rejection
+reason.
 
 ## Status law
 

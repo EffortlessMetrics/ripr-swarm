@@ -11,17 +11,26 @@ and the separate pin in the [Kani workflow](../../.github/workflows/kani.yml)
 for Kani. Kani's bundled compiler and solver are separate identities from the
 product's Rust/MSRV pin; matching one version does not establish the others.
 
-The existing lane supports a focused observation, for example:
+The existing lane supports a focused observation. Until #12581 lands, its
+`cargo kani --version` preflight has no internal deadline. On a Linux host
+with GNU `timeout`, bound the complete manual command, for example:
 
 ```bash
-cargo xtask kani --harness self_computed_cap --harness-timeout-secs 60 --timeout-secs 900
+timeout --signal=TERM --kill-after=10s 1200s \
+  cargo xtask kani --harness self_computed_cap --harness-timeout-secs 60 --timeout-secs 900
 ```
 
 Inspect the selected and completed subjects, native exit and retained report.
 The selector may match more than one harness. A source count or one successful
 row does not establish that every expected subject ran. The provider budget
 does not include installing tools or compiling the xtask front door; an outer
-job budget must include those phases and owned-child cleanup.
+job budget must include those phases, the version preflight and owned-child
+cleanup. An outer timeout is an incomplete observation, including when it
+interrupts the command before a report exists. Retain its exit and raw output;
+do not reuse a previous report as current evidence. The shell deadline bounds
+the command but does not establish descendant cleanup: use the CI job's process
+custody and verify residual children separately. After #12581 lands, retain
+the outer budget as well as the internal preflight and provider deadlines.
 
 Record the exact command, working directory, effective supported Cargo/Kani
 configuration, provider/compiler/solver identities, source fence, native
@@ -45,7 +54,7 @@ Keep the acceptance record with the owning spec/claim and PR. It needs:
 | Proposition | Exact owner, input domain, observable and independent expected behavior |
 | Positive proof | Current native result and every required reachable partition |
 | Behavioral control | Compiling wrong behavior, the named failed assertion/invariant and raw outcome |
-| Domain guard | Constructor addition/omission controls and the specific compile-time guard that refuses them |
+| Domain guard | For enum domains, constructor addition/omission controls and the compile-time guard that refuses them; for numeric domains, boundary/partition reachability and out-of-domain controls; for state-machine models, explicit finite constants, reachable states/actions and deliberately changed-bound/domain controls |
 | Production correspondence | Real caller or state-transition test; pure helper proof alone has a narrower scope |
 | Execution identity | Source/configuration/tool/process/inventory/artifact bindings |
 | Maintenance | Generation change, affected selection, rollback and explicit remaining nonclaims |
