@@ -28,7 +28,18 @@ fn assert_notice(unfiltered: &Output, filtered: &Output) {
         unfiltered_annotations > 0,
         "unfiltered github output must annotate findings: {unfiltered_stdout}"
     );
-    assert_eq!(unfiltered_annotations, 4, "owned sample finding count");
+    // #14302: same-line probes of one class fold into one annotation that
+    // names how many more it stands for; the denominator counts findings.
+    let folded: usize = unfiltered_stdout
+        .lines()
+        .filter(|line| line.contains("file="))
+        .filter_map(|line| line.split("Also covers ").nth(1))
+        .filter_map(|rest| rest.split(' ').next())
+        .filter_map(|count| count.parse::<usize>().ok())
+        .sum();
+    assert_eq!(unfiltered_annotations, 2, "owned sample annotation count");
+    let unfiltered_findings = unfiltered_annotations + folded;
+    assert_eq!(unfiltered_findings, 4, "owned sample finding count");
     assert!(
         !unfiltered_stdout.contains("suppressed by policy"),
         "unfiltered run must not mention policy: {unfiltered_stdout}"
@@ -41,7 +52,7 @@ fn assert_notice(unfiltered: &Output, filtered: &Output) {
         "all-suppressed github output must not be silent"
     );
     let expected = format!(
-        "::notice title=ripr::Annotated 0 of {unfiltered_annotations} static exposure finding(s); {unfiltered_annotations} suppressed by policy"
+        "::notice title=ripr::Annotated 0 of {unfiltered_findings} static exposure finding(s); {unfiltered_findings} suppressed by policy"
     );
     assert!(
         stdout.contains(&expected),

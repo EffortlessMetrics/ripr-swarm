@@ -79,18 +79,75 @@ STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
-    r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
+    r"|\b(?:repairs?|changes?|fix(?:es)?)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
     r"|\bneeds?[ \t]+(?:work|a[ \t]+fix|fix|fixes|repair|changes|rework)\b"
     r"|\b(?:do(?:es)?[ \t]+not(?:[ \t]+yet)?|dont|don't|cannot|can't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\btake[ \t]+(?:it|that)[ \t]+back\b|\bretract(?:ing|ed|s)?\b|\bwithdr(?:aw|awn|awing)\b"
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
+    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\bstatus:[ \t]*(?:blocked|not[ \t]+ready|incomplete|rejected)\b|\breview[ \t]+incomplete\b"
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
+)
+# #14355: a negated change/repair phrase is not a blocker. "no code change needed"
+# and "no changes needed" describe resolved work, not a required repair. The
+# filler set is closed so an unrelated "no findings and code change needed" is
+# not swallowed. The phrase is stripped only when it ends a sentence and no
+# preceding cue refutes it; the rest of the line is then scanned separately, so
+# "no code change needed. The build is red." still refuses.
+NEGATED_CHANGE = re.compile(
+    r"\b(?:no|without)\b[ \t]+"
+    r"(?:(?:a|an|any|further|code|source|production)[ \t]+){0,2}"
+    r"(?:repairs?|changes?|fix(?:es)?)\b[ \t]+"
+    r"(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b",
+    re.IGNORECASE,
+)
+# Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
+NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
+# A recognized cue that refutes a negated change phrase, so it is not resolved
+# work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
+# sentence does not reach across the '.' or ';'. The same cue set is checked
+# after the phrase, but only when the remainder actually refutes it (see
+# REFUTATION_AFTER), so "Nothing is wrong." is not a refutation. The set is a
+# closed enumeration; a phrasing outside it is not detected.
+REFUTATION_CUE = re.compile(
+    r"\b(?:not[ \t]+true|untrue|false|incorrect|not[ \t]+the[ \t]+case"
+    r"|isn't|is[ \t]+not|it's[ \t]+not|it[ \t]+is[ \t]+not"
+    r"|not[ \t]+accurate|not[ \t]+correct|not[ \t]+right"
+    r"|no[ \t]+truth[ \t]+to|a[ \t]+lie|wrong[ \t]+to[ \t]+say|wrong[ \t]+to[ \t]+claim"
+    r"|would[ \t]+be[ \t]+wrong[ \t]+to|disagree|disagrees|disagreed"
+    r"|(?:i|we)[ \t]+(?:don't|do[ \t]+not)[ \t]+believe|(?:i|we)[ \t]+doubt"
+    r"|nobody[ \t]+could[ \t]+say|cannot[ \t]+say|can't[ \t]+say|deny|denies|denied)\b",
+    re.IGNORECASE,
+)
+REFUTES_NEGATION = re.compile(
+    REFUTATION_CUE.pattern + r"[^.;\n]*$",
+    re.IGNORECASE,
+)
+# A refutation after the phrase counts only when the remainder starts with a
+# demonstrative/pronoun subject ("That is false", "It is a lie", "I deny it"),
+# a demonstrative plus a short noun ("That claim is false", "The above is
+# false"), or the cue itself ("Incorrect.", "Wrong.", "Not so."). Ordinary
+# prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
+# does not.
+REFUTATION_AFTER = re.compile(
+    r"^[ \t]*[.!;]?[ \t]*"
+    r"(?:"
+    r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
+    r"|(?:that|this)[ \t]+(?:claim|statement|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
+    r"|the[ \t]+(?:above|statement|claim|assertion|report|summary|finding|comment|review)\b[ \t]*(?:is|'s|\u2019s|was|are)?[ \t]*"
+    r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue)"
+    r"|(?:that|this|it)\b[ \t]*(?:is|are|was)n['\u2019]t[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)"
+    r"|(?:incorrect|wrong|not[ \t]+(?:so|true|correct|the[ \t]+case|accurate|right)|false|untrue|a[ \t]+lie)\b"
+    r")",
+    re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -175,6 +232,43 @@ def positive_line(line: str) -> bool:
     return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
+def strip_negated_change(line: str) -> str:
+    """Remove a negated change/repair phrase only when it is resolved work.
+
+    #14355: the phrase is stripped only when it ends a sentence, no preceding
+    cue refutes it, and the remainder of the line carries no refutation cue.
+    A refuted or followed-by-blocker phrase stays in place, so the blocker scan
+    still refuses it.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        before = line[: match.start()]
+        after = line[match.end() :]
+        # #14355: a cue only refutes the phrase in its own clause. A comma
+        # resets the clause, so "The Devin thread was a false positive, no code
+        # change needed." is resolved work, not a refutation.
+        before_clause = before.rsplit(",", 1)[-1]
+        if (
+            NEGATED_CHANGE_TAIL.match(after)
+            and not REFUTES_NEGATION.search(before_clause)
+            and not REFUTATION_AFTER.search(after)
+        ):
+            return " "
+        return match.group(0)
+
+    return NEGATED_CHANGE.sub(replace, line)
+
+
+def negation_hit(line: str) -> bool:
+    """Whether ``line`` carries a blocker phrase outside a negated change phrase.
+
+    #14355: "no code change needed" is a resolved-work statement, not a blocker.
+    Only an unrefuted statement-position phrase is removed, so a genuine blocker
+    elsewhere on the same line still refuses.
+    """
+    return bool(NEGATION.search(strip_negated_change(line)))
+
+
 def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
@@ -189,11 +283,11 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
+    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
         return False
     return all(
         positive_line(line)
-        or not (STATE_MENTION.search(line) or NEGATION.search(line))
+        or not (STATE_MENTION.search(line) or negation_hit(line))
         for line in substantive[1:]
     )
 
@@ -211,7 +305,7 @@ def comment_body_negative(body: str) -> bool:
         return True
     visible, fenced = parts
     return any(STATE_MENTION.search(line) for line in visible) or any(
-        STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced
+        STATE_TOKEN.search(line) or negation_hit(line) for line in fenced
     )
 
 
@@ -437,6 +531,114 @@ def self_test() -> None:
         ("REVIEW_READY\nnot ready; repairs are required", False),
         ("REVIEW_READY\nThis is no longer ready", False),
         ("REVIEW_READY\nRepairs are required before merge", False),
+        # #14355: a negated change/repair phrase is resolved work, not a blocker.
+        # "Resolved with no code change needed." admits only because the strip ran.
+        ("REVIEW_READY\nResolved with no code change needed.", True),
+        ("REVIEW_READY\nThree Devin threads resolved, no code changes needed.", True),
+        ("REVIEW_READY\nResolved without a code change.", True),
+        # #14355: a comma resets the clause, so a benign cue earlier in the
+        # sentence does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            True,
+        ),
+        ("REVIEW_READY\nGemini isn't available, no changes needed.", True),
+        # #14355: a hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            True,
+        ),
+        ("REVIEW_READY\nCode change needed.", False),
+        ("REVIEW_READY\nA change is needed.", False),
+        ("REVIEW_READY\nChanges required.", False),
+        ("REVIEW_READY\nRepairs required.", False),
+        ("REVIEW_READY\nNo code change needed, but repairs required.", False),
+        # #14355: the real #14117 line 6 is mid-line, followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR "
+            "conversation and resolved with no code change needed. Gemini had no findings. "
+            "CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a "
+            "review; the owning session's inline source review stands in for them.",
+            True,
+        ),
+        ("REVIEW_READY\nNo code change needed. All threads resolved.", True),
+        ("REVIEW_READY\nNo code change needed. Gemini had no findings.", True),
+        ("REVIEW_READY\nNo changes are needed. The build is red.", False),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", False),
+        ("REVIEW_READY\nNo code change needed. Repairs required.", False),
+        ("REVIEW_READY\nNo changes are needed. The build fails.", False),
+        ("REVIEW_READY\nNo changes are needed. The build is broken.", False),
+        ("REVIEW_READY\nNo changes are needed. The build is failing.", False),
+        ("REVIEW_READY\nNo code change needed. A fix is needed.", False),
+        # #14355: a refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", False),
+        ("REVIEW_READY\nNo changes are needed; that is false.", False),
+        ("REVIEW_READY\nNo changes are needed. That is not true.", False),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", False),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", False),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", False),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", False),
+        ("REVIEW_READY\nNo code change needed. Not so.", False),
+        ("REVIEW_READY\nNo changes are needed. Not true.", False),
+        ("REVIEW_READY\nNo changes are needed. That isn't true.", False),
+        ("REVIEW_READY\nNo changes are needed. This isn't correct.", False),
+        ("REVIEW_READY\nNo changes are needed. That claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The above is false.", False),
+        ("REVIEW_READY\nNo changes are needed. That assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. This claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The statement is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The claim is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The assertion is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The finding is false.", False),
+        ("REVIEW_READY\nNo changes are needed. The report is false.", False),
+        ("REVIEW_READY\nNo changes are needed. This statement is untrue.", False),
+        ("REVIEW_READY\nNo changes are needed. All green.", True),
+        # #14355: ordinary prose with a cue word is not a refutation.
+        ("REVIEW_READY\nNo changes are needed. Nothing is wrong.", True),
+        ("REVIEW_READY\nNo changes are needed. No incorrect claims.", True),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            True,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            True,
+        ),
+        # #14355: an unlisted refutation ahead of the phrase is not resolved work.
+        ("REVIEW_READY\nIt's not accurate that no changes are needed.", False),
+        ("REVIEW_READY\nIt's not correct that no changes are needed.", False),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            False,
+        ),
+        ("REVIEW_READY\nI disagree that no changes are needed.", False),
+        ("REVIEW_READY\nI don't believe no changes are needed.", False),
+        ("REVIEW_READY\nI doubt no changes are needed.", False),
+        # Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            True,
+        ),
+        ("REVIEW_READY\nNo code change needed. Gemini isn't available.", True),
+        # #14355: a refuted phrase is not resolved work.
+        ("REVIEW_READY\nIt is not true that no changes are needed.", False),
+        ("REVIEW_READY\nIt is false that no change is needed.", False),
+        ("REVIEW_READY\nNo changes are needed is false.", False),
+        ("REVIEW_READY\nNo code change needed is not correct.", False),
+        ("REVIEW_READY\nNo changes are needed -- the build is red.", False),
+        ("REVIEW_READY\nThere is no truth to the claim that no changes are needed.", False),
+        ("REVIEW_READY\nIt is a lie that no changes are needed.", False),
+        ("REVIEW_READY\nIt is wrong to say that no changes are needed.", False),
+        ("REVIEW_READY\nNobody could say that no changes are needed.", False),
+        ("REVIEW_READY\nno findings, code change needed", False),
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),

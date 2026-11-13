@@ -341,7 +341,20 @@ wrong credits.
    the block itself holds no `return` or `?` (they would skip the assertion,
    and the closure escape gate does not read `async` blocks); a detached task, a handle kept in a binding, an
    `.await` whose result is dropped or converted (`.ok()`, `let _ =`), and
-   any other spawn function stay refused. An `#[rstest]` case table is admitted
+   any other spawn function stay refused. In a synchronous test, the one
+   `async` block that is the only argument of a crate-qualified `block_on`
+   free function is admitted too (#14106): `futures::executor::block_on`,
+   `futures_executor::block_on`, `tokio_test::block_on`, `pollster::block_on`,
+   `smol::block_on` and `async_std::task::block_on` each poll the block to
+   completion on the test thread before the call returns, so its panic is the
+   test's own. The file must hold no item, binding or alias named like the
+   path's crate, under the same `use` rule as `tokio::spawn`, and the block
+   itself holds no `return` or `?`. A bare or partially qualified `block_on`
+   (a test-local helper or any crate may define the name), a method
+   `block_on` on a runtime value, a second argument, a block nothing polls,
+   and a `block_on` inside an `async fn` test stay refused. This admits the
+   block's assertions; it supplies no polling-helper pin for an owner future
+   passed to the executor directly. An `#[rstest]` case table is admitted
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
@@ -2608,7 +2621,16 @@ not themselves a static propagation proof.
   through resolved module edges, recognized only when that root is a Cargo
   autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
   `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
-  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
+  `build.rs` beside an indexed `src/`) or a root the nearest package
+  manifest names: a `[lib] path`, or an explicit `[[test]]`, `[[bin]]`,
+  `[[example]]` or `[[bench]]` `path` (#7128). So a test in
+  `[[test]] path = "it/pin.rs"` is its own crate root and its exact
+  assertion on a crate-qualified owner call is credited like the same test
+  under `tests/`; the same file with no declaring target is an orphan no
+  crate is known to compile and stays unrecognized (tests
+  `a_declared_test_target_outside_tests_dir_pins_like_an_autodiscovered_one`,
+  `an_undeclared_file_outside_the_layout_stays_unplaced`). humantime's
+  `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported

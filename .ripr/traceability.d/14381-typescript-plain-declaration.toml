@@ -1,0 +1,9 @@
+# A plain TypeScript value declaration presents as a value change (#14381).
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::plain_value_declaration_recognizer_is_closed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::presented_shape_rewrites_only_the_ambiguous_fallback",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::classify_change_omits_probe_facts_for_ambiguous_const_expression",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::classify_change_keeps_predicate_for_ambiguous_conditional_declaration",
+]

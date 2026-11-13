@@ -24,8 +24,8 @@
       "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_ambiguous.ts:typescript_preview:ba5968cd",
-        "family": "predicate",
-        "delta": "control",
+        "family": "return_value",
+        "delta": "value",
         "file": "src/ambiguous.ts",
         "line": 4,
         "expression": "    const total = applyDiscount(amount, threshold);",
@@ -77,7 +77,7 @@
         "authority_boundary": "preview_advisory_only",
         "bun_cross_language_grip": null,
         "card_version": "typescript_preview_card.v1",
-        "changed_behavior": "predicate changed at src/ambiguous.ts:4: `const total = applyDiscount(amount, threshold);`",
+        "changed_behavior": "return_value changed at src/ambiguous.ts:4: `const total = applyDiscount(amount, threshold);`",
         "language": "typescript",
         "language_status": "preview",
         "limits": [
@@ -90,7 +90,7 @@
         "oracle_strength": "smoke",
         "owner": "summarize",
         "owner_kind": "function",
-        "probe_family": "predicate",
+        "probe_family": "return_value",
         "related_test": {
           "file": "tests/ambiguous.test.ts",
           "line": 1,

@@ -71,6 +71,129 @@ fn emit_attached_terminal_stdin_note(
     }
 }
 
+/// Split every `--name=value` token into `--name` and `value` (#14292).
+///
+/// Each command parser matches whole tokens, so without this boundary
+/// rewrite the near-universal `--format=json` spelling was refused as an
+/// unknown argument on every command. The rewrite has one owner and runs
+/// once on argv before global `--verbose` extraction, the JSON-refusal
+/// request check and command dispatch, so every command family accepts
+/// both spellings with identical meaning.
+///
+/// Only long flags whose name is ASCII alphanumerics and hyphens split, at
+/// the first `=`; the value keeps any later `=`. An empty value
+/// (`--root=`) becomes an empty value token, which the owning parser
+/// refuses as it would `--root ""`. `argv[0]`, short flags, positional
+/// values and every token after a literal `--` are left unchanged.
+///
+/// A documented switch is never split (`--quiet=false`, `--json=true`):
+/// switches take no value, and splitting would turn `--quiet=false` into
+/// `--quiet` plus a stray `false` that a command with a positional item
+/// reads as that item, the opposite of what was typed. The intact token
+/// reaches the command parser, which refuses it as an unknown argument
+/// naming exactly what was typed. Whether a name is a switch comes from the
+/// command help the `ripr help --json` flag inventory is built from, so the
+/// rule follows the documented options rather than a second list.
+///
+/// A token right after a bare documented value-taking flag is that flag's
+/// value and is never split: `--base --output=x` keeps `--output=x` as the
+/// base, so the base owner refuses the option-shaped revision by name
+/// instead of a stray `x` surfacing as an unknown argument.
+#[doc(hidden)]
+pub fn split_long_flag_values(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut literal = false;
+    // The previous token when it was a bare long flag that may own this
+    // token as its value. Its arity is looked up only when this token is
+    // `--name=value`-shaped, so ordinary argv never pays for the help scan.
+    let mut pending_flag: Option<String> = None;
+    // Tokens before the command word are top-level flags (`--version`,
+    // `--help`), which the version-precedence scan reads as a dash-led run;
+    // splitting `--format=json` there would end that run early.
+    let mut seen_command = false;
+    for (index, arg) in args.into_iter().enumerate() {
+        let previous = pending_flag.take();
+        if !seen_command && index > 0 && !arg.starts_with('-') {
+            seen_command = true;
+        }
+        if index == 0 || literal || !seen_command {
+            out.push(arg);
+            continue;
+        }
+        let value_position = long_flag_shape(&arg).is_some()
+            && previous.is_some_and(|flag| documented_arity(&flag) == Some(true));
+        if value_position {
+            out.push(arg);
+            continue;
+        }
+        if arg == "--" {
+            literal = true;
+            out.push(arg);
+            continue;
+        }
+        match long_flag_value(&arg) {
+            Some((name, value)) => {
+                out.push(name.to_string());
+                out.push(value.to_string());
+            }
+            None => {
+                if arg.starts_with("--") && !arg.contains('=') {
+                    pending_flag = Some(arg.clone());
+                }
+                out.push(arg);
+            }
+        }
+    }
+    out
+}
+
+fn long_flag_value(arg: &str) -> Option<(&str, &str)> {
+    let (name, value) = long_flag_shape(arg)?;
+    // Global switches are not in per-command option lists, so they are named
+    // here: `--verbose=check` must not become `--verbose check` and run check.
+    if GLOBAL_SWITCHES.contains(&name) {
+        return None;
+    }
+    (documented_arity(name) != Some(false)).then_some((name, value))
+}
+
+/// Switches every command accepts outside its own documented options.
+const GLOBAL_SWITCHES: [&str; 3] = ["--verbose", "--help", "--version"];
+
+/// `--name=value` with a name of ASCII alphanumerics and hyphens, split at
+/// the first `=`.
+fn long_flag_shape(arg: &str) -> Option<(&str, &str)> {
+    let (name, value) = arg.split_once('=')?;
+    let bare = name.strip_prefix("--")?;
+    let mut chars = bare.chars();
+    let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '-');
+    (first_ok && rest_ok).then_some((name, value))
+}
+
+/// How the command helps document `name`: `Some(true)` when any help
+/// documents it as taking a value, `Some(false)` when every help that
+/// documents it documents a switch, `None` when no help documents it. Only
+/// consulted around `--name=value` tokens, so ordinary argv never pays for
+/// the help scan.
+fn documented_arity(name: &str) -> Option<bool> {
+    let mut documented = None;
+    for entry in super::command_catalog::catalog() {
+        let Some(body) = super::help::help_text_for(entry.path) else {
+            continue;
+        };
+        for flag in super::help_flags::flags_for(entry.path, body) {
+            if flag.name == name {
+                if flag.takes_value {
+                    return Some(true);
+                }
+                documented = Some(false);
+            }
+        }
+    }
+    documented
+}
+
 /// Extract every global `-v`/`--verbose` occurrence from argv, reporting
 /// whether at least one was present (#5009).
 ///
@@ -133,6 +256,157 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn split_long_flag_values_rewrites_only_long_flag_assignments() {
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--format=json",
+                "--base=origin/main",
+                "--path=src/a=b.rs",
+                "--root=",
+                "--quiet",
+                "-v",
+                "positional=1",
+                "-x=1",
+                "--=x",
+                "--bad name=x",
+                "--quiet=false",
+                "--json=yes",
+                "--base=a=b",
+                "--root=no",
+            ])),
+            args(&[
+                "ripr",
+                "check",
+                "--format",
+                "json",
+                "--base",
+                "origin/main",
+                "--path",
+                "src/a=b.rs",
+                "--root",
+                "",
+                "--quiet",
+                "-v",
+                "positional=1",
+                "-x=1",
+                "--=x",
+                "--bad name=x",
+                "--quiet=false",
+                "--json=yes",
+                "--base",
+                "a=b",
+                "--root",
+                "no",
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_keeps_a_value_position_token_whole() {
+        // `--base` takes a value, so `--output=x` is the base, refused by its
+        // owner as option-shaped; a switch before it does not hold a value.
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--base",
+                "--output=x",
+                "--quiet",
+                "--format=json",
+            ])),
+            args(&[
+                "ripr",
+                "check",
+                "--base",
+                "--output=x",
+                "--quiet",
+                "--format",
+                "json"
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_splits_a_choice_list_flag_and_not_a_split_off_value() {
+        // `--phase before|after|verify` takes a value (#14292 review), and a
+        // value split off `--output=--base` does not own the next token.
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "ripr",
+                "agent",
+                "repair",
+                "--phase=after",
+                "--output=--base",
+                "--root=.",
+            ])),
+            args(&[
+                "ripr", "agent", "repair", "--phase", "after", "--output", "--base", "--root", "."
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_keeps_global_switch_assignments_whole() {
+        for global in ["--verbose=check", "--help=check", "--version=1"] {
+            assert_eq!(
+                split_long_flag_values(args(&["ripr", "check", global, "--format=json"])),
+                args(&["ripr", "check", global, "--format", "json"])
+            );
+        }
+    }
+
+    #[test]
+    fn split_long_flag_values_leaves_flags_before_the_command_alone() {
+        // `ripr --format=json --version` stays a version request (#14292
+        // review): the dash-led run before the command is not rewritten.
+        let leading = args(&["ripr", "--format=json", "--version"]);
+        assert_eq!(split_long_flag_values(leading.clone()), leading);
+        assert!(top_level_version_requested(&split_long_flag_values(
+            leading
+        )));
+    }
+
+    #[test]
+    fn split_long_flag_values_leaves_argv0_and_tokens_after_double_dash() {
+        assert_eq!(
+            split_long_flag_values(args(&[
+                "--root=.",
+                "check",
+                "--base=main",
+                "--",
+                "--format=json",
+                "--quiet",
+            ])),
+            args(&[
+                "--root=.",
+                "check",
+                "--base",
+                "main",
+                "--",
+                "--format=json",
+                "--quiet",
+            ])
+        );
+    }
+
+    #[test]
+    fn split_long_flag_values_feeds_the_same_command_as_the_spaced_spelling() {
+        assert_eq!(
+            parse_args(split_long_flag_values(args(&[
+                "ripr",
+                "check",
+                "--format=json",
+                "--base=main"
+            ]))),
+            Ok(CliCommand::Check(args(&[
+                "--format", "json", "--base", "main"
+            ])))
+        );
     }
 
     #[test]

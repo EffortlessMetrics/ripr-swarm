@@ -1060,8 +1060,32 @@ committed change also touches are not listed.
 - `crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit` (a git-visible flip is not reported)
 - `crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them` (narration, bound, escaping, manifest round-trip)
 
+## Amendment (#14084): no start the before phase would withhold
+
+The before phase selects its seam through the agent brief, which withholds a
+gap-class seam whose static evidence is unknown or opaque at a stage (for
+example a test that calls the changed function and asserts nothing, so the
+propagation stage is unknown). The shared repair-admission gate asks that same
+brief predicate after route eligibility and policy, and refuses such a seam up
+front: bare repair lists it under `no_eligible_seam`, an explicit item refuses
+with `seam_not_repair_eligible` (exit 3), and no attempt is created. The reason
+names the first unclear stage in plain words ("it cannot tell from reading the
+code whether the changed value reaches a result a test can check") and ends
+with "write the test by hand". `ripr agent start`, the card hold and the MCP
+admission use the same gate.
+
+The check screen prints `no repair start offered:` with that reason when its
+finding is a gap. When its finding is already read as unclear, the finding's
+own limitation guidance stands and no repair advisory is added. The brief owns
+the decision; the gate only words it. Whether such a gap should start a repair
+is not decided here.
+
 ## Test Mapping
 
+- `crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses` (#14084)
+- `crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts` (#14084 control)
+- `crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory` (#14084)
+- `crates/ripr/src/app/task_first.rs::tests::evidence_limited_reason_names_the_first_unclear_stage` (#14084)
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
