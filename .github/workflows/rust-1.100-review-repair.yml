@@ -117,12 +117,9 @@ jobs:
               "    let root = crate::test_support::workspace_root()?;\n"
               '    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))\n'
               "        .map_err(|error| error.to_string())?;\n"
-              "    let counter = text\n"
-              "        .lines()\n"
-              '        .find(|line| line.contains("cpx42_idle_ready="))\n'
-              '        .ok_or_else(|| "missing CPX42 readiness counter".to_string())?;\n'
-              '    assert!(counter.contains("rust-16gb"));\n'
-              '    assert!(counter.contains("rust-medium"));\n'
+              "    assert!(text.contains(\n"
+              '        "index(\\\"em-ci\\\") and index(\\\"cpx42\\\") and index(\\\"rust-16gb\\\") and index(\\\"rust-medium\\\")"\n'
+              "    ));\n"
               '    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));\n'
               '    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));\n'
               "    Ok(())\n"
