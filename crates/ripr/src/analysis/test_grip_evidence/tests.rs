@@ -24009,3 +24009,30 @@ fn branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip() ->
     );
     Ok(())
 }
+
+/// #14496: a `for` pattern that binds a parameter makes the call-argument
+/// environment stale. The gate must keep today's credit rather than fold the
+/// condition against the original argument.
+#[test]
+fn branch_local_return_value_seam_with_a_for_pattern_rebind_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    for amount in 0..10 {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn for_loop_reaches_the_discount() {\n    assert_eq!(discounted_total(0, 5), -5);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a for-pattern rebind keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}

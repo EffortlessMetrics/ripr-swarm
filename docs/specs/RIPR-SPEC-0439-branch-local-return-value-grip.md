@@ -130,6 +130,7 @@ refuses.
 - A reaching call through a rebound parameter keeps its grip.
 - A parameter mutated inside a loop after the `if` keeps the reaching
   call's grip.
+- A parameter bound by a `for` pattern keeps the reaching call's grip.
 - Identical arms keep their grip.
 - A sibling duplicate `return` after the `if` keeps the grip of the call
   that reaches it.
@@ -147,6 +148,10 @@ refuses.
   body, including a loop body, makes the fold refuse (`None`) rather than
   model the loop; a value-transparent wrapper is read through, a transforming
   wrapper is not.
+- No modelling of `match` arms. `enclosing_branches_reached` walks `if`
+  ancestors only, so a seam inside a `match` arm the call does not take keeps
+  today's credit. That is a known limit of this contract, reported for a
+  follow-up issue rather than fixed here.
 - No change to any seam kind other than `return_value`.
 - No new JSON field or grip class.
 
@@ -177,6 +182,7 @@ refuses.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_behind_an_untaken_enclosing_guard_is_not_gripped`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_rebound_parameter_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_for_pattern_rebind_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_identical_arms_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call`
