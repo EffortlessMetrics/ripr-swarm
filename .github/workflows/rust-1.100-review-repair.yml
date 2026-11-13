@@ -59,8 +59,7 @@ jobs:
                   )
               target.write_text(text.replace(old, new), encoding="utf-8")
 
-          # Historical MCP pair evidence must record the compiler selected by
-          # the historical subject checkout, not the migration checkout.
+          # Record the compiler selected by the historical subject checkout.
           replace_exact(
               ".github/workflows/python-wheel-qualification.yml",
               "          rustc -vV > pair/rustc-version.txt\n"
@@ -69,7 +68,7 @@ jobs:
               "          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt\n",
           )
 
-          # A/B comparisons must use one explicit compiler for both subjects.
+          # Build both warm A/B subjects with one explicit compiler.
           replace_exact(
               "xtask/src/warm_ab/nightly.rs",
               'const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";\n',
@@ -87,15 +86,20 @@ jobs:
           marker = "#[test]\nfn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {"
           if text.count(marker) != 1:
               raise SystemExit("warm-ab tests: pin parser marker drifted")
-          inserted = (
-              "#[test]\n"
-              "fn nightly_subject_builds_use_one_explicit_compiler() {\n"
-              '    assert_eq!(super::nightly::BUILD_TOOLCHAIN, "+1.100.0");\n'
-              "}\n\n"
+          tests.write_text(
+              text.replace(
+                  marker,
+                  "#[test]\n"
+                  "fn nightly_subject_builds_use_one_explicit_compiler() {\n"
+                  '    assert_eq!(super::nightly::BUILD_TOOLCHAIN, "+1.100.0");\n'
+                  "}\n\n"
+                  + marker,
+              ),
+              encoding="utf-8",
           )
-          tests.write_text(text.replace(marker, inserted + marker), encoding="utf-8")
 
-          # The CPX42 route must check every label required by the selected job.
+          # CPX42 requires both rust-16gb and rust-medium. Keep routing,
+          # readiness evidence, and the convergence fixture in lockstep.
           old_idle = (
               "          idle() { printf '%s' \"$runners\" | jq -s -e --arg model \"$1\" --arg cap \"$2\" "
               "'[.[].runners[]? | select(.status == \"online\" and (.busy | not) and "
@@ -108,11 +112,10 @@ jobs:
               "([.labels[].name | ascii_downcase] | index(\"em-ci\") and index($model) and index($cap) "
               "and ($extra == \"\" or index($extra))))] | length > 0' >/dev/null; }\n"
           )
-          old_counter = (
-              'index("em-ci") and index("cpx42") and index("rust-16gb")))] | length\')"\\n'
-          )
+          old_counter = 'index("em-ci") and index("cpx42") and index("rust-16gb")'
           new_counter = (
-              'index("em-ci") and index("cpx42") and index("rust-16gb") and index("rust-medium")))] | length\')"\\n'
+              'index("em-ci") and index("cpx42") and index("rust-16gb") '
+              'and index("rust-medium")'
           )
           old_route = (
               "            elif idle cpx42 rust-16gb; then target=cpx42 reason=cpx42_idle\n"
@@ -132,56 +135,51 @@ jobs:
           text = workflow_tests.read_text(encoding="utf-8")
           if "fn routed_rust_cpx42_selection_matches_required_labels()" in text:
               raise SystemExit("workflow regression tests already exist")
-          addition = (
-              "\n\n#[test]\n"
-              "fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {\n"
-              "    let root = crate::test_support::workspace_root()?;\n"
-              '    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))\n'
-              "        .map_err(|error| error.to_string())?;\n"
-              "    assert!(text.contains(\n"
-              '        "index(\\\"em-ci\\\") and index(\\\"cpx42\\\") and index(\\\"rust-16gb\\\") and index(\\\"rust-medium\\\")"\n'
-              "    ));\n"
-              '    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));\n'
-              '    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));\n'
-              "    Ok(())\n"
-              "}\n\n"
-              "#[test]\n"
-              "fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {\n"
-              "    let root = crate::test_support::workspace_root()?;\n"
-              '    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))\n'
-              "        .map_err(|error| error.to_string())?;\n"
-              "    assert!(text.contains(\n"
-              '        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"\n'
-              "    ));\n"
-              "    assert!(text.contains(\n"
-              '        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"\n'
-              "    ));\n"
-              '    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));\n'
-              "    Ok(())\n"
-              "}\n"
+          workflow_tests.write_text(
+              text
+              + "\n\n#[test]\n"
+              + "fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {\n"
+              + "    let root = crate::test_support::workspace_root()?;\n"
+              + '    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))\n'
+              + "        .map_err(|error| error.to_string())?;\n"
+              + "    assert!(text.contains(\n"
+              + '        "index(\\\"em-ci\\\") and index(\\\"cpx42\\\") and index(\\\"rust-16gb\\\") and index(\\\"rust-medium\\\")"\n'
+              + "    ));\n"
+              + '    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));\n'
+              + '    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));\n'
+              + "    Ok(())\n"
+              + "}\n\n"
+              + "#[test]\n"
+              + "fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {\n"
+              + "    let root = crate::test_support::workspace_root()?;\n"
+              + '    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))\n'
+              + "        .map_err(|error| error.to_string())?;\n"
+              + "    assert!(text.contains(\n"
+              + '        "(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"\n'
+              + "    ));\n"
+              + "    assert!(text.contains(\n"
+              + '        "(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"\n'
+              + "    ));\n"
+              + '    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));\n'
+              + "    Ok(())\n"
+              + "}\n",
+              encoding="utf-8",
           )
-          workflow_tests.write_text(text + addition, encoding="utf-8")
 
           for path in ["docs/swarm-development.md", "docs/SWARM_RUNNER_ROLLOUT_PLAN.md"]:
-              replace_exact(
-                  path,
-                  "runner_image_unavailable",
-                  "runner_capacity_unavailable",
-              )
+              replace_exact(path, "runner_image_unavailable", "runner_capacity_unavailable")
 
-          # A checked-out branch can override rustup's default. Pin the native
-          # subset job explicitly and retain that value in its receipt.
+          # Pin the native Windows subset. Do not embed a GitHub expression in
+          # this applicator because Actions would interpolate it before Python.
           replace_exact(
               ".github/workflows/windows-advisory.yml",
-              "    env:\n"
-              "      SELECTOR_CONSUMER_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}\n",
+              "    env:\n      SELECTOR_CONSUMER_ENABLED:",
               "    env:\n"
               "      RUSTUP_TOOLCHAIN: 1.100.0\n"
-              "      SELECTOR_CONSUMER_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}\n",
+              "      SELECTOR_CONSUMER_ENABLED:",
           )
 
-          # Rust 1.100 strict-Clippy findings. These are semantic-preserving
-          # repairs and remain source-compatible with the declared 1.95 floor.
+          # Rust 1.100 strict-Clippy repairs, all compatible with the 1.95 floor.
           replace_exact(
               "crates/ripr/src/analysis/language/python/trailing_comment_tests.rs",
               "    assert_eq!(multi_line_string_line_ranges(source), Some(vec![2..=4]));\n",
@@ -266,7 +264,6 @@ jobs:
               "}\n",
           )
 
-          # Ratchets and policy prose must describe the current source.
           replace_exact(
               "policy/evidence-state-literals.txt",
               "crates/ripr/src/lsp/gap_artifacts.rs|4\n",
@@ -283,8 +280,7 @@ jobs:
               "# duplicate them here.\n",
           )
 
-          # The compiler upgrade does not require changing package homepage
-          # metadata. Restore the mainline publishing contract.
+          # Restore unrelated publishing metadata to the current main contract.
           replace_exact(
               "Cargo.toml",
               'repository = "https://github.com/EffortlessMetrics/ripr/"\n\n'
@@ -296,11 +292,8 @@ jobs:
           for path in ["crates/ripr/Cargo.toml", "crates/ripr-contract/Cargo.toml"]:
               replace_exact(
                   path,
-                  "repository.workspace = true\n"
-                  "description = ",
-                  "repository.workspace = true\n"
-                  "homepage.workspace = true\n"
-                  "description = ",
+                  "repository.workspace = true\ndescription = ",
+                  "repository.workspace = true\nhomepage.workspace = true\ndescription = ",
               )
           replace_exact(
               "docs/PUBLISHING.md",
@@ -314,31 +307,8 @@ jobs:
           cargo fmt --all -- --check
           git diff --check
 
-          cargo test --locked -p ripr --lib
-          cargo test --locked -p xtask warm_ab
-          cargo test --locked -p repo-policy --lib routed_rust_cpx42_selection_matches_required_labels
-          cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
-          cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
-          cargo xtask check-architecture
-          cargo +1.95.0 check --locked --workspace --all-targets
-          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-          # The temporary applicator is itself an extra compiler setup. Remove
-          # it only while testing the permanent workflow inventory, then restore
-          # it so this run can finish and the connector can delete it separately.
-          workflow_tmp="$(mktemp)"
-          mv .github/workflows/rust-1.100-review-repair.yml "$workflow_tmp"
-          restore_workflow() {
-            mv "$workflow_tmp" .github/workflows/rust-1.100-review-repair.yml
-          }
-          trap restore_workflow EXIT
-          cargo test --locked -p repo-policy --test workflow_action_pins
-          restore_workflow
-          trap - EXIT
-
-          ! grep -RIl 'runner_image_unavailable' \
-            docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md
-
+          # Persist the bounded repair set before the long qualification so a
+          # later test failure remains inspectable and independently repairable.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
@@ -366,3 +336,25 @@ jobs:
           git push \
             --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
             origin "HEAD:refs/heads/$BRANCH"
+
+          cargo test --locked -p ripr --lib
+          cargo test --locked -p xtask warm_ab
+          cargo test --locked -p repo-policy --lib routed_rust_cpx42_selection_matches_required_labels
+          cargo test --locked -p repo-policy --lib mcp_pair_receipt_uses_the_subject_build_compiler
+          cargo test --locked -p repo-policy --lib routed_rust_workflow_contract
+          cargo xtask check-architecture
+          cargo +1.95.0 check --locked --workspace --all-targets
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+          workflow_tmp="$(mktemp)"
+          mv .github/workflows/rust-1.100-review-repair.yml "$workflow_tmp"
+          restore_workflow() {
+            mv "$workflow_tmp" .github/workflows/rust-1.100-review-repair.yml
+          }
+          trap restore_workflow EXIT
+          cargo test --locked -p repo-policy --test workflow_action_pins
+          restore_workflow
+          trap - EXIT
+
+          ! grep -RIl 'runner_image_unavailable' \
+            docs/swarm-development.md docs/SWARM_RUNNER_ROLLOUT_PLAN.md
