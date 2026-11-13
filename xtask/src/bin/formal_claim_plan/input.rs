@@ -169,3 +169,90 @@ pub(super) fn entry() -> std::process::ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn normalization_sorts_unordered_projection_fields_without_reordering_members() {
+        let members = vec![
+            Member {
+                pr_number: 2,
+                head: "2".repeat(40),
+            },
+            Member {
+                pr_number: 1,
+                head: "1".repeat(40),
+            },
+        ];
+        let mut input = SelectionInput {
+            schema: "ripr.formal-claim-selection-input.v1".to_string(),
+            repository: "example/repository".to_string(),
+            claim_index: ClaimIndex {
+                generation: "generation-1".to_string(),
+                global_authority_paths: vec!["z/path".to_string(), "a/path".to_string()],
+                claims: vec![ClaimIndexEntry {
+                    claim_id: "example.claim".to_string(),
+                    claim_generation: 1,
+                    criticality: Criticality::Critical,
+                    phase: Phase::AdmittedMergeGroup,
+                    provider: "kani".to_string(),
+                    route: ProviderRoute::Native,
+                    owners: vec!["z::owner".to_string(), "a::owner".to_string()],
+                    source_closure: vec!["z/source".to_string(), "a/source".to_string()],
+                    authority_paths: vec!["z/authority".to_string(), "a/authority".to_string()],
+                    subjects: vec!["z::subject".to_string(), "a::subject".to_string()],
+                    limitations: vec!["z limitation".to_string(), "a limitation".to_string()],
+                }],
+            },
+            change_set: ChangeSet {
+                base: "3".repeat(40),
+                group: "4".repeat(40),
+                members: members.clone(),
+                expected_registry_generation: "generation-1".to_string(),
+                controller_generation: "controller-1".to_string(),
+                producer_generation: "producer-1".to_string(),
+                proof_profile: "kani-critical-v1".to_string(),
+                classification_complete: true,
+                changes: vec![
+                    ChangedPath {
+                        path: "z/change".to_string(),
+                        impact: ImpactClass::FormalRelevant,
+                        semantic_subjects: vec!["z::subject".to_string(), "a::subject".to_string()],
+                    },
+                    ChangedPath {
+                        path: "a/change".to_string(),
+                        impact: ImpactClass::FormalRelevant,
+                        semantic_subjects: Vec::new(),
+                    },
+                ],
+                limitations: vec!["z limitation".to_string(), "a limitation".to_string()],
+            },
+        };
+
+        normalize_input(&mut input);
+
+        assert_eq!(input.change_set.members, members);
+        assert_eq!(
+            input.claim_index.global_authority_paths,
+            ["a/path".to_string(), "z/path".to_string()]
+        );
+        let claim = &input.claim_index.claims[0];
+        assert_eq!(claim.owners, ["a::owner".to_string(), "z::owner".to_string()]);
+        assert_eq!(claim.subjects, ["a::subject".to_string(), "z::subject".to_string()]);
+        assert_eq!(
+            input
+                .change_set
+                .changes
+                .iter()
+                .map(|changed| changed.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a/change", "z/change"]
+        );
+        assert_eq!(
+            input.change_set.changes[1].semantic_subjects,
+            ["a::subject".to_string(), "z::subject".to_string()]
+        );
+    }
+}
