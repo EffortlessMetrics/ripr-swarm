@@ -228,7 +228,9 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
-pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{
+    ReturnOracleAdmission, contains_as_whole_word, owner_returns_record,
+};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;

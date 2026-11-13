@@ -100,6 +100,24 @@ const PAYLOAD_EXTRACTING_MACROS: &[&str] = &[
     "assert_ready_err",
 ];
 
+/// #14562: methods that hand back the record they are called on (or the
+/// record an `Option`/`Result` holds), so a later read of the changed field
+/// still reads the owner's value.
+const RECORD_KEEPING_METHODS: &[&str] = &[
+    "clone",
+    "to_owned",
+    "as_ref",
+    "as_mut",
+    "as_deref",
+    "borrow",
+    "deref",
+    "unwrap",
+    "expect",
+    "unwrap_or",
+    "unwrap_or_default",
+    "into_inner",
+];
+
 /// Free functions that hand their one argument on.
 const FORWARDING_CALLEES: &[&str] = &["from", "black_box", "identity"];
 
@@ -113,6 +131,10 @@ enum Sink {
     Masked,
     /// The expression's value is the owner's value or computed from it.
     Value,
+    /// #14562: the owner's whole returned record, while the change sets one
+    /// field of it (`Reader::kept_field`). Compared whole it reaches; a read
+    /// of that field is the owner's value; any other read masks it.
+    Record,
     /// The expression is a container the test built around the owner's value
     /// (tuple, array, variant payload). A shape-only read of it (`.len()`,
     /// `.is_some()`) says nothing about the payload.
@@ -121,16 +143,26 @@ enum Sink {
 
 impl Sink {
     fn reaches(self) -> bool {
-        matches!(self, Self::Value | Self::Payload)
+        matches!(self, Self::Value | Self::Record | Self::Payload)
     }
 }
 
 /// The owner-value reading of `assertion_text` in `test`, for a call of the
 /// function named `owner`.
-pub(in crate::analysis) fn owner_value_flow(
+///
+/// #14562: `kept_field` names the one field of the record the owner returns
+/// that the change sets (`big: n >= 10,`). The owner's value reaches
+/// the compared operand only whole (`assert_eq!(opts(10), want)`) or through
+/// that field (`opts(10).big`). A read of another field (`opts(10).retries`)
+/// or a method of the record (`opts(10).summary()`) is `Masked`: it does not
+/// carry the changed field. Methods that hand the record back
+/// (`RECORD_KEEPING_METHODS`) keep it whole. Once the kept field is selected,
+/// the rest of the operand is read as with no kept field.
+pub(in crate::analysis) fn owner_field_value_flow(
     test: &TestSummary,
     assertion_text: &str,
     owner: &str,
+    kept_field: Option<&str>,
 ) -> OwnerValueFlow {
     if owner.is_empty() {
         return OwnerValueFlow::Absent;
@@ -149,11 +181,15 @@ pub(in crate::analysis) fn owner_value_flow(
     else {
         return OwnerValueFlow::Absent;
     };
-    let reader = Reader { test, owner };
+    let reader = Reader {
+        test,
+        owner,
+        kept_field,
+    };
     let mut flow = OwnerValueFlow::Absent;
     for operand in &operands {
         match reader.text_sink(operand, 0) {
-            Sink::Value | Sink::Payload => return OwnerValueFlow::Reaches,
+            Sink::Value | Sink::Record | Sink::Payload => return OwnerValueFlow::Reaches,
             Sink::Masked => flow = OwnerValueFlow::Masked,
             Sink::Absent => {}
         }
@@ -209,6 +245,8 @@ fn macro_arguments(call: &ast::MacroCall) -> Option<Vec<String>> {
 struct Reader<'a> {
     test: &'a TestSummary,
     owner: &'a str,
+    /// #14562: the one field of the owner's returned record the change sets.
+    kept_field: Option<&'a str>,
 }
 
 impl Reader<'_> {
@@ -234,6 +272,15 @@ impl Reader<'_> {
             let rest = masked.get(end..).unwrap_or_default().trim_start();
             rest.starts_with('(') || rest.starts_with("::<")
         })
+    }
+
+    /// The reading of an owner call itself.
+    fn owner_value(&self) -> Sink {
+        if self.kept_field.is_some() {
+            Sink::Record
+        } else {
+            Sink::Value
+        }
     }
 
     /// `Masked` when `node` names the owner anywhere, else `Absent`: the
@@ -320,7 +367,11 @@ impl Reader<'_> {
                 }
             }
             ast::Expr::MatchExpr(matched) => {
-                if self.inner(matched.expr(), depth).reaches() {
+                let scrutinee = self.inner(matched.expr(), depth);
+                // #14562: arms may destructure any field of the record.
+                if scrutinee == Sink::Record {
+                    Sink::Masked
+                } else if scrutinee.reaches() {
                     Sink::Value
                 } else {
                     self.unfollowed(expr.syntax())
@@ -387,7 +438,7 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
-            return Sink::Value;
+            return self.owner_value();
         }
         let arguments = call
             .arg_list()
@@ -427,7 +478,7 @@ impl Reader<'_> {
             return self.unfollowed(expr.syntax());
         };
         if name == self.owner {
-            return Sink::Value;
+            return self.owner_value();
         }
         let receiver = self.inner(call.receiver(), depth);
         // `masked.eq(&over(10))`: a comparing method's result depends on its
@@ -442,6 +493,15 @@ impl Reader<'_> {
             return Sink::Value;
         }
         match receiver {
+            // #14562: a method of the whole record may never read the
+            // changed field; only the methods that hand the record back keep
+            // it.
+            Sink::Record if RECORD_KEEPING_METHODS.contains(&name.as_str()) => Sink::Record,
+            // `over(10).eq(&want)` compares the whole record.
+            Sink::Record if matches!(name.as_str(), "eq" | "ne" | "cmp" | "partial_cmp") => {
+                Sink::Value
+            }
+            Sink::Record => Sink::Masked,
             // Any method of the owner's own value reads that value.
             Sink::Value => Sink::Value,
             Sink::Payload if UNWRAPPING_METHODS.contains(&name.as_str()) => Sink::Value,
@@ -486,10 +546,20 @@ impl Reader<'_> {
                 _ => self.unfollowed(expr.syntax()),
             };
         }
-        match self.inner(base, depth) {
+        let base = self.inner(base, depth);
+        // #14562: of the whole record, only the changed field carries it.
+        if base == Sink::Record {
+            let name = field.name_ref().map(|name| name.text().to_string());
+            return if name.as_deref() == self.kept_field {
+                Sink::Value
+            } else {
+                Sink::Masked
+            };
+        }
+        match base {
             Sink::Value => Sink::Value,
             Sink::Absent => Sink::Absent,
-            Sink::Payload | Sink::Masked => Sink::Masked,
+            Sink::Record | Sink::Payload | Sink::Masked => Sink::Masked,
         }
     }
 
@@ -513,6 +583,21 @@ impl Reader<'_> {
         let sink = match name.as_deref() {
             // `matches!(scrutinee, pattern)`.
             Some("matches") => match items.first().map(read) {
+                // #14562: a pattern over the record observes the changed
+                // field only when it names it.
+                Some(Sink::Record) => {
+                    let names_kept = self.kept_field.is_some_and(|kept| {
+                        items
+                            .iter()
+                            .skip(1)
+                            .any(|pattern| contains_as_whole_word(pattern, kept))
+                    });
+                    if names_kept {
+                        Sink::Value
+                    } else {
+                        Sink::Masked
+                    }
+                }
                 Some(sink) if sink.reaches() => Sink::Value,
                 _ => Sink::Masked,
             },
@@ -522,6 +607,8 @@ impl Reader<'_> {
             // the owner's value again.
             Some(name) if PAYLOAD_EXTRACTING_MACROS.contains(&name) => {
                 match items.first().map(read) {
+                    // #14562: the extracted payload is still the record.
+                    Some(Sink::Record) => Sink::Record,
                     Some(sink) if sink.reaches() => Sink::Value,
                     _ => Sink::Masked,
                 }
@@ -615,6 +702,10 @@ mod tests {
     use crate::analysis::syntax::ra::shadow_facts_for_body_text;
 
     fn flow(body: &str, assertion: &str) -> OwnerValueFlow {
+        kept_flow(body, assertion, None)
+    }
+
+    fn kept_flow(body: &str, assertion: &str, kept_field: Option<&str>) -> OwnerValueFlow {
         let (_, let_bindings) = shadow_facts_for_body_text(body);
         let test = TestSummary {
             name: "t".to_string(),
@@ -630,7 +721,65 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
             generated: None,
         };
-        owner_value_flow(&test, assertion, "over")
+        owner_field_value_flow(&test, assertion, "over", kept_field)
+    }
+
+    /// #14562: with the changed field `big` kept, the owner's record reaches
+    /// the compared operand whole or through `big` only.
+    #[test]
+    fn a_kept_field_is_read_only_whole_or_through_that_field() {
+        for assertion in [
+            "assert_eq!(over(10).big, true);",
+            "assert!(over(10).big);",
+            "assert!(!over(10).big);",
+            "assert_eq!(over(10), Opts { retries: 3, big: true });",
+            "assert_eq!(over(10).clone().big, true);",
+            "assert_eq!(over(10).unwrap().big, true);",
+            "assert_eq!(over(10).big.to_string(), \"true\");",
+            "assert!(over(10).eq(&want));",
+            "assert!(matches!(over(10), Opts { big: true, .. }));",
+            "assert_eq!(over(10).borrow().big, true);",
+            "assert_eq!(wrap(over(10)).inner.big, true);",
+        ] {
+            assert_eq!(
+                kept_flow(assertion, assertion, Some("big")),
+                OwnerValueFlow::Reaches,
+                "{assertion}"
+            );
+        }
+        for assertion in [
+            "assert_eq!(over(10).retries, 3);",
+            "assert_eq!(over(10).unwrap().retries, 3);",
+            "assert_eq!(over(10).summary(), \"x\");",
+            "assert_eq!(over(10).retries.big, 3);",
+            "assert_eq!(Some(over(10).retries).unwrap(), 3);",
+            "assert_eq!(assert_ok!(over(10)).retries, 3);",
+            "assert_eq!(over(10).0, 3);",
+            "assert_eq!(match over(10) { Opts { retries, .. } => retries }, 3);",
+            "assert!(matches!(over(10), Opts { retries: 3, .. }));",
+        ] {
+            assert_eq!(
+                kept_flow(assertion, assertion, Some("big")),
+                OwnerValueFlow::Masked,
+                "{assertion}"
+            );
+            // Without a kept field the same assertion reads the owner's value.
+            assert_eq!(
+                kept_flow(assertion, assertion, None),
+                OwnerValueFlow::Reaches,
+                "{assertion}"
+            );
+        }
+        let body = "let o = over(10);\nassert_eq!(o.retries, 3);";
+        assert_eq!(
+            kept_flow(body, "assert_eq!(o.retries, 3);", Some("big")),
+            OwnerValueFlow::Masked
+        );
+        let body = "let o = over(10);\nassert_eq!(o.big, true);";
+        assert_eq!(
+            kept_flow(body, "assert_eq!(o.big, true);", Some("big")),
+            OwnerValueFlow::Reaches
+        );
     }
 
     fn one(assertion: &str) -> OwnerValueFlow {
