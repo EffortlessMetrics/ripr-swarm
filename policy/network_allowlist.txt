@@ -1,5 +1,5 @@
 # Allowlisted network surfaces.
-# #14580: tools/ci/shard-verifier-artifact.py uses fixed-host gh api GETs for the current repository/run artifact inventory, exact artifact metadata and ZIP. It receives only the unprivileged actions-read job token, sanitizes download errors, validates digest/checkout identity, and strips token variables before launch. Python/gh are outside this lexical scanner; no unused scanner exception is added.
+# #14580: tools/ci/shard-verifier-artifact.py uses fixed-host gh api GETs for the current repository/run artifact inventory, exact artifact metadata and ZIP. It receives only the unprivileged actions-read job token, sanitizes download errors, validates digest/checkout identity, and strips token variables before launch. The gh invocations are outside this lexical scanner's recognized call patterns; no unused scanner exception is added.
 #
 # SPEC-0148 native acceptance adapter inventory: xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs invokes bounded gh api --hostname github.com --method GET for exact ripr-swarm issue comments only. It reuses existing operator credentials, never writes or logs in, and admits no caller-selected host or cached-response fallback. The lexical network scanner does not match gh invocations; this records the actual network surface without adding an unused scanner exception.
 #

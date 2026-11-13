@@ -1286,3 +1286,21 @@ surface = "repo"
 classification = "metadata"
 reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
 covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "tools/ci/shard-verifier-artifact.py"
+kind = "shard_verifier_bootstrap"
+owner = "ci/shard-verifier"
+surface = "ci"
+classification = "tooling"
+reason = "#14580: the unprivileged verify job must validate the downloaded xtask before executing it and intentionally has no Rust toolchain/build; runner-provided stdlib Python checks exact artifact identity, ZIP members and hashes without bootstrapping trust from that binary."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = "tools/ci/test_shard_verifier_artifact.py"
+kind = "shard_verifier_bootstrap_controls"
+owner = "ci/shard-verifier"
+surface = "ci"
+classification = "test"
+reason = "#14580: stdlib command-entry/ZIP controls execute the actual Python bootstrap and workflow shell with inert binaries and a fixture GitHub API; the Linux repo-policy integration test runs this suite in ordinary workspace qualification."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
