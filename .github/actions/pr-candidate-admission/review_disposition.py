@@ -274,10 +274,11 @@ def strip_negated_change(line: str) -> str:
 
 
 # #14592: on a verdict line, "no blocking findings", "no `block` remains",
-# "non-blocking" and "no failures" are resolved findings. Any run of spacing or
-# markup may separate the negator from the word.
+# "non-blocking" and "no failures" are resolved findings. Only spacing, emphasis
+# or inline-code markup, or one bare hyphen, may separate the negator from the
+# word; a clause or alternative delimiter ("no; BLOCK", "no / BLOCK") does not.
 NEGATED_VERDICT_WORD = re.compile(
-    r"(?<![a-z])(?:no|non|not)[\W_]*(?:block(?:ed|s|ing)?|fail(?:ed|s|ures?)?)(?![a-z])",
+    r"(?<![a-z])(?:no|non|not)(?:[ \t*_`~]*|-)(?:block(?:ed|s|ing)?|fail(?:ed|s|ures?)?)(?![a-z])",
     re.IGNORECASE,
 )
 SENTENCE_END = re.compile(r"[.!;]")
@@ -740,6 +741,11 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: approve, no `block` remains.", True),
         ("SOURCE_REVIEW_READY\nVERDICT: no block remains, but BLOCK on the docs.", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: no; BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: no. BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: no / BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: no, BLOCK", False),
+        ("SOURCE_REVIEW_READY\nVERDICT: no - BLOCK", False),
         ("SOURCE_REVIEW_READY\nVERDICT: not ready", False),
         ("SOURCE_REVIEW_READY\nVERDICT: NO-GO", False),
         ("REVIEW_READY \u2014 no findings", False),

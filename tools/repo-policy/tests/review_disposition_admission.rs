@@ -1074,6 +1074,11 @@ fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> 
             "refuted negated block",
         ),
         (
+            "SOURCE_REVIEW_READY\nVERDICT: no; BLOCK",
+            false,
+            "negator in a separate clause",
+        ),
+        (
             "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
             true,
             "negated block with extra spacing",
