@@ -2953,7 +2953,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         assert_eq!(route.language_status(), "unavailable");
         assert_eq!(route.route(), "unavailable_in_this_binary");
         assert_eq!(route.command, None);
-        assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
+        assert_eq!(route.guidance, None);
     };
     let typescript_available = LanguageId::TypeScript.is_available();
     let summary = required
@@ -3348,6 +3348,80 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
 }
 
 #[test]
+fn enabled_perl_keeps_fact_packet_prerequisites_in_all_renderers() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    if !LanguageId::Perl.is_available() {
+        return Ok(());
+    }
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Perl, "lib/App.pm")]);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust, LanguageId::Perl],
+        false,
+        &files,
+    );
+    let prerequisite = LanguageId::Perl
+        .enable_prerequisite()
+        .ok_or("Perl must have an enable prerequisite")?;
+    assert_eq!(routes.routes[0].guidance, Some(prerequisite.clone()));
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        repo_exposure_byte_bound: None,
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(terminal.contains(&prerequisite), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains(&prerequisite), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["routes"][0]["guidance"], prerequisite);
+    Ok(())
+}
+
+#[test]
+fn explicitly_disabled_typescript_invents_no_rebuild_step() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    if LanguageId::TypeScript.is_available() {
+        return Ok(());
+    }
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust],
+        false,
+        &files,
+    );
+    assert_eq!(routes.routes[0].guidance, None);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        repo_exposure_byte_bound: None,
+        ..pilot_context(&artifacts)
+    };
+    let notice = LanguageId::TypeScript
+        .unavailable_adapter_notice()
+        .ok_or("an unavailable adapter must have a notice")?;
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(!terminal.contains(&notice), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(!md.contains(&notice), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(parsed["language_routes"]["routes"][0]["guidance"].is_null());
+    Ok(())
+}
+
+#[test]
 fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
     use crate::domain::LanguageId;
 
@@ -3410,14 +3484,10 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         "{md}"
     );
     if let Some(notice) = LanguageId::TypeScript.unavailable_adapter_notice() {
-        // #4252: a Rust-only build names the rebuild and invents no route.
-        assert!(
-            terminal.contains(&format!(
-                "typescript: 1 file (not available in this build)\n    {notice}\n"
-            )),
-            "{terminal}"
-        );
-        assert!(md.contains(&notice), "{md}");
+        // #4252: a Rust-only build discloses scope but invents no setup step
+        // after an explicit opt-out.
+        assert!(!terminal.contains(&notice), "{terminal}");
+        assert!(!md.contains(&notice), "{md}");
         if !LanguageId::Perl.is_available() {
             // Neither discovered language is analyzable: no command at all.
             assert!(!terminal.contains("route: ripr check"), "{terminal}");
@@ -3513,13 +3583,9 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let json = render_pilot_summary_json(&[], context);
     assert!(json.contains("\"state\": \"required\""), "{json}");
     if let Some(notice) = LanguageId::Perl.unavailable_adapter_notice() {
-        assert!(
-            terminal.contains(&format!(
-                "perl: 1 file (not available in this build)\n    {notice}\n"
-            )),
-            "{terminal}"
-        );
-        assert!(md.contains(&notice), "{md}");
+        assert!(terminal.contains("perl: 1 file (not available in this build)\n"), "{terminal}");
+        assert!(!terminal.contains(&notice), "{terminal}");
+        assert!(!md.contains(&notice), "{md}");
     }
 
     // Only unavailable languages: no runnable command is invented.

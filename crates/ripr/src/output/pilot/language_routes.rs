@@ -304,7 +304,7 @@ fn route_for(
             enabled: false,
             command: None,
             guidance_category: None,
-            guidance: language.unavailable_adapter_notice(),
+            guidance: (!report.remediation.is_empty()).then(|| report.remediation.join("; ")),
         };
     }
     let enabled = report.effective_enabled;
@@ -319,8 +319,10 @@ fn route_for(
                 Some(PythonRepoExposureGuidance::CATEGORY),
                 Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
             )
-        } else {
+        } else if report.remediation.is_empty() {
             (None, None)
+        } else {
+            (None, Some(report.remediation.join("; ")))
         }
     } else if report.remediation.is_empty() {
         (None, None)

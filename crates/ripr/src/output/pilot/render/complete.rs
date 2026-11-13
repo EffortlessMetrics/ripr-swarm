@@ -1803,7 +1803,9 @@ fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]
         }
         // A disabled-but-available language keeps its enable step visible next
         // to the check route, since `ripr check` skips it until it is enabled.
-        let show_guidance = route.command.is_none() || (route.available && !route.enabled);
+        let show_guidance = route.command.is_none()
+            || (route.available && !route.enabled)
+            || route.language == LanguageId::Perl;
         if let Some(guidance) = route.guidance.as_deref().filter(|_| show_guidance) {
             out.push_str(&format!("    {guidance}\n"));
         }
