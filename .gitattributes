@@ -45,6 +45,10 @@ xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.c
 # The captured LF fixture is pinned by SHA-256 in its adjacent README.
 xtask/tests/windows_advisory_identity/owner_pin_execution-39023007917.log whitespace=-blank-at-eol
 
+# #14460 retains native compiler diagnostic blanks as captured; their hashes
+# are recorded with the Kani cover-evidence fixtures.
+xtask/tests/fixtures/kani-cover-evidence/*.stderr.txt whitespace=-blank-at-eof
+
 # Labeled verdict corpus (RIPR-SPEC-0219): case diffs carry patch-syntax
 # context spaces, and retained subjects are byte-identical upstream files
 # pinned by sha256, so whitespace rules cannot rewrite either.
