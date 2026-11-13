@@ -1,4 +1,3 @@
-use super::pr_causal_delta::write_canonical_delta;
 use super::write_parented_file;
 use crate::run::{
     capture_output_with_timeout, capture_process_output, run_output_owned,
@@ -19,6 +18,7 @@ const DEFAULT_HEAD: &str = "HEAD";
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const PR_CHECK_JSON: &str = "target/ripr/pr/check.json";
+const RETIRED_CANONICAL_DELTA_JSON: &str = "target/ripr/pr/canonical-delta.json";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 const PR_EVIDENCE_TIMEOUT_ENV: &str = "RIPR_PR_EVIDENCE_TIMEOUT_SECS";
@@ -217,7 +217,7 @@ fn write_pr_evidence_with_preparer(
         &[(&str, &str)],
     ) -> Result<String, String>,
 ) -> Result<(), String> {
-    remove_stale_check_artifact(repo)?;
+    remove_stale_analysis_artifacts(repo)?;
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     let changed_files = changed_files(repo, options)?;
@@ -237,18 +237,6 @@ fn write_pr_evidence_with_preparer(
         json!({"pr_evidence_subject": {"base": options.base, "head": options.head},
         "binary": binary.as_ref().ok(), "binary_source": if env::var("RIPR_BIN").is_ok() { "RIPR_BIN" } else { "cargo_build" }})
     );
-    write_canonical_delta(
-        repo,
-        &options.base,
-        &options.head,
-        &changed_files,
-        &options.root,
-        binary.as_deref().map_err(String::as_str),
-        &child_env,
-    )?;
-    // Share successful preparation, but preserve the scoped stage's independent
-    // opportunity after a failed canonical preparation. Its snapshots stay unavailable.
-    let binary = binary.or_else(|_| timed_phase("scoped_binary_build_or_select", || prepare(repo)));
     let result = match timed_phase("scoped_check", || {
         run_check(
             repo,
@@ -341,12 +329,15 @@ fn write_pr_evidence_packet(
     Ok(())
 }
 
-fn remove_stale_check_artifact(repo: &Path) -> Result<(), String> {
-    match fs::remove_file(repo.join(PR_CHECK_JSON)) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("remove stale {PR_CHECK_JSON} failed: {error}")),
+fn remove_stale_analysis_artifacts(repo: &Path) -> Result<(), String> {
+    for path in [PR_CHECK_JSON, RETIRED_CANONICAL_DELTA_JSON] {
+        match fs::remove_file(repo.join(path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove stale {path} failed: {error}")),
+        }
     }
+    Ok(())
 }
 
 fn write_pr_evidence_error_packet(
@@ -808,7 +799,7 @@ fn target_dir_from_value(repo: &Path, cwd: &Path, value: &Path) -> PathBuf {
 
 // Match the analyzer's effective override semantics. Preserve any nonempty operator
 // value in the inherited environment, including relative paths interpreted at cwd.
-// Default children share the invoking analysis root, outside disposable snapshots.
+// The default child shares the invoking analysis root so its cache persists across runs.
 fn default_pr_cache_dir(repo: &Path, root: &str, configured: Option<&str>) -> Option<String> {
     if configured.is_some_and(|value| !value.trim().is_empty()) {
         return None;
@@ -2800,13 +2791,11 @@ mod tests {
     }"#;
 
     #[test]
-    fn stale_check_artifact_is_removed_before_revision_setup_failure() -> Result<(), String> {
+    fn stale_analysis_artifacts_are_removed_before_revision_setup_failure() -> Result<(), String> {
         let repo = temp_repo("ripr-pr-stale-before-setup-failure")?;
-        write_parented_file(
-            &repo.join(PR_CHECK_JSON),
-            PR_CHECK_JSON,
-            "{\"stale\":true}\n",
-        )?;
+        for path in [PR_CHECK_JSON, RETIRED_CANONICAL_DELTA_JSON] {
+            write_parented_file(&repo.join(path), path, "{\"stale\":true}\n")?;
+        }
         let options = PrEvidenceOptions {
             base: "missing-base".to_string(),
             ..options()
@@ -2826,50 +2815,40 @@ mod tests {
 
         assert!(!runner_called);
         assert!(!repo.join(PR_CHECK_JSON).exists());
+        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
 
     #[test]
-    fn scoped_preparation_recovers_after_canonical_preparation_failure() -> Result<(), String> {
-        let (repo, options) = two_commit_repo("ripr-pr-prepare-recovery")?;
+    fn preparation_failure_is_not_retried_for_snapshots() -> Result<(), String> {
+        let (repo, options) = two_commit_repo("ripr-pr-prepare-no-retry")?;
         write_repo_file(&repo, PR_CHECK_JSON, "stale")?;
-        let fake = fake_ripr_binary(&repo, "recovered-ripr", MINIMAL_CHECK_JSON, "", 0, None)?
-            .display()
-            .to_string();
         let mut preparations = 0;
-        write_pr_evidence_with_preparer(
+        let error = write_pr_evidence_with_preparer(
             &repo,
             &options,
             |_| {
                 preparations += 1;
-                if preparations == 1 {
-                    Err("first preparation unavailable".to_string())
-                } else {
-                    Ok(fake.clone())
-                }
+                Err("preparation unavailable".to_string())
             },
-            |repo, options, binary, child_env| {
-                assert_eq!(binary, Ok(fake.as_str()));
-                run_ripr_check(repo, options, binary, child_env)
+            |_, _, binary, _| {
+                binary
+                    .map(|_| MINIMAL_CHECK_JSON.to_string())
+                    .map_err(str::to_string)
             },
-        )?;
-        assert_eq!(preparations, 2);
-        check_pr_evidence(&repo, &options)?;
-        let canonical: Value = serde_json::from_str(
-            &fs::read_to_string(repo.join(super::super::pr_causal_delta::CANONICAL_DELTA_JSON))
-                .map_err(|err| err.to_string())?,
         )
-        .map_err(|err| err.to_string())?;
-        assert_eq!(canonical["base"]["available"], false);
-        assert_eq!(canonical["head"]["available"], false);
-        assert_eq!(canonical["coverage"]["complete"], false);
-        assert_eq!(canonical["coverage"]["low_coverage_disclosed"], true);
+        .err()
+        .ok_or("failed preparation unexpectedly passed")?;
+        assert_eq!(preparations, 1);
+        assert!(error.contains("preparation unavailable"));
+        assert!(!repo.join(PR_CHECK_JSON).exists());
+        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
         fs::remove_dir_all(repo).map_err(|err| err.to_string())
     }
 
     #[test]
-    fn independent_scoped_preparation_failure_stays_fail_closed() -> Result<(), String> {
+    fn preparation_failure_stays_fail_closed() -> Result<(), String> {
         let (repo, options) = two_commit_repo("ripr-pr-build-failure")?;
         write_repo_file(&repo, PR_CHECK_JSON, "stale")?;
         let mut preparations = 0;
@@ -2884,19 +2863,10 @@ mod tests {
         )
         .err()
         .ok_or("failed build unexpectedly passed")?;
-        assert_eq!(preparations, 2);
-        assert!(error.contains("sentinel build failure 2"));
-        assert!(!error.contains("sentinel build failure 1"));
+        assert_eq!(preparations, 1);
+        assert!(error.contains("sentinel build failure 1"));
         assert!(!repo.join(PR_CHECK_JSON).exists());
-        let canonical: Value = serde_json::from_str(
-            &fs::read_to_string(repo.join(super::super::pr_causal_delta::CANONICAL_DELTA_JSON))
-                .map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| err.to_string())?;
-        assert_eq!(canonical["base"]["available"], false);
-        assert_eq!(canonical["head"]["available"], false);
-        assert_eq!(canonical["coverage"]["complete"], false);
-        assert_eq!(canonical["coverage"]["low_coverage_disclosed"], true);
+        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
         let packet: Value = serde_json::from_str(
             &fs::read_to_string(repo.join(PR_EVIDENCE_JSON)).map_err(|err| err.to_string())?,
         )
@@ -2906,12 +2876,11 @@ mod tests {
     }
 
     #[test]
-    fn prepared_binary_is_shared_with_scoped_check_and_snapshot_unknown_stays_visible()
-    -> Result<(), String> {
+    fn prepared_binary_runs_only_scoped_check_without_canonical_artifacts() -> Result<(), String> {
         let (repo, options) = two_commit_repo("ripr-pr-shared-binary")?;
-        let fake = fake_ripr_binary(&repo, "shared-ripr", MINIMAL_CHECK_JSON, "", 0, None)?
-            .display()
-            .to_string();
+        let fake = fake_ripr_binary(&repo, "shared-ripr", MINIMAL_CHECK_JSON, "", 0, None)?;
+        let invocation_log = fake.with_extension("invocations.txt");
+        let fake = fake.display().to_string();
         let mut preparations = 0;
         write_pr_evidence_with_preparer(
             &repo,
@@ -2927,17 +2896,11 @@ mod tests {
         )?;
         assert_eq!(preparations, 1);
         check_pr_evidence(&repo, &options)?;
-        let canonical: Value = serde_json::from_str(
-            &fs::read_to_string(repo.join(super::super::pr_causal_delta::CANONICAL_DELTA_JSON))
-                .map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| err.to_string())?;
-        // The fake succeeds but does not write pilot snapshots. This must not become complete evidence.
-        assert_eq!(canonical["base"]["available"], false);
-        assert_eq!(canonical["head"]["available"], false);
-        assert_eq!(canonical["coverage"]["complete"], false);
-        assert_eq!(canonical["base"]["revision"], "HEAD~1");
-        assert_eq!(canonical["head"]["revision"], "HEAD");
+        let invocations = fs::read_to_string(invocation_log).map_err(|err| err.to_string())?;
+        let calls = invocations.lines().collect::<Vec<_>>();
+        assert_eq!(calls, ["invoked"], "unexpected analyzer calls: {invocations}");
+        assert!(!repo.join(RETIRED_CANONICAL_DELTA_JSON).exists());
+        assert!(!repo.join("target/ripr/pr/canonical-snapshots").exists());
         fs::remove_dir_all(repo).map_err(|err| err.to_string())
     }
 
@@ -3130,6 +3093,7 @@ mod tests {
         #[cfg(windows)]
         {
             let mut script = String::from("@echo off\r\n");
+            script.push_str(">> \"%~dpn0.invocations.txt\" echo invoked\r\n");
             if let Some(seconds) = sleep_seconds {
                 script.push_str(&format!(
                     "powershell -NoProfile -Command Start-Sleep -Seconds {seconds}\r\n"
@@ -3154,6 +3118,7 @@ mod tests {
         {
             let temp_path = path.with_extension("tmp");
             let mut script = String::from("#!/bin/sh\n");
+            script.push_str("printf 'invoked\\n' >> \"${0}.invocations.txt\"\n");
             if let Some(seconds) = sleep_seconds {
                 script.push_str(&format!("sleep {seconds}\n"));
             }

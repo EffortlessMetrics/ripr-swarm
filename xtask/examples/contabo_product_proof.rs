@@ -529,9 +529,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(paths.len(), 19);
+        assert_eq!(paths.len(), 18);
         assert!(paths.contains("target/nextest/ci/junit.xml"));
         assert!(paths.contains("target/ripr/review/annotations.txt"));
+        assert!(!paths.contains("target/ripr/pr/canonical-delta.json"));
         assert!(!paths.contains("target/receipts/quality/ripr-plus.json"));
         Ok(())
     }
