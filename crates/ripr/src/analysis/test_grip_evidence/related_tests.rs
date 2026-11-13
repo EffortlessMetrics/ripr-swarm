@@ -459,19 +459,13 @@ fn direct_owner_alias_module_matches(
     owner_prefix: Option<&str>,
     index: &RustIndex,
 ) -> bool {
-    // `src/pricing/mod.rs` names the `pricing` module, but
-    // `module_path_for_index` keeps the file stem (`pricing/mod`). Fold the
-    // `mod` leaf so a `mod.rs` owner matches its `crate::pricing` import
-    // (#14508 review).
+    // `src/pricing/mod.rs` names `pricing`, but `module_path_for_index` keeps
+    // the file stem (`pricing/mod`); fold the leaf so the owner matches its
+    // `crate::pricing` import (#14508 review).
     let owner_module = owner_module.strip_suffix("/mod").unwrap_or(owner_module);
     if alias_crate_relative {
-        // `crate::` resolves against the crate that compiles the test file.
-        // An integration test (`tests/...`) is its own crate, so its
-        // `crate::pricing` names `tests/pricing.rs`, never the library's
-        // `src/pricing.rs`; a unit test inside `src/` shares the library
-        // crate with the owner. Requiring compilation-unit identity before
-        // the equality check is what stops a test crate's own module from
-        // crediting the library owner (#14508 review).
+        // `crate::` resolves against the crate that compiles the test file, so
+        // compilation-unit identity must hold before the equality check.
         if rust_index::is_test_file(test_file) {
             return false;
         }
@@ -482,10 +476,8 @@ fn direct_owner_alias_module_matches(
         if test_package != owner_package {
             return false;
         }
-        // Package identity alone does not establish library-versus-binary
-        // compilation-unit identity: a package can hold both a library and a
-        // binary, and `crate::` in the binary names the binary's own modules
-        // (#14508 review).
+        // A package can hold both a library and a binary, and `crate::` in the
+        // binary names the binary's own modules.
         if !crate_relative_alias_shares_compilation_unit(
             test_file,
             alias_module,
@@ -499,9 +491,8 @@ fn direct_owner_alias_module_matches(
         if alias_module.is_empty() {
             return owner_is_crate_root;
         }
-        // The chain resolution above already compared the resolved file with
-        // the owner file; the index's module path for a binary target
-        // (`bin/pricing`) is not the crate-relative spelling (`pricing`).
+        // The chain above already compared files; the index's binary-target
+        // module path (`bin/pricing`) is not the crate-relative spelling.
         return true;
     }
     // An external import names a package first: `subject::pricing`. Only the
@@ -535,13 +526,10 @@ fn direct_owner_alias_module_matches(
 /// test file, so package identity alone is not enough: a binary target is a
 /// separate compilation unit from the library beside it.
 ///
-/// Two shapes are definite negatives:
-/// - the test file is an established binary target root, so `crate::` names
-///   that binary and never another crate root (the library root or a sibling
-///   binary's root);
-/// - the test file belongs to a `src/bin/<name>` target, whose module tree is
-///   confined to its own directory, so `crate::<module>` never names a
-///   library module.
+/// Two shapes are definite negatives: the test file is an established binary
+/// target root, so `crate::` names that binary and never another crate root;
+/// or it belongs to a `src/bin/<name>` target, whose module tree is confined
+/// to its own directory, so `crate::<module>` never names a library module.
 ///
 /// A binary root that reaches a *different* file for the same module name
 /// through `#[path]` stays unresolved here; the inline-module shadow guard
@@ -622,8 +610,17 @@ fn resolve_module_chain(index: &RustIndex, root_file: &Path, module_path: &str) 
         let dir = current.parent()?;
         current = match &declaration.path_target {
             ModulePathTarget::Default => {
-                let file = dir.join(format!("{segment}.rs"));
-                let mod_file = dir.join(segment).join("mod.rs");
+                // `pricing.rs` declaring `mod x;` resolves under `pricing/`.
+                let root_like = module_stem(&current).is_none()
+                    || current.ends_with("mod.rs")
+                    || index.member_crates.is_binary_target_root(&current);
+                let base = if root_like {
+                    dir.to_path_buf()
+                } else {
+                    dir.join(current.file_stem()?)
+                };
+                let file = base.join(format!("{segment}.rs"));
+                let mod_file = base.join(segment).join("mod.rs");
                 let file_exists = index_has_file(index, &file);
                 let mod_exists = index_has_file(index, &mod_file);
                 match (file_exists, mod_exists) {
