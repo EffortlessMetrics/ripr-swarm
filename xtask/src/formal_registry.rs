@@ -249,18 +249,30 @@ fn canonical_decision(
         "authority_paths",
         serde_json::to_value(sorted(authority_paths)).map_err(|error| error.to_string())?,
     );
-    value.insert("claim_id", serde_json::to_value(&claim.claim_id).map_err(|error| error.to_string())?);
+    value.insert(
+        "claim_id",
+        serde_json::to_value(&claim.claim_id).map_err(|error| error.to_string())?,
+    );
     value.insert(
         "document",
         serde_json::to_value(document).map_err(|error| error.to_string())?,
     );
-    value.insert("family", serde_json::to_value(&claim.family).map_err(|e| e.to_string())?);
-    value.insert("provider", serde_json::to_value(&claim.provider).map_err(|e| e.to_string())?);
+    value.insert(
+        "family",
+        serde_json::to_value(&claim.family).map_err(|e| e.to_string())?,
+    );
+    value.insert(
+        "provider",
+        serde_json::to_value(&claim.provider).map_err(|e| e.to_string())?,
+    );
     value.insert(
         "criticality",
         serde_json::to_value(&claim.criticality).map_err(|e| e.to_string())?,
     );
-    value.insert("phase", serde_json::to_value(&claim.phase).map_err(|e| e.to_string())?);
+    value.insert(
+        "phase",
+        serde_json::to_value(&claim.phase).map_err(|e| e.to_string())?,
+    );
     value.insert(
         "proposition",
         serde_json::to_value(&claim.proposition).map_err(|e| e.to_string())?,
@@ -277,7 +289,10 @@ fn canonical_decision(
         "source_closure",
         serde_json::to_value(sorted(&claim.source_closure)).map_err(|e| e.to_string())?,
     );
-    value.insert("domain", serde_json::to_value(&claim.domain).map_err(|e| e.to_string())?);
+    value.insert(
+        "domain",
+        serde_json::to_value(&claim.domain).map_err(|e| e.to_string())?,
+    );
     // Assumption order is decision-bearing and matches the native row digest law.
     value.insert(
         "assumptions",
@@ -473,7 +488,9 @@ pub fn execute(args: &[String]) -> RegistryResult<String> {
                 Command::Check => project::render_check(&loaded, format),
                 Command::Index => project::render_index(&loaded, format),
                 Command::Scoreboard => project::render_scoreboard(&loaded, format),
-                Command::Transition => return Err("transition command reached the single-registry route".to_string()),
+                Command::Transition => {
+                    Err("transition command reached the single-registry route".to_string())
+                }
             }
         }
         Command::Transition => {
@@ -481,10 +498,10 @@ pub fn execute(args: &[String]) -> RegistryResult<String> {
                 registry.is_none(),
                 "--registry does not apply to transition",
             )?;
-            let base = base_registry
-                .ok_or_else(|| format!("--base-registry is required; {USAGE}"))?;
-            let head = head_registry
-                .ok_or_else(|| format!("--head-registry is required; {USAGE}"))?;
+            let base =
+                base_registry.ok_or_else(|| format!("--base-registry is required; {USAGE}"))?;
+            let head =
+                head_registry.ok_or_else(|| format!("--head-registry is required; {USAGE}"))?;
             let base = load::load_registry(Path::new(base))?;
             let head = load::load_registry(Path::new(head))?;
             transition::render_transition(&base, &head, format)

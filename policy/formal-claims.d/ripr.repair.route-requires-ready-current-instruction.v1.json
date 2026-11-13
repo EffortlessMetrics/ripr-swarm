@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.repair.route-requires-ready-current-instruction.v1",
-  "claim_generation": 1,
+  "claim_generation": 2,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -15,6 +15,7 @@
     "ripr::domain::repair_card_route_exposable"
   ],
   "source_closure": [
+    "crates/ripr/src/domain/fix_instruction.rs",
     "crates/ripr/src/domain/repair_card.rs",
     "crates/ripr/src/domain/repair_card/kani_proofs.rs"
   ],

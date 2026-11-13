@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.gate.top-level-status-fails-closed.v1",
-  "claim_generation": 1,
+  "claim_generation": 2,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -17,8 +17,9 @@
   ],
   "source_closure": [
     "crates/ripr/src/output/gate.rs",
-    "crates/ripr/src/output/gate/presentation.rs",
-    "crates/ripr/src/output/gate/gate_kani.rs"
+    "crates/ripr/src/output/gate/gate_kani.rs",
+    "crates/ripr/src/output/gate/model.rs",
+    "crates/ripr/src/output/gate/presentation.rs"
   ],
   "domain": "All GateMode variants, symbolic GateSummary counters, bounded warning/configuration-error presence, and symbolic exception blockers.",
   "assumptions": [

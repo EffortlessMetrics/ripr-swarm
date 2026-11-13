@@ -3,6 +3,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+mod path_controls;
+
+fn refusal<T>(outcome: RegistryResult<T>) -> RegistryResult<String> {
+    match outcome {
+        Ok(_) => Err("expected input refusal".to_string()),
+        Err(error) => Ok(error),
+    }
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -28,8 +38,7 @@ impl Fixture {
             "src/example.rs",
             "src/z.rs",
         ] {
-            fs::write(root.join(file), "synthetic fixture\n")
-                .map_err(|error| error.to_string())?;
+            fs::write(root.join(file), "synthetic fixture\n").map_err(|error| error.to_string())?;
         }
         Ok(Self(root))
     }
@@ -126,10 +135,9 @@ fn registry_emits_deterministic_index_and_honest_scoreboard() -> RegistryResult<
     let second = project::render_index(&load::load_registry(&path)?, OutputFormat::Json)?;
     assert_eq!(first, second);
     assert!(first.contains("\"execution_authority\": \"not_granted\""));
-    let scoreboard: serde_json::Value = serde_json::from_str(
-        &project::render_scoreboard(&loaded, OutputFormat::Json)?,
-    )
-    .map_err(|error| error.to_string())?;
+    let scoreboard: serde_json::Value =
+        serde_json::from_str(&project::render_scoreboard(&loaded, OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
     assert_eq!(scoreboard["summary"]["registered_claims"], 1);
     assert_eq!(scoreboard["summary"]["not_established"], 1);
     assert_eq!(scoreboard["claims"][0]["status"], "NOT_ESTABLISHED");
@@ -147,12 +155,11 @@ fn registry_membership_is_complete_and_exact() -> RegistryResult<()> {
         b"{}",
     )
     .map_err(|error| error.to_string())?;
-    assert!(load::load_registry(&path).is_err());
+    assert!(refusal(load::load_registry(&path))?.contains("registry membership differs"));
     fs::remove_file(fixture.0.join("policy/formal-claims.d/unlisted.json"))
         .map_err(|error| error.to_string())?;
-    fs::remove_file(fixture.0.join("src/example.rs"))
-        .map_err(|error| error.to_string())?;
-    assert!(load::load_registry(&path).is_err());
+    fs::remove_file(fixture.0.join("src/example.rs")).map_err(|error| error.to_string())?;
+    assert!(refusal(load::load_registry(&path))?.contains("claim source closure"));
     fs::write(fixture.0.join("src/example.rs"), "synthetic fixture\n")
         .map_err(|error| error.to_string())?;
     fs::remove_file(
@@ -161,28 +168,21 @@ fn registry_membership_is_complete_and_exact() -> RegistryResult<()> {
             .join("policy/formal-claims.d/example.actionability.json"),
     )
     .map_err(|error| error.to_string())?;
-    assert!(load::load_registry(&path).is_err());
+    assert!(refusal(load::load_registry(&path))?.contains("registry membership differs"));
     Ok(())
 }
 
 #[test]
-fn claim_document_stability_rejects_changed_bytes() {
-    assert!(
-        load::require_stable_document(
-            "policy/formal-claims.d/example.json",
-            br#"{"claim_generation":1}"#,
-            br#"{"claim_generation":2}"#,
-        )
-        .is_err()
+fn claim_document_stability_rejects_changed_bytes() -> RegistryResult<()> {
+    let document = "policy/formal-claims.d/example.json";
+    let before = br#"{"claim_generation":1}"#;
+    let after = br#"{"claim_generation":2}"#;
+    assert_eq!(
+        refusal(load::require_stable_document(document, before, after))?,
+        "claim document policy/formal-claims.d/example.json changed while semantic admission was in progress"
     );
-    assert!(
-        load::require_stable_document(
-            "policy/formal-claims.d/example.json",
-            br#"{"claim_generation":1}"#,
-            br#"{"claim_generation":1}"#,
-        )
-        .is_ok()
-    );
+    load::require_stable_document(document, before, before)?;
+    Ok(())
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn decision_digest_mismatch_and_duplicate_manifest_keys_reject() -> RegistryResu
         serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    assert!(load::load_registry(&path).is_err());
+    assert!(refusal(load::load_registry(&path))?.contains("decision digest mismatch"));
 
     let duplicate = br#"{
       "schema":"ripr.formal-claim-registry.v1",
@@ -211,7 +211,9 @@ fn decision_digest_mismatch_and_duplicate_manifest_keys_reject() -> RegistryResu
       "claims":[],
       "retirements":[]
     }"#;
-    assert!(load::parse_unique::<Manifest>(duplicate).is_err());
+    assert!(
+        refusal(load::parse_unique::<Manifest>(duplicate))?.contains("duplicate JSON key: schema")
+    );
     Ok(())
 }
 
@@ -267,15 +269,20 @@ fn transition_requires_generation_bumps_for_decision_changes() -> RegistryResult
     let changed = head_fixture.claim("example.actionability", "New proposition.")?;
     let head_path = head_fixture.write_registry(&changed, 2)?;
     let head = load::load_registry(&head_path)?;
-    assert!(transition::validate_transition(&base, &head).is_err());
+    assert!(
+        refusal(transition::validate_transition(&base, &head))?
+            .contains("changed decision must increase claim_generation")
+    );
 
     let mut changed = changed;
     changed.claim_generation = 2;
     let head_path = head_fixture.write_registry(&changed, 2)?;
     let head = load::load_registry(&head_path)?;
-    let report: serde_json::Value = serde_json::from_str(
-        &transition::render_transition(&base, &head, OutputFormat::Json)?,
-    )
+    let report: serde_json::Value = serde_json::from_str(&transition::render_transition(
+        &base,
+        &head,
+        OutputFormat::Json,
+    )?)
     .map_err(|error| error.to_string())?;
     assert_eq!(
         report["changed_claims"],
@@ -309,9 +316,11 @@ fn transition_requires_explicit_retirement_for_removal() -> RegistryResult<()> {
     )
     .map_err(|error| error.to_string())?;
     let head = load::load_registry(&head_path)?;
-    let report: serde_json::Value = serde_json::from_str(
-        &transition::render_transition(&base, &head, OutputFormat::Json)?,
-    )
+    let report: serde_json::Value = serde_json::from_str(&transition::render_transition(
+        &base,
+        &head,
+        OutputFormat::Json,
+    )?)
     .map_err(|error| error.to_string())?;
     assert_eq!(
         report["retired_claims"],
@@ -349,7 +358,10 @@ fn transition_rejects_retirement_without_base_authority() -> RegistryResult<()> 
     )
     .map_err(|error| error.to_string())?;
     let head = load::load_registry(&head_path)?;
-    assert!(transition::validate_transition(&base, &head).is_err());
+    assert_eq!(
+        refusal(transition::validate_transition(&base, &head))?,
+        "retirement example.ghost does not correspond to an active base claim"
+    );
     Ok(())
 }
 
@@ -367,5 +379,34 @@ fn order_does_not_change_registry_generation() -> RegistryResult<()> {
     let path = fixture.write_registry(&claim, 1)?;
     let second = load::load_registry(&path)?.generation;
     assert_eq!(first, second);
+    Ok(())
+}
+
+#[test]
+fn initial_claims_include_their_production_domain_definitions() -> RegistryResult<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask has no repository parent")?;
+    let registry = load::load_registry(&root.join("policy/formal-claims.json"))?;
+    for (claim_id, domain) in [
+        (
+            "ripr.gate.top-level-status-fails-closed.v1",
+            "crates/ripr/src/output/gate/model.rs",
+        ),
+        (
+            "ripr.repair.route-requires-ready-current-instruction.v1",
+            "crates/ripr/src/domain/fix_instruction.rs",
+        ),
+    ] {
+        let claim = registry
+            .claims
+            .iter()
+            .find(|claim| claim.claim.claim_id == claim_id)
+            .ok_or_else(|| format!("missing initial claim {claim_id}"))?;
+        assert!(
+            claim.claim.source_closure.iter().any(|path| path == domain),
+            "{claim_id} must track its production domain in {domain}"
+        );
+    }
     Ok(())
 }

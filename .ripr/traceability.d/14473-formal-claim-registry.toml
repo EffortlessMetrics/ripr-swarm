@@ -15,4 +15,9 @@ tests = [
   "xtask/src/formal_registry/tests.rs::transition_requires_generation_bumps_for_decision_changes",
   "xtask/src/formal_registry/tests.rs::transition_requires_explicit_retirement_for_removal",
   "xtask/src/formal_registry/tests.rs::order_does_not_change_registry_generation",
+  "xtask/src/formal_registry/tests.rs::initial_claims_include_their_production_domain_definitions",
+  "xtask/src/formal_registry/tests/path_controls.rs::registry_rejects_symlinked_directory_components",
+  "xtask/src/formal_registry/tests.rs::claim_document_stability_rejects_changed_bytes",
+  "xtask/src/formal_registry/tests.rs::transition_rejects_retirement_without_base_authority",
+  "xtask/src/formal_registry/project.rs::markdown_projection_escapes_table_and_control_syntax",
 ]

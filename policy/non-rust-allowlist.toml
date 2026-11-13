@@ -579,6 +579,25 @@ reason = "Declarative lint and policy ledgers (see docs/CLIPPY_POLICY.md)."
 covered_by = ["cargo xtask check-lint-policy", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "policy/formal-claims.json"
+kind = "formal_claim_registry"
+owner = "formal-verification"
+surface = "config"
+classification = "config"
+reason = "Canonical declarative membership and generation authority for the Rust formal-claim registry (#14473)."
+covered_by = ["cargo test -p xtask --lib formal_registry::tests::registry_membership_is_complete_and_exact", "cargo test -p xtask --lib formal_registry::tests::transition_requires_generation_bumps_for_decision_changes"]
+covered_by_unix = ["cargo test -p xtask --lib formal_registry::tests::path_controls::registry_rejects_symlinked_directory_components"]
+
+[[allow]]
+glob = "policy/formal-claims.d/*.json"
+kind = "formal_claim_documents"
+owner = "formal-verification"
+surface = "config"
+classification = "config"
+reason = "Versioned claim declarations parsed by the shared Rust evidence validator and governed by the exact registry membership (#14473)."
+covered_by = ["cargo test -p xtask --lib formal_registry::tests::decision_digest_mismatch_and_duplicate_manifest_keys_reject", "cargo test -p xtask --lib formal_registry::tests::initial_claims_include_their_production_domain_definitions"]
+
+[[allow]]
 glob = "deny.toml"
 kind = "supply_chain_policy"
 owner = "security"

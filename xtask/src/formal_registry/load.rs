@@ -12,10 +12,7 @@ impl<'de> Deserialize<'de> for UniqueJson {
         impl<'de> serde::de::Visitor<'de> for Visitor {
             type Value = UniqueJson;
 
-            fn expecting(
-                &self,
-                formatter: &mut std::fmt::Formatter<'_>,
-            ) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("JSON without duplicate object keys")
             }
 
@@ -41,10 +38,7 @@ impl<'de> Deserialize<'de> for UniqueJson {
                 Ok(UniqueJson(value.into()))
             }
 
-            fn visit_string<E: serde::de::Error>(
-                self,
-                value: String,
-            ) -> Result<Self::Value, E> {
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
                 Ok(UniqueJson(value.into()))
             }
 
@@ -68,9 +62,7 @@ impl<'de> Deserialize<'de> for UniqueJson {
                 mut map: A,
             ) -> Result<Self::Value, A::Error> {
                 let mut values = serde_json::Map::new();
-                while let Some((key, UniqueJson(value))) =
-                    map.next_entry::<String, UniqueJson>()?
-                {
+                while let Some((key, UniqueJson(value))) = map.next_entry::<String, UniqueJson>()? {
                     if values.insert(key.clone(), value).is_some() {
                         return Err(serde::de::Error::custom(format!(
                             "duplicate JSON key: {key}"
@@ -91,8 +83,8 @@ pub(super) fn parse_unique<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Regi
 }
 
 fn read_bounded(path: &Path, remaining: &mut u64) -> RegistryResult<Vec<u8>> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|error| format!("inspect {}: {error}", path.display()))?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect {}: {error}", path.display()))?;
     require(
         metadata.file_type().is_file(),
         format!("{} must be a regular non-symlink file", path.display()),
@@ -120,9 +112,7 @@ pub(super) fn require_stable_document(
 ) -> RegistryResult<()> {
     require(
         before == after,
-        format!(
-            "claim document {document} changed while semantic admission was in progress"
-        ),
+        format!("claim document {document} changed while semantic admission was in progress"),
     )
 }
 
@@ -144,17 +134,56 @@ fn registry_root(manifest_path: &Path) -> RegistryResult<PathBuf> {
         .ok_or_else(|| "registry manifest has no repository root".to_string())
 }
 
+#[derive(Clone, Copy)]
+enum RequiredPathKind {
+    File,
+    Directory,
+}
+
+fn require_non_symlink_path(
+    root: &Path,
+    relative: &str,
+    field: &str,
+    kind: RequiredPathKind,
+) -> RegistryResult<()> {
+    repository_path(relative, field)?;
+    let mut path = root.to_path_buf();
+    let mut components = relative.split('/').peekable();
+    while let Some(component) = components.next() {
+        path.push(component);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("{field} {}: {error}", path.display()))?;
+        let expected = if components.peek().is_some() {
+            RequiredPathKind::Directory
+        } else {
+            kind
+        };
+        let (matches, name) = match expected {
+            RequiredPathKind::File => (metadata.file_type().is_file(), "file"),
+            RequiredPathKind::Directory => (metadata.file_type().is_dir(), "directory"),
+        };
+        require(
+            matches,
+            format!(
+                "{field} {} must be a regular non-symlink {name}",
+                path.display()
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 fn require_regular_path(root: &Path, relative: &str, field: &str) -> RegistryResult<()> {
-    let path = root.join(relative);
-    let metadata = fs::symlink_metadata(&path)
-        .map_err(|error| format!("{field} {}: {error}", path.display()))?;
-    require(
-        metadata.file_type().is_file(),
-        format!("{field} {} must be a regular non-symlink file", path.display()),
-    )
+    require_non_symlink_path(root, relative, field, RequiredPathKind::File)
 }
 
 fn discover_claim_documents(root: &Path) -> RegistryResult<BTreeSet<String>> {
+    require_non_symlink_path(
+        root,
+        "policy/formal-claims.d",
+        "claim registry directory",
+        RequiredPathKind::Directory,
+    )?;
     let directory = root.join("policy/formal-claims.d");
     let mut documents = BTreeSet::new();
     for entry in fs::read_dir(&directory)
@@ -218,10 +247,7 @@ fn validate_manifest(manifest: &Manifest) -> RegistryResult<()> {
             ),
         )?;
         unique_paths(&entry.authority_paths, "authority_paths", true)?;
-        digest_field(
-            &entry.expected_decision_digest,
-            "expected_decision_digest",
-        )?;
+        digest_field(&entry.expected_decision_digest, "expected_decision_digest")?;
         require(
             documents.insert(entry.document.as_str()),
             format!("duplicate claim document {}", entry.document),
@@ -271,12 +297,17 @@ fn validate_manifest(manifest: &Manifest) -> RegistryResult<()> {
 }
 
 pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
+    let root = registry_root(path)?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("registry manifest must have a UTF-8 filename")?;
+    require_regular_path(&root, &format!("policy/{filename}"), "registry manifest")?;
     let mut remaining = MAX_TOTAL_INPUT_BYTES;
     let manifest_bytes = read_bounded(path, &mut remaining)?;
     let manifest: Manifest = parse_unique(&manifest_bytes)
         .map_err(|error| format!("parse {}: {error}", path.display()))?;
     validate_manifest(&manifest)?;
-    let root = registry_root(path)?;
     for authority in &manifest.global_authority_paths {
         require_regular_path(&root, authority, "global authority path")?;
     }
@@ -338,8 +369,7 @@ pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
             format!("{}: unsupported claim schema", entry.claim_id),
         )?;
         require(
-            claim.claim_id == entry.claim_id
-                && claim.claim_generation == entry.claim_generation,
+            claim.claim_id == entry.claim_id && claim.claim_generation == entry.claim_generation,
             format!(
                 "{}: manifest identity/generation does not match its claim document",
                 entry.claim_id
@@ -351,12 +381,8 @@ pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
         for source in &claim.source_closure {
             require_regular_path(&root, source, "claim source closure")?;
         }
-        let actual_digest = decision_digest(
-            &claim,
-            &entry.document,
-            entry.route,
-            &entry.authority_paths,
-        )?;
+        let actual_digest =
+            decision_digest(&claim, &entry.document, entry.route, &entry.authority_paths)?;
         require(
             actual_digest == entry.expected_decision_digest,
             format!(

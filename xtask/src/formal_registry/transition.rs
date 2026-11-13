@@ -84,9 +84,7 @@ fn transition(base: &LoadedRegistry, head: &LoadedRegistry) -> RegistryResult<Tr
         )?;
         require(
             retirement.final_generation == base_claim.claim.claim_generation,
-            format!(
-                "{claim_id}: retirement final_generation does not match the active base claim"
-            ),
+            format!("{claim_id}: retirement final_generation does not match the active base claim"),
         )?;
     }
 
@@ -100,18 +98,14 @@ fn transition(base: &LoadedRegistry, head: &LoadedRegistry) -> RegistryResult<Tr
             Some(head_claim) if head_claim.decision_digest == base_claim.decision_digest => {
                 require(
                     head_claim.claim.claim_generation == base_claim.claim.claim_generation,
-                    format!(
-                        "{claim_id}: unchanged decision cannot change claim_generation"
-                    ),
+                    format!("{claim_id}: unchanged decision cannot change claim_generation"),
                 )?;
                 unchanged_claims.push((*claim_id).to_string());
             }
             Some(head_claim) => {
                 require(
                     head_claim.claim.claim_generation > base_claim.claim.claim_generation,
-                    format!(
-                        "{claim_id}: changed decision must increase claim_generation"
-                    ),
+                    format!("{claim_id}: changed decision must increase claim_generation"),
                 )?;
                 changed_claims.push((*claim_id).to_string());
             }
@@ -128,9 +122,7 @@ fn transition(base: &LoadedRegistry, head: &LoadedRegistry) -> RegistryResult<Tr
                 if let Some(replacement) = &retirement.replacement_claim_id {
                     require(
                         head_claims.contains_key(replacement.as_str()),
-                        format!(
-                            "{claim_id}: retirement replacement {replacement} is not active"
-                        ),
+                        format!("{claim_id}: retirement replacement {replacement} is not active"),
                     )?;
                 }
                 retired_claims.push((*claim_id).to_string());
