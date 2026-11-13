@@ -1993,20 +1993,15 @@ fn path_command(name: &str) -> Option<PathBuf> {
 }
 
 fn path_command_exists(path: &Path) -> bool {
-    let Ok(meta) = path.metadata() else {
-        return false;
-    };
-    if !meta.is_file() {
-        return false;
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
+        path.metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
     {
-        true
+        path.is_file()
     }
 }
 

@@ -706,10 +706,7 @@ pub(super) fn oracle_is_pure_len_aggregate(oracle: &str, changed_literals: &str)
     }
     // The changed literal text appearing in the oracle means it observes the change.
     let trimmed = changed_literals.trim();
-    if trimmed.len() >= 2 && oracle.contains(trimmed) {
-        return false;
-    }
-    true
+    !(trimmed.len() >= 2 && oracle.contains(trimmed))
 }
 
 /// Per-finding state that does not depend on the related rows: the test index

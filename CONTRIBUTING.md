@@ -6,6 +6,11 @@ traceability without reconstructing intent from chat history.
 
 ## Local Setup
 
+The build/release compiler is Rust **1.100.0**; the source MSRV remains **1.95**.
+The [compiler upgrade guide](docs/ci/rust-1.100-upgrade.md) explains the separate
+compiler, LLVM, CI and source-compatibility checks. New APIs must still support
+the declared source minimum.
+
 ### Provision a Linux cloud image
 
 Use the Node major selected by `.github/workflows/vscode-e2e.yml` in the base
@@ -410,7 +415,7 @@ toolchain to be installed, and compares the complete `rustc -vV` identities.
 If only the rolling alias is installed, run the printed command to install the
 exact release once and retry. Store the printed exact selector in the task's
 startup command, for example
-`source tools/activate-rust.sh 1.95.0-x86_64-unknown-linux-gnu` for that release
+`source tools/activate-rust.sh 1.100.0-x86_64-unknown-linux-gnu` for that release
 and host. Reuse the exact selector on restored tasks; using `stable` again
 deliberately resolves the alias again. This does not change the repository's
 toolchain pin or MSRV obligation.

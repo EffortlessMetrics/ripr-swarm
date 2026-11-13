@@ -239,10 +239,9 @@ fn parse_clause_line(line: &str) -> Option<(VerusClauseKind, String)> {
         (VerusClauseKind::Requires, rest.trim())
     } else if let Some(rest) = trimmed.strip_prefix("ensures") {
         (VerusClauseKind::Ensures, rest.trim())
-    } else if let Some(rest) = trimmed.strip_prefix("recommends") {
-        (VerusClauseKind::Recommends, rest.trim())
     } else {
-        return None;
+        let rest = trimmed.strip_prefix("recommends")?;
+        (VerusClauseKind::Recommends, rest.trim())
     };
     if rest.is_empty() {
         return None;

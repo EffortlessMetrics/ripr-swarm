@@ -504,7 +504,7 @@ fn sarif_policy_fingerprint(result: &Value) -> String {
     format!(
         "{}|{}|{}",
         normalize_path(Path::new(&uri)),
-        line.map_or(0, |line| line),
+        line.unwrap_or(0),
         message
     )
 }

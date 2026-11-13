@@ -4,6 +4,12 @@ const LEGACY: &str = include_str!("../../fixtures/convergence/windows-subset/qua
 const STAGED: &str = include_str!("../../.github/workflows/windows-subset-qualification.yml");
 const PRECHECK: &str =
     "      - name: Verify admitted integration source before product execution\n";
+const TOOLCHAIN: &str = concat!(
+    "      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n",
+    "        with:\n",
+    "          toolchain: 1.100.0\n",
+);
+const LEGACY_TOOLCHAIN: &str = "      - uses: dtolnay/rust-toolchain@1.95\n";
 
 fn evidence_step(source: &str) -> Result<&str, String> {
     let (_, step) = source
@@ -20,14 +26,15 @@ fn normalized_job(source: &str) -> Result<String, String> {
         .ok_or_else(|| "missing Windows subset job".to_owned())?;
     let mut job = job.to_owned();
     if let Some((before, tail)) = job.split_once(PRECHECK) {
-        // Frozen predecessors name the tag; mainline pins the commit.
-        let (toolchain, after) = [
-            "      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n",
-            "      - uses: dtolnay/rust-toolchain@1.95\n",
-        ]
-        .iter()
-        .find_map(|toolchain| tail.split_once(toolchain).map(|(_, after)| (*toolchain, after)))
-        .ok_or_else(|| "precheck displaced the native toolchain".to_owned())?;
+        // The frozen predecessor names a compiler tag; mainline pins the
+        // generic action and requires the explicit compiler input with it.
+        let (toolchain, after) = [TOOLCHAIN, LEGACY_TOOLCHAIN]
+            .iter()
+            .find_map(|toolchain| {
+                tail.split_once(toolchain)
+                    .map(|(_, after)| (*toolchain, after))
+            })
+            .ok_or_else(|| "precheck displaced the native toolchain".to_owned())?;
         job = format!("{before}{toolchain}{after}");
     }
     let trust = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
@@ -124,8 +131,9 @@ fn expected_job_with_recovery_quote_repair() -> Result<String, String> {
     Ok(expected)
 }
 
-/// Pinned spelling in the staged job, then the tag spelling the retained
-/// predecessor fixture still names.
+/// Pinned spellings in the staged job, then their frozen predecessor spellings.
+/// The compiler, cache key and rustc receipt use exact reviewed anchors; no
+/// generic version replacement may hide an unrelated job payload change.
 /// Apply every `PIN_NORMALIZATION` pair, failing loudly on a pair that matches
 /// nothing: a no-op pair is a dead normalization that would otherwise surface
 /// only as an unreadable job diff.
@@ -141,10 +149,19 @@ fn apply_pin_normalization(mut job: String) -> Result<String, String> {
     Ok(job)
 }
 
-const PIN_NORMALIZATION: [(&str, &str); 5] = [
+const PIN_NORMALIZATION: [(&str, &str); 8] = [
+    (TOOLCHAIN, LEGACY_TOOLCHAIN),
     (
-        "dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95",
-        "dtolnay/rust-toolchain@1.95",
+        "          shared-key: ripr-windows-advisory-subset-1.100-${{ runner.os }}-stock-volume-v1\n",
+        "          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1\n",
+    ),
+    (
+        "                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.100-' + expression('runner.os') + '-stock-volume-v1', section)\n",
+        "                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-' + expression('runner.os') + '-stock-volume-v1', section)\n",
+    ),
+    (
+        "stdout.startswith(b\"rustc 1.100.0 \")",
+        "stdout.startswith(b\"rustc 1.95.0 \")",
     ),
     (
         "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
@@ -171,7 +188,8 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
             "WORKFLOW = Path.cwd() / '.github/workflows/windows-subset-qualification.yml'"
         )
     );
-    // The retained predecessor names action tags; mainline pins their commits.
+    // The retained predecessor names action tags and the previous compiler;
+    // mainline pins action commits and the reviewed compiler/cache identity.
     // Each pair must match the staged workflow: a pair that matches nothing is a
     // no-op, so a pin bump (or a revert to a tag) would otherwise leave a dead
     // normalization that only fails, if at all, as an unreadable job diff.
@@ -191,7 +209,7 @@ fn subset_command_removal_is_detected() -> Result<(), String> {
     );
     assert_ne!(bad, STAGED);
     assert_ne!(
-        normalized_job(&bad)?,
+        apply_pin_normalization(normalized_job(&bad)?)?,
         expected_job_with_recovery_quote_repair()?
     );
     Ok(())
@@ -214,7 +232,10 @@ fn recovery_quote_scope_and_cleanup_drift_still_break_preservation() -> Result<(
         assert_eq!(STAGED.matches(before).count(), 1, "control anchor drift");
         let changed = STAGED.replacen(before, after, 1);
         assert_ne!(changed, STAGED);
-        assert_ne!(normalized_job(&changed)?, expected);
+        assert_ne!(
+            apply_pin_normalization(normalized_job(&changed)?)?,
+            expected
+        );
     }
     Ok(())
 }
@@ -259,7 +280,7 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
         .find(PRECHECK)
         .ok_or_else(|| "missing source precheck".to_owned())?;
     let toolchain = STAGED
-        .find("      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n")
+        .find(TOOLCHAIN)
         .ok_or_else(|| "missing toolchain".to_owned())?;
     assert!(check < toolchain);
     for clause in [
@@ -277,18 +298,39 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
 
 #[test]
 fn a_pin_bump_without_a_normalization_update_is_detected() -> Result<(), String> {
-    // Simulate Dependabot moving one pin while the normalization stays put.
-    let bumped = STAGED.replace(
-        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
-        "actions/checkout@0000000000000000000000000000000000000000 # v6.2.0",
-    );
-    assert_ne!(bumped, STAGED, "control must mutate the staged workflow");
-    let error = apply_pin_normalization(normalized_job(&bumped)?)
-        .err()
-        .ok_or("a bumped pin must fail the normalization, not pass silently")?;
-    assert!(
-        error.contains("pin normalization matches nothing in the staged job"),
-        "{error}"
-    );
+    // Simulate unreviewed action/compiler changes, an omitted compiler input,
+    // or a stale cache/receipt identity while the normalization stays put.
+    for (before, after) in [
+        (
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+            "actions/checkout@0000000000000000000000000000000000000000 # v6.2.0",
+        ),
+        (
+            "          toolchain: 1.100.0\n",
+            "          toolchain: 1.99.0\n",
+        ),
+        ("          toolchain: 1.100.0\n", ""),
+        (
+            "          shared-key: ripr-windows-advisory-subset-1.100-${{ runner.os }}-stock-volume-v1\n",
+            "          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1\n",
+        ),
+        (
+            "stdout.startswith(b\"rustc 1.100.0 \")",
+            "stdout.startswith(b\"rustc 1.95.0 \")",
+        ),
+    ] {
+        assert_eq!(STAGED.matches(before).count(), 1, "control anchor drift");
+        let bumped = STAGED.replacen(before, after, 1);
+        assert_ne!(bumped, STAGED, "control must mutate the staged workflow");
+        let error = normalized_job(&bumped)
+            .and_then(apply_pin_normalization)
+            .err()
+            .ok_or("a changed pin must fail the normalization, not pass silently")?;
+        assert!(
+            error.contains("pin normalization matches nothing in the staged job")
+                || error == "precheck displaced the native toolchain",
+            "{error}"
+        );
+    }
     Ok(())
 }

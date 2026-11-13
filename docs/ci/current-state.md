@@ -1,5 +1,11 @@
 # CI Current State
 
+> Historical snapshot: this document records CI as of 2026-08-25. For current
+> execution contracts, see [CI documentation](../CI.md). The
+> [2026-11-13 compiler upgrade](rust-1.100-upgrade.md) selects Rust 1.100.0 for
+> builds while retaining the Rust 1.95 source minimum. The toolchain and lane
+> descriptions below belong to the earlier snapshot.
+
 This document records the current implementation state of the CI economics
 system as of 2026-08-25. It is the honest answer to “what actually runs today?”
 as distinct from the target design in `docs/CI.md`.

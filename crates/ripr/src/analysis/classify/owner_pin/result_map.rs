@@ -229,10 +229,9 @@ fn declaration_container(function: &ast::Fn) -> Option<SyntaxNode> {
             super::has_cfg_attr(&item)
         } else if let Some(item) = ast::ItemList::cast(node.clone()) {
             super::has_cfg_attr(&item)
-        } else if let Some(item) = ast::SourceFile::cast(node.clone()) {
-            super::has_cfg_attr(&item)
         } else {
-            return None;
+            let item = ast::SourceFile::cast(node.clone())?;
+            super::has_cfg_attr(&item)
         };
         if gated {
             return None;

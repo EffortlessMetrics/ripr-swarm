@@ -111,9 +111,9 @@ jobs:
           esac
           printf 'qualify=true\n' >> "${GITHUB_OUTPUT}"
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
       # Ledger validation executes even when only an unrelated record changed.
       - name: Validate workflow policy independently
         run: cargo policy check-workflows
@@ -174,9 +174,9 @@ jobs:
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
           checkout_head="$(git rev-parse HEAD)"
           test "${checkout_head}" = "${CANDIDATE_SHA,,}"
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
       - name: Validate package source contract
         shell: bash
         run: |
@@ -255,9 +255,9 @@ jobs:
           ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
           targets: ${{ env.RUST_TARGET }}
 
       - name: Bind exact source candidate and native version
@@ -808,9 +808,9 @@ jobs:
       # toolchain is only for the ordinary fixture's real native project tests.
       - name: Provision Rust only for the ordinary fixture native test
         if: ${{ matrix.client == 'pip' }}
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
 
       - name: Exercise installed offline provider recovery
         id: provider_recovery
@@ -822,10 +822,10 @@ jobs:
           mkdir "${RUNNER_TEMP}/provider-input"
           tar -xzf evidence/provider-recovery.tar.gz -C "${RUNNER_TEMP}/provider-input"
           test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
-          native_cargo="$(rustup which --toolchain 1.95.0 cargo)"
-          native_rustc="$(rustup which --toolchain 1.95.0 rustc)"
+          native_cargo="$(rustup which --toolchain 1.100.0 cargo)"
+          native_rustc="$(rustup which --toolchain 1.100.0 rustc)"
           env -i HOME="${HOME}" PATH="$(dirname "${native_cargo}"):${CONSUMER_PATH}" \
-            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.95.0 \
+            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.100.0 \
             "${CONSUMER_PYTHON}" "${RUNNER_TEMP}/provider-input/tools/python/installed-provider-recovery/run.py" \
             "${CONSUMER_EXECUTABLE}" "${RUNNER_TEMP}/provider-input/crates/ripr/tests/fixtures/proptest_singleton" \
             "${RUNNER_TEMP}/provider-recovery-work" "${GITHUB_WORKSPACE}/provider-recovery-evidence"
@@ -877,18 +877,18 @@ jobs:
             evidence/wheel-receipt.json > /dev/null
           cp ordinary-runner/runner-receipt.json evidence/wheel-receipt.json "${output}/"
           chmod +x "${runner}"
-          native_cargo="$(rustup which --toolchain 1.95.0 cargo)"
-          native_rustc="$(rustup which --toolchain 1.95.0 rustc)"
+          native_cargo="$(rustup which --toolchain 1.100.0 cargo)"
+          native_rustc="$(rustup which --toolchain 1.100.0 rustc)"
           native_path="$(dirname "${native_cargo}"):${CONSUMER_PATH}"
           "${native_cargo}" --version --verbose > "${output}/cargo.txt"
           "${native_rustc}" --version --verbose > "${output}/rustc.txt"
-          grep -E '^cargo 1\.95\.0 ' "${output}/cargo.txt"
-          grep -E '^rustc 1\.95\.0 ' "${output}/rustc.txt"
+          grep -E '^cargo 1\.100\.0 ' "${output}/cargo.txt"
+          grep -E '^rustc 1\.100\.0 ' "${output}/rustc.txt"
           scratch="${RUNNER_TEMP}/ordinary-native-fixtures"
           mkdir "${scratch}"
           journey="${output}/journey"
           ordinary_env=(env -i HOME="${HOME}" PATH="${native_path}" TMPDIR="${scratch}"
-            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.95.0 CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never
+            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.100.0 CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never
             RIPR_ORDINARY_MODE=installed RIPR_ORDINARY_INSTALLED_BINARY="${CONSUMER_EXECUTABLE}"
             RIPR_ORDINARY_EXPECTED_SHA256="${EXPECTED_PAYLOAD_SHA256}"
             RIPR_ORDINARY_EXPECTED_VERSION="${expected_version}" RIPR_ORDINARY_EVIDENCE_DIR="${journey}")
@@ -1018,9 +1018,9 @@ jobs:
           path: pair/anyhow
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
           targets: ${{ env.RUST_TARGET }}
 
       - name: Verify exact subjects and build two release executables sequentially
@@ -1061,8 +1061,8 @@ jobs:
           for path in rust-toolchain.toml packaging/python/pyproject.toml Cargo.lock Cargo.toml crates/ripr/Cargo.toml; do
             cmp "pair-source/baseline/${path}" "pair-source/candidate/${path}"
           done
-          rustc -vV > pair/rustc-version.txt
-          cargo -vV > pair/cargo-version.txt
+          (cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt
+          (cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt
           python3 - <<'PY'
           import hashlib, json, os, platform
           from pathlib import Path

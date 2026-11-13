@@ -15,6 +15,15 @@ const RAW_V11_HEADER_BYTES: usize = 152;
 const ID_BLOCK_BYTES: usize = 8192;
 const JSON_BYTES: usize = 32768;
 const ROOTS: [&str; 4] = ["debug", "debug/deps", "release", "release/deps"];
+const UNIT_ROOTS: [&str; 2] = ["debug/build", "release/build"];
+const SCOPE: [&str; 6] = [
+    ROOTS[0],
+    ROOTS[1],
+    ROOTS[2],
+    ROOTS[3],
+    "debug/build/<package>/<16-hex-unit>/out",
+    "release/build/<package>/<16-hex-unit>/out",
+];
 
 fn raw_layout(version: u64) -> std::result::Result<(usize, &'static str), &'static str> {
     match version {
@@ -138,7 +147,7 @@ const LIMITS: Limits = Limits {
 };
 
 fn base_report(ids: &[String]) -> Value {
-    json!({"status": "unavailable", "scope": ROOTS,
+    json!({"status": "unavailable", "scope": SCOPE,
         "association": "exact GNU build ID plus LLVM profile sections; no test or cause attribution",
         "ids": ids.iter().map(|id| json!({"id": id, "status": "unavailable", "matches": []})).collect::<Vec<_>>(),
         "candidates": [], "non_candidates": 0, "truncated": false,
@@ -271,6 +280,22 @@ mod elf {
                 }
                 _ => return Err("outside_or_non_normal_root".into()),
             }
+        }
+        Ok(directory)
+    }
+
+    pub(super) fn relative_directory(parent: &File, path: &Path) -> std::io::Result<File> {
+        let mut directory = parent.try_clone()?;
+        for component in path.components() {
+            let Component::Normal(name) = component else {
+                return Err(std::io::ErrorKind::InvalidInput.into());
+            };
+            directory = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(
+                    PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name),
+                )?;
         }
         Ok(directory)
     }
@@ -466,8 +491,16 @@ mod elf {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+enum ScanLevel {
+    Executables,
+    Packages,
+    UnitHashes,
+}
+
+#[cfg(target_os = "linux")]
 fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Value {
-    use std::{fs, os::fd::AsRawFd};
+    use std::{collections::VecDeque, fs, os::fd::AsRawFd};
     let mut report = base_report(ids);
     let build_directory = match elf::directory(build) {
         Ok(directory) => directory,
@@ -486,30 +519,37 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
     let mut unavailable = 0;
     let mut non_candidates = 0;
     let mut root_errors = Vec::new();
+    let mut roots_unavailable = 0;
     let mut errors = Vec::new();
     let mut matches = Vec::new();
     let mut matched_identities: Vec<(u64, u64)> = Vec::new();
     let mut truncated = false;
-    'roots: for root in ROOTS {
+    // Cargo's intermediate layout is private. This finite adapter covers the
+    // 1.100 package/unit/out layout as well as the previous direct roots; it
+    // never searches arbitrary descendants or separately configured build dirs.
+    // Every discovery entry shares the original entry and elapsed-time limits.
+    let mut pending: VecDeque<_> = ROOTS
+        .into_iter()
+        .map(|root| (PathBuf::from(root), ScanLevel::Executables, false))
+        .chain(
+            UNIT_ROOTS
+                .into_iter()
+                .map(|root| (PathBuf::from(root), ScanLevel::Packages, true)),
+        )
+        .collect();
+    'roots: while let Some((root, level, optional)) = pending.pop_front() {
         if Instant::now() >= deadline || entries >= limits.entries || inspected >= limits.files {
             truncated = true;
             break;
         }
-        let mut current = build_directory.try_clone().ok();
-        for part in root.split('/') {
-            current = current.and_then(|parent| {
-                use std::os::unix::fs::OpenOptionsExt;
-                fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
-                    .open(PathBuf::from(format!("/proc/self/fd/{}", parent.as_raw_fd())).join(part))
-                    .ok()
-            });
-        }
-        let directory = match current {
-            Some(directory) => directory,
-            None => {
-                root_errors.push(root);
+        let directory = match elf::relative_directory(&build_directory, &root) {
+            Ok(directory) => directory,
+            Err(error) if optional && error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                roots_unavailable += 1;
+                if root_errors.len() < 8 {
+                    root_errors.push(display_bytes(elf::relative_bytes(&root)));
+                }
                 continue;
             }
         };
@@ -517,13 +557,16 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
         let listing = match fs::read_dir(&anchor) {
             Ok(listing) => listing,
             Err(_) => {
-                root_errors.push(root);
+                roots_unavailable += 1;
+                if root_errors.len() < 8 {
+                    root_errors.push(display_bytes(elf::relative_bytes(&root)));
+                }
                 continue;
             }
         };
         let mut names = Vec::new();
         for item in listing {
-            if entries == limits.entries {
+            if entries == limits.entries || Instant::now() >= deadline {
                 truncated = true;
                 break;
             }
@@ -540,8 +583,14 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
                 break 'roots;
             }
             let path = anchor.join(&name);
-            let relative = Path::new(root).join(&name);
+            let relative = root.join(&name);
             let raw = elf::relative_bytes(&relative);
+            if matches!(level, ScanLevel::UnitHashes)
+                && (name.as_encoded_bytes().len() != 16
+                    || !name.as_encoded_bytes().iter().all(u8::is_ascii_hexdigit))
+            {
+                continue;
+            }
             let metadata = match fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(_) => {
@@ -550,13 +599,23 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
                 }
             };
             if metadata.is_dir() {
+                match level {
+                    ScanLevel::Executables => (),
+                    _ if raw.len() > 160 => unavailable += 1,
+                    ScanLevel::Packages => {
+                        pending.push_back((relative, ScanLevel::UnitHashes, false));
+                    }
+                    ScanLevel::UnitHashes => {
+                        pending.push_back((relative.join("out"), ScanLevel::Executables, false));
+                    }
+                }
                 continue;
             }
             if metadata.is_symlink() || !metadata.is_file() {
                 unavailable += 1;
                 continue;
             }
-            if !elf::executable(&metadata) {
+            if !matches!(level, ScanLevel::Executables) || !elf::executable(&metadata) {
                 continue;
             }
             if raw.len() > 160 {
@@ -567,9 +626,8 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
             match elf::inspect(&path, &metadata, &mut budget) {
                 Ok((found, machine)) if found.iter().any(|id| ids.contains(id)) => {
                     let identity = file_identity(&metadata);
-                    // Cargo hard-links debug/<name> to debug/deps/<name>-<hash>
-                    // (likewise under release), so one executable can appear as
-                    // direct entries in two scanned roots. One distinct
+                    // Cargo hard-links final outputs to intermediate artifacts,
+                    // so one executable can appear in multiple roots. One distinct
                     // executable is one candidate; only genuinely different
                     // files with the same ID stay ambiguous.
                     if matched_identities.contains(&(identity.device, identity.inode)) {
@@ -606,7 +664,7 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
             break;
         }
     }
-    let partial = truncated || unavailable > 0 || !root_errors.is_empty();
+    let partial = truncated || unavailable > 0 || roots_unavailable > 0;
     report["status"] = json!(if partial {
         "partial"
     } else {
@@ -614,6 +672,7 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
     });
     report["truncated"] = json!(truncated);
     report["roots_unavailable"] = json!(root_errors);
+    report["roots_unavailable_count"] = json!(roots_unavailable);
     report["entries_seen"] = json!(entries);
     report["files_inspected"] = json!(inspected);
     report["read_bytes"] = json!(budget.bytes);

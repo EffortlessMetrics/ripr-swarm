@@ -17,6 +17,9 @@ const BASELINE_AGE: &str = "24 hours ago";
 /// Where the scoreboard declares the external repositories and their pins.
 const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 
+/// Both A/B subjects are built by the repository-owned compiler.
+pub(super) const BUILD_TOOLCHAIN: &str = "+1.100.0";
+
 /// One pinned change of an external repository, read from the scoreboard
 /// corpus so the A/B times the exact diff the scoreboard row measures.
 pub(crate) struct ExternalPin {
@@ -236,7 +239,14 @@ fn worktree(repo: &Path, path: &Path, commit: &str) -> Result<(), String> {
 fn build(source: &Path, name: &str, bins: &Path) -> Result<PathBuf, String> {
     let status = shared_run::run_in_dir(
         Path::new("cargo"),
-        &["build", "--release", "--locked", "-p", "ripr"],
+        &[
+            BUILD_TOOLCHAIN,
+            "build",
+            "--release",
+            "--locked",
+            "-p",
+            "ripr",
+        ],
         source,
     )?;
     if !status.success() {

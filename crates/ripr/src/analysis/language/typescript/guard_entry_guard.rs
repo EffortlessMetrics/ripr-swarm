@@ -906,7 +906,8 @@ fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
             (key.clone(), None)
         } else if let Some(default) = after.strip_prefix('=').filter(|d| !d.starts_with('=')) {
             (key.clone(), Some(default))
-        } else if let Some(renamed) = after.strip_prefix(':') {
+        } else {
+            let renamed = after.strip_prefix(':')?;
             let renamed = renamed.trim();
             if renamed.starts_with(['{', '[']) {
                 // A nested pattern introduces bindings this reader leaves
@@ -927,8 +928,6 @@ fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
                 let default = tail.strip_prefix('=').filter(|d| !d.starts_with('='))?;
                 (local, Some(default))
             }
-        } else {
-            return None;
         };
         if props.iter().any(|prop| prop.local == local) {
             return None;
@@ -1056,11 +1055,10 @@ fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
         let value = if rest.is_empty() {
             // Shorthand `{ key }`: the value is another binding.
             None
-        } else if let Some(value) = rest.strip_prefix(':') {
-            Some(value)
         } else {
-            // A method, getter or setter (`get key() {}`, `key() {}`).
-            return None;
+            // A method, getter or setter (`get key() {}`, `key() {}`)
+            // has no value prefix and stays unreadable.
+            Some(rest.strip_prefix(':')?)
         };
         // `__proto__: v` sets the prototype, not a property.
         if name == "__proto__" {

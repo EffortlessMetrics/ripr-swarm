@@ -3,6 +3,9 @@ use super::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "binary_ids_cargo_tests.rs"]
+mod cargo_layout;
+
 struct Fixture(PathBuf);
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -634,30 +637,85 @@ fn mapping_failure_cannot_abort_the_original_profile_manifest() -> Result<()> {
 #[test]
 fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result<()> {
     let f = fixture()?;
-    let source = f.0.join("writer.rs");
-    fs::write(&source,b"fn main() { let n=std::env::args().count(); if n>1 { println!(\"many\"); } else { println!(\"one\"); } }").map_err(|e|e.to_string())?;
-    let executable = f.0.join("debug/deps/writer");
+    let project = f.0.join("producer");
+    fs::create_dir(&project).map_err(|e| e.to_string())?;
+    let manifest = project.join("Cargo.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"coverage-id-producer\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[lib]\npath = \"lib.rs\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        project.join("lib.rs"),
+        "#[test]\nfn writes_profile() { assert!(std::env::args().count() > 0); }\n",
+    )
+    .map_err(|e| e.to_string())?;
     let compile = tool(&[
-        "rustc".into(),
-        "--edition=2024".into(),
-        "-C".into(),
-        "instrument-coverage".into(),
-        "-C".into(),
-        "strip=symbols".into(),
-        "-C".into(),
-        "link-arg=-Wl,--build-id=sha1".into(),
-        source.to_string_lossy().into_owned(),
-        "-o".into(),
-        executable.to_string_lossy().into_owned(),
+        "env".into(),
+        format!("CARGO_TARGET_DIR={}", f.0.display()),
+        format!("CARGO_BUILD_BUILD_DIR={}", f.0.display()),
+        "CARGO_BUILD_JOBS=1".into(),
+        "CARGO_INCREMENTAL=0".into(),
+        "RUSTC=rustc".into(),
+        "RUSTC_WRAPPER=".into(),
+        "RUSTC_WORKSPACE_WRAPPER=".into(),
+        "CARGO_ENCODED_RUSTFLAGS=-Cinstrument-coverage\x1f-Cstrip=symbols\x1f-Clink-arg=-Wl,--build-id=sha1".into(),
+        "cargo".into(),
+        "test".into(),
+        "--offline".into(),
+        "--no-run".into(),
+        "--message-format=json".into(),
+        "--manifest-path".into(),
+        manifest.to_string_lossy().into_owned(),
     ])?;
     assert_eq!(compile["exit"], 0, "{compile}");
+    let messages = field(&compile, "stdout")
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    assert!(
+        messages
+            .iter()
+            .any(|message| { message["reason"] == "build-finished" && message["success"] == true })
+    );
+    let executables = messages
+        .iter()
+        .filter(|message| {
+            message["reason"] == "compiler-artifact"
+                && message["profile"]["test"] == true
+                && message["target"]["name"] == "coverage_id_producer"
+        })
+        .filter_map(|message| message["executable"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(executables.len(), 1, "{compile}");
+    let executable = Path::new(executables[0]);
+    let relative_executable = executable.strip_prefix(&f.0).map_err(|e| e.to_string())?;
+    // Preserve Cargo's emitted location. Relocating it to debug/deps would
+    // conceal changes to Cargo's intermediate artifact layout.
     let full = f.0.join("full.profraw");
     let run = tool(&[
         "env".into(),
         format!("LLVM_PROFILE_FILE={}", full.display()),
         executable.to_string_lossy().into_owned(),
+        "--exact".into(),
+        "writes_profile".into(),
     ])?;
     assert_eq!(run["exit"], 0);
+    assert!(
+        field(&run, "stdout")
+            .lines()
+            .any(|line| line == "test writes_profile ... ok"),
+        "{run}"
+    );
+    assert!(
+        field(&run, "stdout").lines().any(|line| {
+            line.starts_with(
+                "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
+            )
+        }),
+        "{run}"
+    );
     let full_bytes = super::super::read_prefix(&full, super::super::PREFIX_BYTES)?;
     let raw_version = u64le(&full_bytes, 8)?;
     let observed = profile_ids(&full_bytes);
@@ -706,7 +764,7 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     assert_eq!(report["executable_mapping"]["ids"][0]["status"], "matched");
     assert_eq!(
         report["executable_mapping"]["candidates"][0]["relative_path"],
-        "debug/deps/writer"
+        display_bytes(elf::relative_bytes(relative_executable))
     );
     assert_eq!(
         report["executable_mapping"]["candidates"][0]["gnu_build_ids"],
@@ -720,6 +778,10 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     assert_eq!(
         super::super::read_prefix(&full, super::super::PREFIX_BYTES)?,
         full_bytes
+    );
+    eprintln!(
+        "Cargo executable association: {}",
+        relative_executable.display()
     );
     eprintln!(
         "real LLVM association: raw_version={raw_version}, layout={layout}, build-id={id}, retained={kept}, mapping={}, original=failure, replay=1",

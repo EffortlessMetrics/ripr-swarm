@@ -258,7 +258,7 @@ pub(super) fn call_presence_callee_target_tokens(expression: &str) -> Vec<String
 }
 
 pub(super) fn call_presence_assertion_affinity_token_is_specific_enough(token: &str) -> bool {
-    if matches!(
+    !matches!(
         token,
         "arg"
             | "args"
@@ -309,10 +309,7 @@ pub(super) fn call_presence_assertion_affinity_token_is_specific_enough(token: &
             | "variant"
             | "byte"
             | "bytes"
-    ) {
-        return false;
-    }
-    true
+    )
 }
 
 pub(super) fn match_direct_owner_call(

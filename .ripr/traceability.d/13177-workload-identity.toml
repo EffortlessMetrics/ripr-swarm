@@ -13,11 +13,26 @@ tests = [
   "xtask/src/reports/dx_scoreboard/workload_tests.rs::missing_sample_identity_cannot_fall_back_to_an_aggregate_trend",
   "xtask/src/reports/dx_scoreboard/workload_tests.rs::missing_or_changed_identity_cannot_hide_incomplete_measurements",
   "xtask/src/reports/dx_scoreboard/workload_tests.rs::workload_exclusions_leave_absolute_ceilings_and_other_sources_in_force",
+  "xtask/src/reports/dx_scoreboard/compiler_tests.rs::measured_speed_compares_only_matching_recorded_compilers",
+  "xtask/src/reports/dx_scoreboard/compiler_tests.rs::legacy_and_unknown_compilers_are_readable_but_never_a_numeric_speed_match",
+  "xtask/src/reports/dx_scoreboard/compiler_tests.rs::changed_compilers_preserve_completion_loss_without_cross_compiler_numeric_regressions",
+  "xtask/src/reports/dx_scoreboard/compiler_tests.rs::compiler_boundary_does_not_waive_ceilings_or_ingested_metric_regressions",
+  "xtask/src/reports/dx_scoreboard/tests.rs::ingest_accepts_its_own_source_and_refuses_measured_metrics",
+  "xtask/tests/dx_scoreboard_compiler.rs::cargo_identity_joins_the_exact_binary_for_cold_and_fresh_builds",
+  "xtask/tests/dx_scoreboard_compiler.rs::cargo_manifest_spelling_joins_only_the_same_canonical_file",
+  "xtask/tests/dx_scoreboard_compiler.rs::missing_malformed_or_ambiguous_compiler_records_stay_unrecorded",
+  "xtask/tests/dx_scoreboard_compiler.rs::cargo_artifact_and_completion_evidence_cannot_be_missing_or_ambiguous",
+  "xtask/tests/dx_scoreboard_compiler.rs::compiler_comparison_requires_two_complete_equal_identities",
+  "xtask/tests/dx_scoreboard_terminal_evidence.rs::exit_zero_partial_reason_survives_real_measurement_cleanup",
 ]
 fixtures = []
 code = [
   "xtask/src/reports/dx_scoreboard/workloads.rs",
   "xtask/src/reports/dx_scoreboard.rs",
+  "xtask/src/reports/dx_scoreboard/compiler.rs",
+  "xtask/src/reports/dx_scoreboard/measure.rs",
+  "crates/ripr/build.rs",
+  "crates/ripr/src/build_compiler_record.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0436-dx-scoreboard-workload-identity-pairing.md",

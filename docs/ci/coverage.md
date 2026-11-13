@@ -71,9 +71,13 @@ This retains diagnostic evidence without converting the profile or changing
 the failed coverage result.
 
 The failure manifest also associates supported raw-profile binary IDs with GNU
-build IDs in instrumented Linux ELF files found only as direct entries in the
-coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
-directories. It captures bounded
+build IDs in instrumented Linux ELF files within six declared scopes. It checks
+direct entries in the coverage target's `debug`, `debug/deps`, `release`, and
+`release/deps` directories, then Cargo 1.100's
+`debug/build/<package>/<16-hex-unit>/out` and corresponding `release/build`
+layout. Every level uses no-follow traversal under the same shared limits;
+arbitrary descendants and separately configured build directories are outside
+the inspected scope. It captures bounded
 identifiers and file metadata, never whole binaries. Exact ID equality and LLVM
 profile sections are required; distinct instrumented candidates with the same
 ID remain ambiguous, while duplicate directory entries of one executable
@@ -82,6 +86,8 @@ to a single candidate by file identity.
 Unavailable, unmatched within the inspected scope, and truncated results remain
 explicit. Inspection is limited to 1,024 directory entries, 256 files, 2 MiB of
 reads (64 KiB per file), 16 matches, 32 KiB of mapping JSON, and two seconds.
+Unavailable directories are counted in `roots_unavailable_count`, with at most
+eight path samples in `roots_unavailable`.
 The profile parser retains the valid prefix when a later ID exceeds the 32-ID
 limit, reports that profile as partial, and marks the aggregate mapping partial
 so unmatched retained IDs are not treated as definitive misses. An unavailable
@@ -188,10 +194,10 @@ and contain no debug-prefixed section except an exact, nonempty `PROGBITS`
 DWARF, compressed debug sections, lookalike names and unknown debug prefixes
 still fail the control.
 
-The distinction follows the pinned producer and linker. Rust's
+The original distinction follows the Rust 1.95 producer and linker. Rust's
 [GDB metadata producer](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_llvm/src/debuginfo/gdb.rs)
 emits pretty-printer loader records and retains a volatile reference to them;
-they are not DWARF line tables. The pinned
+they are not DWARF line tables. That compiler's
 [linker mapping](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_ssa/src/back/linker.rs)
 selects `--strip-debug`, and the matching LLVM
 [debug-section predicate](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/lld/ELF/InputSection.h)
@@ -206,7 +212,7 @@ column headers are errors. Numeric row indices remain unique. For each
 debug-prefixed section it records the name, type, hexadecimal byte size and
 flags. Flag bytes must be unique members of `WAXMSILOGTCERlyopx`; optional
 empty flags remain valid. The
-[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
+[original LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
 defines this column order and flag alphabet. This lexical validation precedes
 the existing section policy; it does not admit arbitrary allocated DWARF.
 Malformed debug fields, duplicate debug names and exhausted row/text bounds
@@ -253,19 +259,24 @@ Before explicit success cleanup, the native fixture retains and reports its
 root on an error or panic, including uncertain child cleanup. Removal follows
 successful commands and assertions, before the passed receipt is emitted.
 
-The pinned interface basis is Rust 1.95.0
+The original interface basis is Rust 1.95.0
 [`strip` codegen documentation](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/src/doc/rustc/src/codegen-options/index.md#strip),
 its Cargo revision's
 [profiles](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/profiles.md#strip)
 and [profile environment variables](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/environment-variables.md),
 and [cargo-llvm-cov 0.9.1](https://github.com/taiki-e/cargo-llvm-cov/blob/v0.9.1/src/main.rs).
-Native execution, including the matching LLVM 22.1.2 tools on the pinned
-workflow, remains the compatibility authority.
+Native execution with each selected compiler's matching LLVM tools remains the
+compatibility authority. Rust 1.100.0 uses LLVM 23.1.5 and raw profile version 11;
+the retained 1.95.0 baseline uses LLVM 22.1.2 and raw version 10. The real
+association control retains Cargo's emitted executable path, including the
+1.100 intermediate layout; it does not relocate the binary into legacy roots.
+See the [compiler upgrade rationale](rust-1.100-upgrade.md).
 
 ### Validate locally
 
 On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with
-both the repository pin and stable. Install matching LLVM tools for each
+both the previous baseline (1.95.0) and stable. This deliberately retains the
+old-profile control after the repository pin moves to 1.100.0. Install matching LLVM tools for each
 selected compiler; a system `llvm-profdata` from another LLVM release is not a
 substitute for the tool in that compiler's sysroot.
 
@@ -349,7 +360,7 @@ Selecting these together keeps the policy helper's build-time and runtime compil
 identities aligned. The checks retain their compiler-identity refusals.
 
 The `stable-repo-policy` job in the existing advisory Future Clippy workflow
-executes this marked recipe with genuine pin/stable toolchains and matching
+executes this marked recipe with genuine baseline/stable toolchains and matching
 `llvm-tools-preview`, starting with the stable SDK first on `PATH` and an absolute
 `RUSTC`. It first runs the workflow controls, then requires all four ordered
 completion records, nonempty successful test runs, genuine LLVM association
@@ -357,11 +368,11 @@ observations for both diagnostics checks, and successful Clippy completion.
 Missing, ambiguous or malformed recipe boundaries, partial execution and stale
 run evidence fail the job. Native compiler, LLVM and profile observations stay
 in the job output. This route replaces the duplicate stable Cargo commands. It
-follows that workflow's existing daily-schedule, manual-dispatch and
-`clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
+follows that workflow's current explicit `workflow_dispatch` routing; its
+former automatic subscriptions are retired. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust
-1.95.0. This stable compatibility check does not change the repository pin or
+1.100.0. This stable compatibility check does not change the repository pin or
 MSRV.
 
 To generate coverage and inspect artifacts locally:

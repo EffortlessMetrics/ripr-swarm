@@ -238,12 +238,17 @@ fn resolve(path: &Path) -> PathBuf {
 }
 
 /// Whether `executable` sits in a Cargo profile output directory
-/// (`<target-dir>/[<triple>/]<profile>/`). Cargo keeps its `deps` and
-/// `.fingerprint` bookkeeping beside every binary it builds there;
-/// `cargo install` copies only the binary into its `bin` directory.
+/// (`<target-dir>/[<triple>/]<profile>/`). Recognize both the legacy
+/// bookkeeping directories and Cargo 1.100's profile locks plus build
+/// directory. This is an advisory layout heuristic, not provenance proof:
+/// `cargo install` copies only the binary into its `bin` directory, while
+/// a separately configured Cargo build directory may omit these markers.
 fn is_cargo_build_output(executable: &Path) -> bool {
     executable.parent().is_some_and(|profile| {
-        profile.join("deps").is_dir() && profile.join(".fingerprint").is_dir()
+        (profile.join("deps").is_dir() && profile.join(".fingerprint").is_dir())
+            || (profile.join("build").is_dir()
+                && profile.join(".cargo-artifact-lock").is_file()
+                && profile.join(".cargo-build-lock").is_file())
     })
 }
 
@@ -363,6 +368,92 @@ mod tests {
                 .map_err(|error| format!("create {bookkeeping}: {error}"))?;
         }
         Ok(profile)
+    }
+
+    fn cargo_1_100_profile_dir(root: &Path) -> Result<PathBuf, String> {
+        let profile = root.join("target").join("debug");
+        std::fs::create_dir_all(profile.join("build")).map_err(|error| error.to_string())?;
+        for lock in [".cargo-artifact-lock", ".cargo-build-lock"] {
+            std::fs::write(profile.join(lock), b"").map_err(|error| error.to_string())?;
+        }
+        Ok(profile)
+    }
+
+    #[test]
+    fn cargo_1_100_build_output_preserves_identity_and_warnings() -> Result<(), String> {
+        let root = temp_dir("cargo-1-100-identity")?;
+        let result = (|| -> Result<(), String> {
+            let profile = cargo_1_100_profile_dir(&root)?;
+            let built = executable(&profile)?;
+            let installed_dir = root.join("bin");
+            std::fs::create_dir_all(&installed_dir).map_err(|error| error.to_string())?;
+            let installed = executable(&installed_dir)?;
+
+            let identity = evaluate_binary_identity(Some(built.clone()), Some(installed.clone()));
+            if !identity.executable_is_cargo_build_output
+                || identity.path_ripr_is_cargo_build_output
+                || identity.path_ripr_is_running_executable != Some(false)
+                || !identity.warnings.is_empty()
+            {
+                return Err(format!(
+                    "Cargo 1.100 source build against installed PATH must stay quiet: {identity:?}"
+                ));
+            }
+
+            let identity = evaluate_binary_identity(Some(installed), Some(built));
+            if identity.executable_is_cargo_build_output
+                || !identity.path_ripr_is_cargo_build_output
+                || identity.path_ripr_is_running_executable != Some(false)
+                || !identity
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("Cargo build output"))
+            {
+                return Err(format!(
+                    "Cargo 1.100 build first on PATH must still warn: {identity:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn cargo_1_100_build_output_requires_all_profile_markers() -> Result<(), String> {
+        let root = temp_dir("cargo-1-100-markers")?;
+        let result = (|| -> Result<(), String> {
+            for marker in ["build", ".cargo-artifact-lock", ".cargo-build-lock"] {
+                let profile = cargo_1_100_profile_dir(&root.join(marker))?;
+                let built = executable(&profile)?;
+                let marker_path = profile.join(marker);
+                if marker == "build" {
+                    std::fs::remove_dir(&marker_path).map_err(|error| error.to_string())?;
+                } else {
+                    std::fs::remove_file(&marker_path).map_err(|error| error.to_string())?;
+                }
+                if is_cargo_build_output(&built) {
+                    return Err(format!(
+                        "missing {marker} must not identify Cargo build output"
+                    ));
+                }
+                // A name alone is insufficient; files and directories must
+                // also have the roles observed in a native Cargo build.
+                if marker == "build" {
+                    std::fs::write(&marker_path, b"").map_err(|error| error.to_string())?;
+                } else {
+                    std::fs::create_dir(&marker_path).map_err(|error| error.to_string())?;
+                }
+                if is_cargo_build_output(&built) {
+                    return Err(format!(
+                        "wrong {marker} type must not identify Cargo build output"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     #[test]

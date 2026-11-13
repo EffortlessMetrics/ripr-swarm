@@ -1628,14 +1628,12 @@ fn exact_operand_for_row(
                 let value = if let Some(literal) = super::helper_transfer::strict_literal(argument)
                 {
                     literal
-                } else if let Some(cell) = owner_parameters
-                    .iter()
-                    .position(|parameter| parameter.as_str() == argument.trim())
-                    .and_then(|position| row.get(position))
-                {
-                    cell.value.clone()
                 } else {
-                    return None;
+                    let cell = owner_parameters
+                        .iter()
+                        .position(|parameter| parameter.as_str() == argument.trim())
+                        .and_then(|position| row.get(position))?;
+                    cell.value.clone()
                 };
                 bound.insert(parameter, value);
             }

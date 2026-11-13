@@ -179,6 +179,7 @@ fn exit_zero_partial_reason_survives_real_measurement_cleanup() -> Result<(), St
         2_000,
     )?;
     let rows = invocations(&report)?;
+    assert_eq!(report.get("rustc"), Some(&Value::Null));
     assert_eq!(rows.len(), 5);
     assert_eq!(
         report["corpus"][0]["terminal_evidence"]["binary_sha256_before_pilot"]

@@ -78,7 +78,7 @@ second wheel build.
 Only the pip consumer adds the ordinary row. Its installation and Python
 preview still run with the existing Rust-free environment, offline wheelhouse,
 planted PATH decoy and no source checkout. After those steps, a separately named
-toolchain step provisions Rust 1.95.0 for the fixture's native Cargo tests. The
+toolchain step provisions Rust 1.100.0 for the fixture's native Cargo tests. The
 uv consumer retains its existing install, preview, reinstall and uninstall
 coverage. Both consumers still require the source contract and wheel build.
 

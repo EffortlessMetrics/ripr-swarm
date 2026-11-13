@@ -165,7 +165,7 @@ mod tests {
     /// The `exit` notification reaches the hook through the real layer, even
     /// though no `shutdown` handler ran; any other method does not.
     #[tokio::test]
-    async fn the_exit_notification_signals_the_session_end() -> Result<(), String> {
+    async fn the_exit_notification_signals_the_session_end() {
         use super::super::{RecordShutdownExit, ShutdownExitOrder};
         use tower::Service;
         use tower_lsp_server::jsonrpc::{Request, Response};
@@ -190,14 +190,13 @@ mod tests {
             layer
                 .call(Request::build(method.to_owned()).finish())
                 .await
-                .map_err(|e| e.to_string())?;
+                .unwrap_or_else(|never| match never {});
         }
         assert_eq!(count.load(Ordering::SeqCst), 0);
         layer
             .call(Request::build("exit".to_owned()).finish())
             .await
-            .map_err(|e| e.to_string())?;
+            .unwrap_or_else(|never| match never {});
         assert_eq!(count.load(Ordering::SeqCst), 1);
-        Ok(())
     }
 }

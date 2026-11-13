@@ -10,8 +10,11 @@ mod diagnostics;
 pub(crate) use check_admission::typed_cause_of_static_limit;
 mod editor_refresh;
 
-use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
-use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
+use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome, compiler};
+use crate::run::{
+    ByteCaptureBudget, MeasuredOutput, capture_bytes_in_dir_with_budget,
+    capture_bytes_in_dir_with_timeout, capture_output_measured,
+};
 #[cfg(test)]
 pub(crate) use check_admission::{
     CHECK_SCHEMA_VERSION, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, admit_check_document,
@@ -83,11 +86,9 @@ pub(super) fn measure(
     let binary = match &options.ripr_bin {
         Some(path) => path.clone(),
         None => {
-            crate::run::run(
-                "cargo",
-                &["build", "--release", "-p", "ripr", "--bin", "ripr"],
-            )?;
-            release_binary()
+            let built = build_binary(crate::run::tool_build_timeout()?)?;
+            context.rustc = built.rustc;
+            built.path
         }
     };
     let binary = fs::canonicalize(&binary)
@@ -1939,12 +1940,68 @@ fn shorten(line: &str) -> String {
     }
 }
 
-fn release_binary() -> PathBuf {
-    let binary_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map_or_else(|| PathBuf::from("target"), PathBuf::from)
-        .join("release")
-        .join(binary_name)
+fn build_binary(timeout: Duration) -> Result<compiler::BuiltBinary, String> {
+    let args: Vec<_> = [
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr",
+        "--message-format=json",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let cwd = std::env::current_dir().map_err(|error| format!("current dir: {error}"))?;
+    let output = capture_bytes_in_dir_with_budget(
+        Path::new("cargo"),
+        &args,
+        (&cwd, None),
+        &[],
+        // The same Cargo JSON stream budgets used by native_libtest.
+        ByteCaptureBudget {
+            timeout,
+            stdout_bytes: 8 * 1024 * 1024,
+            stderr_bytes: 1024 * 1024,
+        },
+        "dx-scoreboard release build",
+    )?;
+    // Preserve Cargo progress, manifest warnings and rendered rustc diagnostics
+    // while its structured stdout supplies artifact and compiler identities.
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        match serde_json::from_str::<Value>(line) {
+            Ok(message) if message["reason"] == "compiler-message" => {
+                if let Some(rendered) = message["message"]["rendered"].as_str() {
+                    eprint!("{rendered}");
+                } else {
+                    eprintln!("{}", message["message"]);
+                }
+            }
+            Ok(_) => (),
+            Err(_) => eprintln!("{line}"),
+        }
+    }
+    if output.timed_out {
+        return Err(format!(
+            "dx-scoreboard release build timed out after {} ms; Cargo status {:?}",
+            timeout.as_millis(),
+            output.status,
+        ));
+    }
+    let status = output
+        .status
+        .ok_or("Cargo build did not report an exit status")?;
+    if !status.success() {
+        return Err(format!("cargo {} failed with {status}", args.join(" ")));
+    }
+    let manifest = fs::canonicalize("crates/ripr/Cargo.toml")
+        .map_err(|error| format!("resolve scoreboard build manifest: {error}"))?;
+    let stdout = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("Cargo build evidence is not UTF-8: {error}"))?;
+    compiler::owned_build(stdout, &manifest)
 }
 
 fn git_revision() -> String {

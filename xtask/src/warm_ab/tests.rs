@@ -104,6 +104,11 @@ fn a_missing_findings_field_is_rejected_not_counted_as_zero() {
 }
 
 #[test]
+fn nightly_subject_builds_use_one_explicit_compiler() {
+    assert_eq!(super::nightly::BUILD_TOOLCHAIN, "+1.100.0");
+}
+
+#[test]
 fn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {
     use super::nightly::parse_pins;
     assert_eq!(

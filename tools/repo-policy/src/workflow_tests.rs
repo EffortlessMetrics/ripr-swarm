@@ -116,7 +116,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         };
         let prepared = |text: &str, command: &str| {
             let setup = format!(
-                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
+                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.100.0\n          components: llvm-tools-preview"
             );
             match (text.find(setup.as_str()), text.find(command)) {
                 (Some(setup), Some(test)) => {
@@ -146,7 +146,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             command
         ));
         assert!(!prepared(
-            &text.replace("toolchain: 1.95.0", "toolchain: stable"),
+            &text.replace("toolchain: 1.100.0", "toolchain: stable"),
             command
         ));
         let test_first = format!("{command}\n{text}");
@@ -2020,4 +2020,28 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
     assert!(!rejects(&format!(
         "      - uses: actions/cache@{sha} # v4.2.0\n"
     )));
+}
+
+#[test]
+fn routed_rust_cpx42_selection_matches_required_labels() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
+        .map_err(|error| error.to_string())?;
+    assert!(text.contains(
+        "index(\"em-ci\") and index(\"cpx42\") and index(\"rust-16gb\") and index(\"rust-medium\")"
+    ));
+    assert!(text.contains("elif idle cpx42 rust-16gb rust-medium; then"));
+    assert!(!text.contains("elif idle cpx42 rust-16gb; then"));
+    Ok(())
+}
+
+#[test]
+fn mcp_pair_receipt_uses_the_subject_build_compiler() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/python-wheel-qualification.yml"))
+        .map_err(|error| error.to_string())?;
+    assert!(text.contains("(cd pair-source/baseline && rustc -vV) > pair/rustc-version.txt"));
+    assert!(text.contains("(cd pair-source/baseline && cargo -vV) > pair/cargo-version.txt"));
+    assert!(!text.contains("          rustc -vV > pair/rustc-version.txt"));
+    Ok(())
 }

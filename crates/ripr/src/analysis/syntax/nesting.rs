@@ -115,14 +115,11 @@ impl std::hash::Hasher for WordHasher {
     fn write(&mut self, bytes: &[u8]) {
         const K: u64 = 0x517c_c1b7_2722_0a95;
         let mix = |hash: u64, word: u64| (hash.rotate_left(5) ^ word).wrapping_mul(K);
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            let mut word = [0u8; 8];
-            word.copy_from_slice(chunk);
-            self.0 = mix(self.0, u64::from_le_bytes(word));
+        let (chunks, rest) = bytes.as_chunks::<8>();
+        for chunk in chunks {
+            self.0 = mix(self.0, u64::from_le_bytes(*chunk));
         }
         let mut tail = [0u8; 8];
-        let rest = chunks.remainder();
         tail[..rest.len()].copy_from_slice(rest);
         self.0 = mix(self.0, u64::from_le_bytes(tail));
     }

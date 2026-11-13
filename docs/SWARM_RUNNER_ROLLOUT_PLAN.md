@@ -31,20 +31,22 @@ repos/<owner>/<repo>/actions/runners
 ## Stable router outputs
 
 - `router_target=cpx42|cx43|cx53|github`
-- `router_reason=cpx42_idle|cx43_idle|cx53_idle|no_idle_runner|runner_image_unavailable|runner_token_missing|runner_token_unauthorized|runner_token_forbidden|runner_api_failed|parse_failed|fork_or_untrusted_pr`
+- `router_reason=cpx42_idle|cx43_idle|cx53_idle|no_idle_runner|runner_capacity_unavailable|runner_token_missing|runner_token_unauthorized|runner_token_forbidden|runner_api_failed|parse_failed|fork_or_untrusted_pr`
 - Optional `router_error=false|true` only for repos that already expose an error-classification output.
 
 Do not rename existing reason values without an explicit migration that updates
 the router summary, normalized result summary, rollout evidence, and downstream
 issue comments. In particular, `fork_or_untrusted_pr` and
-`runner_image_unavailable` are already used by `ripr-swarm` and must remain
+`runner_capacity_unavailable` are already used by `ripr-swarm` and must remain
 valid routed-result vocabulary.
 
 ## CPX42 execution model
 
-- Use direct Rust toolchain setup (`dtolnay/rust-toolchain@v1`, Rust `1.95.0`).
+- Use direct Rust toolchain setup with a `dtolnay/rust-toolchain` action
+  pinned to a commit SHA. Set its explicit `toolchain` input to match the
+  repository's `rust-toolchain.toml` (`1.100.0` for `ripr-swarm`).
 - Prepare `TMPDIR` and `CARGO_TARGET_DIR` before toolchain setup.
-- Do not assume local `em-ci-rust:1.95` Docker image on CPX42.
+- Do not assume a local `em-ci-rust:<version>` Docker image on CPX42.
 - Run repo Rust gate on host and clean scratch afterwards.
 
 ## CX43/CX53 execution model
@@ -64,7 +66,7 @@ valid routed-result vocabulary.
 Do not merge if any are true:
 
 - Repository runner endpoint is used.
-- CPX42 assumes `em-ci-rust:1.95` image.
+- CPX42 assumes a local `em-ci-rust:<version>` image.
 - `TMPDIR` created after toolchain step.
 - Result job does not include conditional runner jobs.
 - Fork PR can reach self-hosted jobs.
@@ -81,7 +83,7 @@ Merge when all are true:
   proving a primary self-hosted rollout and an idle image-ready runner is
   discoverable.
 - GitHub-hosted fallback is accepted when the router records an allowed fallback
-  reason such as `no_idle_runner`, `runner_image_unavailable`,
+  reason such as `no_idle_runner`, `runner_capacity_unavailable`,
   `runner_api_failed`, `runner_token_missing`, `runner_token_unauthorized`,
   `runner_token_forbidden`, `parse_failed`, or `fork_or_untrusted_pr`.
 - Selected implementation lane succeeds.

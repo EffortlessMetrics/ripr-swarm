@@ -919,10 +919,7 @@ fn verify_tree_object(repo: &Path, tree: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let object_type = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if object_type != "tree" {
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(object_type == "tree")
 }
 
 fn verify_tree_in_repositories(source: &Path, swarm: &Path, tree: &str) -> Result<(), String> {

@@ -3397,7 +3397,7 @@ Durable rules:
 
 - Never bless or hand-edit golden expected-files from a Windows host. The
   re-bless route is WSL Ubuntu with the pinned toolchain
-  (`rust-toolchain.toml`, channel 1.95.0) or hosted Linux qualification —
+  (`rust-toolchain.toml`) or hosted Linux qualification —
   never a Windows renderer. Run the failing check under WSL, confirm the
   drift is `formatting_only` (or semantically justified per the output
   contract), then bless from the WSL checkout so expected-file bytes come

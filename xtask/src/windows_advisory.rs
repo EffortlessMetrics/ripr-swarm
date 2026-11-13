@@ -1253,10 +1253,9 @@ fn test_result_line(line: &str) -> Option<(String, bool)> {
     let rest = line.strip_prefix("test ")?;
     let (name, failed) = if let Some(name) = rest.strip_suffix(" ... FAILED") {
         (name, true)
-    } else if let Some(name) = rest.strip_suffix(" ... ok") {
-        (name, false)
     } else {
-        return None;
+        let name = rest.strip_suffix(" ... ok")?;
+        (name, false)
     };
     let name = name.trim();
     (!name.is_empty()).then(|| (name.to_string(), failed))

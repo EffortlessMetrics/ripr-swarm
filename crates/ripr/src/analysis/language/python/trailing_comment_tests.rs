@@ -76,7 +76,10 @@ fn the_edit_predicate_is_token_exact_and_fails_closed() {
 fn string_content_lines_are_found_from_the_whole_file() {
     use super::no_behavior::multi_line_string_line_ranges;
     let source = "def f():\n    sql = \"\"\"\n    SELECT a FROM t\n    \"\"\"\n    return sql\n";
-    assert_eq!(multi_line_string_line_ranges(source), Some(vec![2..=4]));
+    assert_eq!(
+        multi_line_string_line_ranges(source),
+        Some(std::iter::once(2..=4).collect::<Vec<_>>())
+    );
     assert_eq!(
         multi_line_string_line_ranges("x = 'a'\ny = f'{x}'\n"),
         Some(Vec::new())

@@ -39,8 +39,8 @@ A panic-family call site is acceptable only if it satisfies **both rails**.
   [`clippy.toml`](../clippy.toml) deliberately does not enable
   `allow-unwrap-in-tests`, `allow-expect-in-tests`, `allow-panic-in-tests`,
   `allow-dbg-in-tests`, or `allow-indexing-slicing-in-tests`. The same file
-  pins `msrv = "1.95"` so newer Clippy releases — when run via `rustup` or
-  in an advisory CI lane on a more recent toolchain — do not suggest APIs
+  pins `msrv = "1.95"` so the Rust 1.100 build compiler's Clippy and
+  newer advisory toolchains do not suggest APIs
   that violate the workspace's declared minimum supported Rust version.
 - Every suppression carries a written reason. `clippy::allow_attributes_without_reason`
   is denied at the workspace level, so `#[allow(...)]` and `#[expect(...)]`
@@ -239,8 +239,7 @@ responsibility for other configuration fields such as `priority` and `check-cfg`
 met, the entry must have a remaining non-MSRV `blocked_by` or be promoted.
 A `blocked_by` that only names an MSRV or Rust version is treated as missing.
 `reason` is narrative and does not satisfy the gate. The values are not
-verified available-since (`clippy::manual_pop_if` records `1.95` while
-`blocked_by` says pinned 1.95.0 Clippy does not recognize the lint).
+verified available-since; historical values may be planned-MSRV guesses.
 
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update
@@ -295,6 +294,7 @@ PR 03 promoted these lints after the MSRV 1.95 bump:
 | `clippy::decimal_bitwise_operands` | warn | Make bit masks visually inspectable. |
 | `clippy::manual_checked_ops` | warn | Prefer checked arithmetic over manual guards. |
 | `clippy::manual_take` | warn | Use the standard ownership helper. |
+| `clippy::manual_pop_if` | warn | Prefer conditional pop helpers; promoted with the Rust 1.100 compiler after checking native lint support. |
 | `clippy::duration_suboptimal_units` | warn | Make durations legible without unit conversion. |
 | `clippy::unnecessary_trailing_comma` | warn | Keep format macro calls clean. |
 
@@ -303,7 +303,6 @@ Planned lints retained after PR 03:
 | Lint | Blocker |
 | --- | --- |
 | `clippy::disallowed_fields` | Requires a reviewed `clippy.toml` `disallowed-fields = [...]` protected-seam list; without that config the lint is a no-op. |
-| `clippy::manual_pop_if` | Rust 1.95.0 Clippy does not recognize this lint; promote after the pinned toolchain supports it. |
 | `clippy::indexing_slicing` | Requires per-call `#[expect]` receipts on parser/diff bounded indexing. |
 | `clippy::string_slice` | Pairs with `indexing_slicing`; requires per-call receipts on AST-bounded slicing. |
 

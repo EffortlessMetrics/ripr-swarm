@@ -185,6 +185,7 @@ Rust baseline:
 
 - Rust 2024;
 - MSRV 1.95;
+- build/release compiler 1.100.0, independently selected by `rust-toolchain.toml`;
 - `unsafe_code = "forbid"`;
 - Rust-first repository automation;
 - non-Rust programming files only in approved policy surfaces.

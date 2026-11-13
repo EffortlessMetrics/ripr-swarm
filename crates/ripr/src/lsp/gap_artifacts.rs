@@ -505,7 +505,6 @@ fn validate_gap_decision_ledger(
     let mut receipt_command_specs = Vec::new();
     let mut language = None;
     let mut language_status = None;
-    let gap_state;
     let mut has_actionable_record = false;
     let mut no_action_records = 0usize;
     for record in records {
@@ -554,18 +553,18 @@ fn validate_gap_decision_ledger(
         verify_command_specs.extend(record_verify_specs);
         receipt_command_specs.extend(record_receipt_specs);
     }
-    if has_actionable_record {
-        gap_state = Some("actionable".to_string());
+    let gap_state = if has_actionable_record {
+        Some("actionable".to_string())
     } else if !records.is_empty() && no_action_records == records.len() {
-        gap_state = Some("no_actionable_seam".to_string());
+        Some("no_actionable_seam".to_string())
     } else {
-        gap_state = records.iter().find_map(|record| {
+        records.iter().find_map(|record| {
             record
                 .get("gap_state")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
-        });
-    }
+        })
+    };
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
         corpus_currentness: None,

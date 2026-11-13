@@ -663,7 +663,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
             );
         } else {
             assert_eq!(
-                without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
+                without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n").replace("cargo +1.95.0 check --locked --workspace --all-targets", "cargo check --workspace --all-targets")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
                 run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
                     "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                     "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -687,7 +687,12 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                         // A comment may carry the exact release (`v6.1.0`) while the
                         // predecessor names the major (`v6`); compare the major.
                         let tag = tag.trim();
-                        let tag = if tag.starts_with('v') {
+                        let tag = if name == "- uses: dtolnay/rust-toolchain" && tag == "v1" {
+                            // Build jobs now select 1.100.0 through generic v1.
+                            // workflow_action_pins checks that exact step-local
+                            // input; this retained fixture compares action roles.
+                            "1.95.0"
+                        } else if tag.starts_with('v') {
                             tag.split('.').next().unwrap_or(tag)
                         } else {
                             tag
@@ -754,6 +759,45 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
         }
     }
     Ok(())
+}
+
+fn explicit_msrv_selection(source: &str) -> bool {
+    let child = job(source, "msrv");
+    child.contains("    env:\n      RUSTUP_TOOLCHAIN: 1.95.0\n")
+        && child.matches("RUSTUP_TOOLCHAIN:").count() == 1
+        && child.contains(
+            "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+        )
+        && run_blocks(child)
+            == ["cargo +1.95.0 check --locked --workspace --all-targets".to_owned()]
+}
+
+#[test]
+fn msrv_selection_cannot_follow_the_newer_build_toolchain() {
+    assert!(explicit_msrv_selection(WORKFLOW));
+    for (before, after) in [
+        ("      RUSTUP_TOOLCHAIN: 1.95.0\n", ""),
+        ("RUSTUP_TOOLCHAIN: 1.95.0", "RUSTUP_TOOLCHAIN: 1.100.0"),
+        (
+            "cargo +1.95.0 check --locked --workspace --all-targets",
+            "cargo check --workspace --all-targets",
+        ),
+        (
+            "cargo +1.95.0 check --locked --workspace --all-targets",
+            "cargo +1.100.0 check --locked --workspace --all-targets",
+        ),
+        (
+            "cargo +1.95.0 check --locked --workspace --all-targets",
+            "cargo +1.95.0 check --workspace --all-targets",
+        ),
+    ] {
+        let changed = WORKFLOW.replace(before, after);
+        assert_ne!(changed, WORKFLOW, "mutation must reach the MSRV job");
+        assert!(
+            !explicit_msrv_selection(&changed),
+            "accepted MSRV drift: {before} -> {after}"
+        );
+    }
 }
 #[test]
 fn literal_runtime_commands_propagate_native_failure() -> TestResult {

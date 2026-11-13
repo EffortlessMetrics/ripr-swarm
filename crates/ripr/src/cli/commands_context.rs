@@ -326,10 +326,7 @@ pub(super) fn refuse_json_envelope_checked(
         },
         &error,
     );
-    match rendered {
-        Ok(document) => write_stdout_refusal_json(document)?,
-        Err(render) => return Err(render),
-    }
+    write_stdout_refusal_json(rendered?)?;
     Ok(error.to_string())
 }
 

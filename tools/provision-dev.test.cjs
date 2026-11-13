@@ -775,16 +775,16 @@ test('Given a changed repository pin, ensure installs that SDK and fetches with 
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
     await f.run(['--rust-only']);
-    f.put('rust-toolchain.toml', '[toolchain]\nprofile = "minimal"\nchannel = "1.99.0"\n'
+    f.put('rust-toolchain.toml', '[toolchain]\nprofile = "minimal"\nchannel = "1.100.0"\n'
       + 'components = ["rustfmt", "clippy", "rust-analyzer"]\n');
     const report = await f.run(['--rust-only', '--ensure']);
-    assert.equal(report.rust_pin, '1.99.0-' + HOST);
-    assertComponents(f.read(), ['1.99.0-' + HOST, 'stable', STABLE + '-' + HOST], ['rust-analyzer']);
+    assert.equal(report.rust_pin, '1.100.0-' + HOST);
+    assertComponents(f.read(), ['1.100.0-' + HOST, 'stable', STABLE + '-' + HOST], ['rust-analyzer']);
     const fetches = f.read().events.filter(event => event.command === 'cargo' && event.args[0] === 'fetch');
     assert.ok(fetches.length > 0, 'the dependency consumer must run');
     const current = fetches[fetches.length - 1];
-    assert.equal(current.env.RUSTUP_TOOLCHAIN, '1.99.0-' + HOST);
-    assert.equal(current.env.RUSTC, path.join(f.rustupHome, 'toolchains', '1.99.0-' + HOST, 'bin/rustc'));
+    assert.equal(current.env.RUSTUP_TOOLCHAIN, '1.100.0-' + HOST);
+    assert.equal(current.env.RUSTC, path.join(f.rustupHome, 'toolchains', '1.100.0-' + HOST, 'bin/rustc'));
     assert.equal(current.args[current.args.indexOf('--manifest-path') + 1], f.manifest);
   });
 

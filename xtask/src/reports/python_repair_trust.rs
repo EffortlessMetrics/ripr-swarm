@@ -1956,10 +1956,7 @@ fn refresh_chain_revisits(
         if !seen.insert(current.clone()) {
             return Some(current);
         }
-        match successor_by_target.get(&current) {
-            Some(next) => current = next.clone(),
-            None => return None,
-        }
+        current = successor_by_target.get(&current)?.clone();
     }
 }
 

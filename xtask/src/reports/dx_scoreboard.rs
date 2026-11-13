@@ -14,7 +14,8 @@
 //!   close, reported as `below_target`, and never fails the command.
 //! - **regression**: worse than a committed baseline by more than the
 //!   metric's margin. With `--gate` this exits nonzero. Wall-time and memory
-//!   metrics compare only against a baseline from the same runner class.
+//!   metrics compare only against a baseline from the same runner class;
+//!   measured speed also requires matching recorded build compilers.
 //!
 //! Metrics measured elsewhere (the hand-checked verdict corpus, the scripted
 //! first-run journey) arrive through `--ingest <file>` in the
@@ -30,6 +31,7 @@
 //! meets / below / not-measured / failed / uncompared counts.
 //! `pass_with_gaps` does not exit nonzero; only `fail` does.
 
+mod compiler;
 mod input;
 mod measure;
 mod muse_plugin;
@@ -2198,6 +2200,9 @@ pub(crate) struct RunContext {
     pub(crate) revision: String,
     pub(crate) analyzer_version: String,
     pub(crate) runner_class: String,
+    /// Recorded by the Cargo build supplying this run's binary. An explicit
+    /// --ripr-bin remains unrecorded.
+    pub(crate) rustc: Option<String>,
     pub(crate) binary: String,
     pub(crate) corpus: Vec<Value>,
 }
@@ -2421,6 +2426,7 @@ pub(crate) fn build_report(
         "revision": context.revision,
         "analyzer_version": context.analyzer_version,
         "runner_class": context.runner_class,
+        "rustc": context.rustc,
         "binary": context.binary,
         "corpus_version": config.corpus_version,
         "corpus": context.corpus,
@@ -2434,6 +2440,7 @@ pub(crate) fn build_report(
             "counts": gate_counts,
             "baseline_revision": baseline.map(|b| b["revision"].clone()).unwrap_or(Value::Null),
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
+            "baseline_rustc": baseline.map(|b| b["rustc"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
@@ -2442,7 +2449,7 @@ pub(crate) fn build_report(
             "review": review,
             "uncompared": uncompared,
         },
-        "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
+        "claim_boundary": "Numbers hold for the recorded revision, binary, runner class, build compiler and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics require the same runner class; measured speed also requires a matching recorded build compiler. Supplied binaries and historical reports without compiler evidence remain uncompared for measured speed. Peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
     })
 }
 
@@ -2989,12 +2996,16 @@ pub(crate) fn compare_with_baseline(
     let workloads = workloads::pair(def, row, base_row, context, baseline);
     let missing = missing_repos(row, base_row);
     let lost = repo_completion_losses(row, base_row, &workloads);
+    let compiler_issue = (def.board == "speed" && def.source == "measured")
+        .then(|| compiler::comparison_issue(context.rustc.as_deref(), baseline["rustc"].as_str()))
+        .flatten();
     if !lost.is_empty() || (incomplete(row) && !incomplete(base_row)) {
         // Repositories that completed but got worse would otherwise be hidden
         // behind the lost completion; list them too where values compare.
         let mut lost = lost;
-        if !def.runner_dependent
-            || baseline["runner_class"].as_str() == Some(context.runner_class.as_str())
+        if compiler_issue.is_none()
+            && (!def.runner_dependent
+                || baseline["runner_class"].as_str() == Some(context.runner_class.as_str()))
         {
             for regression in repo_regressions(def, row, base_row, &workloads) {
                 if !lost.iter().any(|entry| entry["repo"] == regression["repo"]) {
@@ -3025,6 +3036,14 @@ pub(crate) fn compare_with_baseline(
                 baseline["runner_class"].as_str().unwrap_or("unknown"),
                 context.runner_class
             ),
+            "missing_repos": missing,
+        }));
+    }
+    if let Some(reason) = compiler_issue {
+        return workloads.retain_exclusions(json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": reason,
             "missing_repos": missing,
         }));
     }
@@ -3267,10 +3286,11 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         format!(", {partial_count} partially measured")
     };
     out.push_str(&format!(
-        "Revision `{}` · {} · runner `{}`\n\n",
+        "Revision `{}` · {} · runner `{}` · {}\n\n",
         report["revision"].as_str().unwrap_or("unknown"),
         report["analyzer_version"].as_str().unwrap_or("unknown"),
         report["runner_class"].as_str().unwrap_or("unknown"),
+        compiler::description(report["rustc"].as_str()),
     ));
     out.push_str(&format!(
         "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed, {} not compared. Gate: `{}`.\n\n",

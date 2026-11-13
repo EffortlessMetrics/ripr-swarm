@@ -203,7 +203,7 @@ Test: `spec_0105_seams_deferred_run_status_value_is_not_full`
 ## Acceptance
 
 - All 4 controls pass in CI.
-- `cargo fmt --check` clean under rustfmt 1.9.0 (toolchain 1.95.0).
+- `cargo fmt --check` clean using rustfmt from the repository's pinned toolchain.
 - `RUSTFLAGS="-D warnings" cargo build -p ripr -p xtask` clean.
 - `cargo clippy -p ripr --all-targets -- -D warnings` clean.
 - `cargo xtask check-static-language` passes (no forbidden terms in new output).

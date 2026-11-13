@@ -4,11 +4,13 @@ const ORIGINAL: &str =
     include_str!("../../../fixtures/convergence/printed-command-paste/original.yml");
 
 fn payload(source: &str) -> String {
-    // The retained predecessor names the tag; mainline pins the commit.
+    // The retained predecessor used the old toolchain. Compare the unchanged
+    // execution payload after the explicitly selected build toolchain step.
     source
-        .split_once("      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95\n")
+        .split_once("      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n        with:\n          toolchain: 1.100.0\n")
         .or_else(|| source.split_once("      - uses: dtolnay/rust-toolchain@1.95\n"))
         .map_or("", |(_, tail)| tail)
+        .replace("ripr-printed-command-paste-1.100-", "ripr-printed-command-paste-1.95-")
         .replace(
             "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
             "Swatinem/rust-cache@v2",
@@ -129,7 +131,7 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
         WORKFLOW.find("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0");
     let guard = WORKFLOW.find("Verify exact source before product execution");
     let toolchain =
-        WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
+        WORKFLOW.find("dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8");
     assert!(checkout.is_some() && guard.is_some() && toolchain.is_some());
     assert!(checkout < guard && guard < toolchain);
 }

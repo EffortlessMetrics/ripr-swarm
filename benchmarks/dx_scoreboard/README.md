@@ -438,6 +438,36 @@ more than one CPU model, and wall time on identical code differed by about
 1.7x between runs, so the model is part of the key. Counts and line totals
 compare across runners.
 
+The nine built-in measured speed metrics also require the same recorded build
+compiler. The additive `rustc` report field binds its release, full compiler
+commit, compiler host and LLVM version; the Markdown header prints that identity.
+It describes the compiler that built the measured binary, independently of the
+source MSRV declared by `rust-version`.
+
+The default path always invokes Cargo to check freshness and obtains the binary
+from its `compiler-artifact` message. It joins that package's compiler record
+from `build-script-executed` and requires successful build completion. The build
+script observes Cargo's resolved `RUSTC`, including configuration overrides;
+Cargo retains that record when it reuses an up-to-date artifact. The build keeps
+the dependency graph locked and uses the shared tool-build timeout (15 minutes,
+overridable with `RIPR_TOOL_BUILD_TIMEOUT_SECS`) independently of the measurement
+timeout. It uses the shared subprocess capture owner with the native Cargo
+adapter's 8 MiB stdout and 1 MiB stderr budgets. Invalid or
+incomplete artifact/completion evidence refuses the measurement; unavailable
+compiler evidence alone leaves the compiler identity unrecorded.
+This does not require clearing caches or rebuilding otherwise-fresh code.
+
+An explicit `--ripr-bin`, a missing or malformed compiler record, or ambiguous
+compiler evidence leaves the identity unrecorded. The current `rustc` on `PATH`
+cannot establish how another binary was built. Legacy reports remain readable
+under scoreboard v1, but absent identities never compare, including with each
+other. Compiler changes or unavailable identities list measured speed as
+uncompared; current values and target judgments remain visible. Completion
+loss, failed instruments and hard ceilings still fail independently. Ingested
+metrics retain their producer-specific comparison contracts. Historical
+baselines are not stamped with today's compiler; a new comparable baseline
+requires a new measured report and the usual review.
+
 `metrics/dx-scoreboard/baseline.json` is the committed baseline. To move it,
 commit a newer report after reviewing why the numbers changed. A baseline
 recorded on one runner class leaves speed metrics uncompared on another; the

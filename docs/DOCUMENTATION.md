@@ -52,6 +52,8 @@ Current how-to docs:
 - [Contributing](../CONTRIBUTING.md)
 - [Testing](TESTING.md)
 - [CI strategy](CI.md)
+- [Rust 1.100 compiler upgrade](ci/rust-1.100-upgrade.md) - build compiler,
+  source minimum, Cargo artifacts and LLVM compatibility
 - [Proof routing](PROOF_ROUTING.md)
 - [Source-of-truth control plane](source-of-truth/README.md)
 - [Sibling-tool interop and learning ledger](interop/sibling-tools.md)
@@ -241,7 +243,7 @@ Current reference docs:
 - [No-panic semantic allowlist](NO_PANIC_SEMANTIC_ALLOWLIST.md)
 - [Droid rollout checklist](agent-context/droid-rollout.md)
 - [CI verification ladder](ci/verification-ladder.md)
-- [CI current state](ci/current-state.md)
+- [CI implementation snapshot (2026-08-25)](ci/current-state.md)
 - [CI upstream tool substrate](ci/upstream-tool-substrate.md)
 - [CI LEM budgeting](ci/lem-budgeting.md)
 - [CI labels](ci/labels.md)

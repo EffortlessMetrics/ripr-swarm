@@ -1080,10 +1080,9 @@ fn typescript_error_value(prefix: &str, expression: &str) -> Option<String> {
             return None;
         }
         callee
-    } else if let Some(message) = first_typescript_string_literal(expression) {
-        return Some(format!("{prefix} error matching {message}"));
     } else {
-        return None;
+        let message = first_typescript_string_literal(expression)?;
+        return Some(format!("{prefix} error matching {message}"));
     };
     if error_type.is_empty() {
         return None;

@@ -969,8 +969,7 @@ impl PackageWalk {
             self.other_phase_roots = Some((Origin::Evidence, evidence));
             return false;
         }
-        let production: Vec<(PathBuf, ChildAnchor)> = self.queue.drain(..).collect();
-        self.queue = evidence;
+        let production = std::mem::replace(&mut self.queue, evidence);
         self.other_phase_roots = Some((Origin::Production, production));
         self.phase = Origin::Evidence;
         self.seen_load_edge = false;
@@ -983,10 +982,9 @@ impl PackageWalk {
         let Some((Origin::Production, roots)) = self.other_phase_roots.take() else {
             return false;
         };
-        let leftover: Vec<(PathBuf, ChildAnchor)> = self.queue.drain(..).collect();
         self.phase = Origin::Production;
         self.visited.clear();
-        self.queue = roots;
+        let leftover = std::mem::replace(&mut self.queue, roots);
         if !leftover.is_empty() {
             self.other_phase_roots = Some((Origin::Evidence, leftover));
         }

@@ -1060,14 +1060,17 @@ failed sensor evidence pass or establish that another consumer ran.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
-has both the host label (`CX43`, `CPX42`, or `CX53`) and the `em-ci-rust-1.95`
-runner-image/toolchain readiness label. If runner state cannot be read, or a
-runner is idle but not image-ready, the workflow fails closed to GitHub-hosted
+has `em-ci`, its host label (`cx43`, `cpx42`, or `cx53`) and the matching
+capacity label (`rust-medium`, `rust-16gb`, or `rust-large`, respectively).
+The CPX42 job also requests `rust-medium`; all self-hosted jobs request the
+existing trusted Linux x64 runner labels. Exact Rust 1.100.0 installation is a
+job step, not a runner-registration label. If runner state cannot be read, or a
+runner is idle but lacks the required capability, the workflow falls back to GitHub-hosted
 rather than selecting a self-hosted runner by guesswork.
 
 The route job and protected result summaries include count-only runner
 diagnostics so operators can separate missing host runners, busy runners, and
-missing `em-ci-rust-1.95` readiness labels without exposing runner names,
+missing capacity labels without exposing runner names,
 registration tokens, secrets, or full label inventories. The protected result
 job also receives those values as environment variables, so downloaded result
 logs are sufficient for issue proof.
@@ -1134,15 +1137,18 @@ It runs on manual dispatch or a validated frozen-subject call selecting
 same command on Windows. The retained PR diff selector is legacy handling,
 not an active subscription: callable selection comes from explicit admitted
 inputs, and manual dispatch runs the lane unconditionally.
-The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
+The CI workflow also has an explicit MSRV job that sets
+`RUSTUP_TOOLCHAIN=1.95.0` and runs:
 
 ```bash
-cargo check --workspace --all-targets
+cargo +1.95.0 check --locked --workspace --all-targets
 ```
 
-The `release-proof` job pins the declared `1.95.0` toolchain; the MSRV job
-duplicates that baseline and runs on manual dispatch or a validated callable
-selection with `run_msrv`. It has no independent PR subscription.
+The `release-proof` and `rust-only-features` jobs select the Rust `1.100.0`
+build/release compiler. The MSRV job checks the retained `1.95` source minimum
+independently of the repository's newer toolchain pin. It runs on manual
+dispatch or a validated callable selection with `run_msrv` and has no
+independent PR subscription.
 
 The legacy workflow's `release-proof`, `rust-only-features`, and `msrv` jobs
 run on `ubuntu-latest`. They carry release-surface and baseline proof and must not
@@ -2827,7 +2833,7 @@ accept explicit `workflow_dispatch` only; their PR, main-push and daily schedule
 are retired. Codecov upload remains non-blocking.
 
 The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
-pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
+pinned to Rust `1.100.0`. Selected lint findings remain advisory warnings. A
 missing component, compilation failure, failed log capture, or absent Cargo
 artifact/completion evidence fails that job instead of appearing as a completed
 scan. Its always-run summary and artifact retain the source SHA, run ID and
@@ -2840,9 +2846,9 @@ recorded in [Clippy policy](CLIPPY_POLICY.md).
 The same workflow's separate `stable-repo-policy` job executes the marked
 [focused toolchain-upgrade recipe](ci/coverage.md#validate-locally) after running
 its workflow controls. It starts with the stable SDK first on `PATH` and an
-absolute stable `RUSTC`, so the recipe must switch to the repository pin and back
-to stable. The recipe explicitly installs the pin, refreshes stable, and selects
-matching LLVM tools. The job requires ordered successful pinned/stable diagnostics,
+absolute stable `RUSTC`, so the recipe must switch to the previous 1.95.0
+baseline and back to stable. The recipe explicitly installs that baseline,
+refreshes stable, and selects matching LLVM tools. The job requires ordered successful baseline/stable diagnostics,
 stable `frontdoor` fixtures and strict package Clippy, with nonempty test summaries,
 genuine profile observations, and completion tied to the current run. Missing or
 malformed recipe boundaries, omitted checks, native failures and stale evidence

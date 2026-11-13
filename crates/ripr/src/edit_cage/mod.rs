@@ -1695,6 +1695,7 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
+#[cfg(unix)]
 fn delta_from_repository_states(
     before: &AttemptBaseline,
     after: &AttemptBaseline,
@@ -2132,6 +2133,8 @@ fn writable_path_components_are_safe_in(
     relative: &str,
     explicit_store_scopes: &[&CagePathRule],
 ) -> Result<bool, String> {
+    #[cfg(not(unix))]
+    let _ = explicit_store_scopes;
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
         current.push(component);
