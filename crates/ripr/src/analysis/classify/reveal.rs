@@ -3680,6 +3680,50 @@ fn predicate_initialized_field<'a>(line: &'a str, expression: &str) -> Option<&'
     .then_some(name)
 }
 
+/// #14562: whether the owner `body` (from its `fn` token) declares a plain
+/// named return type (`-> Opts`, `-> crate::Opts`, `-> Self`) and builds a
+/// literal of it (`Opts {` or `Self {`). Only then does a predicate that sets
+/// one field of a literal there set a field of the returned record. A
+/// generic, reference, tuple, collection or `impl` return keeps the plain
+/// #14206 reading.
+pub(in crate::analysis) fn owner_returns_record(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return false;
+    };
+    let header = &masked[..open];
+    let Some(arrow) = header.find("->") else {
+        return false;
+    };
+    let returned = header[arrow + 2..].trim();
+    let returned = returned
+        .find(" where")
+        .map_or(returned, |at| returned[..at].trim_end());
+    if returned.is_empty()
+        || !returned
+            .bytes()
+            .all(|byte| is_ident_byte(byte) || byte == b':')
+    {
+        return false;
+    }
+    let Some(name) = returned.rsplit("::").next().filter(|name| {
+        name.starts_with(|first: char| first.is_ascii_uppercase())
+            && name.bytes().all(is_ident_byte)
+    }) else {
+        return false;
+    };
+    let rest = &masked[open..];
+    [name, "Self"].iter().any(|literal| {
+        rest.match_indices(literal).any(|(at, _)| {
+            let before = at
+                .checked_sub(1)
+                .and_then(|index| rest.as_bytes().get(index));
+            !before.is_some_and(|byte| is_ident_byte(*byte))
+                && rest[at + literal.len()..].trim_start().starts_with('{')
+        })
+    })
+}
+
 fn constructed_field_name(expression: &str) -> Option<&str> {
     let expression = expression.trim().trim_end_matches(',').trim();
     let head = match expression.find(':') {
@@ -14439,6 +14483,30 @@ return Err(\"typed pin\".into());
             called_names("a.tax(1) + vec![x] + Tax::new::<u8>(2) + taxes (3)"),
             vec!["tax", "new", "taxes"]
         );
+    }
+
+    /// #14562: the field rule applies only to an owner that returns a plain
+    /// named record it builds.
+    #[test]
+    fn only_an_owner_returning_a_built_record_takes_the_field_rule() {
+        for body in [
+            "fn opts(n: u32) -> Opts {\n    Opts {\n        big: n >= 10,\n    }\n}",
+            "fn new(n: u32) -> Self {\n    Self { big: n >= 10 }\n}",
+            "fn opts(n: u32) -> crate::cfg::Opts where u32: Copy {\n    let o = Opts { big: n >= 10 };\n    o\n}",
+        ] {
+            assert!(owner_returns_record(body), "{body}");
+        }
+        for body in [
+            "fn is_big(n: u32) -> bool {\n    let o = Opts { big: n >= 10 };\n    o.big\n}",
+            "fn all(n: u32) -> Vec<Opts> {\n    vec![Opts { big: n >= 10 }]\n}",
+            "fn opts(n: u32) -> Option<Opts> {\n    Some(Opts { big: n >= 10 })\n}",
+            "fn opts(n: u32) -> &Opts {\n    todo!()\n}",
+            "fn render(n: u32) -> String {\n    Cfg { verbose: n > 1 }.render()\n}",
+            "fn opts(n: u32) -> Opts {\n    build(n >= 10)\n}",
+            "fn set(&mut self, n: u32) {\n    self.o = Opts { big: n >= 10 };\n}",
+        ] {
+            assert!(!owner_returns_record(body), "{body}");
+        }
     }
 
     /// #14562: only a line that is exactly `name: <predicate>` (optional

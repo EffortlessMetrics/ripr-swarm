@@ -109,6 +109,8 @@ const RECORD_KEEPING_METHODS: &[&str] = &[
     "as_ref",
     "as_mut",
     "as_deref",
+    "borrow",
+    "deref",
     "unwrap",
     "expect",
     "unwrap_or",
@@ -365,7 +367,11 @@ impl Reader<'_> {
                 }
             }
             ast::Expr::MatchExpr(matched) => {
-                if self.inner(matched.expr(), depth).reaches() {
+                let scrutinee = self.inner(matched.expr(), depth);
+                // #14562: arms may destructure any field of the record.
+                if scrutinee == Sink::Record {
+                    Sink::Masked
+                } else if scrutinee.reaches() {
                     Sink::Value
                 } else {
                     self.unfollowed(expr.syntax())
@@ -577,6 +583,21 @@ impl Reader<'_> {
         let sink = match name.as_deref() {
             // `matches!(scrutinee, pattern)`.
             Some("matches") => match items.first().map(read) {
+                // #14562: a pattern over the record observes the changed
+                // field only when it names it.
+                Some(Sink::Record) => {
+                    let names_kept = self.kept_field.is_some_and(|kept| {
+                        items
+                            .iter()
+                            .skip(1)
+                            .any(|pattern| contains_as_whole_word(pattern, kept))
+                    });
+                    if names_kept {
+                        Sink::Value
+                    } else {
+                        Sink::Masked
+                    }
+                }
                 Some(sink) if sink.reaches() => Sink::Value,
                 _ => Sink::Masked,
             },
@@ -716,6 +737,8 @@ mod tests {
             "assert_eq!(over(10).unwrap().big, true);",
             "assert_eq!(over(10).big.to_string(), \"true\");",
             "assert!(over(10).eq(&want));",
+            "assert!(matches!(over(10), Opts { big: true, .. }));",
+            "assert_eq!(over(10).borrow().big, true);",
             "assert_eq!(wrap(over(10)).inner.big, true);",
         ] {
             assert_eq!(
@@ -732,6 +755,8 @@ mod tests {
             "assert_eq!(Some(over(10).retries).unwrap(), 3);",
             "assert_eq!(assert_ok!(over(10)).retries, 3);",
             "assert_eq!(over(10).0, 3);",
+            "assert_eq!(match over(10) { Opts { retries, .. } => retries }, 3);",
+            "assert!(matches!(over(10), Opts { retries: 3, .. }));",
         ] {
             assert_eq!(
                 kept_flow(assertion, assertion, Some("big")),
