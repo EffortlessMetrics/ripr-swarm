@@ -12,7 +12,13 @@ caller, never to a PR label, body or candidate-controlled setting.
 Activation requires a coordinated caller generation at both initial admission
 and the final Result recheck, including a plan for queued heads whose reviews
 were written under the old contract. The lifecycle owner must qualify that
-migration before claiming enforcement. The parent #14584 remains the separately
+migration before claiming enforcement. In this candidate's workflow, the initial
+source-review step runs only for `pull_request`; a `merge_group` reaches review
+checking at final Result. Adding the flag to those two commands alone would not
+establish early refusal for queue membership. Activation must qualify early
+checks for every actual group member. The four-file reader bundle also does not
+bind the caller workflow or selector: trusted caller-generation authority is a
+separate prerequisite, not established by matching flag text. The parent #14584 remains the separately
 qualified precedence repair. No additional workflow or service is introduced.
 
 ## What the stronger mode establishes

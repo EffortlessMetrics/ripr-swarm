@@ -439,6 +439,30 @@ def source_excerpt(evidence, source_reader) -> bool:
     return end <= len(lines) and hashlib.sha256(b"".join(lines[begin-1:end])).hexdigest() == evidence["excerpt_sha256"]
 
 
+def review_subject(pull, head):
+    """Return the validated same-repository subject shared by producer/consumer."""
+    if not isinstance(pull, dict) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    number = pull.get("number")
+    href, bref = pull.get("head"), pull.get("base")
+    if (type(number) is not int or number <= 0
+            or not isinstance(href, dict) or not isinstance(bref, dict)):
+        return None
+    head_repo, base_repo = href.get("repo"), bref.get("repo")
+    if not isinstance(head_repo, dict) or not isinstance(base_repo, dict):
+        return None
+    repo = base_repo.get("full_name")
+    if (not isinstance(repo, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
+            or href.get("sha") != head or head_repo.get("full_name") != repo):
+        return None
+    return repo, number
+
+
+def valid_rationale(value):
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= 4000
+
+
 def resolved_objections(reviews, *, pull, head, source_reader):
     """Validate explicit refutations. Evidence binding is not semantic proof.
 
@@ -455,17 +479,10 @@ def resolved_objections(reviews, *, pull, head, source_reader):
     if any(type(i) is not int or i <= 0 for i in ids) or len(set(ids)) != len(ids):
         return resolved, malformed
     by_id = {r["id"]: r for r in reviews}
-    if not isinstance(pull, dict):
+    subject = review_subject(pull, head)
+    if subject is None:
         return resolved, malformed
-    number = pull.get("number")
-    href, bref = pull.get("head") or {}, pull.get("base") or {}
-    repo = (bref.get("repo") or {}).get("full_name")
-    if (not re.fullmatch(r"[0-9a-f]{40}", head)
-            or type(number) is not int or number <= 0 or not isinstance(repo, str)
-            or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
-            or href.get("sha") != head
-            or (href.get("repo") or {}).get("full_name") != repo):
-        return resolved, malformed
+    repo, number = subject
     # Bound unique data reads per invocation, including invalid records. The live
     # reader is fixed to repo/H; a declaration can never choose its own fetch ref.
     cache = {}
@@ -508,8 +525,7 @@ def resolved_objections(reviews, *, pull, head, source_reader):
                         or resolution_body(target_body) or not comment_body_negative(target_body)
                         or item["body_sha256"] != hashlib.sha256(target_body.encode("utf-8")).hexdigest()
                         or item["disposition"] not in ("refuted", "retracted")
-                        or not isinstance(item["rationale"], str)
-                        or not 1 <= len(item["rationale"].strip()) <= 4000
+                        or not valid_rationale(item["rationale"])
                         or not isinstance(item["source_evidence"], list)
                         or not 1 <= len(item["source_evidence"]) <= 4
                         or not all(source_excerpt(e, read) for e in item["source_evidence"])):
@@ -650,15 +666,17 @@ def fetch_pull(repository: str, pr_number: str) -> dict[str, Any]:
 def format_resolution(reviews, pull, args, source_reader):
     """Build an unpublished source-refutation record, never a review approval."""
     targets = [r for r in reviews if r.get("id") == args.format_resolution]
-    if len(targets) != 1 or not isinstance(pull, dict):
+    if len(targets) != 1:
         raise ValueError("target review is missing or ambiguous")
+    if review_subject(pull, args.head) != (args.repository, args.pr):
+        raise ValueError("resolution requires the exact same-repository PR subject")
     target = targets[0]
     body = str(target.get("body") or "")
     if (not _trusted(target) or target.get("state") != "COMMENTED"
             or target.get("commit_id") != args.head
             or resolution_body(body) or not comment_body_negative(body)
             or (pull.get("head") or {}).get("sha") != args.head
-            or not args.rationale or not 1 <= len(args.rationale.strip()) <= 4000):
+            or not valid_rationale(args.rationale)):
         raise ValueError("target is not a current trusted COMMENT objection or rationale is absent")
     path = args.source_path
     if (not isinstance(path, str) or not 1 <= len(path) <= 512
@@ -678,12 +696,15 @@ def format_resolution(reviews, pull, args, source_reader):
                     excerpt_sha256=hashlib.sha256(excerpt).hexdigest())
     if not source_excerpt(evidence, lambda _: record):
         raise ValueError("source evidence failed exact-blob/excerpt verification")
-    return RESOLUTION_HEADER + json.dumps(dict(
+    body = RESOLUTION_HEADER + json.dumps(dict(
         schema="ripr.review-resolution.v1", repository=args.repository,
         pull_request=args.pr, head_sha=args.head, resolutions=[dict(
             review_id=target["id"], body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
             disposition=args.resolution_disposition, rationale=args.rationale,
             source_evidence=[evidence])]), indent=2, ensure_ascii=False)
+    if len(body.encode("utf-8")) > 65536:
+        raise ValueError("formatted resolution exceeds the 64 KiB body limit")
+    return body
 
 
 def self_test() -> None:

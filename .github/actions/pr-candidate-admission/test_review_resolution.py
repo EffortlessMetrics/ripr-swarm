@@ -87,6 +87,20 @@ class Resolution(unittest.TestCase):
         v['reviews'][2]['body']=out
         self.run_cli(v,0)
 
+    def test_formatter_and_consumer_share_subject_and_rationale_limits(self):
+        args=('--format-resolution','2','--source-path','src/lib.rs','--start-line','1','--end-line','3')
+        v=fixture();v['pull']['head']['repo']['full_name']='fork/r'
+        self.run_cli(v,1,args+('--rationale','The source refutes the allegation.'))
+        v=fixture();v['pull']['number']=True
+        self.run_cli(v,1,args+('--rationale','The source refutes the allegation.'))
+        for rationale in [' '*66000+'x','x'*4001,' ']:
+            v=fixture();self.run_cli(v,1,args+('--rationale',rationale))
+            r=record(v);r['resolutions'][0]['rationale']=rationale;set_record(v,r)
+            self.run_cli(v,1)
+        v=fixture()
+        out,_=self.run_cli(v,0,args+('--rationale','é'*4000))
+        v['reviews'][2]['body']=out;self.run_cli(v,0)
+
     def test_historical_red_control_can_be_explicitly_retracted(self):
         v=fixture();v['reviews'][1]['body']='REPAIR_REQUIRED\nThe test fails before the repair.'
         r=record(v);r['resolutions'][0]['body_sha256']=hashlib.sha256(v['reviews'][1]['body'].encode()).hexdigest()
