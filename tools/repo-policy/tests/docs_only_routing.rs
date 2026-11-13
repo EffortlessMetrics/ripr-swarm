@@ -593,6 +593,45 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
 }
 
 #[test]
+fn merge_group_range_keeps_earlier_members_and_excludes_qualified_prefix() -> TestResult {
+    let fixture = Fixture::new()?;
+    let old_main = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("src/prefix.rs", "fn qualified_prefix() {}\n")?;
+    let base = fixture.commit()?;
+    fixture.git(&["update-ref", "refs/remotes/origin/main", &old_main])?;
+    fixture.write("docs/member.md", "first docs member\n")?;
+    fixture.commit()?;
+    fixture.write("docs/tip.md", "second docs member\n")?;
+    let docs_head = fixture.commit()?;
+    let production = shell("detect-docs-only")?;
+    assert!(fixture.detect(&production, "merge_group", &base, &docs_head, None)?);
+    assert!(!fixture.detect(&production, "merge_group", &old_main, &docs_head, None)?);
+
+    // A group can contain several commits. Its first member changes code while
+    // the final member changes only docs; HEAD^1 would hide the code member.
+    fixture.git(&["checkout", "--detach", &base])?;
+    fixture.write("src/member.rs", "fn current_member() {}\n")?;
+    let code_member = fixture.commit()?;
+    fixture.write("docs/tip.md", "last member is docs only\n")?;
+    let head = fixture.commit()?;
+    assert_eq!(fixture.git(&["rev-parse", "HEAD^1"])?, code_member);
+    assert_eq!(
+        fixture.git(&["diff", "--name-only", &format!("{base}...{head}")])?,
+        "docs/tip.md\nsrc/member.rs"
+    );
+    assert!(!fixture.detect(&production, "merge_group", &base, &head, None)?);
+    let range = "\"$BASE_SHA\"...\"$HEAD_SHA\"";
+    assert_eq!(production.matches(range).count(), 1);
+    let mutant = production.replace(range, "\"${HEAD_SHA}^1\"...\"$HEAD_SHA\"");
+    assert!(
+        fixture.detect(&mutant, "merge_group", &base, &head, None)?,
+        "wrong last-parent range must expose the false docs-only decision"
+    );
+    assert_eq!(fixture.git(&["rev-parse", "HEAD"])?, head);
+    Ok(())
+}
+
+#[test]
 fn spec_registration_surfaces_classify_as_docs_only() -> TestResult {
     let production = shell("detect-docs-only")?;
     for path in [
