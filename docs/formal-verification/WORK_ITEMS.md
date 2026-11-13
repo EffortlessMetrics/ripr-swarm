@@ -40,6 +40,8 @@ before any required-check promotion under #12904.
 | #12579 / PR #12581 | Bounded preflight implementation exists; branch was behind/nonmergeable at the November 11 reconciliation | Reconcile the existing candidate onto current main, preserve its delayed-probe and positive evidence, qualify exact head, then merge |
 | #13768 / draft PR #14469 | Positive-cover admission candidate | Distinguish claim-required covers from harness-local/advisory covers; retain native negative evidence; compose with #14472 |
 | #10686 / draft PR #11517 | Large context/source/cache/public-inventory candidate | Keep owner/domain semantics out; split producer/context and projections if needed; qualify current head instead of recreating work |
+| #14472/#14473 / draft PR #14478 | Offline claim/run document auditor and strengthened design contracts; native assurance remains `not_assessed` | Reuse one semantic validator at the native producer/report boundary, generate the governed registry/result join, and avoid a second admission implementation |
+| #14474 / stacked passive selector candidate | Supplied-fact critical selection, all-critical fallback, queue identity, and JSON/Markdown planning without provider execution | Qualify this contract, then generate its claim index from #14473 and bind actual `B/G/member/change` facts under #14500 before any advisory execution |
 
 ## Newly split infrastructure leaves
 
@@ -50,6 +52,10 @@ inventory, cover, currentness, and raw-artifact identity.
 
 It consumes the delivered runner-integrity fixes and composes with #12581 and
 #14469. It does not add a proof, semantic relation, or required check.
+
+Draft PR #14478 supplies an executable offline consistency auditor and corrects
+the draft schemas, but explicitly does not emit or authenticate native evidence.
+The production runner/result integration remains open.
 
 ### #14473 — stable claims and assurance scoreboard
 
@@ -65,11 +71,19 @@ The first claim families are:
 4. resource/budget safety;
 5. edit/repair final disposition.
 
+PR #14478 validates supplied draft claim documents but creates no governed
+registry and no assurance scoreboard.
+
 ### #14474 — affected critical selection
 
-Plans and executes an advisory `kani-critical` route from registered semantic
-claims. Unknown or partial impact falls back to all critical claims, never no
-work.
+Plans an advisory `kani-critical` route from registered semantic claims for the
+actual admitted merge group. Unknown, incomplete, empty, or unmapped
+formal-relevant impact falls back to all critical claims, never no work.
+
+The stacked passive selector candidate adds the provider-free plan contract and
+falsification controls. It grants no execution authority and adds no workflow
+trigger. Native execution remains dependent on #14472/#14473 and #14500's
+queue-only lifecycle.
 
 It remains advisory until #12904's measured admission criteria and
 #6452/#6456 transition protection are satisfied.
