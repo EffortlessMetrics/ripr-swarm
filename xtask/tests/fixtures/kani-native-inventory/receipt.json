@@ -1,0 +1,78 @@
+{
+  "package": "ripr-contract",
+  "source_before": {
+    "head": "55b89de2010b932881fa5b7171587c455dc6e84a",
+    "tree": "bae7bdcf205e6c1d2353a7bc221902cdf9ed29c1",
+    "status": ""
+  },
+  "source_after": {
+    "head": "55b89de2010b932881fa5b7171587c455dc6e84a",
+    "tree": "bae7bdcf205e6c1d2353a7bc221902cdf9ed29c1",
+    "status": ""
+  },
+  "cwd": "/workspace/scratch/cbdfae970a24/ripr-cap/target/native-list-ripr-contract-55b89de2010b-qualified",
+  "cwd_was_empty": true,
+  "argv": [
+    "cargo",
+    "kani",
+    "-p",
+    "ripr-contract",
+    "--manifest-path",
+    "/workspace/scratch/cbdfae970a24/ripr-cap/Cargo.toml",
+    "list",
+    "--format",
+    "json"
+  ],
+  "elapsed_seconds": 25.95016360282898,
+  "timeout_seconds": 120,
+  "exit_code": 0,
+  "timed_out": false,
+  "json_artifact": {
+    "path": "/workspace/scratch/cbdfae970a24/fv-evidence/cap/native-list-ripr-contract-qualified/kani-list.json",
+    "bytes": 2533,
+    "sha256": "d023ab5a23a66e93b649312ef2f229af1659d04abd522330c26d587dc5fb7224"
+  },
+  "json_shape": {
+    "kani-version": "str",
+    "file-version": "str",
+    "standard-harnesses": "dict",
+    "contract-harnesses": "dict",
+    "contracts": "list",
+    "totals": "dict"
+  },
+  "artifacts": [
+    {
+      "path": "/workspace/scratch/cbdfae970a24/fv-evidence/cap/native-list-ripr-contract-qualified/stdout.txt",
+      "bytes": 2397,
+      "sha256": "e99786dcaf5002a3332282f92fc672824b0ca89615ec43bc841a1ea829386d67"
+    },
+    {
+      "path": "/workspace/scratch/cbdfae970a24/fv-evidence/cap/native-list-ripr-contract-qualified/stderr.txt",
+      "bytes": 539,
+      "sha256": "2a84a0e9f7ffbf7c6fd95a54376942d44404b809f7f1e87b68ae64b428c794f9"
+    },
+    {
+      "path": "/workspace/scratch/cbdfae970a24/fv-evidence/cap/native-list-ripr-contract-qualified/list-help.stdout.txt",
+      "bytes": 2575,
+      "sha256": "6750a23d637ac7f0f98fb31171d9ea4de26ba6941fe22df1856c736821797d37"
+    },
+    {
+      "path": "/workspace/scratch/cbdfae970a24/fv-evidence/cap/native-list-ripr-contract-qualified/list-help.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "configuration": {
+    "CARGO_HOME": "/workspace/scratch/cbdfae970a24/fv-tools/cargo",
+    "RUSTUP_HOME": "/workspace/scratch/cbdfae970a24/fv-tools/rustup",
+    "KANI_HOME": "/workspace/scratch/cbdfae970a24/fv-tools/kani",
+    "CARGO_TARGET_DIR": "/workspace/scratch/cbdfae970a24/fv-target-kani-cap",
+    "CARGO_BUILD_JOBS": "1",
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "RUSTC_WRAPPER": null,
+    "RUSTC_WORKSPACE_WRAPPER": null,
+    "KANIFLAGS": null,
+    "KANI_FLAGS": null
+  }
+}

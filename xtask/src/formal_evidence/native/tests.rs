@@ -1,5 +1,5 @@
 use super::*;
-use crate::formal_evidence::{audit, parse_json};
+use crate::formal_evidence::{audit, kani_output, native_inventory, parse_json};
 
 fn complete_document() -> AuditResult<Run> {
     let mut value: serde_json::Value = parse_json(include_bytes!(
@@ -161,6 +161,216 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
 }
 
 #[test]
+fn aggregate_process_preserves_nonzero_timeout_and_unsettled_capture() -> AuditResult<()> {
+    use super::super::{Cleanup, ProcessState};
+    let run = complete_document()?;
+    let invocations = &run
+        .execution
+        .as_ref()
+        .ok_or("execution absent")?
+        .invocations;
+    let commitment = sha256(b"the exact retained invocation index");
+    let positive = aggregate_process(invocations, &commitment);
+    assert_eq!(positive.state, ProcessState::Completed);
+    assert_eq!(positive.exit_code, Some(0));
+    assert_eq!(
+        positive.raw_output_digest.as_deref(),
+        Some(commitment.as_str())
+    );
+    let mut calls = invocations.clone();
+    calls.last_mut().ok_or("verification absent")?.exit_code = Some(17);
+    let failed = aggregate_process(&calls, &commitment);
+    assert_eq!(failed.state, ProcessState::Failed);
+    assert_eq!(failed.exit_code, Some(17));
+    let mut errored = invocations.clone();
+    errored.last_mut().ok_or("verification absent")?.error = Some("capture failed".into());
+    let refused = aggregate_process(&errored, &commitment);
+    assert_eq!(refused.state, ProcessState::Failed);
+    assert!(refused.exit_code.is_none());
+    calls.last_mut().ok_or("verification absent")?.timed_out = true;
+    assert_eq!(
+        aggregate_process(&calls, &commitment).state,
+        ProcessState::TimedOut
+    );
+    let mut calls = invocations.clone();
+    calls[0].capture_complete = false;
+    assert_eq!(
+        aggregate_process(&calls, &commitment).cleanup_state,
+        Cleanup::NotObserved
+    );
+    let absent = aggregate_process(&invocations[..invocations.len() - 1], &commitment);
+    assert_eq!(absent.state, ProcessState::NotStarted);
+    assert_eq!(absent.cleanup_state, Cleanup::NotApplicable);
+    assert!(absent.exit_code.is_none() && absent.raw_output_digest.is_none());
+    Ok(())
+}
+
+#[test]
+fn native_failed_assertion_is_distinct_from_unwind_expected_panic_and_false_success()
+-> AuditResult<()> {
+    let subject = complete_document()?
+        .execution
+        .ok_or("execution absent")?
+        .selected_subjects;
+    let failed = "Checking harness m::proof...\nCheck 1: m::proof.assertion.1\n - Status: FAILURE\n - Description: \"intended assertion\"\n - Location: source.rs:1:1 in function m::proof\nCheck 2: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- FAILED\nVerification Time: 0.012345678s\n";
+    let row = native_inventory::observe(&subject, failed).0.remove(0);
+    assert_eq!(row.status, ObservationStatus::Failed);
+    assert_eq!(row.native_verdict, super::super::Verdict::Counterexample);
+    assert_eq!(row.properties.len(), 2);
+    assert_eq!(
+        row.properties[0].description.as_deref(),
+        Some("\"intended assertion\"")
+    );
+    assert_eq!(row.duration_ms, Some(12));
+    for bad in [
+        failed.replace(".assertion.1", ".unwind.1"),
+        failed.replace("VERIFICATION:- FAILED", "VERIFICATION:- SUCCESSFUL"),
+        failed.replace(
+            "VERIFICATION:- FAILED",
+            "VERIFICATION:- SUCCESSFUL (encountered one or more panics as expected)",
+        ),
+        failed.replace(" - Status: FAILURE", " - Status: ERROR"),
+    ] {
+        assert_eq!(
+            native_inventory::observe(&subject, &bad).0[0].status,
+            ObservationStatus::NotEstablished
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn measured_multiline_assertion_description_is_retained_without_metadata_borrowing()
+-> AuditResult<()> {
+    let bytes =
+        include_bytes!("../../../tests/fixtures/kani-native-output/currentness-mutant.stdout");
+    assert_eq!(
+        sha256(bytes),
+        "sha256:f14b79a7045346579a5592bd1fbee69ef947f9922dbd641ce99acd406907e147"
+    );
+    let output = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let properties = kani_output::native_properties(output)?;
+    assert_eq!(properties.len(), 40);
+    let failures: Vec<_> = properties
+        .iter()
+        .filter(|property| property.status == "FAILURE")
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+        failures[0].name,
+        "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint.assertion.1"
+    );
+    assert_eq!(
+        failures[0].description.as_deref(),
+        Some(
+            "\"assertion failed: value.permits_candidate_action() ==\nvalue == SourceCurrentness::CandidateCurrent\""
+        )
+    );
+    assert_eq!(
+        failures[0].location.as_deref(),
+        Some(
+            "crates/ripr-contract/src/domain/probe_kani.rs:32:5 in function domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint"
+        )
+    );
+    assert!(has_counterexample_properties(&properties));
+    assert_eq!(
+        kani_output::cover_properties(output)?
+            .iter()
+            .filter(|property| property.status == "SATISFIED")
+            .count(),
+        6
+    );
+    for malformed in [
+        output.replace(
+            "value == SourceCurrentness::CandidateCurrent\"",
+            "value == SourceCurrentness::CandidateCurrent",
+        ),
+        output.replace(
+            "value == SourceCurrentness::CandidateCurrent\"",
+            "- Status: SUCCESS\"",
+        ),
+        output.replace(
+            "value == SourceCurrentness::CandidateCurrent\"",
+            "Check 99: hidden.cover.1\"",
+        ),
+    ] {
+        assert!(kani_output::native_properties(&malformed).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn native_property_identity_and_summary_must_both_establish_success() -> AuditResult<()> {
+    let run = complete_document()?;
+    let subjects = &run
+        .execution
+        .as_ref()
+        .ok_or("execution absent")?
+        .selected_subjects;
+    let output = "Checking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+    assert_eq!(
+        native_inventory::observe(subjects, output).0[0].status,
+        ObservationStatus::Verified
+    );
+    for bad in [
+        output.replace("Check 1: m::proof.cover.1\n - Status: SATISFIED\n", ""),
+        output.replace("SATISFIED", "UNSATISFIABLE"),
+        output.replace(
+            "VERIFICATION:- SUCCESSFUL",
+            " - Description: VERIFICATION:- SUCCESSFUL",
+        ),
+    ] {
+        assert_ne!(
+            native_inventory::observe(subjects, &bad).0[0].status,
+            ObservationStatus::Verified
+        );
+    }
+    assert!(
+        kani_output::cover_properties(
+            "Check 1: h.cover.1\n - Status: SATISFIED\nCheck 2: h.cover.1\n - Status: SATISFIED\n"
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn ambiguous_native_blocks_publish_a_consistent_refusal_without_borrowed_properties()
+-> AuditResult<()> {
+    let positive = "Checking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+    let failed = positive.replace("SATISFIED", "UNSATISFIABLE");
+    for output in [
+        format!("{positive}{positive}"),
+        format!("{positive}{failed}"),
+    ] {
+        let mut run = complete_document()?;
+        let subjects = &run
+            .execution
+            .as_ref()
+            .ok_or("execution absent")?
+            .selected_subjects;
+        let (rows, observed, reasons) = native_inventory::observe(subjects, &output);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, ObservationStatus::NotEstablished);
+        assert_eq!(rows[0].native_verdict, super::super::Verdict::Ambiguous);
+        assert!(rows[0].detail.contains("duplicate native result blocks"));
+        assert!(rows[0].properties.is_empty() && rows[0].cover_properties.is_empty());
+        assert!(rows[0].covers.is_none() && rows[0].raw_block_digest.is_none());
+        assert!(!reasons.is_empty());
+        run.unregistered_results = rows;
+        run.inventory.complete = false;
+        run.inventory.rejection_reasons = reasons.clone();
+        let execution = run.execution.as_mut().ok_or("execution absent")?;
+        execution.observed_subjects = observed;
+        execution.inventory_rejections = reasons.clone();
+        execution.rejection_reasons = reasons;
+        execution.lane_success = false;
+        audit(&[], Some(&run))?;
+    }
+    Ok(())
+}
+
+#[test]
 fn source_manifest_rejects_duplicate_and_escaping_paths() -> AuditResult<()> {
     let digest = sha256(b"source");
     for text in [
@@ -174,6 +384,165 @@ fn source_manifest_rejects_duplicate_and_escaping_paths() -> AuditResult<()> {
     assert_eq!(
         parse_source_manifest(&canonical_manifest_bytes(&manifest)?)?,
         manifest
+    );
+    Ok(())
+}
+
+#[test]
+fn pinned_native_inventory_requires_exact_version_count_and_captured_files() -> AuditResult<()> {
+    let bytes = include_bytes!("../../../tests/fixtures/kani-native-inventory/kani-list.json");
+    assert_eq!(
+        sha256(bytes),
+        "sha256:d023ab5a23a66e93b649312ef2f229af1659d04abd522330c26d587dc5fb7224"
+    );
+    let original: serde_json::Value = parse_json(bytes)?;
+    let files = original["standard-harnesses"]
+        .as_object()
+        .ok_or("fixture inventory absent")?;
+    let sources: SourceManifest = files
+        .keys()
+        .map(|path| (path.clone(), sha256(b"synthetic source binding")))
+        .collect();
+    let root = Path::new("/repo");
+    let subjects = native_inventory::native_inventory(bytes, "ripr-contract", root, &sources)?;
+    assert_eq!(subjects.len(), 21);
+    assert_eq!(
+        subjects
+            .iter()
+            .filter(|s| s.qualified_name.as_deref()
+                == Some(
+                    "domain::probe::kani_proofs::currentness_action_and_base_side_are_disjoint"
+                ))
+            .count(),
+        1
+    );
+    assert!(native_inventory::compare_inventories(&subjects, &subjects).is_empty());
+    for file in ["/outside/source.rs", "crates/ripr-contract/src/missing.rs"] {
+        let mut changed = original.clone();
+        changed["standard-harnesses"] = serde_json::json!({file: ["m::proof"]});
+        changed["totals"]["standard-harnesses"] = serde_json::json!(1);
+        assert!(
+            native_inventory::native_inventory(
+                &serde_json::to_vec(&changed).map_err(|e| e.to_string())?,
+                "ripr-contract",
+                root,
+                &sources
+            )
+            .is_err()
+        );
+    }
+    let file = files.keys().next().ok_or("fixture files absent")?;
+    let mut repeated = original.clone();
+    repeated["standard-harnesses"] = serde_json::json!({file: ["m::proof", "m::proof"]});
+    repeated["totals"]["standard-harnesses"] = serde_json::json!(2);
+    assert!(
+        native_inventory::native_inventory(
+            &serde_json::to_vec(&repeated).map_err(|e| e.to_string())?,
+            "ripr-contract",
+            root,
+            &sources
+        )
+        .is_err()
+    );
+    let mut duplicate = subjects.clone();
+    duplicate.push(subjects[0].clone());
+    assert!(!native_inventory::compare_inventories(&duplicate, &subjects).is_empty());
+    assert!(!native_inventory::compare_inventories(&subjects, &subjects[1..]).is_empty());
+    assert!(!native_inventory::compare_inventories(&subjects[1..], &subjects).is_empty());
+    for (pointer, value) in [
+        ("/kani-version", serde_json::json!("0.69.0")),
+        ("/file-version", serde_json::json!("0.2")),
+        ("/totals/standard-harnesses", serde_json::json!(20)),
+        ("/contracts", serde_json::json!([{}])),
+        ("/totals/contract-harnesses", serde_json::json!(1)),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).ok_or("fixture field absent")? = value;
+        assert!(
+            native_inventory::native_inventory(
+                &serde_json::to_vec(&changed).map_err(|e| e.to_string())?,
+                "ripr-contract",
+                root,
+                &sources
+            )
+            .is_err(),
+            "accepted {pointer}"
+        );
+    }
+    assert!(
+        native_inventory::native_inventory(bytes, "ripr-contract", root, &BTreeMap::new()).is_err()
+    );
+    let duplicated_key = String::from_utf8(bytes.to_vec())
+        .map_err(|e| e.to_string())?
+        .replacen(
+            "\"kani-version\": \"0.68.0\",",
+            "\"kani-version\": \"0.68.0\",\"kani-version\": \"0.68.0\",",
+            1,
+        );
+    assert!(
+        native_inventory::native_inventory(
+            duplicated_key.as_bytes(),
+            "ripr-contract",
+            root,
+            &sources
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals() -> AuditResult<()>
+{
+    let run = complete_document()?;
+    let execution = run.execution.as_ref().ok_or("execution absent")?;
+    let invocation = execution.invocations.last().ok_or("verification absent")?;
+    let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+    let observe = |call: &Invocation, out: Option<&[u8]>, err: Option<&[u8]>| {
+        native_inventory::observe_invocation(&execution.selected_subjects, call, out, err)
+    };
+    let positive = observe(invocation, Some(stdout), Some(b""));
+    assert_eq!(positive.0[0].status, ObservationStatus::Verified);
+    assert_eq!(positive.1.len(), 1);
+    assert!(positive.2.is_empty());
+    for control in 0..5 {
+        let mut changed = invocation.clone();
+        match control {
+            0 => changed.timed_out = true,
+            1 => changed.exit_code = Some(7),
+            2 => changed.exit_code = None,
+            3 => changed.capture_complete = false,
+            _ => changed.error = Some("synthetic capture failure".into()),
+        }
+        assert_eq!(
+            observe(&changed, Some(stdout), Some(b"")).0[0].status,
+            ObservationStatus::NotEstablished,
+            "control {control}"
+        );
+    }
+    for bytes in [None, Some(&b"\xff"[..])] {
+        let refused = observe(invocation, bytes, Some(b""));
+        assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
+        assert!(!refused.2.is_empty());
+    }
+    let text = std::str::from_utf8(stdout).map_err(|e| e.to_string())?;
+    for changed in [
+        text.replace("0.68.0", "0.69.0"),
+        text.replace("6.11.0", "6.12.0"),
+        text.replace("Kani Rust Verifier 0.68.0\n", ""),
+    ] {
+        let refused = observe(invocation, Some(changed.as_bytes()), Some(b""));
+        assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
+        assert!(!refused.2.is_empty());
+    }
+    assert!(
+        !observe(
+            invocation,
+            Some(stdout),
+            Some(b"Checking harness foreign::proof...\n")
+        )
+        .2
+        .is_empty()
     );
     Ok(())
 }

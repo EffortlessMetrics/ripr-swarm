@@ -28,19 +28,38 @@ particular, an honestly reported counterexample, timeout, stale result or tool
 absence can be a consistent document. Never use this exit code as the Kani lane
 result or as a required proof check.
 
-## Shared Kani parsing precursor
+## Shared native interpretation prerequisite
 
-`xtask/src/formal_evidence/kani_output.rs` owns the existing Kani lane's pure
-source discovery, text classification, result attribution, row-based lane verdict
-and report rendering. The lane imports these functions and retains its command
-execution and process-completion policy. The nine relocated parser tests run in the same library target
-shown below; their predicates and fixtures are unchanged.
+`xtask/src/formal_evidence/kani_output.rs` owns source discovery, text and native
+property interpretation, result attribution, the row-based lane verdict and
+escaped Markdown report rendering. The existing lane imports that same owner.
+It retains command execution and process-completion policy. Complete positive
+cover admission and its native captures from #14469 now live in the shared
+parser; bare success, contradictory or incomplete covers remain insufficient.
 
-This is a partial prerequisite for #14472 and the existing #14545 native
-observation producer. It preserves the current text interpretation and does not
-activate native property admission, capture, replay or registered assurance.
-Later parser extensions must update this owner rather than add a private parser.
-The document-audit binary continues to report native assurance as `not_assessed`.
+`native_inventory.rs` decodes pinned Kani 0.68.0 list-format 0.1, compares exact
+compiled/source subjects and attributes observations to unique qualified native
+blocks. Properties and cover projections come from the same block; duplicates
+retain an explicit refusal with no borrowed property set. Native failure,
+unsupported expected panic, missing data, unwind failure and timeout remain
+distinct. Multiline descriptions preserve their native bytes and cannot hide
+metadata continuations. The profile helper checks the supplied Kani/CBMC headers
+and aggregates observed process outcomes without turning stdout into process
+success. These are pure interpretation APIs, not fresh verifier executions.
+
+Retained fixtures include native inventory/provenance and a native multiline
+counterexample. Their historical source identities and byte hashes remain
+unchanged. The library's direct controls also use explicitly synthetic source
+bindings and process observations; fixture replay never becomes a current proof.
+
+This stage depends on #14551/#14549 and #14469. The latter still owns its four
+production reachability witnesses and full-lane integration. #14545 retains
+producer activation. Cargo configuration/toolchain capture, source-closure
+discovery, raw artifact replay and registry binding remain separate adoption
+stages. No new producer, registry, workflow or authority is installed here.
+The document-audit binary keeps `native_assurance: "not_assessed"` and exit zero
+still means document consistency. Changes to the pinned native format require
+new retained captures and the direct refusal controls below before activation.
 
 ## Commands
 

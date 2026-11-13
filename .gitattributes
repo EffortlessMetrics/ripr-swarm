@@ -116,3 +116,8 @@ fixtures/ts_trailing_whitespace_in_template/diff.patch whitespace=-blank-at-eol
 # Rewriting these bytes would falsify the byte counts pinned in
 # benchmarks/agent-discrimination/scenarios/<scenario>/scenario.json.
 benchmarks/agent-discrimination/contexts/** whitespace=-blank-at-eol,-blank-at-eof
+
+# Native Kani fixture receipts commit exact diagnostic/help whitespace.
+xtask/tests/fixtures/kani-cover-evidence/*.stderr.txt whitespace=-blank-at-eof
+xtask/tests/fixtures/kani-native-inventory/list-help.stdout.txt whitespace=-blank-at-eol
+xtask/tests/fixtures/kani-native-inventory/stdout.txt whitespace=-blank-at-eol

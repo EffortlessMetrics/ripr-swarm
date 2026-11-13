@@ -447,8 +447,7 @@ mod tests {
             file: "proof.rs".to_string(),
             name: "proof".to_string(),
         }];
-        let output =
-            "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
+        let output = "Checking harness m::proof...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
         let success = reconcile_kani_output(&harnesses, output, None);
         assert_eq!(
             complete_lane_verdict(&success.results, true, false, None).err(),
@@ -500,7 +499,7 @@ mod tests {
                 name: "second".to_string(),
             },
         ];
-        let text = "Checking harness a::first...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
+        let text = "Checking harness a::first...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
         let problem = process_completion_problem(true, None, "", 10);
         let run = reconcile_kani_output(&harnesses, text, problem);
         assert_eq!(run.results.len(), 2);
@@ -536,7 +535,7 @@ mod tests {
         ];
         let mixed = reconcile_kani_output(
             &harnesses,
-            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\nVERIFICATION:- SUCCESSFUL\n",
+            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
             Some("cargo kani exited with exit status: 1".to_string()),
         );
         assert!(matches!(&mixed.results[0].status, HarnessStatus::Failed(_)));

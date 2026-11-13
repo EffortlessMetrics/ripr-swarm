@@ -24,6 +24,33 @@ status = "active"
 #
 # See docs/FILE_POLICY.md for the doctrine.
 
+[[allow]]
+glob = "xtask/tests/fixtures/kani-cover-evidence/provenance.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Retained native cover-format provenance consumed by the shared parser; not authenticated execution."
+covered_by = ["cargo test -p xtask --lib formal_evidence::kani_output::tests::pinned_native_cover_captures_keep_distinct_lane_dispositions", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/kani-native-inventory/*.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Historical native compiled inventory and provenance; direct parser controls pin its bytes and refuse unsupported identities."
+covered_by = ["cargo test -p xtask --lib formal_evidence::native::tests::pinned_native_inventory_requires_exact_version_count_and_captured_files", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/kani-native-output/*.json"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-lane"
+surface = "fixtures"
+classification = "fixture"
+reason = "Historical native multiline counterexample provenance; the shared parser test pins the exact retained output."
+covered_by = ["cargo test -p xtask --lib formal_evidence::native::tests::measured_multiline_assertion_description_is_retained_without_metadata_borrowing", "cargo xtask check-file-policy"]
+
 # ---------------------------------------------------------------------------
 # Documentation surfaces
 # ---------------------------------------------------------------------------

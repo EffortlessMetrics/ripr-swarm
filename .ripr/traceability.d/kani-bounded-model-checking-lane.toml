@@ -3,11 +3,19 @@ id = "RIPR-SPEC-0371"
 name = "Kani lane never passes by absence"
 spec = "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md"
 tests = [
+  "xtask/src/formal_evidence/kani_output.rs::tests::report_fields_cannot_add_markdown_rows_or_markup",
+  "xtask/tests/kani_lane_process.rs::kani_runner_requires_observed_complete_cover_evidence",
   "xtask/src/formal_evidence/kani_output.rs::a_solver_timeout_is_not_a_counterexample",
   "xtask/src/formal_evidence/kani_output.rs::discovery_ignores_harness_text_inside_raw_string_fixtures",
   "xtask/src/formal_evidence/kani_output.rs::discovery_finds_named_harnesses_past_attributes_and_docs",
   "xtask/src/formal_evidence/kani_output.rs::classification_requires_an_explicit_success_verdict",
-  "xtask/src/formal_evidence/kani_output.rs::unreachable_cover_makes_the_proof_vacuous",
+  "xtask/src/formal_evidence/kani_output.rs::classification_requires_positive_complete_cover_evidence",
+  "xtask/src/formal_evidence/kani_output.rs::undetermined_properties_never_become_verified",
+  "xtask/src/formal_evidence/kani_output.rs::complete_cover_evidence_allows_unreachable_ordinary_assertions",
+  "xtask/src/formal_evidence/kani_output.rs::complete_cover_evidence_preserves_expected_panic_success",
+  "xtask/src/formal_evidence/kani_output.rs::cover_property_and_summary_must_not_contradict",
+  "xtask/src/formal_evidence/kani_output.rs::pinned_native_cover_captures_keep_distinct_lane_dispositions",
+  "xtask/src/formal_evidence/kani_output.rs::unsatisfied_cover_fails_the_reachability_policy",
   "xtask/src/formal_evidence/kani_output.rs::blocks_join_to_harnesses_and_a_missing_block_is_not_established",
   "xtask/src/formal_evidence/kani_output.rs::duplicate_source_names_never_share_a_native_result",
   "xtask/src/formal_evidence/kani_output.rs::duplicate_native_blocks_are_not_first_match_wins",
