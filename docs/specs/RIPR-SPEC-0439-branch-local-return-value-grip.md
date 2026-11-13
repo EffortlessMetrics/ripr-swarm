@@ -35,6 +35,8 @@ Support-tier impact:
 - No tier change. The rule withholds credit; it never adds a class or a
   strength. A seam that loses credit moves from `strongly_gripped` to
   `weakly_gripped` or lower, which is a gap class, not a support promotion.
+  Claim boundaries for this surface stay governed by the canonical ledger in
+  [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
