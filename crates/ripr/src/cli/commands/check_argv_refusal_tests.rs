@@ -178,6 +178,27 @@ fn committed_refuses_repo_scoped_formats_and_gap_ledger() -> Result<(), String> 
 }
 
 #[test]
+fn a_bare_argument_is_read_as_a_path_scope() -> Result<(), String> {
+    // #14307: the bare path reaches the --path refusal for a repo-scoped
+    // format, so it was parsed as a scope rather than refused as unknown.
+    let root = TempRoot::new("bare-path-scope")?;
+    let bare = refusal(&root, &["src/lib.rs", "--format", "repo-exposure-json"])?;
+    let flag = refusal(
+        &root,
+        &["--path", "src/lib.rs", "--format", "repo-exposure-json"],
+    )?;
+    if bare != flag || !bare.contains("--path/--exclude narrow a diff") {
+        return Err(format!("bare: {bare}\nflag: {flag}"));
+    }
+    // A dash-led token is still an unknown argument, not a path.
+    let dashed = refusal(&root, &["-x"])?;
+    if !dashed.contains("unknown check argument \"-x\"") {
+        return Err(format!("-x must stay unknown, got {dashed}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn path_and_exclude_are_refused_where_they_would_claim_an_unapplied_bound() -> Result<(), String> {
     let root = TempRoot::new("scope-refusals")?;
     let saved_arg = root.0.join("saved.json").to_string_lossy().into_owned();
@@ -577,6 +598,7 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
         OutputFormat::BadgeJson,
         OutputFormat::RepoExposureJson,
         OutputFormat::AgentSeamPacketsJson,
+        OutputFormat::Agent,
     ] {
         let Some(document) = machine_refusal_document(&input, format, &error) else {
             return Err(format!("{format:?} must carry a refusal document"));
@@ -586,6 +608,13 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
             assert_eq!(
                 document,
                 "# ripr run refused: run_status=repository_root_unusable; repair_route=analysis/repository-root; synthetic refusal\n"
+            );
+            continue;
+        }
+        if matches!(format, OutputFormat::Agent) {
+            assert_eq!(
+                document,
+                "#ripr agent static-advisory refused run_status=repository_root_unusable repair_route=analysis/repository-root\nstop=synthetic refusal\nverify=refused|outcome=refused|findings=0|exposed=0|reason=repository_root_unusable\n"
             );
             continue;
         }
@@ -886,10 +915,6 @@ fn every_machine_format_carries_a_refusal_document() -> Result<(), String> {
             }
             continue;
         }
-        // `agent` gains its record in #14467.
-        if matches!(format, OutputFormat::Agent) && document.is_none() {
-            continue;
-        }
         let document = document.ok_or(format!("{name} must carry a refusal document"))??;
         covered += 1;
         assert!(
@@ -1001,8 +1026,8 @@ fn every_machine_format_carries_a_refusal_document() -> Result<(), String> {
             _ => {}
         }
     }
-    // 23 names with a refusal document (the `agent` record lands with #14467).
-    assert_eq!(covered, 22, "machine formats with a refusal document");
+    // 23 names with a refusal document, `agent` (#14452) included.
+    assert_eq!(covered, 23, "machine formats with a refusal document");
     Ok(())
 }
 

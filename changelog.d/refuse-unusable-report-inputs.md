@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr reports gap-ledger` exits 2 and names the flag, cause and producer when its source is readable but not valid input (invalid JSON, an empty file, another artifact) instead of exiting 0 with a silent `blocked` ledger, and `ripr policy readiness` exits 2 when a supplied input is missing, not JSON, empty, or a report of another `kind` instead of reporting `ready_for_visible_only` from an empty gate decision. Both still write their report first so no stale report is left behind (#14311).

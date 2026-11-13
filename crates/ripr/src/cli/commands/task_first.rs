@@ -644,6 +644,7 @@ fn facade_before_options(
         store: None,
         json,
         quiet,
+        facade_start: true,
     }
 }
 
@@ -687,6 +688,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 store: None,
                 json: options.json,
                 quiet: options.quiet,
+                facade_start: false,
             },
             None,
         ),
