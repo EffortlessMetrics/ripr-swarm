@@ -15656,6 +15656,11 @@ try_parse_summary(raw).map_err(Into::into)"
             capture.admits("manifest_path", "assert_eq!(err.manifest_path, expected);"),
             "a format-string capture is a live binding, not prose"
         );
+        let escaped = ProbeLiterals::new("msg: format!(\"{{status}}\")");
+        assert!(
+            !escaped.admits("status", "assert_eq!(report.status, Status::Ok);"),
+            "an escaped brace is a literal, not a capture"
+        );
         let raw = ProbeLiterals::new("summary: r#\"Show \"capability\" status\"#, // \"status\"");
         assert_eq!(raw.literals, vec!["Show \"capability\" status".to_string()]);
         let one_word = ProbeLiterals::new("name: \"status\",");
