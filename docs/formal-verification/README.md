@@ -51,6 +51,12 @@ does not promote any existing result. The #14472 native-result producer,
 admitted lifecycle join, and proof-authority transitions remain separate
 runtime obligations.
 
+[Passive native preparation](NATIVE_BINDINGS.md) connects a loader-validated
+canonical registry snapshot to exact native binding declarations and local
+source bytes. Every canonical claim remains visible when its binding is
+missing. Preparation preserves the registry-only scoreboard and grants no
+native origin, assurance, or execution authority.
+
 ## Non-cross-credit law
 
 Keep these states distinct:

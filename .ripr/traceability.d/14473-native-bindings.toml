@@ -1,0 +1,24 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = [
+  "xtask/src/formal_registry/native_bindings.rs",
+  "xtask/src/formal_registry.rs",
+  "xtask/src/formal_registry/load.rs",
+  "xtask/src/formal_evidence/native/profile.rs",
+]
+tests = [
+  "xtask/src/formal_registry/native_bindings/tests.rs::canonical_snapshot_and_missing_bindings_keep_the_full_denominator",
+  "xtask/src/formal_registry/native_bindings/tests.rs::prepared_binding_uses_real_source_bytes_and_keeps_canonical_subjects",
+  "xtask/src/formal_registry/native_bindings/tests.rs::exact_canonical_keys_refuse_aliases_stale_generations_and_duplicate_bindings",
+  "xtask/src/formal_registry/native_bindings/tests.rs::provider_profile_and_exact_canonical_subject_inventory_are_required",
+  "xtask/src/formal_registry/native_bindings/tests.rs::rust_only_profile_is_distinct_and_does_not_borrow_default_assurance",
+  "xtask/src/formal_registry/native_bindings/tests.rs::duplicate_or_foreign_cover_mappings_cannot_reuse_a_witness",
+  "xtask/src/formal_registry/native_bindings/tests.rs::missing_presentations_remain_explicit_without_shrinking_required_covers",
+  "xtask/src/formal_registry/native_bindings/tests.rs::post_validation_registry_byte_changes_are_refused_even_if_semantically_equal",
+  "xtask/src/formal_registry/native_bindings/tests.rs::post_validation_unlisted_claim_cannot_evade_canonical_membership",
+  "xtask/src/formal_registry/native_bindings/tests.rs::source_refusals_use_real_harness_configuration_and_include_inputs",
+  "xtask/src/formal_registry/native_bindings/tests.rs::cover_source_anchors_and_native_locations_must_exist",
+  "xtask/src/formal_registry/native_bindings/tests.rs::strict_binding_json_rejects_duplicate_keys_and_native_origin_assertions",
+  "xtask/src/formal_registry/native_bindings/tests.rs::cli_projects_all_canonical_claims_and_refuses_unknown_arguments",
+  "xtask/src/formal_registry/native_bindings/tests.rs::source_symlink_is_refused_before_hashing",
+]

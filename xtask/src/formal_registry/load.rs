@@ -173,8 +173,18 @@ fn require_non_symlink_path(
     Ok(())
 }
 
-fn require_regular_path(root: &Path, relative: &str, field: &str) -> RegistryResult<()> {
+pub(super) fn require_regular_path(root: &Path, relative: &str, field: &str) -> RegistryResult<()> {
     require_non_symlink_path(root, relative, field, RequiredPathKind::File)
+}
+
+#[cfg(feature = "formal-native-bindings")]
+pub(super) fn require_directory_path(root: &Path, relative: &str) -> RegistryResult<()> {
+    require_non_symlink_path(
+        root,
+        relative,
+        "native source directory",
+        RequiredPathKind::Directory,
+    )
 }
 
 fn discover_claim_documents(root: &Path) -> RegistryResult<BTreeSet<String>> {
@@ -417,10 +427,19 @@ pub(super) fn load_registry(path: &Path) -> RegistryResult<LoadedRegistry> {
 
     let digest = registry_digest(&manifest, &claims)?;
     let generation = format!("{}:{digest}", manifest.registry_generation);
+    let mut input_digests: BTreeMap<_, _> = claim_documents
+        .iter()
+        .map(|(path, bytes)| (path.clone(), formal_evidence::native::sha256(bytes)))
+        .collect();
+    input_digests.insert(
+        format!("policy/{filename}"),
+        formal_evidence::native::sha256(&manifest_bytes),
+    );
     Ok(LoadedRegistry {
         manifest,
         claims,
         registry_digest: digest,
         generation,
+        input_digests,
     })
 }

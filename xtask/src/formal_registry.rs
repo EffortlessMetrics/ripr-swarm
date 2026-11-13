@@ -24,6 +24,8 @@ pub const USAGE: &str = concat!(
     "  formal-claim-registry scoreboard --registry FILE [--format json|markdown]\n",
     "  formal-claim-registry transition --base-registry FILE --head-registry FILE ",
     "[--format json|markdown]\n",
+    "  formal-claim-registry prepare-native --root DIR [--bindings FILE] ",
+    "(requires formal-native-bindings)\n",
     "Exit 0: deterministic registry result; 2: invalid input. ",
     "No command grants native assurance or execution authority.",
 );
@@ -123,11 +125,96 @@ struct LoadedRegistry {
     claims: Vec<LoadedClaim>,
     registry_digest: String,
     generation: String,
+    input_digests: BTreeMap<String, String>,
+}
+
+/// A read-only canonical decision snapshot. Construction always uses the one
+/// registry loader; neither JSON nor a provider binding can construct this view.
+/// It records local input bytes, not authenticated custody or native execution.
+#[derive(Clone, Debug)]
+pub struct ValidatedRegistry {
+    root: std::path::PathBuf,
+    loaded: LoadedRegistry,
+}
+
+impl ValidatedRegistry {
+    pub fn load(root: &Path) -> RegistryResult<Self> {
+        let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+        let loaded = load::load_registry(&root.join("policy/formal-claims.json"))?;
+        Ok(Self { root, loaded })
+    }
+
+    pub fn generation(&self) -> &str {
+        &self.loaded.generation
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.loaded.registry_digest
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn input_digests(&self) -> &BTreeMap<String, String> {
+        &self.loaded.input_digests
+    }
+
+    pub fn claims(&self) -> impl Iterator<Item = RegisteredClaim<'_>> {
+        self.loaded
+            .claims
+            .iter()
+            .map(|loaded| RegisteredClaim { loaded })
+    }
+
+    pub fn scoreboard_json(&self) -> RegistryResult<String> {
+        project::render_scoreboard(&self.loaded, OutputFormat::Json)
+    }
+
+    pub fn index_json(&self) -> RegistryResult<String> {
+        project::render_index(&self.loaded, OutputFormat::Json)
+    }
+}
+
+/// Borrowed canonical claim identity; callers cannot replace its decision.
+#[derive(Clone, Copy, Debug)]
+pub struct RegisteredClaim<'a> {
+    loaded: &'a LoadedClaim,
+}
+
+impl RegisteredClaim<'_> {
+    pub fn id(&self) -> &str {
+        &self.loaded.claim.claim_id
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.loaded.claim.claim_generation
+    }
+
+    pub fn decision_digest(&self) -> &str {
+        &self.loaded.decision_digest
+    }
+
+    pub const fn route(&self) -> &'static str {
+        self.loaded.route.as_str()
+    }
+
+    /// An ordinary owned document, not an authority-bearing handle. The
+    /// canonical loader already admitted its semantics through this DTO owner.
+    pub fn document(&self) -> RegistryResult<formal_evidence::Claim> {
+        serde_json::from_value(
+            serde_json::to_value(&self.loaded.claim).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())
+    }
 }
 
 mod load;
 mod project;
 mod transition;
+
+#[cfg(feature = "formal-native-bindings")]
+pub mod native_bindings;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputFormat {
@@ -432,6 +519,13 @@ fn parse_command(value: &str) -> RegistryResult<Command> {
 }
 
 pub fn execute(args: &[String]) -> RegistryResult<String> {
+    #[cfg(feature = "formal-native-bindings")]
+    if args
+        .first()
+        .is_some_and(|command| command == "prepare-native")
+    {
+        return native_bindings::execute(&args[1..]);
+    }
     let command = args
         .first()
         .ok_or_else(|| format!("command is required; {USAGE}"))
