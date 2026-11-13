@@ -945,6 +945,14 @@ mod tests {
     use super::*;
 
     #[cfg(target_os = "linux")]
+    fn refusal_diagnostic<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<String, String> {
+        result
+            .err()
+            .map(|error| error.to_string())
+            .ok_or_else(|| "expected a diagnostic refusal, but the operation succeeded".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_group_observer_requires_terminal_single_thread_members() -> Result<(), String> {
         let stat = |state: &str, group: u32, threads: u32| {
@@ -961,14 +969,10 @@ mod tests {
         assert!(linux_stat_group_is_quiescent(stat("X", 42, 1), 42).map_err(|e| e.to_string())?);
         assert!(!linux_stat_group_is_quiescent(stat("Z", 42, 2), 42).map_err(|e| e.to_string())?);
         assert!(linux_stat_group_is_quiescent(stat("R", 43, 1), 42).map_err(|e| e.to_string())?);
-        assert!(matches!(
-            linux_stat_group_is_quiescent("malformed", 42),
-            Err(_)
-        ));
-        assert!(matches!(
-            linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42),
-            Err(_)
-        ));
+        assert!(!refusal_diagnostic(linux_stat_group_is_quiescent("malformed", 42))?.is_empty());
+        assert!(
+            !refusal_diagnostic(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42))?.is_empty()
+        );
         Ok(())
     }
 
@@ -1762,10 +1766,13 @@ mod tests {
             linux_stat_group_is_quiescent(&stat, 42).is_err(),
             "invalid tail is not a non-member"
         );
-        assert!(matches!(
-            wait_for_linux_group_quiescence(u32::MAX, Instant::now() + Duration::from_secs(1)),
-            Err(_)
-        ));
+        assert!(
+            !refusal_diagnostic(wait_for_linux_group_quiescence(
+                u32::MAX,
+                Instant::now() + Duration::from_secs(1)
+            ))?
+            .is_empty()
+        );
         Ok(())
     }
 
@@ -1820,14 +1827,14 @@ mod tests {
         assert!(error.contains("settlement exceeded its deadline after SIGKILL"));
         assert!(error.contains("primary reaped within budget: true"));
         assert_eq!(owned.group_settlement_deadline, Some(expired));
-        assert!(matches!(owned.try_wait(), Err(_)));
-        assert!(matches!(owned.wait(), Err(_)));
-        assert!(matches!(owned.terminate_tree(), Err(_)));
+        assert!(!refusal_diagnostic(owned.try_wait())?.is_empty());
+        assert!(!refusal_diagnostic(owned.wait())?.is_empty());
+        assert!(!refusal_diagnostic(owned.terminate_tree())?.is_empty());
         assert_eq!(
             owned.test_group_kills, 1,
             "no group signal after fallback reap"
         );
-        assert!(matches!(observe_unreaped_exit(&owned.child), Err(_)));
+        assert!(!refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty());
         Ok(())
     }
 
@@ -1855,8 +1862,14 @@ mod tests {
                 .map_err(|error| error.to_string())?
         );
         assert!(!owned.group_quiescent);
-        assert!(matches!(owned.try_wait(), Err(_)), "failure stays sticky");
-        assert!(matches!(owned.wait(), Err(_)), "wait cannot resume polling");
+        assert!(
+            !refusal_diagnostic(owned.try_wait())?.is_empty(),
+            "failure stays sticky"
+        );
+        assert!(
+            !refusal_diagnostic(owned.wait())?.is_empty(),
+            "wait cannot resume polling"
+        );
         let cleanup = owned
             .terminate_tree()
             .err()
@@ -1864,7 +1877,7 @@ mod tests {
         assert!(cleanup.contains("incomplete tree cleanup"));
         assert!(cleanup.contains("settlement exceeded its deadline after SIGKILL"));
         assert!(cleanup.contains("primary reaped within budget: true"));
-        assert!(matches!(observe_unreaped_exit(&owned.child), Err(_)));
+        assert!(!refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty());
         assert_eq!(owned.test_group_kills, 1, "no renewed or post-reap signal");
         Ok(())
     }
@@ -1892,7 +1905,7 @@ mod tests {
                 .map_err(|error| error.to_string())?
         );
         assert!(
-            matches!(owned.try_wait(), Err(_)),
+            !refusal_diagnostic(owned.try_wait())?.is_empty(),
             "the failure must persist"
         );
         let cleanup = owned
@@ -1918,7 +1931,7 @@ mod tests {
         assert!(owned.group_quiescent);
         assert!(owned.group_cleanup_error.is_none());
         assert!(
-            matches!(observe_unreaped_exit(&owned.child), Err(_)),
+            !refusal_diagnostic(observe_unreaped_exit(&owned.child))?.is_empty(),
             "successful wait reaps"
         );
         owned.terminate_tree()?;
@@ -1932,7 +1945,7 @@ mod tests {
         let mut owned = successful_group_command()?;
         owned.terminate_tree()?;
         owned.group_cleanup_error = Some("injected unproved group cleanup".to_string());
-        assert!(matches!(owned.try_wait(), Err(_)));
+        assert!(!refusal_diagnostic(owned.try_wait())?.is_empty());
         assert!(owned.terminate_tree().is_err());
         assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
         Ok(())
