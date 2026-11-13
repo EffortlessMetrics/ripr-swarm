@@ -6,8 +6,8 @@
 //! variants. Unmigrated failures travel as [`CoreError::Message`] until
 //! those migrations; they are not a semantic family.
 //!
-//! Public CLI, JSON, and LSP text is rendered at [`Display`] boundaries.
-//! Semantic consumers match variants (including through
+//! Public CLI, JSON, and LSP text is rendered at [`Display`](fmt::Display)
+//! boundaries. Semantic consumers match variants (including through
 //! [`CoreError::with_context`]), not rendered prefixes. #2811 remains the
 //! public/LSP projection owner: a typed timeout maps to the existing
 //! `git_invocation_timeout` kind string.
@@ -170,7 +170,7 @@ pub struct CheckRefusal {
     pub identity: &'static str,
     pub repair_route: &'static str,
     /// Whether the envelope message must be the redacted config summary
-    /// ([`crate::config::config_error_summary`]) instead of the full
+    /// (`ripr::config::config_error_summary`) instead of the full
     /// diagnostic: config file contents never enter machine output
     /// (RIPR-SPEC-0007). Every other family echoes the stderr diagnostic
     /// verbatim, exactly what the caller already sees.
