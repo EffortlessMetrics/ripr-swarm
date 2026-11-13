@@ -1,7 +1,9 @@
 //! Synthetic observation controls; no verifier execution is claimed.
 
 use super::super::{HarnessStatus, lane_verdict, parse_args, results_from_output};
-use super::{CaptureOutcome, Harness, InvocationContext, NEXT_RUN, Report, SourceObservation, digest};
+use super::{
+    CaptureOutcome, Harness, InvocationContext, NEXT_RUN, Report, SourceObservation, digest,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -286,7 +288,10 @@ fn complete_inventory_does_not_bypass_changed_source_refusal() -> Result<(), Str
     assert_eq!(report.selected_files_unchanged_after_run, Some(false));
     assert_eq!(
         report.finish(Ok(())),
-        Err("NOT-ESTABLISHED: discovered proof source changed or could not be rechecked".to_string())
+        Err(
+            "NOT-ESTABLISHED: discovered proof source changed or could not be rechecked"
+                .to_string()
+        )
     );
     assert!(!report.lane_success);
     Ok(())
