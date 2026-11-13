@@ -1214,7 +1214,16 @@ target/sample build residue and shares the same badge endpoint boundary.
 `goldens check` validate the current fixture and
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
-for reviewers. `test-oracle-report` writes an advisory baseline for the strength
+for reviewers. The opt-in `cargo xtask goldens check-with-fixtures` evaluates
+each selected fixture once and writes both `fixtures.md` and the existing golden
+reports from that in-memory result. It retains preparation, assistant-loop corpus,
+expected-class ratchet, drift, line-ending and provenance checks. The fixture
+report retains its fixtures-only verdict; golden-only failures still fail the
+combined command. Early preparation or report-write failures return non-success
+and do not establish both reports. This command does not reuse prior reports,
+change hosted obligation rows, or qualify a timing improvement. The existing
+CI/DAG owner must retain both obligations when integrating it (#8198).
+`test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
 is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
