@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim-registry.v1",
   "repository": "EffortlessMetrics/ripr-swarm",
-  "registry_generation": 2,
+  "registry_generation": 3,
   "global_authority_paths": [
     "docs/formal-verification/CLAIMS.md",
     "docs/formal-verification/RESULTS.md",
@@ -26,7 +26,7 @@
     {
       "document": "policy/formal-claims.d/ripr.currentness.candidate-action-requires-current.v1.json",
       "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
-      "claim_generation": 1,
+      "claim_generation": 2,
       "route": "native",
       "authority_paths": [
         "docs/formal-verification/CLAIMS.md",
@@ -34,7 +34,7 @@
         "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md",
         "policy/formal-claims.d/ripr.currentness.candidate-action-requires-current.v1.json"
       ],
-      "expected_decision_digest": "sha256:99bfd57aa74f52062506fb299eed32b51c921c3702a357e6a47af3007e87d972"
+      "expected_decision_digest": "sha256:1dbf915af1e4fec7109230ca73a3bba0267b509b4940a0dd860300badf2188b4"
     },
     {
       "document": "policy/formal-claims.d/ripr.gate.top-level-status-fails-closed.v1.json",

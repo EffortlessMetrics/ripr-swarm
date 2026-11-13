@@ -1,7 +1,7 @@
 {
   "schema": "ripr.formal-claim.v1",
   "claim_id": "ripr.currentness.candidate-action-requires-current.v1",
-  "claim_generation": 1,
+  "claim_generation": 2,
   "family": "bounded_model_check",
   "provider": "kani",
   "criticality": "critical",
@@ -38,13 +38,17 @@
     "currentness_action_and_base_side_are_disjoint"
   ],
   "required_covers": [
+    "the CandidateCurrent constructor is explored",
+    "the BaseDeleted constructor is explored",
+    "the MovedOrRenamed constructor is explored",
+    "the UnresolvedSubject constructor is explored",
     "a base-side state is explored",
     "a candidate-action-permitting state is explored"
   ],
   "negative_controls": [
     "Mutation control: permit candidate action for a base-side or unresolved currentness state."
   ],
-  "result_satisfaction": "One current verified row for the registered subject with both disjoint-state covers satisfied.",
+  "result_satisfaction": "One current verified row for the registered subject with all four constructor covers and both semantic predicate covers satisfied and no unreachable cover.",
   "currentness_inputs": [
     "claim document decision digest",
     "complete registered source-closure digest",
