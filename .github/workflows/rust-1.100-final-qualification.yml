@@ -11,9 +11,10 @@ on:
 permissions:
   contents: read
 
+# Keep the pre-integration diagnostic run; queue this exact-head run behind it.
 concurrency:
   group: rust-1.100-final-qualification
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   linux-core:
