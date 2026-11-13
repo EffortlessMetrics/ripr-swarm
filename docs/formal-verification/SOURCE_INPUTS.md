@@ -35,6 +35,7 @@ scanner follows literal `include!`, `include_str!`, `include_bytes!`, and extern
 module `#[path = "..."]` attributes. It also includes existing selected-package
 and runner `build.rs` inputs and their literal includes. A file's name alone,
 including a name containing `test`, never excludes it.
+Direct includes in documentation attributes enter the inventory as well.
 
 Whitespace and comments between Rust syntax tokens do not change recognition.
 Raw identifiers normalize only as identifiers; whitespace and comment-looking
@@ -43,6 +44,8 @@ single double-quoted string decodable by the existing JSON string decoder.
 Raw string syntax and Rust-only escape forms outside that subset refuse rather
 than being guessed. Conditional and inline module path semantics remain outside
 this profile. Macro-generated and dynamic include arguments refuse explicitly.
+Visible includes nested inside another macro's token tree also refuse; text
+inside a string literal does not count as a visible macro invocation.
 
 Explicit `cfg(test)` ancestry propagates through known external module edges.
 Any production incoming edge defeats test-only exclusion. The ancestry pass
@@ -112,8 +115,8 @@ cargo build --locked -p xtask --no-default-features \
 cargo fmt --check
 ```
 
-The focused module contains sixteen controls on Unix; the symlink control is
-Unix-only, so other platforms have fifteen. Counts describe authored inventory,
+The focused module contains twenty-one controls on Unix; the symlink control is
+Unix-only, so other platforms have twenty. Counts describe authored inventory,
 not a claim that this candidate has executed. Thin binary or unrelated filtered
 test runs do not qualify these controls. Follow with default-target composition,
 traceability, doc/policy checks and the applicable protected route.
@@ -122,7 +125,9 @@ Retain donor controls for qualified includes, dynamic and macro inputs, symlinks
 test/production ancestry, build scripts and inline-path refusal. New controls
 challenge commented/raw path and include syntax, conditional paths, a production
 edge hidden from a test-only graph, malformed ancestry, the initial size bound,
-ordinary-harness trivia, and doc-prefix lookalikes. For the new refusal cases,
+ordinary-harness trivia, doc-prefix lookalikes, nested macro inputs, direct
+documentation includes, recursive Rust inputs, malformed bytes and path escapes.
+For the new refusal cases,
 first observe the intended behavior against the donor or a reversible removal;
 compiler/setup failure is not a discriminating negative result.
 

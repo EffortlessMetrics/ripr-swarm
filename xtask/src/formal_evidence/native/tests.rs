@@ -1,6 +1,12 @@
 use super::*;
 use crate::formal_evidence::{audit, kani_output, native_inventory, parse_json};
 
+fn refusal<T>(result: AuditResult<T>, expected: &str) -> AuditResult<()> {
+    let reason = result.err().ok_or("expected a diagnostic refusal")?;
+    assert!(reason.contains(expected), "{reason}");
+    Ok(())
+}
+
 fn complete_document() -> AuditResult<Run> {
     let mut value: serde_json::Value = parse_json(include_bytes!(
         "../../../../docs/formal-verification/examples/native-proof-run.example.json"
@@ -104,22 +110,22 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
     ] {
         let mut run = valid.clone();
         run.unregistered_results[0].native_verdict = verdict;
-        assert!(audit(&[], Some(&run)).is_err());
+        refusal(audit(&[], Some(&run)), "native observation status")?;
     }
     let mut run = valid.clone();
     run.unregistered_results[0].subject.source_digest =
         sha256(b"another source with the same native name");
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "observation identity or source")?;
     let mut run = valid.clone();
     run.unregistered_results[0].properties.clear();
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "native cover projection differs")?;
     let mut run = valid.clone();
     run.execution
         .as_mut()
         .ok_or("execution absent")?
         .lane_success = false;
     run.unregistered_results[0].status = ObservationStatus::Failed;
-    assert!(audit(&[], Some(&run)).is_err());
+    refusal(audit(&[], Some(&run)), "native observation status")?;
     for verdict in [
         super::super::Verdict::Counterexample,
         super::super::Verdict::UnreachableCover,
@@ -131,7 +137,7 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
             .lane_success = false;
         run.unregistered_results[0].status = ObservationStatus::Failed;
         run.unregistered_results[0].native_verdict = verdict.clone();
-        assert!(audit(&[], Some(&run)).is_err());
+        refusal(audit(&[], Some(&run)), "native observation status")?;
         if verdict == super::super::Verdict::Counterexample {
             run.unregistered_results[0].properties.push(NativeProperty {
                 name: "m::proof.assertion.1".into(),
@@ -145,7 +151,7 @@ fn native_document_status_and_complete_subject_cannot_borrow_success() -> AuditR
                 .last_mut()
                 .ok_or("failure absent")?
                 .name = "m::proof.unwind.1".into();
-            assert!(audit(&[], Some(&run)).is_err());
+            refusal(audit(&[], Some(&run)), "native observation status")?;
         } else {
             run.unregistered_results[0].cover_properties[0].status = "UNREACHABLE".into();
             run.unregistered_results[0].properties[0].status = "UNREACHABLE".into();
@@ -294,7 +300,10 @@ fn measured_multiline_assertion_description_is_retained_without_metadata_borrowi
             "Check 99: hidden.cover.1\"",
         ),
     ] {
-        assert!(kani_output::native_properties(&malformed).is_err());
+        refusal(
+            kani_output::native_properties(&malformed),
+            "native description is unterminated",
+        )?;
     }
     Ok(())
 }
@@ -325,12 +334,12 @@ fn native_property_identity_and_summary_must_both_establish_success() -> AuditRe
             ObservationStatus::Verified
         );
     }
-    assert!(
+    refusal(
         kani_output::cover_properties(
-            "Check 1: h.cover.1\n - Status: SATISFIED\nCheck 2: h.cover.1\n - Status: SATISFIED\n"
-        )
-        .is_err()
-    );
+            "Check 1: h.cover.1\n - Status: SATISFIED\nCheck 2: h.cover.1\n - Status: SATISFIED\n",
+        ),
+        "identity/status is duplicate",
+    )?;
     Ok(())
 }
 
@@ -373,12 +382,21 @@ fn ambiguous_native_blocks_publish_a_consistent_refusal_without_borrowed_propert
 #[test]
 fn source_manifest_rejects_duplicate_and_escaping_paths() -> AuditResult<()> {
     let digest = sha256(b"source");
-    for text in [
-        format!("{{\"a.rs\":\"{digest}\",\"a.rs\":\"{digest}\"}}"),
-        format!("{{\"../a.rs\":\"{digest}\"}}"),
-        format!("{{\"C:/a.rs\":\"{digest}\"}}"),
+    for (text, expected) in [
+        (
+            format!("{{\"a.rs\":\"{digest}\",\"a.rs\":\"{digest}\"}}"),
+            "duplicate JSON key",
+        ),
+        (
+            format!("{{\"../a.rs\":\"{digest}\"}}"),
+            "artifact path must remain relative",
+        ),
+        (
+            format!("{{\"C:/a.rs\":\"{digest}\"}}"),
+            "artifact path must remain relative",
+        ),
     ] {
-        assert!(parse_source_manifest(text.as_bytes()).is_err());
+        refusal(parse_source_manifest(text.as_bytes()), expected)?;
     }
     let manifest = SourceManifest::from([("src/a.rs".to_string(), digest)]);
     assert_eq!(
@@ -421,29 +439,29 @@ fn pinned_native_inventory_requires_exact_version_count_and_captured_files() -> 
         let mut changed = original.clone();
         changed["standard-harnesses"] = serde_json::json!({file: ["m::proof"]});
         changed["totals"]["standard-harnesses"] = serde_json::json!(1);
-        assert!(
+        refusal(
             native_inventory::native_inventory(
                 &serde_json::to_vec(&changed).map_err(|e| e.to_string())?,
                 "ripr-contract",
                 root,
-                &sources
-            )
-            .is_err()
-        );
+                &sources,
+            ),
+            "outside captured",
+        )?;
     }
     let file = files.keys().next().ok_or("fixture files absent")?;
     let mut repeated = original.clone();
     repeated["standard-harnesses"] = serde_json::json!({file: ["m::proof", "m::proof"]});
     repeated["totals"]["standard-harnesses"] = serde_json::json!(2);
-    assert!(
+    refusal(
         native_inventory::native_inventory(
             &serde_json::to_vec(&repeated).map_err(|e| e.to_string())?,
             "ripr-contract",
             root,
-            &sources
-        )
-        .is_err()
-    );
+            &sources,
+        ),
+        "duplicate qualified native harness",
+    )?;
     let mut duplicate = subjects.clone();
     duplicate.push(subjects[0].clone());
     assert!(!native_inventory::compare_inventories(&duplicate, &subjects).is_empty());
@@ -469,9 +487,10 @@ fn pinned_native_inventory_requires_exact_version_count_and_captured_files() -> 
             "accepted {pointer}"
         );
     }
-    assert!(
-        native_inventory::native_inventory(bytes, "ripr-contract", root, &BTreeMap::new()).is_err()
-    );
+    refusal(
+        native_inventory::native_inventory(bytes, "ripr-contract", root, &BTreeMap::new()),
+        "outside captured source closure",
+    )?;
     let duplicated_key = String::from_utf8(bytes.to_vec())
         .map_err(|e| e.to_string())?
         .replacen(
@@ -479,15 +498,15 @@ fn pinned_native_inventory_requires_exact_version_count_and_captured_files() -> 
             "\"kani-version\": \"0.68.0\",\"kani-version\": \"0.68.0\",",
             1,
         );
-    assert!(
+    refusal(
         native_inventory::native_inventory(
             duplicated_key.as_bytes(),
             "ripr-contract",
             root,
-            &sources
-        )
-        .is_err()
-    );
+            &sources,
+        ),
+        "duplicate JSON key",
+    )?;
     Ok(())
 }
 

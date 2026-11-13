@@ -27,6 +27,20 @@ fn token_text(node: &ra_ap_syntax::SyntaxNode) -> String {
     text
 }
 
+fn contains_input_macro(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    let tokens: Vec<_> = node
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    tokens.windows(2).any(|pair| {
+        matches!(
+            pair[0].text().strip_prefix("r#").unwrap_or(pair[0].text()),
+            "include" | "include_str" | "include_bytes"
+        ) && pair[1].text() == "!"
+    })
+}
+
 /// Admit literal Rust include/path inputs, including ignored/untracked files.
 /// Dynamic generated includes and out-of-repository inputs remain unsupported;
 /// a hash over tracked files alone cannot establish this closure.
@@ -121,19 +135,7 @@ pub fn extend_source_inputs(
                 if is_test_only(definition.syntax()) {
                     continue;
                 }
-                let tokens: Vec<_> = definition
-                    .syntax()
-                    .descendants_with_tokens()
-                    .filter_map(|node| node.into_token())
-                    .filter(|token| !token.kind().is_trivia())
-                    .collect();
-                if tokens.windows(2).any(|pair| {
-                    matches!(
-                        pair[0].text().strip_prefix("r#").unwrap_or(pair[0].text()),
-                        "include" | "include_str" | "include_bytes"
-                    )
-                        && pair[1].text() == "!"
-                }) {
+                if contains_input_macro(definition.syntax()) {
                     return Err(format!(
                         "macro-generated includes require an explicit supported closure rule: {name}"
                     ));
@@ -166,6 +168,13 @@ pub fn extend_source_inputs(
                         )
                     })?;
                     inputs.push((input, name_tail == "include"));
+                } else if call
+                    .token_tree()
+                    .is_some_and(|tree| contains_input_macro(tree.syntax()))
+                {
+                    return Err(format!(
+                        "nested macro includes are outside captured input profile: {name}"
+                    ));
                 }
             }
             for attr in parsed
@@ -491,7 +500,12 @@ pub fn validate_harness_configuration(
             }
             unwind = Some(number);
         } else if ![
-            "#[doc=", "#[doc(", "#[allow(", "#[expect(", "#[deny(", "#[forbid(",
+            "#[doc=",
+            "#[doc(",
+            "#[allow(",
+            "#[expect(",
+            "#[deny(",
+            "#[forbid(",
         ]
         .iter()
         .any(|prefix| text.starts_with(prefix))
