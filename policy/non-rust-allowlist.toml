@@ -585,7 +585,7 @@ owner = "formal-verification"
 surface = "config"
 classification = "config"
 reason = "Canonical declarative membership and generation authority for the Rust formal-claim registry (#14473)."
-covered_by = ["cargo test -p xtask --lib formal_registry::tests::registry_membership_is_complete_and_exact", "cargo test -p xtask --lib formal_registry::tests::transition_requires_generation_bumps_for_decision_changes"]
+covered_by = ["cargo test -p xtask --lib formal_registry::tests::registry_membership_is_complete_and_exact", "cargo test -p xtask --lib formal_registry::tests::transition_controls::"]
 covered_by_unix = ["cargo test -p xtask --lib formal_registry::tests::path_controls::registry_rejects_symlinked_directory_components"]
 
 [[allow]]

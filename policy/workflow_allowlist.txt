@@ -17,6 +17,7 @@
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
 .github/workflows/ci.yml|39|#4987: exact-subject callable guard/result and bounded legacy event-head Rust detection; unchanged feature/release payloads. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command. Locked proptest fixture preparation fits this existing per-block limit (#10839).
+.github/workflows/diagnostic-rustfmt.yml|9|Diagnostic-only Rustfmt patch capture for the existing formal registry/producer branches (#14473/#14472): one formatter invocation, exact patch/file-list capture, and a bounded copy of changed Rust files. Empty outputs mean an already-formatted checkout; native formatter errors still fail.
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/dx-scoreboard.yml|1|Nightly developer-experience scoreboard delegates corpus measurement, ingest, and the regression gate to one cargo xtask dx-scoreboard command.

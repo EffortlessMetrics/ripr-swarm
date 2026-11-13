@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod transition_controls;
+
 #[cfg(unix)]
 mod path_controls;
 
