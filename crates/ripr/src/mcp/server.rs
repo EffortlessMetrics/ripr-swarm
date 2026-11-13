@@ -866,12 +866,17 @@ fn optional_string_argument(
 /// The source an omitted `ripr_refresh` `source` selects (#13096): the same
 /// `app::diff_source` decision `ripr check` makes with no `--worktree` or
 /// `--committed` flag. A clean or untracked-only tree, or a probe that could
-/// not run, keeps committed history.
+/// not run, keeps committed history. The probe runs under the same
+/// `RIPR_GIT_TIMEOUT` deadline as the refresh (#14386); an invalid value
+/// selects under the default here and the refresh itself then fails closed
+/// with `config_invalid`.
 fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let git_timeout = workspace::mcp_git_timeout()
+        .unwrap_or_else(|_invalid| Some(crate::app::default_cli_git_timeout()));
     let selected = crate::app::diff_source::select_live_diff_source(
         root,
         crate::app::diff_source::DiffSourceRequest::Default,
-        Some(crate::app::default_cli_git_timeout()),
+        git_timeout,
     );
     if selected.is_working_tree() {
         workspace::RefreshSource::Worktree
