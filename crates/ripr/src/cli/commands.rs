@@ -634,6 +634,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
 
 fn pr_comments_plan(args: &[String]) -> Result<(), String> {
     let options = parse_pr_comments_plan_options(args)?;
+    crate::cli::commands_context::ensure_command_root(
+        Path::new(&options.root),
+        "pr-comments plan",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
