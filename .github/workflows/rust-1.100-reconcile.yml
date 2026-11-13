@@ -1,0 +1,110 @@
+name: Reconcile Rust 1.100 migration
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-reconcile.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: rust-1.100-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the exact migration head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: build/rust-1.100-upgrade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge current main without dropping either lane
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: build/rust-1.100-upgrade
+        run: |
+          set -euo pipefail
+
+          actual_head="$(git rev-parse HEAD)"
+          test "$actual_head" = "$EXPECTED_HEAD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin main
+
+          merge_base="$(git merge-base "$EXPECTED_HEAD" origin/main)"
+          replay_paths=(
+            .ripr/traceability.toml
+            crates/ripr/src/analysis/classify/activation.rs
+            crates/ripr/src/analysis/classify/related_tests.rs
+            docs/CI.md
+          )
+          git diff --binary "$merge_base" "$EXPECTED_HEAD" -- "${replay_paths[@]}" \
+            > /tmp/rust-1.100-replay.patch
+          git show "$EXPECTED_HEAD":.github/workflows/rust-test-shards.yml \
+            > /tmp/rust-test-shards.ours.yml
+
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+
+          mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+          allowed_conflicts=(
+            .github/workflows/rust-test-shards.yml
+            .ripr/traceability.toml
+            crates/ripr/src/analysis/classify/activation.rs
+            crates/ripr/src/analysis/classify/related_tests.rs
+            docs/CI.md
+          )
+          for conflict in "${conflicts[@]}"; do
+            allowed=false
+            for expected in "${allowed_conflicts[@]}"; do
+              if [ "$conflict" = "$expected" ]; then
+                allowed=true
+                break
+              fi
+            done
+            if [ "$allowed" != true ]; then
+              echo "::error::unexpected merge conflict: $conflict"
+              exit 1
+            fi
+          done
+          if [ "$merge_status" -ne 0 ] && [ "${#conflicts[@]}" -eq 0 ]; then
+            echo "::error::merge failed without a resolvable file conflict"
+            exit 1
+          fi
+
+          # Current main owns the semantic base of the overlapping source/docs.
+          # Replay only the migration's narrow deltas onto those current files.
+          git checkout origin/main -- "${replay_paths[@]}"
+          git apply --3way --index /tmp/rust-1.100-replay.patch
+
+          # A workflow token cannot safely publish workflow-file changes. Keep the
+          # already-published Rust 1.100 version byte-for-byte here; the connector
+          # will add main's independent shard-list optimization after this merge.
+          cp /tmp/rust-test-shards.ours.yml .github/workflows/rust-test-shards.yml
+          git add .github/workflows/rust-test-shards.yml
+
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git diff --cached --check
+          grep -Fq 'toolchain: 1.100.0' .github/workflows/rust-test-shards.yml
+          grep -Fq 'cargo +1.95.0 check --locked --workspace --all-targets' docs/CI.md
+          grep -Fq 'cargo_unit_outputs_match_exact_ids_and_preserve_ambiguity' .ripr/traceability.toml
+          grep -Fq 'location_miss_hint_names_lines_files_and_the_column_form' .ripr/traceability.toml
+          grep -Fq 'let cell = owner_parameters' crates/ripr/src/analysis/classify/activation.rs
+
+          git commit -m "chore: reconcile Rust 1.100 migration with current main"
+          git push \
+            --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
+            origin "HEAD:refs/heads/$BRANCH"
