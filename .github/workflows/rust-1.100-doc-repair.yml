@@ -1,0 +1,73 @@
+name: Repair Rust 1.100 release docs
+
+on:
+  push:
+    branches:
+      - build/rust-1.100-upgrade
+    paths:
+      - .github/workflows/rust-1.100-doc-repair.yml
+
+permissions: {}
+
+concurrency:
+  group: rust-1.100-doc-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: build/rust-1.100-upgrade
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Restore and narrowly repair release metadata instructions
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: build/rust-1.100-upgrade
+          ORIGINAL_HEAD: aedc7f8a765ff06527e5d60300d1b9309b770c1e
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$ORIGINAL_HEAD" -- docs/RELEASE.md
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path('docs/RELEASE.md'): (
+                  '- `repository` and `homepage` point at `https://github.com/EffortlessMetrics/ripr/`.\n',
+                  '- Cargo package `repository` points at `https://github.com/EffortlessMetrics/ripr/`;\n'
+                  '  no duplicate Cargo `homepage` field is emitted.\n',
+              ),
+              Path('docs/PUBLISHING.md'): (
+                  'Verify `repository` and `homepage` point at the canonical GitHub repository before publishing.\n',
+                  'Verify `repository` points at the canonical GitHub repository and that the\n'
+                  'packaged manifest does not reintroduce a duplicate `homepage` before publishing.\n',
+              ),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one stale metadata sentence, found {count}')
+              path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+
+          git diff --check
+          test "$(git diff --numstat docs/RELEASE.md | awk '{print $1":"$2}')" = "2:1"
+          test "$(git diff --numstat docs/PUBLISHING.md | awk '{print $1":"$2}')" = "2:1"
+          git add docs/RELEASE.md docs/PUBLISHING.md
+          git commit -m "docs: align release metadata with Cargo 1.100"
+          git push \
+            --force-with-lease="refs/heads/$BRANCH:$EXPECTED_HEAD" \
+            origin "HEAD:refs/heads/$BRANCH"
