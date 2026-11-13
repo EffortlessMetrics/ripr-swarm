@@ -22,21 +22,21 @@
   ],
   "properties": {
     "schema": {"const": "ripr.native-proof-run.v1"},
-    "run_id": {"type": "string", "minLength": 1},
-    "repository": {"type": "string", "minLength": 1},
-    "revision": {"type": "string", "minLength": 1},
-    "tree": {"type": "string", "minLength": 1},
-    "worktree_digest": {"type": ["string", "null"]},
-    "source_closure_digest": {"type": "string", "minLength": 1},
-    "claim_registry_generation": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "repository": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "revision": {"type": "string", "pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"},
+    "tree": {"type": "string", "pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"},
+    "worktree_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
+    "source_closure_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "claim_registry_generation": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "provider": {
       "type": "object",
       "additionalProperties": false,
       "required": ["family", "name", "version"],
       "properties": {
-        "family": {"type": "string", "minLength": 1},
-        "name": {"type": "string", "minLength": 1},
-        "version": {"type": "string", "minLength": 1},
+        "family": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "name": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "version": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "solver_version": {"type": ["string", "null"]}
       }
     },
@@ -45,7 +45,7 @@
       "additionalProperties": false,
       "required": ["language"],
       "properties": {
-        "language": {"type": "string", "minLength": 1},
+        "language": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "target": {"type": ["string", "null"]}
       }
     },
@@ -54,16 +54,12 @@
       "additionalProperties": false,
       "required": ["generation", "command_digest", "deadline_policy"],
       "properties": {
-        "generation": {"type": "string", "minLength": 1},
-        "command_digest": {"type": "string", "minLength": 1},
+        "generation": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "command_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
         "deadline_policy": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "preflight_seconds",
-            "whole_run_seconds",
-            "per_subject_seconds"
-          ],
+          "required": ["preflight_seconds", "whole_run_seconds", "per_subject_seconds"],
           "properties": {
             "preflight_seconds": {"type": "integer", "minimum": 1},
             "whole_run_seconds": {"type": "integer", "minimum": 1},
@@ -80,47 +76,62 @@
         "expected_claim_ids": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1}
+          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
         },
         "discovered_subjects": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1}
+          "items": {"type": "string", "minLength": 1, "pattern": "\\S"}
         },
         "complete": {"type": "boolean"},
-        "rejection_reasons": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
+        "rejection_reasons": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "\\S"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"complete": {"const": true}}, "required": ["complete"]},
+          "then": {
+            "properties": {
+              "expected_claim_ids": {"minItems": 1},
+              "discovered_subjects": {"minItems": 1},
+              "rejection_reasons": {"maxItems": 0}
+            }
+          },
+          "else": {"required": ["rejection_reasons"], "properties": {"rejection_reasons": {"minItems": 1}}}
         }
-      }
+      ]
     },
     "process": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "state",
-        "exit_code",
-        "timed_out",
-        "raw_output_digest",
-        "cleanup_state"
-      ],
+      "required": ["state", "exit_code", "timed_out", "raw_output_digest", "cleanup_state"],
       "properties": {
-        "state": {
-          "enum": ["completed", "failed", "timed_out", "killed", "not_started"]
-        },
+        "state": {"enum": ["completed", "failed", "timed_out", "killed", "not_started"], "$comment": "ripr-allow: static-language: OS process termination, not a mutation outcome."},
         "exit_code": {"type": ["integer", "null"]},
         "timed_out": {"type": "boolean"},
-        "raw_output_digest": {"type": ["string", "null"]},
-        "cleanup_state": {
-          "enum": ["complete", "residue", "failed", "not_applicable"]
+        "raw_output_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
+        "cleanup_state": {"enum": ["complete", "residue", "failed", "not_applicable"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "completed"}}, "required": ["state"]},
+          "then": {"properties": {"exit_code": {"type": "integer"}, "timed_out": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "timed_out"}}, "required": ["state"]},
+          "then": {"properties": {"timed_out": {"const": true}}},
+          "else": {"properties": {"timed_out": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["failed", "killed"], "$comment": "ripr-allow: static-language: OS process termination, not a mutation outcome."}}, "required": ["state"]},
+          "then": {"properties": {"exit_code": {"not": {"const": 0}}}}
+        },
+        {
+          "if": {"properties": {"state": {"const": "not_started"}}, "required": ["state"]},
+          "then": {"properties": {"exit_code": {"type": "null"}, "raw_output_digest": {"type": "null"}}}
         }
-      }
+      ]
     },
-    "results": {
-      "type": "array",
-      "minItems": 1,
-      "items": {"$ref": "#/$defs/result"}
-    }
+    "results": {"type": "array", "items": {"$ref": "#/$defs/result"}, "uniqueItems": true}
   },
   "$defs": {
     "result": {
@@ -141,20 +152,11 @@
         "non_claims"
       ],
       "properties": {
-        "claim_id": {"type": "string", "minLength": 1},
+        "claim_id": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "claim_generation": {"type": "integer", "minimum": 1},
-        "subject": {"type": "string", "minLength": 1},
-        "source_digest": {"type": "string", "minLength": 1},
-        "status": {
-          "enum": [
-            "ESTABLISHED",
-            "FAILED",
-            "NOT_ESTABLISHED",
-            "STALE",
-            "UNSUPPORTED",
-            "NOT_PROVEN"
-          ]
-        },
+        "subject": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "source_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+        "status": {"enum": ["ESTABLISHED", "FAILED", "NOT_ESTABLISHED", "STALE", "UNSUPPORTED", "NOT_PROVEN"]},
         "native_verdict": {
           "enum": [
             "verified",
@@ -179,22 +181,98 @@
             "unreachable": {"type": "integer", "minimum": 0}
           }
         },
-        "assumptions_digest": {"type": ["string", "null"]},
-        "bounds_digest": {"type": "string", "minLength": 1},
+        "assumptions_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
+        "bounds_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
         "duration_ms": {"type": ["integer", "null"], "minimum": 0},
         "peak_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
-        "raw_block_digest": {"type": ["string", "null"]},
+        "raw_block_digest": {"anyOf": [{"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}, {"type": "null"}]},
         "current": {"type": "boolean"},
-        "reasons": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
+        "reasons": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "pattern": "\\S"}},
+        "non_claims": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "\\S"}, "minItems": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "ESTABLISHED"}}, "required": ["status"]},
+          "then": {
+            "required": ["raw_block_digest"],
+            "properties": {
+              "native_verdict": {"const": "verified"},
+              "current": {"const": true},
+              "raw_block_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+              "duration_ms": {"type": "integer", "minimum": 0},
+              "covers": {"properties": {"unreachable": {"const": 0}}}
+            }
+          }
         },
-        "non_claims": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
+        {
+          "if": {"properties": {"status": {"const": "FAILED"}}, "required": ["status"]},
+          "then": {
+            "required": ["raw_block_digest"],
+            "properties": {
+              "native_verdict": {"enum": ["counterexample", "unreachable_cover"]},
+              "current": {"const": true},
+              "raw_block_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+              "duration_ms": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "FAILED"}, "native_verdict": {"const": "unreachable_cover"}}, "required": ["status", "native_verdict"]},
+          "then": {"properties": {"covers": {"properties": {"required": {"minimum": 1}, "unreachable": {"minimum": 1}}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "STALE"}}, "required": ["status"]},
+          "then": {"properties": {"current": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"native_verdict": {"const": "timeout"}}, "required": ["native_verdict"]},
+          "then": {"properties": {"status": {"enum": ["NOT_ESTABLISHED", "STALE"]}}}
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "results": {"contains": {"properties": {"status": {"enum": ["ESTABLISHED", "FAILED"]}}, "required": ["status"]}}
+        },
+        "required": ["results"]
+      },
+      "then": {
+        "properties": {
+          "process": {"properties": {"raw_output_digest": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}}}
         }
       }
+    },
+    {
+      "if": {"properties": {"provider": {"properties": {"name": {"const": "kani"}}, "required": ["name"]}}},
+      "then": {"properties": {"provider": {"properties": {"family": {"const": "bounded_model_check"}}}}}
+    },
+    {
+      "if": {
+        "properties": {"process": {"properties": {"state": {"const": "not_started"}}, "required": ["state"]}}
+      },
+      "then": {
+        "properties": {
+          "results": {
+            "items": {
+              "properties": {
+                "status": {"const": "NOT_ESTABLISHED"},
+                "native_verdict": {"const": "missing"},
+                "raw_block_digest": {"type": "null"},
+                "duration_ms": {"type": "null"},
+                "peak_memory_bytes": {"type": "null"},
+                "covers": {"properties": {"satisfied": {"const": 0}, "unreachable": {"const": 0}}}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"inventory": {"properties": {"complete": {"const": true}}, "required": ["complete"]}}},
+      "then": {"properties": {"results": {"minItems": 1}}}
     }
-  }
+  ]
 }

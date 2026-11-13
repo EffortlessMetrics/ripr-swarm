@@ -4,9 +4,9 @@ A formal harness or model is an implementation artifact. The semantic unit of
 maintenance is a **registered claim**.
 
 The initial implementation should use a versioned machine-readable registry
-validated by repository policy. The exact storage path and generated Rust
-shape belong to #6381/#5198; the contract below is independent of that storage
-decision.
+validated by repository policy. The exact self-assurance registry path and
+generated Rust shape belong to #14473; the broader provider architecture stays
+with #6381/#5198. The contract below is independent of that storage decision.
 
 ## Stable identity
 
@@ -36,7 +36,7 @@ Every critical claim records:
 | `family` | Bounded model checking, deductive proof, state-machine model, etc. |
 | `provider` | Exact admitted native provider |
 | `criticality` | Critical, important, advisory, scheduled, or manual |
-| `phase` | Ordinary PR critical, merge-ready, scheduled, release, or manual |
+| `phase` | Admitted merge group, scheduled, release, or manual; legacy ordinary-PR/merge-ready values are historical declarations only |
 | `proposition` | Machine- and reviewer-readable statement of what is asserted |
 | `non_claims` | Explicit statements the result does not establish |
 | `owners` | Exact production symbols/files or a typed owner rule |
@@ -57,6 +57,13 @@ Every critical claim records:
 
 An unregistered harness may remain in the source census. It cannot increase
 registered assurance coverage.
+
+For the queue-only development lifecycle in #14500, new critical development
+claims use `admitted_merge_group`. The document auditor retains the older
+`ordinary_pr_critical` and `merge_ready` spellings to inspect historical input;
+accepting either spelling does not authorize a workflow start. Phase selection
+and source-bound native evidence belong to #14474 and the admitted-G plan,
+not to the passive document audit.
 
 ## Claim families
 
@@ -98,8 +105,11 @@ A native “verified” result with an unreachable required cover is `FAILED` fo
 the registered claim. A cover not included in the registered claim is
 advisory and must not silently affect claim status.
 
-Draft PR #14469 owns the current positive-cover tightening. New work must
-compose with it rather than rebuild its runner changes.
+PR #14469 / #14460 owns the existing collector's complete-positive-cover
+tightening. That collector treats every observed harness cover as required;
+it does not yet implement registered advisory-cover distinctions. #14472 and
+#14473 must compose with that behavior and make any changed cover policy an
+explicit versioned admission change, with native controls.
 
 ## Negative controls
 

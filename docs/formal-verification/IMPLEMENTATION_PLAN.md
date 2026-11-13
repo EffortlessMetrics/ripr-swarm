@@ -6,8 +6,8 @@ programme or reserve work already owned elsewhere.
 ## Live non-overlap constraints
 
 - **PR #12581 / issue #12579** owns the Kani version-preflight deadline.
-- **Draft PR #14469 / issue #13768** owns the current positive-cover admission
-  tightening for critical async-bridge proofs.
+- **PR #14469 / issue #14460** owns positive, complete cover-evidence admission
+  in the existing Kani self-proof collector.
 - **Draft PR #11517 / issue #10686** owns declared Kani context, source identity,
   cache identity, and public inventory. It explicitly does not own
   owner/domain/observable semantics.
@@ -55,7 +55,8 @@ Do not mark the spec active until implementation and policy checks agree.
 
 ### 0C. Add machine result DTO
 
-Owners: #12109/#12904.
+Owners: #14472 and #12470, under #12109/#12904. Reuse #14478's qualified
+document-admission predicates when connecting them to the native producer.
 
 Likely implementation seams:
 
@@ -77,7 +78,8 @@ Acceptance:
 
 ### 0D. Add stable claim registry
 
-Owners: #6381/#5198/#12109.
+Owner: #14473 under #12109/#12904. The broader provider architecture remains
+with #6381/#5198.
 
 Start with critical self-claims only. Do not attempt every proof family in the
 first slice.
@@ -91,7 +93,11 @@ Acceptance:
 - unregistered harnesses cannot increase registered coverage;
 - passive validation executes no provider.
 
-## Phase 1 — complete one end-to-end Kani product path
+## Separate product track — complete one end-to-end Kani product path
+
+This track belongs to #10745. It shares result/identity contracts with
+self-assurance, but does not block the self-assurance work below and is not
+cross-credited as proof of RIPR itself.
 
 ### 1A. Qualify or split PR #11517
 
@@ -225,19 +231,26 @@ Preserve exact inventory, one run identity, and fail-closed aggregate.
 #12904 applies the admission criteria in [CI.md](CI.md). Harness count or one
 successful run is insufficient.
 
-## Phase 4 — qualify the repair-lifecycle TLA+ pilot
+## Phase 4 — qualify repair-lifecycle implementation correspondence
 
-The source-only pilot on
-`codex/repair-lifecycle-model-20261106` needs:
+The pilot at `30ec9ac187025985314858ff9ba9d72bf1ad02e9` already has a
+[retained native TLC observation](https://github.com/EffortlessMetrics/ripr-swarm/issues/12109#issuecomment-6813436649):
+the positive configuration completed with 199 distinct states; each of the
+three named fault configurations produced its expected invariant violation.
+These results cover one attempt, two finishers, six currentness/verdict
+combinations and an abstract atomic commit. They do not prove Rust or OS
+transaction behavior, reset/crash paths, liveness or unbounded concurrency.
 
-1. Rust adapter build/tests;
-2. native positive TLC run;
-3. all three named negative configurations and counterexamples;
-4. exact model/config/tool/source commitments;
-5. timeout/malformed/stale controls;
-6. state/action-to-Rust mapping;
-7. six-case bounded conformance comparison;
-8. current-main port and protected integration.
+Remaining acceptance:
+
+1. build and test the Rust adapter;
+2. retain exact model/config/tool/source and raw-artifact commitments in the
+   native receipt contract;
+3. qualify timeout, malformed and stale-input refusal;
+4. map Capture, Commit, Refuse and Quiesce to actual production branches,
+   including locked rechecks and write failures;
+5. execute the six-case bounded conformance comparison;
+6. port the accepted model/mapping to current main and qualify integration.
 
 Model safety, implementation conformance, and Rust implementation correctness
 remain separate claims.
@@ -284,15 +297,20 @@ A provider admission packet contains:
 Candidates include Miri, Loom/Shuttle, deterministic fuzz replay, targeted
 mutation, and exact branch/condition coverage. There is no run-every-tool lane.
 
-## Overall acceptance
+## Self-assurance acceptance
 
-The programme reaches the first maintained milestone when:
+The self-assurance programme reaches the first maintained milestone when:
 
 - lane/spec/result/claim contracts agree;
 - critical self-claims have current falsifiable evidence;
-- one installed user-facing Kani journey is complete;
-- guard-only changes remain affected;
+- proof-only, assumption, trust, bound and configuration changes remain
+  affected and cannot authorize their own loss of base protection;
 - the assurance scoreboard is generated;
 - critical selection is conservative and measurable;
 - unsupported and not-established states remain visible;
+- model-to-production correspondence is established for every claimed
+  implementation guarantee;
 - required status, if any, is separately admitted.
+
+The installed user-facing Kani journey and its public adversarial corpus
+remain acceptance for the separate #10745 product track.

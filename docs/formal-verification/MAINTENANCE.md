@@ -2,6 +2,59 @@
 
 This runbook keeps the system current after the initial implementation.
 
+## Reproducible execution
+
+Start from the exact reviewed source. Record its commit/tree and any captured
+dirty or untracked inputs before running a provider. Follow
+[`rust-toolchain.toml`](../../rust-toolchain.toml) for ordinary Rust commands
+and the separate pin in the [Kani workflow](../../.github/workflows/kani.yml)
+for Kani. Kani's bundled compiler and solver are separate identities from the
+product's Rust/MSRV pin; matching one version does not establish the others.
+
+The existing lane supports a focused observation, for example:
+
+```bash
+cargo xtask kani --harness self_computed_cap --harness-timeout-secs 60 --timeout-secs 900
+```
+
+Inspect the selected and completed subjects, native exit and retained report.
+The selector may match more than one harness. A source count or one successful
+row does not establish that every expected subject ran. The provider budget
+does not include installing tools or compiling the xtask front door; an outer
+job budget must include those phases and owned-child cleanup.
+
+Record the exact command, working directory, effective supported Cargo/Kani
+configuration, provider/compiler/solver identities, source fence, native
+status and raw artifacts. A changed flag such as disabled default checks,
+an unregistered stub, a different body under `cfg(kani)`, or an unknown
+configuration invalidates the original production claim even when the solver
+returns success. Hashes preserve identity; admission must separately enforce
+which configurations and trust boundaries are allowed.
+
+The historical lane retains Markdown only. #14472 owns native JSON, raw
+custody and complete inventory; #14478's offline auditor checks supplied
+documents and cannot substitute for that execution. Use the
+[work index](WORK_ITEMS.md) to distinguish landed commands from candidates.
+
+## Claim-change acceptance record
+
+Keep the acceptance record with the owning spec/claim and PR. It needs:
+
+| Item | Evidence to retain |
+| --- | --- |
+| Proposition | Exact owner, input domain, observable and independent expected behavior |
+| Positive proof | Current native result and every required reachable partition |
+| Behavioral control | Compiling wrong behavior, the named failed assertion/invariant and raw outcome |
+| Domain guard | Constructor addition/omission controls and the specific compile-time guard that refuses them |
+| Production correspondence | Real caller or state-transition test; pure helper proof alone has a narrower scope |
+| Execution identity | Source/configuration/tool/process/inventory/artifact bindings |
+| Maintenance | Generation change, affected selection, rollback and explicit remaining nonclaims |
+
+A compile-time domain guard is a structural control. It must not be counted
+as a behavioral mutation result. Report each mutant as detected, survived,
+equivalent after review, unsupported, timed out or not run. An equivalent or
+unrun control is not an observed detection; a timeout is not a counterexample.
+
 ## Routine maintainer checks
 
 ### On every formal claim change
