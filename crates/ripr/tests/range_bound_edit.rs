@@ -569,6 +569,25 @@ fn an_assertion_after_return_on_the_same_line_does_not_separate() -> Result<(), 
 }
 
 #[test]
+fn an_assertion_in_an_uncalled_closure_does_not_separate() -> Result<(), String> {
+    // `_check` is never called, so only `sum_to(0)` runs.
+    let findings = findings_on_changed_line(
+        &sum_to("(0..=n).sum()"),
+        "    (0..=n).sum()",
+        "    (0..n).sum()",
+        &test_calling(
+            "assert_eq!(sum_to(0), 0);\n    let _check = || {\n        assert_eq!(sum_to(4), 10);\n    };",
+        ),
+    )?;
+    assert!(!findings.is_empty());
+    assert!(
+        !infection_states(&findings).contains(&"Yes".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_live_assertion_sharing_a_line_still_separates() -> Result<(), String> {
     // Control: no dead code on the line, so `sum_to(4)` still separates.
     let findings = findings_on_changed_line(
