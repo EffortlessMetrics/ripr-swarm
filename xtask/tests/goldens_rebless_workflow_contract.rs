@@ -39,7 +39,9 @@
 //!   `bless_installs_the_pinned_toolchain` and
 //!   `every_no_default_rust_toolchain_step_pins_its_toolchain` fail; a
 //!   `toolchain:` under `env:` or inside `run:` must not satisfy the contract
-//!   → `toolchain_contract_rejects_env_and_run_shapes` (#14563).
+//!   → `toolchain_contract_rejects_env_and_run_shapes`; an empty, quoted-empty,
+//!   comment-only or YAML-null scalar must not either →
+//!   `toolchain_scalar_shapes` (#14563).
 
 use std::fs;
 use std::path::Path;
@@ -749,10 +751,9 @@ fn step_lines<'a>(lines: &[&'a str], index: usize) -> Vec<&'a str> {
 /// inside a `run:` block, or in a sibling step is not the action input and
 /// must not satisfy the contract (#14563 review).
 ///
-/// An empty value is not an input: `toolchain:` with nothing after it,
-/// `toolchain: ""` and `toolchain: # note` all leave the action without a
-/// toolchain and still exit 1 with `'toolchain' is a required input`
-/// (#14563 acceptance 2, second review).
+/// The first `toolchain:` key under `with:` is authoritative: an empty or
+/// null value there is no input, even if a later line happens to contain a
+/// usable scalar.
 fn with_toolchain_value(step: &[&str]) -> Option<String> {
     let first = step.first()?;
     let item_indent = first.len() - first.trim_start().len();
@@ -767,27 +768,81 @@ fn with_toolchain_value(step: &[&str]) -> Option<String> {
             let trimmed = line.trim_start();
             !trimmed.is_empty() && line.len() - trimmed.len() > with_indent
         })
-        .find_map(|line| {
-            line.trim_start()
-                .strip_prefix("toolchain:")
-                .map(|value| yaml_scalar(value))
-        })
-        .filter(|value| !value.is_empty())
+        .find(|line| line.trim_start().starts_with("toolchain:"))
+        .and_then(|line| line.trim_start().strip_prefix("toolchain:"))
+        .and_then(yaml_scalar)
 }
 
-/// The text of a one-line YAML scalar, without surrounding quotes and without
-/// a trailing comment. An empty result means the key carried no value.
-fn yaml_scalar(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.starts_with('#') {
-        return String::new();
+/// The text of a one-line YAML scalar, or `None` when the key carries no
+/// usable value.
+///
+/// Supported shapes:
+/// - a plain scalar: `1.95.0`, `stable`;
+/// - a single- or double-quoted scalar: `"1.95.0"`, `'1.95.0'`;
+/// - a trailing comment after any of the above: `1.95.0 # pinned`,
+///   `"" # pinned`, `'' # pinned`;
+/// - YAML null forms, which mean no input: empty, `~`, `null`, `Null`,
+///   `NULL` (quoted or not).
+///
+/// A `#` inside a quoted scalar is part of the value, not a comment. This is a
+/// one-line heuristic, not a full YAML parser: it does not handle multi-line
+/// scalars, anchors, or escapes inside double quotes.
+fn yaml_scalar(value: &str) -> Option<String> {
+    let value = strip_trailing_comment(value);
+    let value = strip_matching_quotes(value.trim());
+    let value = value.trim();
+    if value.is_empty() || is_yaml_null(value) {
+        return None;
     }
-    for quote in ['"', '\''] {
-        if trimmed.len() >= 2 && trimmed.starts_with(quote) && trimmed.ends_with(quote) {
-            return trimmed[1..trimmed.len() - 1].trim().to_string();
+    Some(value.to_string())
+}
+
+/// Drop a trailing YAML comment, respecting quoted scalars so a `#` inside
+/// quotes is not treated as a comment.
+fn strip_trailing_comment(value: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(open) => {
+                if open == '"' && ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                } else if ch == '#' {
+                    let before = &value[..index];
+                    if before.is_empty() || before.chars().last().is_some_and(char::is_whitespace) {
+                        return before;
+                    }
+                }
+            }
         }
     }
-    trimmed.to_string()
+    value
+}
+
+/// Strip one pair of matching single or double quotes, if present.
+fn strip_matching_quotes(value: &str) -> &str {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+/// YAML null spellings that mean the key carries no value.
+fn is_yaml_null(value: &str) -> bool {
+    matches!(value, "~" | "null" | "Null" | "NULL")
 }
 
 /// Scan one workflow source for no-default rust-toolchain steps that do not
@@ -930,43 +985,53 @@ fn toolchain_contract_rejects_env_and_run_shapes() -> Result<(), String> {
             ),
             false,
         ),
-        (
-            "with: toolchain null",
-            format!(
-                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain:\n"
-            ),
-            false,
-        ),
-        (
-            "with: toolchain empty string",
-            format!(
-                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"\"\n"
-            ),
-            false,
-        ),
-        (
-            "with: toolchain whitespace only",
-            format!(
-                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"   \"\n"
-            ),
-            false,
-        ),
-        (
-            "with: toolchain comment only",
-            format!(
-                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: # pinned below\n"
-            ),
-            false,
-        ),
-        (
-            "with: toolchain quoted value",
-            format!(
-                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: \"1.95.0\"\n"
-            ),
-            true,
-        ),
     ];
     for (name, source, expected) in cases {
+        let (checked, findings) = scan_no_default_toolchain_steps(&source);
+        if checked != 1 {
+            return Err(format!(
+                "{name}: expected one scanned step, found {checked}"
+            ));
+        }
+        let accepted = findings.is_empty();
+        if accepted != expected {
+            return Err(format!(
+                "{name}: expected accepted={expected}, got accepted={accepted}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn toolchain_scalar_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        ("plain", "1.95.0", true),
+        ("double quoted", "\"1.95.0\"", true),
+        ("single quoted", "'1.95.0'", true),
+        ("plain with comment", "1.95.0 # pinned", true),
+        ("double quoted with comment", "\"1.95.0\" # pinned", true),
+        ("single quoted with comment", "'1.95.0' # pinned", true),
+        ("hash inside quotes", "\"a#b\"", true),
+        ("empty", "", false),
+        ("double quoted empty", "\"\"", false),
+        ("single quoted empty", "''", false),
+        ("double quoted empty with comment", "\"\" # pinned", false),
+        ("single quoted empty with comment", "'' # pinned", false),
+        ("whitespace only", "   ", false),
+        ("double quoted whitespace", "\"   \"", false),
+        ("comment only", "# pinned", false),
+        ("tilde null", "~", false),
+        ("null", "null", false),
+        ("Null", "Null", false),
+        ("NULL", "NULL", false),
+        ("quoted null", "\"null\"", false),
+    ];
+    for (name, value, expected) in cases {
+        let source = format!(
+            "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: {value}\n"
+        );
         let (checked, findings) = scan_no_default_toolchain_steps(&source);
         if checked != 1 {
             return Err(format!(
