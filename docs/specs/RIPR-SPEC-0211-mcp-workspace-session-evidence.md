@@ -862,6 +862,13 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/src/process_owner.rs::tests::linux_group_observer_requires_terminal_single_thread_members`
   + `linux_group_observer_accepts_non_utf8_comm_and_refuses_missing_leader`
   — terminal-state/thread-count and byte-safe membership refusal.
+- `crates/ripr/src/process_owner.rs::tests::linux_stat_unavailable_group_is_pending_even_for_terminal_state`
+  + `linux_stat_unknown_group_does_not_accept_other_malformed_groups`
+  — the kernel's teardown `pgid=-1` sentinel is unknown membership, not a
+  quiescent or unrelated process. Observation stays pending under the original
+  settlement deadline; malformed group tokens still refuse. The owned leader
+  must still have a positively observed matching group. This fixture does not
+  claim the missing raw stat bytes from a particular hosted failure.
 - `crates/ripr/src/process_owner.rs::tests::linux_settlement_deadline_survives_polls_and_explicit_cleanup`
   + `linux_try_wait_refuses_expired_nonterminal_settlement`
   + `linux_wait_refuses_expired_settlement_before_reaping`

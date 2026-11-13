@@ -752,6 +752,12 @@ fn linux_stat_group_is_quiescent(stat: impl AsRef<[u8]>, group: u32) -> std::io:
             .copied()
             .ok_or_else(|| std::io::Error::other("incomplete process stat"))
     };
+    // do_task_stat can emit pgid=-1 when lock_task_sighand loses task
+    // teardown. Membership is then unknown, even if the sampled state is X/Z.
+    // Keep the observation pending under the existing settlement deadline.
+    if field(2)? == "-1" {
+        return Ok(false);
+    }
     let pgrp = field(2)?.parse::<u32>().map_err(std::io::Error::other)?;
     if pgrp != group {
         return Ok(true);
@@ -972,6 +978,37 @@ mod tests {
         assert!(!refusal_diagnostic(linux_stat_group_is_quiescent("malformed", 42))?.is_empty());
         assert!(
             !refusal_diagnostic(linux_stat_group_is_quiescent("42 (sleep) Z 1 42", 42))?.is_empty()
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stat_unavailable_group_is_pending_even_for_terminal_state() -> Result<(), String> {
+        // The kernel initializes pgid=-1/num_threads=0 before attempting
+        // lock_task_sighand; state is sampled independently of that lock.
+        for state in ["R", "X", "Z"] {
+            let stat =
+                format!("42 (name with ) spaces) {state} 1 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            let settled = linux_stat_group_is_quiescent(stat, 42).map_err(|error| {
+                format!("valid unavailable pgrp must remain pending, not error: {error}")
+            })?;
+            assert!(!settled, "unknown group membership must remain pending");
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_stat_unknown_group_does_not_accept_other_malformed_groups() -> Result<(), String> {
+        for group in ["-2", "invalid", "4294967296"] {
+            let stat = format!("42 (worker) X 1 {group} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            assert!(!refusal_diagnostic(linux_stat_group_is_quiescent(stat, 42))?.is_empty());
+        }
+        let unrelated = "43 (worker) R 1 43 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1";
+        assert!(
+            linux_stat_group_is_quiescent(unrelated, 42).map_err(|error| error.to_string())?,
+            "known unrelated positive group remains outside the owned group"
         );
         Ok(())
     }
