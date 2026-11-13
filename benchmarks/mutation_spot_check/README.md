@@ -83,16 +83,32 @@ and never promote a filtered receipt while the manifest still lists more crates.
 To promote a run, download the artifact, replace
 `metrics/public-proof/mutation-spot-check.json` with it, carry over the recorded
 top-level `timing_observation` (a fresh run does not measure time), run
-`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`
-and `cargo xtask public-proof --refresh-receipts`, and open a reviewed PR. To add
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json --committed-language rust`
+and `cargo xtask public-proof --refresh-receipts`, and open a reviewed PR. `--committed-language` is the explicit promotion step: a fresh run defaults every language to `artifact_only`; repeat the flag for each language actually copied into the committed receipt. To add
 a crate, append it to `corpus.json` with a full 40-character revision (the first five keep their recorded pins). The README table
 above lists the first five; the manifest is the current population.
 
 ## Derived summary rows
 
-The v2 receipt also carries three additive rows derived from
+The v2 receipt also carries a corpus/publication envelope and three additive rows derived from
 `outcomes_by_disposition_and_grip_class` (no schema bump; consumers that read
 other keys are unaffected):
+
+- `corpus` counts the selected and scored repositories, while top-level
+  `limitations` explicitly names each selected repository that produced no
+  scored run and why (`leg_incomplete`, `mutants_timeout`, `runner_shutdown`,
+  `missing_stryker_report`, or `invalid_stryker_report`). The Markdown headline
+  says **N of M scored**, including `limitations: []` and `N == M` when every
+  selected repository completed. Rates cover only the scored set; receipts with
+  different scored sets are not directly comparable without naming that delta.
+- `language_evidence` records `committed` or `artifact_only` for Rust, Python,
+  and TypeScript. This is the publication state of this receipt, separate from
+  `recall_of_missed.by_language`, whose `established` describes measurement
+  sufficiency. Fresh workflow artifacts default all three to `artifact_only`;
+  promotion to `metrics/public-proof` must explicitly name each committed
+  language with `--committed-language`. Thus the current public snapshot can
+  state `rust: committed` without presenting Python or TypeScript artifact
+  measurements as committed evidence.
 
 - `recall_of_missed`: runtime-missed mutants across every disposition, counted
   by ripr grip class (`ungripped`, `activation_unknown`, `strongly_gripped`,
@@ -261,7 +277,11 @@ verdict agrees with a real mutant, not suite adequacy.
 pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
-failed. First hosted run (2026-11-08, Stryker 9.6.1): defu and ufo installed, ran
+failed. Before scoring, `cargo xtask mutation-spot-check --validate-stryker-report <mutation.json>`
+validates each raw report offline. A missing or invalid report is retained where
+possible and recorded as a named limitation instead of suppressing the whole
+receipt; the final validation status still makes that hosted run fail.
+First hosted run (2026-11-08, Stryker 9.6.1): defu and ufo installed, ran
 under Stryker and were scored (1,107 mutants); scule was dropped because its
 vitest crashes the Stryker vitest runner. Figures bind to the recorded
 revisions and are not promoted to the public receipt yet.
