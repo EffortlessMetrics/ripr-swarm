@@ -24,6 +24,9 @@ tests = [
   "xtask/src/kani_lane.rs::report_names_every_status_word",
   "crates/ripr/src/bounded_input_kani.rs::production_cap_is_256_mib",
   "crates/ripr/src/cli/exit_kani.rs::exit_code_constants_match_documented_table",
+  "crates/ripr/src/cli/exit_kani.rs::command_error_exit_code_total_and_matches_table",
+  "crates/ripr/src/cli/exit_proof_domain.rs::tests::command_error_domain_is_nonempty_and_unique",
+  "crates/ripr/src/cli/exit_proof_domain.rs::tests::every_command_error_matches_the_documented_exit_code",
   "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs::generation_counter_saturates_at_max",
   "crates/ripr/src/domain/repair_card/kani_proofs.rs::default_budget_is_valid",
 ]
@@ -32,6 +35,7 @@ code = [
   "crates/ripr/src/kani_smoke.rs",
   "crates/ripr/src/bounded_input_kani.rs",
   "crates/ripr/src/cli/exit_kani.rs",
+  "crates/ripr/src/cli/exit_proof_domain.rs",
   "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs",
   "crates/ripr/src/domain/repair_card/kani_proofs.rs",
 ]
