@@ -142,6 +142,7 @@ impl Fixture {
             "Cargo.lock",
             "rust-toolchain.toml",
             "tools/repo-policy",
+            "xtask/src/policy/user_text.rs",
             ".github",
             ".agents",
             ".claude",
