@@ -165,7 +165,7 @@ re-derives it from that section's per-repo tables.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
 refresh a recorded receipt without re-running mutation testing:
-`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json --committed-language rust`.
 
 ## What is scored
 

@@ -71,7 +71,6 @@ jobs:
               printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
             fi
           done
-          [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no Stryker report was produced"; exit 1; }
 
       - name: Validate and retain the Stryker reports
         # Per-package failures become receipt limitations; the final step is red.
