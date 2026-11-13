@@ -6113,7 +6113,10 @@ mod tests {
         assert!(worktree.contains("saved tracked-worktree edits"));
         assert!(worktree.contains("(reason-beta)"));
         assert!(worktree.contains("repair readiness and cards are withheld"));
-        assert!(worktree.contains("run ripr_refresh without `source` for committed repair cards"));
+        assert!(
+            worktree
+                .contains("run ripr_refresh with source `committed` for committed repair cards")
+        );
         assert!(!worktree.contains("analyzed committed content"));
         assert!(!committed.contains("saved tracked-worktree edits"));
     }
@@ -6123,11 +6126,11 @@ mod tests {
         let parse = |text: String| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string());
         assert_eq!(
             parse(refresh_retry_arguments(None, RefreshSource::Committed))?,
-            json!({})
+            json!({"source": "committed"})
         );
         assert_eq!(
             parse(refresh_retry_arguments(Some("b"), RefreshSource::Committed))?,
-            json!({"base": "b"})
+            json!({"source": "committed", "base": "b"})
         );
         assert_eq!(
             parse(refresh_retry_arguments(None, RefreshSource::Worktree))?,
@@ -6163,7 +6166,13 @@ mod tests {
         let committed = RefreshSource::Committed;
         let unset = typed_failure(CoreError::base_unresolvable("no base"), None, committed);
         assert!(unset.recovery.contains("(the detail names candidates)"));
-        assert!(unset.recovery.contains(r#"{"base": "<ref>"}"#));
+        // #13096: an omitted source no longer means committed, so the
+        // committed retry names its source explicitly.
+        assert!(
+            unset
+                .recovery
+                .contains(r#"{"base":"<ref>","source":"committed"}"#)
+        );
         assert!(!unset.recovery.contains("worktree"));
         let given = typed_failure(
             CoreError::base_unresolvable("bad base"),
@@ -6171,7 +6180,12 @@ mod tests {
             committed,
         );
         assert!(given.recovery.contains("a different `base`"));
-        assert!(given.recovery.contains("omit `base`"));
+        // Omitting only `base` keeps the committed source.
+        assert!(
+            given
+                .recovery
+                .contains(r#"omit only `base` to use the default branch: {"source":"committed"}"#)
+        );
         assert!(!given.recovery.contains("(the detail names candidates)"));
         for base in [None, Some("b")] {
             let unusable = typed_failure(
