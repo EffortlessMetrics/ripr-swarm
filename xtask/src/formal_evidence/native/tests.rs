@@ -40,6 +40,46 @@ fn complete_document() -> AuditResult<Run> {
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
+fn audit_observation_roundtrip(
+    original: &Run,
+    invocation: &Invocation,
+    observation: &(Vec<UnregisteredResult>, Vec<String>, Vec<String>),
+) -> AuditResult<Run> {
+    assert_eq!(observation.0.len(), 1, "expected one selected observation");
+    let mut run = original.clone();
+    run.unregistered_results = observation.0.clone();
+    run.inventory.complete = observation.2.is_empty();
+    run.inventory.rejection_reasons = observation.2.clone();
+    let execution = run.execution.as_mut().ok_or("execution absent")?;
+    *execution
+        .invocations
+        .last_mut()
+        .ok_or("verification absent")? = invocation.clone();
+    execution.observed_subjects = observation.1.clone();
+    execution.inventory_rejections = observation.2.clone();
+    execution.rejection_reasons = observation.2.clone();
+    execution.lane_success = observation.2.is_empty()
+        && invocation.succeeded()
+        && observation
+            .0
+            .iter()
+            .all(|row| row.status == ObservationStatus::Verified);
+    run.process = aggregate_process(
+        &execution.invocations,
+        &sha256(b"synthetic invocation index"),
+    );
+    let bytes = serde_json::to_vec(&run).map_err(|error| error.to_string())?;
+    let decoded: Run = parse_json(&bytes)?;
+    assert_eq!(
+        serde_json::to_value(&decoded).map_err(|error| error.to_string())?,
+        serde_json::to_value(&run).map_err(|error| error.to_string())?
+    );
+    let summary = audit(&[], Some(&decoded))?;
+    assert_eq!(summary.native_assurance, "not_assessed");
+    assert_eq!(summary.declared_established_rows, 0);
+    Ok(decoded)
+}
+
 #[test]
 fn native_document_admission_refuses_false_currentness_and_incomplete_covers() -> AuditResult<()> {
     let valid = complete_document()?;
@@ -374,7 +414,15 @@ fn ambiguous_native_blocks_publish_a_consistent_refusal_without_borrowed_propert
         execution.inventory_rejections = reasons.clone();
         execution.rejection_reasons = reasons;
         execution.lane_success = false;
-        audit(&[], Some(&run))?;
+        let bytes = serde_json::to_vec(&run).map_err(|error| error.to_string())?;
+        let decoded: Run = parse_json(&bytes)?;
+        assert_eq!(
+            serde_json::to_value(&decoded).map_err(|error| error.to_string())?,
+            serde_json::to_value(&run).map_err(|error| error.to_string())?
+        );
+        let summary = audit(&[], Some(&decoded))?;
+        assert_eq!(summary.native_assurance, "not_assessed");
+        assert_eq!(summary.declared_established_rows, 0);
     }
     Ok(())
 }
@@ -518,9 +566,12 @@ fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals(
     let invocation = execution.invocations.last().ok_or("verification absent")?;
     let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
     let observe = |call: &Invocation, out: Option<&[u8]>, err: Option<&[u8]>| {
-        native_inventory::observe_invocation(&execution.selected_subjects, call, out, err)
+        let observation =
+            native_inventory::observe_invocation(&execution.selected_subjects, call, out, err);
+        audit_observation_roundtrip(&run, call, &observation)?;
+        Ok::<_, String>(observation)
     };
-    let positive = observe(invocation, Some(stdout), Some(b""));
+    let positive = observe(invocation, Some(stdout), Some(b""))?;
     assert_eq!(positive.0[0].status, ObservationStatus::Verified);
     assert_eq!(positive.1.len(), 1);
     assert!(positive.2.is_empty());
@@ -534,13 +585,13 @@ fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals(
             _ => changed.error = Some("synthetic capture failure".into()),
         }
         assert_eq!(
-            observe(&changed, Some(stdout), Some(b"")).0[0].status,
+            observe(&changed, Some(stdout), Some(b""))?.0[0].status,
             ObservationStatus::NotEstablished,
             "control {control}"
         );
     }
     for bytes in [None, Some(&b"\xff"[..])] {
-        let refused = observe(invocation, bytes, Some(b""));
+        let refused = observe(invocation, bytes, Some(b""))?;
         assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
         assert!(!refused.2.is_empty());
     }
@@ -550,7 +601,7 @@ fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals(
         text.replace("6.11.0", "6.12.0"),
         text.replace("Kani Rust Verifier 0.68.0\n", ""),
     ] {
-        let refused = observe(invocation, Some(changed.as_bytes()), Some(b""));
+        let refused = observe(invocation, Some(changed.as_bytes()), Some(b""))?;
         assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
         assert!(!refused.2.is_empty());
     }
@@ -559,7 +610,7 @@ fn observed_invocation_cannot_borrow_success_across_profile_or_process_refusals(
             invocation,
             Some(stdout),
             Some(b"Checking harness foreign::proof...\n")
-        )
+        )?
         .2
         .is_empty()
     );
@@ -573,9 +624,12 @@ fn incomplete_streams_preserve_observations_and_known_process_failures() -> Audi
     let invocation = execution.invocations.last().ok_or("verification absent")?;
     let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
     let observe = |call: &Invocation, out: Option<&[u8]>, err: Option<&[u8]>| {
-        native_inventory::observe_invocation(&execution.selected_subjects, call, out, err)
+        let observation =
+            native_inventory::observe_invocation(&execution.selected_subjects, call, out, err);
+        audit_observation_roundtrip(&run, call, &observation)?;
+        Ok::<_, String>(observation)
     };
-    let positive = observe(invocation, Some(stdout), Some(b""));
+    let positive = observe(invocation, Some(stdout), Some(b""))?;
     assert_eq!(positive.0[0].status, ObservationStatus::Verified);
     for control in 0..3 {
         let mut call = invocation.clone();
@@ -587,7 +641,7 @@ fn incomplete_streams_preserve_observations_and_known_process_failures() -> Audi
                 Some(&b""[..])
             }
         };
-        let refused = observe(&call, Some(stdout), stderr);
+        let refused = observe(&call, Some(stdout), stderr)?;
         assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
         assert_eq!(refused.1, positive.1, "observed stdout must not disappear");
         assert_eq!(
@@ -621,7 +675,7 @@ fn incomplete_streams_preserve_observations_and_known_process_failures() -> Audi
         call.timed_out = timed_out;
         call.exit_code = None;
         call.error = Some("synthetic process/capture error".into());
-        let refused = observe(&call, None, None);
+        let refused = observe(&call, None, None)?;
         assert_eq!(refused.0[0].status, ObservationStatus::NotEstablished);
         assert_eq!(refused.0[0].native_verdict, verdict);
         assert!(refused.0[0].detail.contains(detail));
@@ -641,17 +695,117 @@ fn unsupported_stderr_results_cannot_leave_verified_rows() -> AuditResult<()> {
     let execution = run.execution.as_ref().ok_or("execution absent")?;
     let invocation = execution.invocations.last().ok_or("verification absent")?;
     let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
-    let (rows, observed, reasons) = native_inventory::observe_invocation(
+    let observation = native_inventory::observe_invocation(
         &execution.selected_subjects,
         invocation,
         Some(stdout),
         Some(b"Checking harness foreign::proof...\n"),
     );
+    audit_observation_roundtrip(&run, invocation, &observation)?;
+    let (rows, observed, reasons) = observation;
     assert_eq!(rows[0].status, ObservationStatus::NotEstablished);
     assert!(rows[0].detail.contains("unsupported stderr"));
     assert_eq!(observed.len(), 1);
     assert!(rows[0].raw_block_digest.is_some());
     assert!(reasons.iter().any(|r| r.contains("unsupported stderr")));
+    Ok(())
+}
+
+#[test]
+fn observer_roundtrip_refuses_lane_and_capture_promotion() -> AuditResult<()> {
+    let original = complete_document()?;
+    let execution = original.execution.as_ref().ok_or("execution absent")?;
+    let mut invocation = execution
+        .invocations
+        .last()
+        .ok_or("verification absent")?
+        .clone();
+    let stdout = b"Kani Rust Verifier 0.68.0\nCBMC 6.11.0\nChecking harness m::proof...\nCheck 1: m::proof.cover.1\n - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
+    let positive_observation = native_inventory::observe_invocation(
+        &execution.selected_subjects,
+        &invocation,
+        Some(stdout),
+        Some(b""),
+    );
+    let positive = audit_observation_roundtrip(&original, &invocation, &positive_observation)?;
+    assert!(
+        positive
+            .execution
+            .as_ref()
+            .ok_or("execution absent")?
+            .lane_success
+    );
+    assert_eq!(
+        positive.unregistered_results[0].status,
+        ObservationStatus::Verified
+    );
+
+    // A missing stderr stream is represented honestly in both the invocation
+    // receipt and interpreter inputs. Available stdout remains diagnostic only.
+    invocation.capture_complete = false;
+    invocation.stderr = None;
+    let observation = native_inventory::observe_invocation(
+        &execution.selected_subjects,
+        &invocation,
+        Some(stdout),
+        None,
+    );
+    let incomplete = audit_observation_roundtrip(&original, &invocation, &observation)?;
+    let captured = incomplete.execution.as_ref().ok_or("execution absent")?;
+    assert!(!captured.lane_success);
+    assert!(!incomplete.inventory.complete);
+    assert!(!captured.inventory_rejections.is_empty());
+    assert!(
+        !captured
+            .invocations
+            .last()
+            .ok_or("verification absent")?
+            .capture_complete
+    );
+    assert_eq!(
+        incomplete.unregistered_results[0].status,
+        ObservationStatus::NotEstablished
+    );
+    assert_eq!(
+        captured.observed_subjects,
+        positive
+            .execution
+            .as_ref()
+            .ok_or("execution absent")?
+            .observed_subjects
+    );
+    assert_eq!(
+        incomplete.unregistered_results[0].raw_block_digest,
+        positive.unregistered_results[0].raw_block_digest
+    );
+
+    for (promote_lane, expected) in [
+        (
+            true,
+            "successful lane lacks complete current admitted native evidence",
+        ),
+        (
+            false,
+            "complete capture lacks raw streams or native process observation",
+        ),
+    ] {
+        let mut changed = incomplete.clone();
+        let captured = changed.execution.as_mut().ok_or("execution absent")?;
+        if promote_lane {
+            captured.lane_success = true;
+        } else {
+            captured
+                .invocations
+                .last_mut()
+                .ok_or("verification absent")?
+                .capture_complete = true;
+        }
+        // Only the selected Boolean changes. Do not regenerate process or
+        // inventory fields to make the contradictory document consistent.
+        let bytes = serde_json::to_vec(&changed).map_err(|error| error.to_string())?;
+        let decoded: Run = parse_json(&bytes)?;
+        assert_eq!(audit(&[], Some(&decoded)).err().as_deref(), Some(expected));
+    }
     Ok(())
 }
 
