@@ -87,6 +87,24 @@ struct RegistryCheck {
     execution_authority: &'static str,
 }
 
+pub(super) fn markdown_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('|', "&#124;")
+        .replace('`', "&#96;")
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 fn claim_index(registry: &LoadedRegistry) -> ClaimIndexDocument {
     let claims = registry
         .claims
@@ -201,23 +219,23 @@ fn registry_check(registry: &LoadedRegistry) -> RegistryCheck {
 fn markdown_check(value: &RegistryCheck) -> String {
     format!(
         "# Formal claim registry check\n\n- Repository: `{}`\n- Generation: `{}`\n- Digest: `{}`\n- Active claims: {}\n- Retired claims: {}\n- Native assurance: `{}`\n- Execution authority: `{}`\n",
-        value.repository,
-        value.registry_generation,
-        value.registry_digest,
+        markdown_text(&value.repository),
+        markdown_text(&value.registry_generation),
+        markdown_text(&value.registry_digest),
         value.active_claims,
         value.retired_claims,
-        value.native_assurance,
-        value.execution_authority,
+        markdown_text(value.native_assurance),
+        markdown_text(value.execution_authority),
     )
 }
 
 fn markdown_index(value: &ClaimIndexDocument) -> String {
     let mut output = format!(
         "# Formal claim index\n\nRepository: `{}`  \nGeneration: `{}`  \nExecution authority: `{}`  \nNative assurance: `{}`\n\n",
-        value.repository,
-        value.claim_index.generation,
-        value.execution_authority,
-        value.native_assurance,
+        markdown_text(&value.repository),
+        markdown_text(&value.claim_index.generation),
+        markdown_text(value.execution_authority),
+        markdown_text(value.native_assurance),
     );
     output.push_str(
         "| Claim | Generation | Criticality | Phase | Provider route | Subjects |\n\
@@ -226,12 +244,12 @@ fn markdown_index(value: &ClaimIndexDocument) -> String {
     for claim in &value.claim_index.claims {
         output.push_str(&format!(
             "| `{}` | {} | `{}` | `{}` | `{}/{}` | {} |\n",
-            claim.claim_id,
+            markdown_text(&claim.claim_id),
             claim.claim_generation,
-            claim.criticality,
-            claim.phase,
-            claim.provider,
-            claim.route.as_str(),
+            markdown_text(&claim.criticality),
+            markdown_text(&claim.phase),
+            markdown_text(&claim.provider),
+            markdown_text(claim.route.as_str()),
             claim.subjects.len(),
         ));
     }
@@ -241,10 +259,10 @@ fn markdown_index(value: &ClaimIndexDocument) -> String {
 fn markdown_scoreboard(value: &Scoreboard) -> String {
     let mut output = format!(
         "# Formal assurance scoreboard\n\nRepository: `{}`  \nRegistry generation: `{}`  \nNative result join: `{}`  \nNative assurance: `{}`\n\n",
-        value.repository,
-        value.registry_generation,
-        value.native_result_join,
-        value.native_assurance,
+        markdown_text(&value.repository),
+        markdown_text(&value.registry_generation),
+        markdown_text(value.native_result_join),
+        markdown_text(value.native_assurance),
     );
     output.push_str(
         "| Claim | Generation | Status | Provider route | Reason |\n\
@@ -253,12 +271,12 @@ fn markdown_scoreboard(value: &Scoreboard) -> String {
     for claim in &value.claims {
         output.push_str(&format!(
             "| `{}` | {} | `{}` | `{}/{}` | {} |\n",
-            claim.claim_id,
+            markdown_text(&claim.claim_id),
             claim.claim_generation,
-            claim.status,
-            claim.provider,
-            claim.route.as_str(),
-            claim.reasons.join(" "),
+            markdown_text(claim.status),
+            markdown_text(&claim.provider),
+            markdown_text(claim.route.as_str()),
+            markdown_text(&claim.reasons.join(" ")),
         ));
     }
     output
