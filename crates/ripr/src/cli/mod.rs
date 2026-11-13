@@ -651,14 +651,14 @@ fn persist_before_repair_attempt(
         .artifacts
         .iter()
         .find(|artifact| artifact.role == "agent_packet")
-        .ok_or("published attempt is missing its packet role")?;
+        .ok_or("published attempt is missing its packet role; inspect the attempt with `ripr agent status`, then report this as a ripr bug")?;
     let agent_packet = root.join(&retained_packet.path);
     let retained_baseline = result
         .manifest
         .artifacts
         .iter()
         .find(|artifact| artifact.role == "edit_cage_baseline")
-        .ok_or("published attempt is missing its baseline role")?;
+        .ok_or("published attempt is missing its baseline role; inspect the attempt with `ripr agent status`, then report this as a ripr bug")?;
     let edit_cage_baseline = root.join(&retained_baseline.path);
 
     // The persist total stops at publication: everything below is success

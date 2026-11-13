@@ -1076,10 +1076,10 @@ pub(crate) fn prepare_binding(
     )?;
     let record_path = before_snapshot_path
         .parent()
-        .ok_or("before snapshot has no preparation directory")?
+        .ok_or("before snapshot has no preparation directory; report this as a ripr bug with the command you ran")?
         .join(PREPARE_RECORD_FILE);
     let mut rendered = serde_json::to_vec_pretty(&record)
-        .map_err(|error| format!("serialize python repair-trust binding failed: {error}"))?;
+        .map_err(|error| format!("serialize python repair-trust binding failed: {error}; report this as a ripr bug with the command you ran"))?;
     rendered.push(b'\n');
     crate::output::file_write::write_new_with(&record_path, |file| {
         std::io::Write::write_all(file, &rendered)

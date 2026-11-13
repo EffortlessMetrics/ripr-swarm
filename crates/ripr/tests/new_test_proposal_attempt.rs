@@ -57,6 +57,45 @@ fn combined(output: &Output) -> String {
     )
 }
 
+fn assert_no_published_attempt(root: &Path, diagnostic: &str) -> Result<(), String> {
+    let attempts = root.join("target/ripr/repair-attempts");
+    let entries = match fs::read_dir(&attempts) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("read {}: {error}", attempts.display())),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("repair-attempt-")
+        {
+            continue;
+        }
+        let path = entry.path();
+        match fs::symlink_metadata(path.join("attempt.json")) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(format!(
+                    "refusal published a manifest at {}",
+                    path.display()
+                ));
+            }
+            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
+        }
+        if !diagnostic.contains(&path.display().to_string())
+            || !diagnostic.contains("inspect it before any manual cleanup")
+        {
+            return Err(format!(
+                "refusal did not identify retained reservation {}: {diagnostic}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -422,8 +461,8 @@ fn an_existing_test_target_attempt_has_no_not_yet_disclosure() -> Result<(), Str
 }
 
 /// The preflight refuses a defective target at start: a symlinked `tests`
-/// directory (the proposal's parent) leaves no attempt behind, and the same
-/// fixture without the defect starts.
+/// directory (the proposal's parent) publishes no attempt manifest; any
+/// retained reservation is disclosed, and the fixture without the defect starts.
 #[cfg(unix)]
 #[test]
 fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Result<(), String> {
@@ -451,24 +490,7 @@ fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Re
     let text = combined(&output);
     assert!(!output.status.success(), "{text}");
     assert!(text.contains("symlinked directory"), "{text}");
-    let attempts = root.join("target/ripr/repair-attempts");
-    let left: Vec<_> = fs::read_dir(&attempts)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("repair-attempt-")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    assert!(
-        left.is_empty(),
-        "a refused preflight left attempts behind: {left:?}"
-    );
+    assert_no_published_attempt(root, &text)?;
     // Without the defect the same fixture starts.
     fs::remove_file(root.join("tests")).map_err(|error| error.to_string())?;
     fs::rename(&real, root.join("tests")).map_err(|error| error.to_string())?;

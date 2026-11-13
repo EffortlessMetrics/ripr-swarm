@@ -218,6 +218,45 @@ fn cage_policy(root: &Path, attempt: &Attempt) -> Result<Value, String> {
         .ok_or_else(|| format!("baseline has no policy:\n{baseline}"))
 }
 
+fn assert_no_published_attempt(root: &Path, diagnostic: &str) -> Result<(), String> {
+    let attempts = root.join("target/ripr/repair-attempts");
+    let entries = match fs::read_dir(&attempts) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("read {}: {error}", attempts.display())),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("repair-attempt-")
+        {
+            continue;
+        }
+        let path = entry.path();
+        match fs::symlink_metadata(path.join("attempt.json")) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(format!(
+                    "refusal published a manifest at {}",
+                    path.display()
+                ));
+            }
+            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
+        }
+        if !diagnostic.contains(&path.display().to_string())
+            || !diagnostic.contains("inspect it before any manual cleanup")
+        {
+            return Err(format!(
+                "refusal did not identify retained reservation {}: {diagnostic}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn assert_refused_not_started(root: &Path, context: &str, reason: &str) -> Result<(), String> {
     let output = start(root)?;
     let text = combined(&output);
@@ -348,20 +387,7 @@ fn inline_proposal_with_an_invalid_package_identity_leaves_no_attempt() -> Resul
         let text = combined(&output);
         assert!(!output.status.success(), "{manifest}\n{text}");
         assert!(text.contains("fix Cargo.toml"), "{text}");
-        let attempts = fixture.root.join("target/ripr/repair-attempts");
-        if attempts.exists() {
-            for entry in fs::read_dir(&attempts).map_err(|error| error.to_string())? {
-                let entry = entry.map_err(|error| error.to_string())?;
-                assert!(
-                    !entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("repair-attempt-"),
-                    "a refused preflight left an attempt: {}",
-                    entry.path().display()
-                );
-            }
-        }
+        assert_no_published_attempt(&fixture.root, &text)?;
     }
     Ok(())
 }
@@ -496,20 +522,7 @@ fn package_name_preflight_agrees_with_cargo_metadata() -> Result<(), String> {
                 text.contains("`package.name` must be a valid Cargo package name"),
                 "a rejected name must name the package diagnostic: {text}"
             );
-            let attempts = fixture.root.join("target/ripr/repair-attempts");
-            let published: Vec<String> = fs::read_dir(&attempts)
-                .map(|entries| {
-                    entries
-                        .filter_map(Result::ok)
-                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                        .filter(|name| !name.starts_with('.'))
-                        .collect()
-                })
-                .unwrap_or_default();
-            assert!(
-                published.is_empty(),
-                "a rejected name must leave no durable attempt: {published:?}"
-            );
+            assert_no_published_attempt(&fixture.root, &text)?;
         }
     }
     Ok(())

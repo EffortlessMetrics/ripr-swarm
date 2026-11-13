@@ -30779,6 +30779,11 @@ fn agent_status_resumes_the_current_awaiting_repair_attempt()
 
     // The workflow directory is only a compatibility projection: removing it
     // does not change which transaction status resumes.
+    std::fs::create_dir_all(root.join("target/ripr/workflow"))?;
+    std::fs::write(
+        root.join("target/ripr/workflow/foreign-file"),
+        b"compatibility decoy",
+    )?;
     std::fs::remove_dir_all(root.join("target/ripr/workflow"))?;
     let report = repair_route_status(&root)?;
     assert_eq!(repair_route_next(&report).1, printed, "{report:#}");
@@ -32232,6 +32237,66 @@ fn repair_route_two_seam_workspace(label: &str) -> Result<PathBuf, Box<dyn std::
     run_git(&root, &["add", "src", "tests"])?;
     repair_route_commit(&root, "second seam")?;
     Ok(root)
+}
+
+#[test]
+fn agent_status_historical_completion_does_not_hide_another_seam()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_two_seam_workspace("status historical other seam")?;
+    let attempt_id = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &attempt_id));
+    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+    let mut receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(&receipt_path)?)?;
+    assert_eq!(receipt["provenance"]["movement"], "improved", "{receipt:#}");
+    receipt["status"] = serde_json::Value::String("advisory".to_string());
+    receipt["analysis_outcome_status"] = serde_json::Value::String("complete".to_string());
+    receipt["analysis_outcome_error"] = serde_json::Value::Null;
+    repair_route_write_terminal_receipt(&root, &attempt_id, &receipt)?;
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "make the first result historical")?;
+
+    let root_arg = root.to_string_lossy().into_owned();
+    let packet = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        REPAIR_ROUTE_SHIPPING_SEAM,
+        "--json",
+    ]);
+    assert_success(&packet);
+    let value: serde_json::Value = serde_json::from_slice(&packet.stdout)?;
+    assert_eq!(value["packets"][0]["seam_id"], REPAIR_ROUTE_SHIPPING_SEAM);
+    std::fs::remove_file(receipt_path)?;
+    let workflow = root.join("target/ripr/workflow");
+    std::fs::remove_dir_all(&workflow)?;
+    std::fs::create_dir_all(&workflow)?;
+    std::fs::write(workflow.join("agent-packet.json"), &packet.stdout)?;
+
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["seam"]["seam_id"], REPAIR_ROUTE_SHIPPING_SEAM,
+        "{report:#}"
+    );
+    let earlier = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(earlier["disposition"], "finished", "{report:#}");
+    assert_eq!(earlier["head_current"], false, "{report:#}");
+    assert_eq!(earlier["receipt"]["shows_gap_closed"], true, "{report:#}");
+    assert_eq!(report["status"], "incomplete", "{report:#}");
+    assert!(
+        report["missing_commands"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "{report:#}"
+    );
+    assert!(!report["next_command"].is_null(), "{report:#}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 /// #4572 first falsifier: finishing B must not destroy A's retained terminal

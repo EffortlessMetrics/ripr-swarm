@@ -344,7 +344,12 @@ impl AgentStatusReport {
 
     pub(crate) fn status(&self) -> &'static str {
         let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
-            && !self.has_current_finished_attempt();
+            && !self.has_current_finished_attempt()
+            && !(selected_historical_completion(self.seam.as_ref(), &self.repair_attempts)
+                && self
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == "repair_receipt_stale"));
         if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
@@ -353,6 +358,30 @@ impl AgentStatusReport {
             "warning"
         }
     }
+}
+
+/// Historical retained completion avoids recreating shared projections for
+/// this seam. It does not establish that the receipt remains current.
+fn historical_retained_completion(attempt: &AgentStatusRepairAttempt) -> bool {
+    !attempt.legacy_gap_binding
+        && attempt.disposition == "finished"
+        && attempt.head_current == Some(false)
+        && matches!(
+            &attempt.receipt,
+            AgentStatusAttemptReceipt::Issued { path, reading }
+                if path != WORKFLOW_AGENT_RECEIPT_ARTIFACT && reading.shows_gap_closed()
+        )
+}
+
+fn selected_historical_completion(
+    seam: Option<&AgentStatusSeam>,
+    attempts: &[AgentStatusRepairAttempt],
+) -> bool {
+    seam.is_some_and(|seam| {
+        attempts.iter().any(|attempt| {
+            attempt.seam_id == seam.seam_id && historical_retained_completion(attempt)
+        })
+    })
 }
 
 fn current_finished_attempt(attempt: &AgentStatusRepairAttempt) -> bool {
@@ -407,6 +436,7 @@ pub(crate) fn build_agent_status_report_from(
             attempts
                 .iter()
                 .any(|attempt| attempt.seam_id == seam.seam_id && current_finished_attempt(attempt))
+                || selected_historical_completion(Some(seam), attempts)
         })
     });
     let missing_commands = if gap_bound_seam || finished_selected_seam {
