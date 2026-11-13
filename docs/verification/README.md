@@ -117,3 +117,14 @@ workflow docs still own their detailed surfaces:
 - [`docs/PR_EVIDENCE_LEDGER_WORKFLOW.md`](../PR_EVIDENCE_LEDGER_WORKFLOW.md)
   for PR movement ledgers;
 - [`docs/CI.md`](../CI.md) for generated GitHub workflow projection.
+
+## Internal Kani observations
+
+The [Kani observation journal](kani-observation.md) documents the internal
+`cargo xtask kani` JSON/Markdown producer, run identity, failure publication,
+retention bounds, qualification commands and remaining custody limitations.
+Its [schema](kani-observation-v1.schema.json) and
+[synthetic example](kani-observation-v1.example.json) describe internal
+observations, not a portable product assurance contract or native proof receipt.
+The owning process tests compare actual output fields and JSON/Markdown identity;
+schema conformance alone cannot grant registered assurance.

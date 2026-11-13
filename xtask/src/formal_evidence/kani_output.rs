@@ -1,6 +1,9 @@
 //! Single pure Kani output interpretation shared by live collection and
 //! retained evidence replay. No process or authenticity claim is made here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Harness {
     pub file: String,
     pub name: String,
@@ -62,10 +65,17 @@ fn function_name(line: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    tag = "status",
+    content = "detail",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub enum HarnessStatus {
     Verified,
     Failed(String),
+    #[serde(rename = "NOT-ESTABLISHED")]
     NotEstablished(String),
 }
 
@@ -120,16 +130,19 @@ pub fn classify_output(output: &str) -> HarnessStatus {
     )
 }
 
-struct CoverSummary {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverSummary {
     satisfied: u64,
     total: u64,
     undetermined: u64,
+    unreachable: u64,
 }
 
 /// Kani 0.68.0 emits one positive-total summary per harness. Its optional
 /// suffix lists undetermined then unreachable counts; unsatisfiable covers
 /// contribute to the total without a suffix. Parse that format fail-closed.
-fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
+pub fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
     fn count(text: &str) -> Option<u64> {
         if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
             return None;
@@ -184,6 +197,7 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
         satisfied,
         total,
         undetermined,
+        unreachable,
     })
 }
 
@@ -250,6 +264,8 @@ fn classify_cover_evidence(output: &str) -> HarnessStatus {
     HarnessStatus::Verified
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HarnessResult {
     pub harness: Harness,
     pub status: HarnessStatus,
@@ -428,7 +444,7 @@ pub fn native_verdict(block: &str) -> crate::formal_evidence::Verdict {
     }
 }
 
-fn matches_harness(qualified: &str, harness: &Harness) -> bool {
+pub fn matches_harness(qualified: &str, harness: &Harness) -> bool {
     qualified == harness.name || qualified.ends_with(&format!("::{}", harness.name))
 }
 

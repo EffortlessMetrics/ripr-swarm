@@ -1,0 +1,28 @@
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = ["xtask/src/kani_lane.rs", "xtask/src/kani_lane/machine.rs"]
+tests = [
+  "xtask/src/kani_lane/machine.rs::tests::missing_tool_keeps_expected_subject_and_refuses_success",
+  "xtask/src/kani_lane/machine.rs::tests::partial_timeout_preserves_native_row_without_lane_success",
+  "xtask/src/kani_lane/machine.rs::tests::native_extra_subject_is_not_silently_dropped",
+  "xtask/src/kani_lane/machine.rs::tests::duplicate_selected_or_missing_rows_cannot_pass",
+  "xtask/src/kani_lane/machine.rs::tests::an_omitted_source_recheck_cannot_admit_a_clean_run",
+  "xtask/src/kani_lane/machine.rs::tests::retention_limit_keeps_hash_and_refuses_complete_evidence",
+  "xtask/src/kani_lane/machine.rs::tests::markdown_cells_do_not_execute_control_or_markup_text",
+  "xtask/src/kani_lane/machine.rs::tests::source_inventory_digest_is_order_independent",
+  "xtask/src/kani_lane/machine.rs::tests::observed_cover_counts_use_existing_parser",
+  "xtask/src/kani_lane/machine.rs::tests::journal_replaces_old_success_with_new_incomplete_run",
+  "xtask/src/kani_lane/machine.rs::tests::source_change_stops_lane_without_erasing_historical_rows",
+  "xtask/src/kani_lane/machine.rs::tests::markdown_is_derived_from_serialized_report_rows",
+  "xtask/tests/kani_machine_report.rs::current_run_replaces_old_success_without_borrowing_its_evidence",
+  "xtask/tests/kani_machine_report.rs::unexpected_native_subject_is_preserved_and_refuses_lane_success",
+  "xtask/tests/kani_machine_report.rs::changed_proof_source_cannot_reuse_a_success_looking_row",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::selected_file_without_source_observation_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::unselected_source_observation_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::duplicate_source_observations_are_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::same_cardinality_source_substitution_is_refused",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::multiple_harnesses_share_one_observed_source_file",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::complete_multi_file_inventory_is_order_independent",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::empty_opt_out_does_not_admit_an_orphan_source",
+  "xtask/src/kani_lane/machine/inventory_tests.rs::complete_inventory_does_not_bypass_changed_source_refusal",
+]
