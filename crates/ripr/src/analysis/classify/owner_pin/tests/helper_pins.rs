@@ -867,6 +867,42 @@ fn a_predicate_assert_eq_in_a_known_disabled_module_is_still_refused() -> Result
     Ok(())
 }
 
+/// #14537 repair: only an unevaluable `cfg` atom is admitted. A `cfg_attr`
+/// that is always applied and always turns the module off
+/// (`#[cfg_attr(all(), cfg(any()))]`) is a provably-off gate, so the
+/// module-declaration refusal stays and the equality is not credited. This is
+/// the shape that discriminates: a reader that only inspects `Meta::CfgMeta`
+/// sees no `cfg` here and admits, while the availability reader refuses.
+#[test]
+fn a_predicate_assert_eq_in_a_cfg_attr_disabled_module_is_still_refused() -> Result<(), String> {
+    let lib = "#[cfg_attr(all(), cfg(any()))]\nmod python;\n\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
+    let python = "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn pins() {\n        assert_eq!(gate(10), true);\n    }\n}\n";
+    let index = index(&[(LIB, lib), ("src/python.rs", python)]);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pins")
+        .ok_or("premise: `pins` is indexed")?;
+    let owner = owner(&index, "gate");
+    let probe = super::predicate_probe(owner, "10 <= value");
+    let assertion = parser_oracles_for_function(&test.body, test.start_line)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
+        .ok_or("premise: the test's assert_eq! parses")?;
+    let syntax = OwnerPinSyntax::default();
+    let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
+    assert!(
+        matches!(refusal, Some(AssertionRefusal::ModuleDeclaration { .. })),
+        "a `cfg_attr(all(), cfg(any()))` module keeps the module-declaration refusal (refusal={refusal:?})"
+    );
+    assert!(
+        !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
+        "a predicate assert_eq! in a module no build compiles is not admitted"
+    );
+    Ok(())
+}
+
 /// #14537 repair: the gated `mod` exception is only about build availability.
 /// A dead `if false` branch and an `#[ignore]` test inside the same gated
 /// module still refuse, so the new arm is exercised by all three shapes.
@@ -879,7 +915,13 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
     let owner = owner(&index, "gate");
     let probe = super::predicate_probe(owner, "10 <= value");
     let syntax = OwnerPinSyntax::default();
-    for name in ["pins", "ignored"] {
+    for (name, expected) in [
+        (
+            "pins",
+            "a dead `if false` branch refuses as ConditionalPath",
+        ),
+        ("ignored", "an `#[ignore]`d test refuses as TestAttribute"),
+    ] {
         let test = index
             .tests()
             .iter()
@@ -891,10 +933,25 @@ fn a_gated_predicate_assert_eq_in_a_dead_branch_or_ignored_test_is_still_refused
             .find(|oracle| oracle.text.starts_with("assert_eq!(gate("))
             .ok_or_else(|| format!("premise: `{name}`'s assert_eq! parses"))?;
         let refusal = syntax.equality_assertion_refusal(&probe, test, &assertion, &index);
-        assert!(
-            refusal.is_some(),
-            "{name}: a dead or ignored predicate assert_eq! is still refused (refusal={refusal:?})"
-        );
+        // Assert the variant, not just `is_some()`: `ModuleDeclaration` is also
+        // `Some`, so `is_some()` would pass whether the arm skipped the module
+        // edge, skipped nothing, or skipped the whole provenance step.
+        let matched = match name {
+            "pins" => matches!(
+                refusal,
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::ConditionalPath("an `if` branch")
+                ))
+            ),
+            "ignored" => matches!(
+                refusal,
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::TestAttribute(ref attr)
+                )) if attr == "#[ignore]"
+            ),
+            _ => false,
+        };
+        assert!(matched, "{name}: {expected} (refusal={refusal:?})");
         assert!(
             !syntax.admits_equality_assertion(&probe, test, &assertion, &index),
             "{name}: a dead or ignored predicate assert_eq! is not admitted"

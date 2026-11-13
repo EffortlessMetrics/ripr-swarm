@@ -71,7 +71,6 @@ use crate::analysis::extract::{
 };
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
@@ -87,11 +86,11 @@ use crate::analysis::syntax::{
     RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
     claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan, module_path_targets,
-    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
-    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
-    source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
+    module_declaration_unestablished_gate, module_path_targets, owner_pin_assertions,
+    owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
+    returns_leave_the_function, source_binds_value_name, source_declares_value_name,
+    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
@@ -1052,18 +1051,15 @@ impl OwnerPinSyntax {
                 line,
                 declaration,
             }) if family == ProbeFamily::Predicate => {
-                // Only an unknown build availability is admitted. A module no
-                // build compiles (`#[cfg(any())]`) keeps the refusal, so a
-                // test that never runs cannot credit the equality (#14537).
-                if module_declaration_build_availability(&index, &parent, &declaration, line)
-                    == Some(false)
-                {
-                    Some(AssertionRefusal::ModuleDeclaration {
-                        parent,
-                        line,
-                        declaration,
-                    })
-                } else {
+                // Only an unevaluable cfg atom is admitted. A provably-off
+                // gate, any other attribute, or a declaration not found
+                // exactly once keeps the refusal, so a test that never runs
+                // cannot credit the equality (#14537).
+                let unknown =
+                    index.files().get(&parent).and_then(|facts| {
+                        module_declaration_unestablished_gate(&facts.source, line)
+                    }) == Some(true);
+                if unknown {
                     let skip = self.module_edge_child_for_test(test, index);
                     self.context_refusal_without_provenance(
                         test,
@@ -1072,6 +1068,12 @@ impl OwnerPinSyntax {
                         matches_context,
                         skip.as_deref(),
                     )
+                } else {
+                    Some(AssertionRefusal::ModuleDeclaration {
+                        parent,
+                        line,
+                        declaration,
+                    })
                 }
             }
             refusal => refusal,
@@ -8913,59 +8915,6 @@ fn module_declaration_cfg_gated(
         })
         .peekable();
     on_line.peek().is_none() || on_line.any(|module| has_cfg_that_may_drop(&module))
-}
-
-/// #14537: the build availability of the out-of-line `mod <name>;` that
-/// `declaration` names, with its `mod` token on `line` of `parent`.
-/// `Some(false)` is a module no build compiles (`#[cfg(any())]`), `None` is
-/// unknown (a feature or target atom), and `Some(true)` is unconditional. An
-/// unreadable parent or declaration is unknown, so the caller fails closed.
-fn module_declaration_build_availability(
-    index: &RustIndex,
-    parent: &Path,
-    declaration: &str,
-    line: usize,
-) -> Option<bool> {
-    let name = declaration
-        .split_whitespace()
-        .skip_while(|word| *word != "mod")
-        .nth(1)
-        .map(|word| word.trim_end_matches(';'))?;
-    if name.is_empty() {
-        return None;
-    }
-    let name = name.strip_prefix("r#").unwrap_or(name);
-    let facts = index.files().get(parent)?;
-    let source = &facts.source;
-    let parse = parse_clean_source_file(source)?;
-    let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
-    let module = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .filter_map(ast::Module::cast)
-        .filter(|module| module.item_list().is_none())
-        .find(|module| {
-            module
-                .mod_token()
-                .is_some_and(|token| line_of(token.text_range().start().into()) == line)
-                && module.name().is_some_and(|ident| {
-                    let text = ident.text().to_string();
-                    text.strip_prefix("r#").unwrap_or(&text) == name
-                })
-        })?;
-    let mut availability = Some(true);
-    for attr in module.attrs() {
-        if !matches!(attr.meta(), Some(ast::Meta::CfgMeta(_))) {
-            continue;
-        }
-        match attribute_test_build_availability(&attr.syntax().text().to_string()) {
-            Some(false) => return Some(false),
-            None => availability = None,
-            Some(true) => {}
-        }
-    }
-    availability
 }
 
 /// #7082: whether `node` carries an attribute that may drop or relocate it
