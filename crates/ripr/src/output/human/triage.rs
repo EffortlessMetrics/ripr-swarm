@@ -3048,9 +3048,10 @@ mod tests {
             candidates(&rows).is_empty(),
             "the candidate-current row at index 20 is outside the first 20 rows"
         );
-        // Eligibility is still decided inside the displayed window: with 21
-        // candidate-current rows, the one that ranks last (no recommended next
-        // step) falls outside the window and offers no stub route.
+        // Eligibility is separately filtered inside the first 20 report-order
+        // rows: with 21 candidate-current rows, the one that ranks last (no
+        // recommended next step) still offers a stub route despite being
+        // excluded from the displayed Hidden: window.
         let mut all_current = rows.clone();
         for (index, row) in all_current.iter_mut().enumerate() {
             row.source_currentness = SourceCurrentness::CandidateCurrent;
