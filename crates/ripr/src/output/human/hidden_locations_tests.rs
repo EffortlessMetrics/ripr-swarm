@@ -335,3 +335,30 @@ fn hidden_rows_keep_a_short_shared_reason_on_every_row() {
     );
     assert!(!rendered.contains("same as above"), "{rendered}");
 }
+
+#[test]
+fn hidden_rows_restate_a_long_reason_after_a_different_reason() {
+    // "same as above" points only at the row printed just above: A, B, A states
+    // A again on the third row instead of pointing past B.
+    const LONG_A: &str = "An integration test may reach this change through a crate public API ripr cannot fully trace";
+    const LONG_B: &str =
+        "A macro expansion hides the changed expression from the static probe ripr runs here";
+    let findings = [LONG_A, LONG_B, LONG_A]
+        .iter()
+        .enumerate()
+        .map(|(index, reason)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding.missing = vec![(*reason).to_string()];
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert_eq!(rendered.matches(LONG_A).count(), 2, "{rendered}");
+    assert_eq!(rendered.matches(LONG_B).count(), 1, "{rendered}");
+    assert!(!rendered.contains("same as above"), "{rendered}");
+}
