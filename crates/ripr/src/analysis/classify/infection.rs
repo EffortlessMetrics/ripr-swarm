@@ -1102,6 +1102,20 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                         )
                     }
                 }
+            } else if let Some((before, after, kind)) = probe.before.as_deref().and_then(|before| {
+                // A match-arm probe carries only the arm head (`_ =>`) even
+                // when the edit sits in the arm body; read the whole arm line.
+                let after = full_arm_line(owner, &probe.expression, before, probe.location.line)
+                    .unwrap_or_else(|| probe.expression.clone());
+                range_bound_change(before, &after).map(|kind| (before, after, kind))
+            }) {
+                range_bound_infection(
+                    owner.filter(|_| !assertion_macros_rebound),
+                    &aligned_range_texts(before, &after),
+                    kind,
+                    related_tests,
+                    owner_has_other_callers,
+                )
             } else {
                 StageEvidence::new(
                     StageState::Yes,
@@ -1111,6 +1125,354 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             }
         }
     }
+}
+
+/// #14419: a changed range bound (`0..n` to `0..=n`, `1..n` to `0..n`)
+/// changes the owner's result only at inputs where the two ranges yield
+/// different values, and `0..n` and `0..=n` both sum to 0 at `n = 0`. A
+/// reachable call is therefore not infection: credit needs an asserted
+/// literal call at which the owner folds to different values on the
+/// baseline and the change. A rebound assertion macro (`owner` withheld by
+/// the caller) or an unread shape stays unknown, never `yes`.
+///
+/// A moved match range pattern routes an input to a different arm rather
+/// than absorbing an element; when the fold cannot read the arms (a `&str`
+/// result) it keeps the ordinary reading, so the arm-routing evidence
+/// (#5992) still decides between a moved input and one inside both patterns.
+fn range_bound_infection(
+    owner: Option<&FunctionSummary>,
+    (before, after): &(String, String),
+    kind: RangeConsumer,
+    related_tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> StageEvidence {
+    use crate::analysis::test_grip_evidence::{RangeChangeVisibility, range_change_visibility};
+    match owner.map(|owner| {
+        range_change_visibility(owner, before, after, related_tests, owner_has_other_callers)
+    }) {
+        Some(RangeChangeVisibility::ExactInputSeparates(call)) => StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            format!(
+                "A related test asserts an exact value for `{call}`, an input at which the old and new range bounds give different results, so the input reaches the change"
+            ),
+        ),
+        Some(RangeChangeVisibility::InexactInputSeparates(call)) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "A related test calls `{call}`, where the old and new range bounds give different results, but only a relational or inequality assertion checks it; no exact assertion pins an input that tells the two ranges apart"
+            ),
+        ),
+        Some(RangeChangeVisibility::EveryAssertedInputAgrees(call)) => StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Every related test asserts the owner only at inputs where the old and new range bounds give the same result (for example `{call}`), so no test input reaches the change"
+            ),
+        ),
+        Some(RangeChangeVisibility::NotEstablished) | None if kind == RangeConsumer::Pattern => {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "Reachable tests can plausibly activate this changed behavior",
+            )
+        }
+        Some(RangeChangeVisibility::NotEstablished) | None => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The change moves a range bound, which alters the result only at inputs where the old and new ranges yield different values (both `0..n` and `0..=n` are empty-sum at `n = 0`); ripr could not show that any related test's asserted input separates them, so infection is not credited",
+        ),
+    }
+}
+
+/// Whether `before` and `after` differ only inside one range expression (the
+/// operator, `..` to `..=`, or an endpoint, `1..n` to `0..n`) whose values
+/// feed a consumer that can absorb the changed element. The changed span is
+/// the text between the longest common prefix and suffix; it must sit inside
+/// a range expression in both versions.
+///
+/// Absorbing consumers are where a reaching input can leave the result
+/// unchanged: `.sum()` adds the extra element 0, `.contains(&x)` and
+/// `.any(..)` ignore it away from the endpoint, `.take(k)` drops it, and a
+/// `for` loop body may do anything with it. A chain of length-preserving
+/// adaptors (`.iter()`, `.map(..)`, `.collect()`, `.len()`, slicing) does
+/// not absorb it: the result has one element more or fewer at every input
+/// where either range is non-empty, which is the ordinary reading's premise,
+/// so such ranges keep it. A version that does not parse as a statement
+/// still counts when the whole difference is one `=` right after a `..`.
+/// Match arm lines and block headers are parsed in a `match` or with their
+/// block closed, so endpoint moves there (`1..5 =>` to `0..5 =>`,
+/// `for i in 1..n {`) are read too.
+///
+/// The preserving list is a length claim, not an injectivity claim:
+/// `.collect()` into a set or `Option<Vec<_>>` can still absorb an element,
+/// and both ranges being empty at the test input (`(1..n)` and `(0..n)` at
+/// `n = 0`) leaves any consumer unchanged. Those shapes keep the ordinary
+/// reading and are a known limit.
+///
+/// Returns the consumer kind: [`RangeConsumer::Pattern`] when the range is a
+/// match pattern on both sides, otherwise [`RangeConsumer::Absorbing`].
+fn range_bound_change(before: &str, after: &str) -> Option<RangeConsumer> {
+    use crate::analysis::language::mask_rust_comments_and_strings;
+    let (before, after) = aligned_range_texts(before, after);
+    let before = mask_rust_comments_and_strings(&before);
+    let after = mask_rust_comments_and_strings(&after);
+    if before == after {
+        return None;
+    }
+    let prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let limit = before.len().min(after.len()) - prefix;
+    let suffix = before
+        .bytes()
+        .rev()
+        .zip(after.bytes().rev())
+        .take(limit)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let span = |text: &str| prefix..text.len() - suffix;
+    match (
+        range_consumer(&before, span(&before)),
+        range_consumer(&after, span(&after)),
+    ) {
+        (Some(RangeConsumer::Pattern), Some(RangeConsumer::Pattern)) => {
+            Some(RangeConsumer::Pattern)
+        }
+        (Some(RangeConsumer::Preserving), _) | (_, Some(RangeConsumer::Preserving)) => None,
+        (Some(_), Some(_)) => Some(RangeConsumer::Absorbing),
+        _ => {
+            let (short, long) = if before.len() < after.len() {
+                (&before, &after)
+            } else {
+                (&after, &before)
+            };
+            (long.len() == short.len() + 1
+                && long.get(span(long)) == Some("=")
+                && long
+                    .get(..prefix)
+                    .is_some_and(|head| head.ends_with("..") && !head.ends_with("...")))
+            .then_some(RangeConsumer::Absorbing)
+        }
+    }
+}
+
+/// `before` and `after` trimmed, and cut to their arm heads when one is a
+/// bare match-arm head: a match-arm probe may carry only the head
+/// (`0..5 =>`) while its baseline carries the whole line (`1..5 => 1,`).
+/// The other side is cut at its first `=>` outside strings and comments.
+/// Anything else (a one-line `match k { 1 => 0, _ => (1..n).sum() }`, an
+/// arrow inside a string) is compared whole.
+pub(in crate::analysis) fn aligned_range_texts(before: &str, after: &str) -> (String, String) {
+    use crate::analysis::language::mask_rust_comments_and_strings;
+    let (before, after) = (before.trim(), after.trim());
+    let is_head = |text: &str| {
+        let masked = mask_rust_comments_and_strings(text);
+        masked.ends_with("=>") && masked.matches("=>").count() == 1
+    };
+    let head_of = |text: &str| -> Option<String> {
+        let masked = mask_rust_comments_and_strings(text);
+        let at = masked.find("=>")?;
+        text.get(..at + 2).map(str::to_string)
+    };
+    match (is_head(before), is_head(after)) {
+        (true, false) => match head_of(after) {
+            Some(head) => (before.to_string(), head),
+            None => (before.to_string(), after.to_string()),
+        },
+        (false, true) => match head_of(before) {
+            Some(head) => (head, after.to_string()),
+            None => (before.to_string(), after.to_string()),
+        },
+        _ => (before.to_string(), after.to_string()),
+    }
+}
+
+/// The owner's whole current arm line for a head-only match-arm probe
+/// (`_ =>`) whose baseline is a whole arm line with the same head
+/// (`_ => (0..n).sum(),`): the one other owner line starting with that head.
+/// `None` when the probe is not a bare head, the head itself changed, or the
+/// line is not unique.
+fn full_arm_line(
+    owner: Option<&FunctionSummary>,
+    head: &str,
+    before: &str,
+    probe_line: usize,
+) -> Option<String> {
+    let owner = owner?;
+    let (head, before) = (head.trim(), before.trim());
+    if !head.ends_with("=>") || before == head || !before.starts_with(head) {
+        return None;
+    }
+    let lines: Vec<(usize, &str)> = owner
+        .body
+        .lines()
+        .enumerate()
+        .map(|(offset, line)| (owner.start_line + offset, line.trim()))
+        .filter(|(_, line)| line.starts_with(head) && *line != before)
+        .collect();
+    // Two arms share the head (`_ =>` in a nested match): the probe's own
+    // line names the edited one.
+    match lines.as_slice() {
+        [(_, line)] => Some((*line).to_string()),
+        _ => lines
+            .iter()
+            .find(|(absolute, _)| *absolute == probe_line)
+            .map(|(_, line)| (*line).to_string()),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RangeConsumer {
+    /// A consumer that can leave the result unchanged when the range gains or
+    /// loses an element.
+    Absorbing,
+    /// A match range pattern: it routes an input to an arm.
+    Pattern,
+    /// Only length-preserving adaptors, or the range value itself.
+    Preserving,
+}
+
+/// Methods that take one range and slice by it, as `v[a..b]` does.
+const SLICING_METHODS: [&str; 4] = ["get", "get_mut", "get_unchecked", "get_unchecked_mut"];
+
+/// Adaptors after which one element more or fewer still shows up in the
+/// result. Any other method on the range's chain is read as absorbing.
+const LENGTH_PRESERVING_METHODS: [&str; 25] = [
+    "iter",
+    "iter_mut",
+    "into_iter",
+    "copied",
+    "cloned",
+    "map",
+    "rev",
+    "enumerate",
+    "collect",
+    "count",
+    "len",
+    "to_vec",
+    "to_owned",
+    "as_slice",
+    "as_bytes",
+    "bytes",
+    "copy_from_slice",
+    "clone_from_slice",
+    "into",
+    "try_into",
+    "to_string",
+    "chars",
+    "char_indices",
+    "par_iter",
+    "into_par_iter",
+];
+
+/// How the innermost range expression of `text` (parsed as one block
+/// statement) whose text covers `span` is consumed: walk up through
+/// parentheses, references, a slice index and the method chain whose
+/// receiver it is.
+fn range_consumer(text: &str, span: std::ops::Range<usize>) -> Option<RangeConsumer> {
+    const PREFIX: &str = "fn __ripr_range_probe() {\n";
+    const ARM_PREFIX: &str = "fn __ripr_range_probe() {\nmatch __ripr_subject {\n";
+    let covers = |node: &ra_ap_syntax::SyntaxNode, offset: usize| {
+        let covered = node.text_range();
+        usize::from(covered.start()) <= offset + span.start
+            && offset + span.end <= usize::from(covered.end())
+    };
+    // A match arm line (`1..5 => 1,`, `_ => (0..n).sum(),`) parses inside a
+    // `match`; a range pattern there is a membership test, which absorbs
+    // every element away from the moved bound. A block header
+    // (`for i in 1..n {`, `if (0..n).contains(&x) {`) parses once its block
+    // is closed.
+    let trimmed = text.trim_end();
+    let closing = if trimmed.ends_with("=>") {
+        " {},"
+    } else if trimmed.ends_with('{') {
+        "}"
+    } else {
+        ""
+    };
+    let arm = text
+        .contains("=>")
+        .then(|| {
+            let source = format!("{ARM_PREFIX}{text}{closing}\n_ => {{}}\n}}\n}}\n");
+            crate::analysis::syntax::parse_clean_source_file(&source)
+        })
+        .flatten();
+    if let Some(parse) = &arm
+        && parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::RangePat::can_cast(node.kind()))
+            .any(|node| covers(&node, ARM_PREFIX.len()))
+    {
+        return Some(RangeConsumer::Pattern);
+    }
+    let (parse, offset) = match arm {
+        Some(parse) => (parse, ARM_PREFIX.len()),
+        None => {
+            let closing = if trimmed.ends_with('{') { "}" } else { "" };
+            let source = format!("{PREFIX}{text}{closing}\n}}\n");
+            (
+                crate::analysis::syntax::parse_clean_source_file(&source)?,
+                PREFIX.len(),
+            )
+        }
+    };
+    let range = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::RangeExpr::cast)
+        .filter(|range| covers(range.syntax(), offset))
+        .last()?;
+    let mut node = range.syntax().clone();
+    while let Some(parent) = node.parent() {
+        if ast::RefExpr::can_cast(parent.kind()) || ast::ParenExpr::can_cast(parent.kind()) {
+            node = parent;
+            continue;
+        }
+        if let Some(index) = ast::IndexExpr::cast(parent.clone())
+            && index.index().is_some_and(|inner| inner.syntax() == &node)
+        {
+            node = parent;
+            continue;
+        }
+        if let Some(call) = ast::MethodCallExpr::cast(parent.clone())
+            && call
+                .receiver()
+                .is_some_and(|receiver| receiver.syntax() == &node)
+        {
+            let name = call.name_ref().map(|name| name.text().to_string());
+            if !name.is_some_and(|name| LENGTH_PRESERVING_METHODS.contains(&name.as_str())) {
+                return Some(RangeConsumer::Absorbing);
+            }
+            node = parent;
+            continue;
+        }
+        // `v.get(a..b)` and its unchecked or mutable forms slice like an
+        // index expression.
+        if ast::ArgList::can_cast(parent.kind())
+            && let Some(call) = parent.parent().and_then(ast::MethodCallExpr::cast)
+            && ast::ArgList::cast(parent.clone()).is_some_and(|args| args.args().count() == 1)
+            && call
+                .name_ref()
+                .is_some_and(|name| SLICING_METHODS.contains(&name.text().to_string().as_str()))
+        {
+            node = call.syntax().clone();
+            continue;
+        }
+        // A `for` header, or a range handed to a call (`Iterator::sum(0..n)`,
+        // `helper(0..n)`) whose consumer is not read here.
+        if ast::ForExpr::can_cast(parent.kind()) || ast::ArgList::can_cast(parent.kind()) {
+            return Some(RangeConsumer::Absorbing);
+        }
+        break;
+    }
+    Some(RangeConsumer::Preserving)
 }
 
 /// #14388: the string literal a related test passes that reaches an appended
