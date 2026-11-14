@@ -543,7 +543,7 @@ pub(crate) fn render_human_triage(
                     out.push_str(&format!(
                         "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
                     ));
-                } else if head_has_parent(&output.root) {
+                } else if last_commit_retry_applies(output) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -1391,12 +1391,53 @@ pub(crate) fn canonical_next_action_for_triage(
         } else {
             None
         },
+        check_scope_route: (check_case_for_triage(triage, output)
+            == NextActionCheckCase::ScopeMissing
+            && last_commit_retry_applies(output))
+        .then(|| last_commit_retry_command(output, None)),
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// #14423: the one owner of the "check the last commit" retry for an empty
+/// `scope_missing` range that is the base branch compared with itself. True
+/// when the committed-history read compared HEAD's own branch as the base
+/// (`<branch>`, or `origin/<branch>` in a clone, under the same git-identity
+/// rule the bare human check's rescope uses), no untracked or ignored source
+/// file explains the empty range, and `HEAD~1` resolves. The human `Safe next
+/// action`, the agent `stop=` line and the JSON
+/// `canonical_next_action.stop.scope_route` all read this decision.
+pub(crate) fn last_commit_retry_applies(output: &CheckOutput) -> bool {
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        || (output.unanalyzed_working_tree
+            && !output.untracked_working_tree_source_paths.is_empty())
+        || !output.ignored_working_tree_source_paths.is_empty()
+    {
+        return false;
+    }
+    crate::analysis::base_is_checked_out_head_with_parent(&output.root, base, None)
+}
+
+/// The `ripr check` rerun for [`last_commit_retry_applies`], rooted like the
+/// restart route, with ` --format <format>` appended when one is given.
+pub(crate) fn last_commit_retry_command(output: &CheckOutput, format: Option<&str>) -> String {
+    let mut command = format!(
+        "ripr check --root {} --base HEAD~1",
+        shell_arg(&crate::agent::loop_commands::root_display(
+            &output.root.display().to_string()
+        ))
+    );
+    if let Some(format) = format {
+        command.push_str(&format!(" --format {format}"));
+    }
+    command
 }
 
 /// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
@@ -2070,7 +2111,19 @@ fn triage_rank<'a>(
     root: &std::path::Path,
     context: &SourceRoleContext,
     decisive_findings: &[&Finding],
-) -> (u8, u8, u8, u8, u8, u8, u8, i32, &'a std::path::Path, usize) {
+) -> (
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    u8,
+    i32,
+    u8,
+    &'a std::path::Path,
+    usize,
+) {
     let class_rank = match finding.class {
         ExposureClass::ReachableUnrevealed => 2,
         ExposureClass::WeaklyExposed => 3,
@@ -2120,6 +2173,13 @@ fn triage_rank<'a>(
         u8::from(finding.oracle_related_tests().next().is_none()),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
+        // #14266: a repair route zeroes `repair_rank` for every routed
+        // finding, and every stable finding with a next step counts as
+        // routed, so without this key two otherwise equal candidates were
+        // ordered by file path: an unknown in `analysis/` led a
+        // `reachable_unrevealed` gap in `provider_contract/`. The class
+        // order breaks that tie before the path does.
+        class_rank,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
@@ -3782,6 +3842,44 @@ mod tests {
             (NARROW_STATE.to_string(), NARROW_ACTION.to_string())
         );
         Ok(())
+    }
+
+    /// #14266: two candidates equal on every evidence key through
+    /// confidence order by exposure class, not by file path. The unknown
+    /// sorts first by path and is listed first, so neither path order nor
+    /// insertion order can masquerade as ranking.
+    #[test]
+    fn start_here_breaks_an_evidence_tie_by_class_before_path() {
+        let mut unknown = finding_at(
+            "finding:unknown",
+            "src/a_analysis.rs",
+            ExposureClass::PropagationUnknown,
+        );
+        let mut gap = finding_at(
+            "finding:unrevealed",
+            "src/z_provider.rs",
+            ExposureClass::ReachableUnrevealed,
+        );
+        for finding in [&mut unknown, &mut gap] {
+            finding.recommended_next_step = Some("inspect the related test".to_string());
+            finding.confidence = 0.66;
+        }
+        let output = test_output(vec![unknown.clone(), gap.clone()]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unrevealed")
+        );
+
+        // Discriminating control: a higher-confidence unknown still leads,
+        // so class only breaks a tie and does not override earlier keys.
+        unknown.confidence = 0.9;
+        let output = test_output(vec![gap, unknown]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(
+            triage.selected.map(|finding| finding.id.as_str()),
+            Some("finding:unknown")
+        );
     }
 
     /// #9346: the same preference covers a weak production gap.

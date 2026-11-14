@@ -200,6 +200,25 @@ Source resolution compiles nothing, so it is weaker than a listing. Hosted
 `ci-policy` and the standalone `cargo xtask check-file-policy` always build
 and list every applicable selector.
 
+### Rule 8: local `precommit` caps build jobs on a memory-constrained host
+
+On a 4-core, 15 GB host, whole-workspace Clippy checks the `ripr` library
+test (about 9.8 GB) beside an `xtask` unit. At Cargo's default job count that
+run was stopped by the memory limit; at two jobs it passed once (12.8 GB) and
+was stopped once (13.6 GB). Local `precommit` sets `CARGO_BUILD_JOBS=1` for
+the Clippy and enumeration children it starts when all of these hold:
+
+- `CARGO_BUILD_JOBS` is not already set;
+- the smallest readable memory bound is below 24 GiB: `MemTotal`, and the
+  cgroup limit of this process's own cgroup and every ancestor named in
+  `/proc/self/cgroup` (v2 `memory.max`, v1 `memory.limit_in_bytes`), so a
+  nested child limit below an unlimited root counts;
+- the host reports more than one CPU.
+
+A host whose memory or CPU count cannot be read is left alone. The run says
+on stderr that the cap applies. Hosted `ci-policy` and the standalone
+`cargo xtask check-file-policy` never apply it.
+
 ## Decisions
 
 1. **Bound by attempts and by summed duration.** Adopted: both
@@ -222,6 +241,11 @@ and list every applicable selector.
    that cannot be read as a listing. Rejected: dropping the selector from
    local runs (a renamed module would pass), and moving the tests to an
    integration target (they exercise private items).
+6. **Cap jobs from host memory, overridable.** Adopted: an environment
+   variable on the children, so recorded commands are unchanged and an
+   explicit `CARGO_BUILD_JOBS` wins. One job, because two jobs was
+   measured to pass once and fail once. Rejected: relying on each session to
+   remember the variable, and two jobs.
 
 ## Required Evidence
 
@@ -258,6 +282,10 @@ and list every applicable selector.
   resolves the shipped `ripr` selector in this repository. A policy test pins
   that a resolved selector is not handed to the builder, that the remaining
   selectors are, and that the resolved row cannot be read as a listing.
+- The job-cap decision is pinned as a table (explicit count, the memory
+  boundary, unreadable memory or CPU count, one CPU), the memory parsers
+  on exact and malformed inputs, and the cgroup walk (v2 and v1, child limited
+  under an unlimited root, parent limited, a sibling's limit ignored).
 
 ## Non-Goals
 
@@ -296,6 +324,9 @@ and list every applicable selector.
    selector is resolved in source and its row says `not_listed`; the other
    selectors are built and listed. If the named module were renamed, the
    selector would go to the build-and-list path and fail there.
+9. Local `precommit` on a 4-core host with 16 GB: Cargo children run with
+   `CARGO_BUILD_JOBS=1`. With `CARGO_BUILD_JOBS=4` set, or on a 32 GB host,
+   nothing is imposed.
 
 ## Test Mapping
 
@@ -305,6 +336,7 @@ and list every applicable selector.
   composition side of rule 6.
 - `xtask/src/policy/file_policy.rs`: the policy side of rules 6 and 7.
 - `xtask/src/policy/library_selector.rs`: the resolver side of rule 7.
+- `xtask/src/cargo_job_cap.rs`: rule 8.
 
 ## Implementation Mapping
 
@@ -321,6 +353,8 @@ and list every applicable selector.
   `coverage_disclosure_items` (rule 6); `partition_resolved_in_source`
   (rule 7).
 - `xtask/src/policy/library_selector.rs`: `resolve_in_source` (rule 7).
+- `xtask/src/cargo_job_cap.rs`: `capped_jobs`, `local_precommit_envs`
+  (rule 8).
 
 ## Metrics
 

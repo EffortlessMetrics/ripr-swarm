@@ -861,6 +861,17 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
+        // The producer's bounded cause (for example, the parser reported
+        // syntax errors) is what makes the recovery actionable; JSON, SARIF
+        // and the editor sentence already carry it (#14398).
+        if let Some(detail) = &limitation.bounded_detail {
+            let detail = if plain {
+                plain_limitation_detail(detail, limitation.path.as_deref())
+            } else {
+                detail.trim_end_matches('.')
+            };
+            out.push_str(&format!("; {detail}"));
+        }
         let recovery = limitation.recovery.kind;
         let recovery_label = if plain || recovery.plain_label() == recovery.as_str() {
             recovery.plain_label().to_string()
@@ -875,6 +886,33 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         ));
     }
     out.push('\n');
+}
+
+/// The bounded surface keeps no schema tokens (#8165, RIPR-SPEC-0122): a
+/// producer detail that leads with its snake_case code (optionally after
+/// `static limit `) loses that prefix, and a trailing `: <path>` that repeats
+/// the line's `file:` part is dropped (#14398).
+fn plain_limitation_detail<'a>(detail: &'a str, path: Option<&str>) -> &'a str {
+    let mut text = detail.trim_end_matches('.');
+    let unprefixed = text.strip_prefix("static limit ").unwrap_or(text);
+    if let Some((code, rest)) = unprefixed.split_once(": ")
+        && code.contains('_')
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !rest.is_empty()
+    {
+        text = rest;
+    }
+    if let Some(path) = path
+        && let Some(head) = text
+            .strip_suffix(path)
+            .and_then(|head| head.strip_suffix(": "))
+        && !head.is_empty()
+    {
+        text = head;
+    }
+    text
 }
 
 /// Emit a per-language changed-file breakdown only when a non-Rust language
@@ -11358,5 +11396,43 @@ mod tests {
             "{digest}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod limitation_detail_tests {
+    use super::plain_limitation_detail;
+
+    /// #14398: the bounded surface keeps the cause but not its schema code or
+    /// a repeated path; prose details pass through.
+    #[test]
+    fn plain_limitation_detail_drops_codes_and_repeated_paths() {
+        assert_eq!(
+            plain_limitation_detail(
+                "rust_lexical_test_index_partial: unchanged lexical-fallback test file lost evidence: tests/opaque.rs",
+                Some("tests/opaque.rs"),
+            ),
+            "unchanged lexical-fallback test file lost evidence"
+        );
+        assert_eq!(
+            plain_limitation_detail(
+                "static limit expression_nesting_budget: depth 2101 exceeds the 2000-level budget.",
+                None,
+            ),
+            "depth 2101 exceeds the 2000-level budget"
+        );
+        assert_eq!(
+            plain_limitation_detail("1 parser error(s): Unexpected token", Some("src/broken.ts")),
+            "1 parser error(s): Unexpected token"
+        );
+        assert_eq!(
+            plain_limitation_detail(
+                "src/lib.rs: the Rust parser reported syntax errors.",
+                Some("src/lib.rs"),
+            ),
+            "src/lib.rs: the Rust parser reported syntax errors"
+        );
+        // A code with nothing after it is kept rather than emptied.
+        assert_eq!(plain_limitation_detail("some_code: ", None), "some_code: ");
     }
 }

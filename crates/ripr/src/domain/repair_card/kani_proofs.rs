@@ -70,5 +70,7 @@ fn budget_validate_accepts_exactly_nonzero_limits() {
 /// refuses on the budget's own shape.
 #[kani::proof]
 fn default_budget_is_valid() {
-    assert!(RepairCardBudget::default().validate().is_ok());
+    let valid = RepairCardBudget::default().validate().is_ok();
+    assert!(valid);
+    kani::cover!(valid, "the production default budget is accepted");
 }

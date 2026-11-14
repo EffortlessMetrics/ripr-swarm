@@ -172,7 +172,7 @@
       "const": "terse"
     },
     "evidence_legend": {
-      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing`, `assertion_texts` and `ripr.<stage>.summary` values; expanding every code through this legend reconstructs the exact original document strings.",
       "type": "object",
       "additionalProperties": { "type": "string", "minLength": 1 }
     },

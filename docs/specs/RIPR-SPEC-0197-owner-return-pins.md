@@ -291,7 +291,14 @@ wrong credits.
    the attribute carries no arguments (#5040), and under `#[actix_rt::test]`
    and `#[actix_web::test]` on the same terms (#14073): the exact
    crate-qualified path, the crate not rebound in the test's module, and no
-   arguments (`system = ..` swaps the runtime). An `async` owner's return value is then read
+   arguments (`system = ..` swaps the runtime). `#[test_log::test]` (#14211)
+   runs the unchanged body after installing a logger: it is admitted bare on a
+   sync `fn`, or as exactly `#[test_log::test(tokio::test)]` on an `async fn`,
+   with neither `test_log` nor `tokio` rebound in the test's module.
+   `#[tracing_test::traced_test]` (#14213) installs a subscriber and enters a
+   span before the unchanged body: it is admitted by its crate-qualified path,
+   or by the bare name bound by one unrenamed `use tracing_test::traced_test`,
+   with no arguments and the crate not rebound. An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -502,7 +509,8 @@ wrong credits.
    A compared operand that is a plain identifier the test binds exactly
    once, by an immutable `let v [: T] = <call>;`, is that call (#6974) when
    `v` appears nowhere else in the test but as a whole operand of
-   `assert_eq!` assertions on later lines, and the assertion is the
+   `assert_eq!` assertions (or one whole side of a plain lone-equality
+   `assert!(v == e)`, see Lone-equality pins) on later lines, and the assertion is the
    statement right after the `let` and the only statement on its line (a
    statement between them, or one sharing the assertion's line, could
    change the value through a shared handle). A `mut` binding, a second binding, a
@@ -1873,7 +1881,14 @@ reads `assert_eq!` operands when:
    macro admission (the parser keys each terminal Err-return guard by its
    `if` line and whitespace-free condition, with the same eager-path
    gates), `#[should_panic]`, the test's line range and the return-path
-   gate. The #6974 let-bound result rule applies to `assert_eq!` only.
+   gate. The #6974 let-bound result rule reads a plain `assert!` here as
+   it reads `assert_eq!` (#14085): `let v = owner(..); assert!(v == 4);`
+   fails exactly when `assert_eq!(v, 4)` does, so `v` is the call when one
+   side of the single `==` is the binding alone, the assertion names it
+   nowhere else (a message argument `"{}", v` refuses; an inline `"{v}"`
+   is string text), and every #6974 binding condition holds. A guard twin
+   over a binding (`let v = owner(..); if v != 4 { return Err(..) }`)
+   stays unpinned.
 4. A guard reads only its condition. A macro inside its body runs only
    when the guard fires, so it is never the pinned assertion, and the
    self-computed check selects its reader the same way: an `assert_eq!`
@@ -2664,7 +2679,33 @@ not themselves a static propagation proof.
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its
-  module children otherwise look like a crate root of their own. The same
+  module children otherwise look like a crate root of their own. #14116
+  narrows that last clause to what the paste can reach. An `include!` of a
+  literal path inside the repository, either inside an inline module or at
+  file level with a target the index does not hold, is read: an inert
+  fragment (no out-of-line `mod`, no `include!`, no `#[path]`, so it compiles
+  no further file) that the index holds as a file no crate claims is already
+  scanned as a file any crate may compile, and one the index does not hold
+  is read from disk with the same assertion-macro scan every indexed file
+  gets. A fragment with no possible binding leaves placement on. One that
+  may bind an assertion macro turns placement off only for the including
+  crate when that crate is an integration test, bench or example root, which
+  nothing can import (a `[lib] path` moved under `tests/` is a library and
+  does not count), and its crate-local sites stay charged to that crate;
+  inside a library or binary it keeps the workspace-wide refusal. A dynamic
+  expression, a missing, unreadable or oversized target, a path that
+  resolves outside the repository through a symlink, a fragment that
+  mounts a file, and a fragment that is itself a module of some crate keep
+  the workspace-wide refusal too. The fragment's items stay unread, so a
+  test that reaches a fragment's function by import, glob or path is not
+  taken for the owner's
+  (`an_include_in_a_test_crate_leaves_the_librarys_tests_credited`,
+  `a_read_inert_fragment_in_the_library_leaves_its_tests_credited`,
+  `an_unread_mounting_or_binding_fragment_keeps_the_refusal`,
+  `a_fragments_namesake_is_never_taken_for_the_owner`,
+  `a_library_rooted_under_tests_is_not_an_unimportable_crate`,
+  `a_fragment_symlinked_out_of_the_repository_is_not_read`,
+  `the_glob_alone_and_an_unresolved_include_are_the_two_baselines`). The same
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
@@ -3353,6 +3394,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Let-bound lone-equality pins (#14085):
+  `crates/ripr/tests/let_bound_lone_equality_pin.rs`
+  (`a_let_bound_result_compared_by_a_lone_equality_pins_the_owner`,
+  `refused_bindings_and_conditions_lend_no_lone_equality_pin`,
+  `an_equality_the_test_never_runs_stays_unrevealed`).
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,

@@ -348,6 +348,13 @@ pub enum NextActionStop {
         /// names the route, it does not run it.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         repair_route: String,
+        /// The one `ripr check` rerun that gives an empty-by-construction
+        /// `scope_missing` range a scope (#14423): on the base branch with a
+        /// parent commit, `--base HEAD~1` checks the last commit, the same
+        /// command the human `Safe next action` prints. Present only when that
+        /// decision holds; the class stays non-executable.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        scope_route: String,
     },
     DoctorRecovery {
         check_name: String,
@@ -508,6 +515,9 @@ pub(crate) struct NextActionInput<'a> {
     /// says the gap can be started. Carried on the non-executable check stop
     /// so JSON agrees with the human `Next` block; never an execution grant.
     pub(crate) check_repair_route: Option<String>,
+    /// The `ripr check` rerun that gives a `scope_missing` empty range a
+    /// scope (#14423); see [`NextActionStop::CheckTriage::scope_route`].
+    pub(crate) check_scope_route: Option<String>,
     /// The precise doctor recovery, bound by the doctor producer only.
     pub(crate) doctor_recovery: Option<NextActionDoctorRecovery>,
     /// The delegated check/repair transaction, bound by pilot only.
@@ -1193,6 +1203,7 @@ fn render_decision(
                     case,
                     detail_route: input.detail_route.clone(),
                     repair_route: input.check_repair_route.clone().unwrap_or_default(),
+                    scope_route: input.check_scope_route.clone().unwrap_or_default(),
                 },
                 transition,
                 Vec::new(),
@@ -1399,6 +1410,7 @@ mod tests {
             restart_route: "ripr check --root .".to_string(),
             check_case: None,
             check_repair_route: None,
+            check_scope_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),
@@ -2764,6 +2776,7 @@ mod tests {
                 case: NextActionCheckCase::TopGap,
                 detail_route: "ripr explain finding:top".to_string(),
                 repair_route: String::new(),
+                scope_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -2834,6 +2847,7 @@ mod tests {
             restart_route: "ripr repair --root .".to_string(),
             check_case: None,
             check_repair_route: None,
+            check_scope_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),

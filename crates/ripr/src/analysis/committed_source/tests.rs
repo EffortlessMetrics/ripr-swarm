@@ -499,6 +499,13 @@ fn porcelain_parser_pairs_rename_sources_and_rejects_malformed_records() -> Resu
     assert_eq!(parsed.dirty, vec!["src/lib.rs"]);
     assert_eq!(parsed.ignored_files, vec!["tests/local.rs"]);
     assert_eq!(parsed.ignored_directories, vec!["build"]);
+    // #14315: ripr's self-ignoring output tree, at the top or under a nested
+    // root, is not source; a similarly named authored path still counts.
+    let parsed = parse_porcelain_z(
+        b"!! target/ripr/cache/\0!! target/ripr/.gitignore\0!! app/target/ripr/cache/\0!! app/target/ripr/x.rs\0!! target/ripr-notes/\0!! src/target/riprx.rs\0",
+    )?;
+    assert_eq!(parsed.ignored_directories, vec!["target/ripr-notes"]);
+    assert_eq!(parsed.ignored_files, vec!["src/target/riprx.rs"]);
     // #5258: `??` records are untracked. They stay in the dirty set (the
     // overlay reads them absent at HEAD) and are named for the output layer,
     // so the note can distinguish them from the `--worktree`-visible edits.

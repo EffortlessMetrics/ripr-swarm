@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/diff-refusal.schema.json",
+  "title": "RIPR Diff Refusal",
+  "description": "The refusal envelope `ripr diff --json` writes to stdout, with exit code 2, when it cannot produce a `ripr_diff` report after argument parsing (for example an unresolvable base, no work tree, or an unreadable config). It is the envelope shape `ripr check --format json` uses for a refusal, keyed with the diff report's `schema_version`: no `kind`, no findings, a zeroed summary, and exactly one `run_limitations` entry naming the refusal and its remedy. Argument usage errors write no JSON. The `summary`, `run_limitation` and `refusal_remedy` definitions are copies of the same definitions in `check.schema.json` and are held equal to them by test.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "root",
+    "summary",
+    "findings",
+    "analysis_scope",
+    "run_limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "tool": {
+      "const": "ripr"
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "enum": [
+        "instant",
+        "draft",
+        "fast",
+        "deep",
+        "ready"
+      ]
+    },
+    "base": {
+      "description": "The base as the caller supplied it; omitted when none was passed.",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary",
+      "properties": {
+        "changed_rust_files": {
+          "const": 0
+        },
+        "probes": {
+          "const": 0
+        },
+        "findings": {
+          "const": 0
+        },
+        "exposed": {
+          "const": 0
+        },
+        "weakly_exposed": {
+          "const": 0
+        },
+        "reachable_unrevealed": {
+          "const": 0
+        },
+        "no_static_path": {
+          "const": 0
+        },
+        "infection_unknown": {
+          "const": 0
+        },
+        "propagation_unknown": {
+          "const": 0
+        },
+        "static_unknown": {
+          "const": 0
+        },
+        "changed_files_by_language": {
+          "maxItems": 0
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "analysis_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "run_status",
+        "basis",
+        "downstream_consumable",
+        "limitation",
+        "repair_route"
+      ],
+      "properties": {
+        "scope": {
+          "const": "diff"
+        },
+        "run_status": {
+          "description": "The typed refusal identity, for example `base_unresolvable`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "basis": {
+          "description": "The typed refusal identity, for example `base_unresolvable`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "downstream_consumable": {
+          "const": false
+        },
+        "limitation": {
+          "description": "The typed refusal identity, for example `base_unresolvable`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "repair_route": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "run_limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "$ref": "#/$defs/run_limitation",
+        "required": [
+          "remedy"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_rust_files",
+        "probes",
+        "findings",
+        "exposed",
+        "weakly_exposed",
+        "reachable_unrevealed",
+        "no_static_path",
+        "infection_unknown",
+        "propagation_unknown",
+        "static_unknown",
+        "changed_files_by_language"
+      ],
+      "properties": {
+        "changed_rust_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exposed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "weakly_exposed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reachable_unrevealed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_static_path": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "infection_unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "propagation_unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "static_unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_files_by_language": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "language",
+              "files"
+            ],
+            "properties": {
+              "language": {
+                "type": "string",
+                "minLength": 1
+              },
+              "files": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "suppressed_by_policy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "withheld_by_owner_opt_out": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "conflicting_expressions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "proof_harness_only": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "run_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "run_status",
+        "basis",
+        "downstream_consumable",
+        "message",
+        "repair_route"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "downstream_consumable": {
+          "const": false
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repair_route": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remedy": {
+          "$ref": "#/$defs/refusal_remedy"
+        }
+      }
+    },
+    "refusal_remedy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "command",
+        "alternatives",
+        "tool",
+        "flags",
+        "fill_in",
+        "retry_stated",
+        "env",
+        "conditional",
+        "prose_has_more"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "mcp_tool",
+            "flags",
+            "none"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^--[a-z]"
+          }
+        },
+        "fill_in": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "retry_stated": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "conditional": {
+          "type": "boolean"
+        },
+        "prose_has_more": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
