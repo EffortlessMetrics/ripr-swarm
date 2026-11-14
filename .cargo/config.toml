@@ -9,6 +9,12 @@ build-lld = [
 xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
+[build]
+# Agent worktrees are short-lived. Retaining a separate incremental object graph
+# in every checkout costs more disk than it usually saves; a long-lived checkout
+# can opt in deliberately with CARGO_INCREMENTAL=1.
+incremental = false
+
 [env]
 TEMP = { value = "target", relative = true, force = true }
 TMP = { value = "target", relative = true, force = true }
