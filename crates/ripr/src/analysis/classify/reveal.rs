@@ -20,7 +20,7 @@ use super::builder_override::{
     literals_equal, overridden_fields_read, setter_names, struct_literal_field_texts,
     struct_literal_fields,
 };
-use super::owner_value_sink::{OwnerValueFlow, owner_value_flow};
+use super::owner_value_sink::{OwnerValueFlow, owner_field_value_flow};
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
     assertion_observes_direct_collection_in_test_for_probe, direct_collection_mutation_receiver,
@@ -148,6 +148,9 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// owner (`s.place("A", 0);`) may have returned before its insert, so
     /// only a call whose result is consumed confirms a keyed read.
     pub(in crate::analysis) owner_returns_value: bool,
+    /// #14562: the owner's source line at the probe (`big: n >= 10,`), read
+    /// only for a predicate probe; `None` when unknown.
+    pub(in crate::analysis) predicate_record_field: Option<&'a str>,
     /// #8051: whether the owner body before the changed expression may
     /// leave early (`if self.locked { return; }`, `?`, a panicking call),
     /// including a guard sharing the changed line. Only then can a test
@@ -207,6 +210,7 @@ fn reveal_evidence(
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
             owner_returns_value: true,
+            predicate_record_field: None,
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
@@ -257,6 +261,7 @@ fn reveal_evidence_with_exit(
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
             owner_returns_value: true,
+            predicate_record_field: None,
             owner_may_exit_before_probe,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
@@ -326,6 +331,7 @@ fn reveal_evidence_proximity_reach_pinning(
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
             owner_returns_value: true,
+            predicate_record_field: None,
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
@@ -2483,6 +2489,13 @@ fn analyze_related_assertions(
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let predicate_family = matches!(probe.family, ProbeFamily::Predicate);
+    let predicate_field = predicate_family
+        .then(|| {
+            return_admission
+                .predicate_record_field
+                .and_then(|line| predicate_initialized_field(line, &probe.expression))
+        })
+        .flatten();
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
     // literal (`return_value`) or field initializer (`field_construction`)
     // writes. Such a field's token confirms nothing in an assertion that
@@ -3144,9 +3157,13 @@ fn analyze_related_assertions(
                 // #14206: a predicate probe needs no token confirmation, so
                 // an exact assertion that calls the owner and then discards
                 // or masks the call's value would otherwise confirm.
+                // #14562: a predicate that sets one field of the owner's
+                // returned record (`big: n >= 10,`) is observed only through
+                // that field or the whole record.
                 let owner_value_masked = predicate_family
                     && match_context.owner_callee.is_some_and(|owner| {
-                        owner_value_flow(test, &assertion.text, owner) == OwnerValueFlow::Masked
+                        owner_field_value_flow(test, &assertion.text, owner, predicate_field)
+                            == OwnerValueFlow::Masked
                     });
                 let observation_confirmed = !self_computed
                     // Refusal withholds kind-only credit, not an independently
@@ -3643,6 +3660,68 @@ fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
             .filter(|(name, _)| names.contains(name))
             .collect(),
     )
+}
+
+/// #14562: the field a predicate probe's source line initializes, when that
+/// line is exactly `name: <predicate>,` (or without the comma) in a record
+/// literal and `<predicate>` is the probe's expression.
+fn predicate_initialized_field<'a>(line: &'a str, expression: &str) -> Option<&'a str> {
+    let line = line.trim();
+    let line = line.strip_suffix(',').unwrap_or(line).trim_end();
+    let colon = line.find(':')?;
+    let rest = &line[colon + 1..];
+    if rest.starts_with(':') || rest.trim() != expression.trim() {
+        return None;
+    }
+    let name = line[..colon].trim();
+    (!name.is_empty()
+        && name.bytes().all(is_ident_byte)
+        && !name.starts_with(|first: char| first.is_ascii_digit()))
+    .then_some(name)
+}
+
+/// #14562: whether the owner `body` (from its `fn` token) declares a plain
+/// named return type (`-> Opts`, `-> crate::Opts`, `-> Self`) and builds a
+/// literal of it (`Opts {` or `Self {`). Only then does a predicate that sets
+/// one field of a literal there set a field of the returned record. A
+/// generic, reference, tuple, collection or `impl` return keeps the plain
+/// #14206 reading.
+pub(in crate::analysis) fn owner_returns_record(body: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let Some(open) = masked.find('{') else {
+        return false;
+    };
+    let header = &masked[..open];
+    let Some(arrow) = header.find("->") else {
+        return false;
+    };
+    let returned = header[arrow + 2..].trim();
+    let returned = returned
+        .find(" where")
+        .map_or(returned, |at| returned[..at].trim_end());
+    if returned.is_empty()
+        || !returned
+            .bytes()
+            .all(|byte| is_ident_byte(byte) || byte == b':')
+    {
+        return false;
+    }
+    let Some(name) = returned.rsplit("::").next().filter(|name| {
+        name.starts_with(|first: char| first.is_ascii_uppercase())
+            && name.bytes().all(is_ident_byte)
+    }) else {
+        return false;
+    };
+    let rest = &masked[open..];
+    [name, "Self"].iter().any(|literal| {
+        rest.match_indices(literal).any(|(at, _)| {
+            let before = at
+                .checked_sub(1)
+                .and_then(|index| rest.as_bytes().get(index));
+            !before.is_some_and(|byte| is_ident_byte(*byte))
+                && rest[at + literal.len()..].trim_start().starts_with('{')
+        })
+    })
 }
 
 fn constructed_field_name(expression: &str) -> Option<&str> {
@@ -6808,6 +6887,7 @@ mod tests {
             },
             owner_argument_names: &[],
             owner_returns_value: true,
+            predicate_record_field: None,
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
@@ -8383,6 +8463,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -8484,6 +8565,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
@@ -8672,6 +8754,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
@@ -8787,6 +8870,7 @@ mod tests {
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
@@ -9215,6 +9299,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -9312,6 +9397,7 @@ mod tests {
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -10734,6 +10820,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: false,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11243,6 +11330,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11319,6 +11407,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11366,6 +11455,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11432,6 +11522,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11500,6 +11591,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11748,6 +11840,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -11798,6 +11891,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -12248,6 +12342,7 @@ return Err(\"typed pin\".into());
                         constructor_starts_empty: &|_, _, _| false,
                         owner_may_exit_before_probe: false,
                         owner_returns_value: true,
+                        predicate_record_field: None,
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
@@ -12333,6 +12428,7 @@ return Err(\"typed pin\".into());
                     constructor_starts_empty: &|_, _, _| false,
                     owner_may_exit_before_probe: false,
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
@@ -12454,6 +12550,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
@@ -12795,6 +12892,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -12906,6 +13004,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     owner_argument_names: &[],
                     owner_returns_value: true,
+                    predicate_record_field: None,
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
@@ -12960,6 +13059,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -13465,6 +13565,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -14018,6 +14119,7 @@ return Err(\"typed pin\".into());
                 getter_reads_key: &|_, _, _| None,
                 owner_argument_names: &[],
                 owner_returns_value: true,
+                predicate_record_field: None,
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
@@ -14386,6 +14488,62 @@ return Err(\"typed pin\".into());
             called_names("a.tax(1) + vec![x] + Tax::new::<u8>(2) + taxes (3)"),
             vec!["tax", "new", "taxes"]
         );
+    }
+
+    /// #14562: the field rule applies only to an owner that returns a plain
+    /// named record it builds.
+    #[test]
+    fn only_an_owner_returning_a_built_record_takes_the_field_rule() {
+        for body in [
+            "fn opts(n: u32) -> Opts {\n    Opts {\n        big: n >= 10,\n    }\n}",
+            "fn new(n: u32) -> Self {\n    Self { big: n >= 10 }\n}",
+            "fn opts(n: u32) -> crate::cfg::Opts where u32: Copy {\n    let o = Opts { big: n >= 10 };\n    o\n}",
+        ] {
+            assert!(owner_returns_record(body), "{body}");
+        }
+        for body in [
+            "fn is_big(n: u32) -> bool {\n    let o = Opts { big: n >= 10 };\n    o.big\n}",
+            "fn all(n: u32) -> Vec<Opts> {\n    vec![Opts { big: n >= 10 }]\n}",
+            "fn opts(n: u32) -> Option<Opts> {\n    Some(Opts { big: n >= 10 })\n}",
+            "fn opts(n: u32) -> &Opts {\n    todo!()\n}",
+            "fn render(n: u32) -> String {\n    Cfg { verbose: n > 1 }.render()\n}",
+            "fn opts(n: u32) -> Opts {\n    build(n >= 10)\n}",
+            "fn set(&mut self, n: u32) {\n    self.o = Opts { big: n >= 10 };\n}",
+        ] {
+            assert!(!owner_returns_record(body), "{body}");
+        }
+    }
+
+    /// #14562: only a line that is exactly `name: <predicate>` (optional
+    /// comma) names the record field a predicate sets.
+    #[test]
+    fn only_a_field_initializer_line_names_the_predicate_record_field() {
+        assert_eq!(
+            predicate_initialized_field("        big: n >= 10,", "n >= 10"),
+            Some("big")
+        );
+        assert_eq!(
+            predicate_initialized_field(
+                "verbose: flag == \"-v\" || flag == \"--verbose\"",
+                "flag == \"-v\" || flag == \"--verbose\""
+            ),
+            Some("verbose")
+        );
+        for (line, expression) in [
+            ("big: n >= 10 && strict,", "n >= 10"),
+            ("let big: bool = n >= 10;", "n >= 10"),
+            ("Kind::Big => n >= 10,", "n >= 10"),
+            ("n >= 10", "n >= 10"),
+            ("0: n >= 10,", "n >= 10"),
+            ("std::big: n >= 10,", "n >= 10"),
+            ("big: n >= 10,", "n > 10"),
+        ] {
+            assert_eq!(
+                predicate_initialized_field(line, expression),
+                None,
+                "{line}"
+            );
+        }
     }
 
     /// #5830 review: a type-qualified expected-side call (`Money::new(8)`)

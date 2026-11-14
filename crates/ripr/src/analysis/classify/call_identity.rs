@@ -193,6 +193,10 @@ pub(crate) struct CallIdentityMemos {
     /// sources, so the per-(seam, test) enum-variant check reads it once
     /// instead of masking every file that mentions the name each time.
     sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// Positions in [`RustIndex::functions`] order of every function, keyed by
+    /// its name without a `r#` prefix, built once per index so a per-(seam,
+    /// test) free-function lookup reads one bucket instead of every function.
+    functions_by_unraw_name: std::sync::OnceLock<std::collections::HashMap<String, Vec<usize>>>,
     /// #12886: the cross-file resolver for assertion-forwarding workspace
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
@@ -253,6 +257,27 @@ impl CallIdentityMemos {
             cache.insert(key, answer);
         }
         answer
+    }
+
+    /// Positions (in [`RustIndex::functions`] order) of the functions whose
+    /// name, `r#` prefix removed, is `unraw_name`; ascending.
+    pub(super) fn function_positions_named<'m>(
+        &'m self,
+        index: &RustIndex,
+        unraw_name: &str,
+    ) -> &'m [usize] {
+        self.functions_by_unraw_name
+            .get_or_init(|| {
+                let mut by_name: std::collections::HashMap<String, Vec<usize>> =
+                    std::collections::HashMap::new();
+                for (position, function) in index.functions().iter().enumerate() {
+                    let name = function.name.strip_prefix("r#").unwrap_or(&function.name);
+                    by_name.entry(name.to_string()).or_default().push(position);
+                }
+                by_name
+            })
+            .get(unraw_name)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The memoized std-impl source answer for (`trait_name`, `head`),

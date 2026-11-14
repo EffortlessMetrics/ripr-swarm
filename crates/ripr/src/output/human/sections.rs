@@ -299,7 +299,8 @@ pub(crate) fn render_finding_digest_with_config(
         .as_deref()
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
+    let changed = with_arm_result(finding, changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
     if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
@@ -590,6 +591,39 @@ fn wrapped_fragment(label: &str, value: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+/// #14420: a head-only match-arm text (`Size::Medium =>`) joined to the arm
+/// result the flow model read for it (`Size::Medium => 450`), so a reader
+/// sees the value a test must pin. Any other text, or a head whose result
+/// the flow model did not read on the head's line, is returned unchanged.
+pub(super) fn with_arm_result<'a>(finding: &Finding, text: &'a str) -> std::borrow::Cow<'a, str> {
+    let head = text.trim();
+    let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The sink was read for the probe's own head, so only that head may be
+    // joined to it: a different `before` head would pair an old pattern with
+    // the new arm's result. Arrows are counted on the comment/string-masked
+    // text, as the flow model counts them, so `"a=>b" =>` is one head.
+    let result = (finding.probe.family == ProbeFamily::MatchArm
+        && head.ends_with("=>")
+        && crate::analysis::mask_comments_and_strings(head)
+            .matches("=>")
+            .count()
+            == 1
+        && compact(head) == compact(&finding.probe.expression))
+    .then(|| {
+        finding.flow_sinks.iter().find(|sink| {
+            sink.kind == crate::domain::FlowSinkKind::MatchArm
+                && sink.line == finding.probe.location.line
+                && !sink.text.trim().is_empty()
+                && sink.text.trim() != head
+        })
+    })
+    .flatten();
+    match result {
+        Some(sink) => std::borrow::Cow::Owned(format!("{head} {}", sink.text.trim())),
+        None => std::borrow::Cow::Borrowed(text),
+    }
 }
 
 /// Marks a match-arm `after:` row that carries only the arm head.

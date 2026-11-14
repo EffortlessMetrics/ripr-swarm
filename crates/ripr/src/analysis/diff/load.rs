@@ -1010,6 +1010,18 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
     )
 }
 
+/// The refusal for a bare repository: it is a repository, but it has no
+/// checked-out source for the analysis to read, so the next action is a
+/// work tree, not "run inside a repository" (#14104).
+pub(crate) fn bare_repository_message(root: &Path) -> String {
+    format!(
+        "This root is a bare Git repository with no work tree (the analysis did not run). \
+         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
+         `--root <path>` to that work tree. Root: `{}`",
+        root.display(),
+    )
+}
+
 fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String> {
     match probe {
         GitRootProbe::GitNotFoundOnPath => {
@@ -1452,12 +1464,32 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         HeadRefState::Unknown => return String::new(),
         HeadRefState::Resolved => {}
     }
+    let single_branch = origin_tracks_a_single_branch(root, git_timeout);
     if is_shallow_repository(root, git_timeout) {
+        if single_branch {
+            // `git clone --depth N` is single-branch: `--unshallow` deepens
+            // the one tracked branch and fetches no base branch at all.
+            return format!(
+                " This is a shallow clone that tracks a single branch, so it never fetched a \
+                 base branch; widen it with `{WIDEN_ORIGIN_COMMAND}`, then fetch with \
+                 `git fetch --unshallow origin`."
+            );
+        }
         return " This is a shallow clone that did not fetch a base branch; fetch it with \
                 `git fetch --unshallow origin` (in GitHub Actions, set `fetch-depth: 0` on \
                 actions/checkout)."
             .to_string();
     }
+    // A full single-branch clone has the same hole: the base branch was
+    // never fetched, and the branches listed below are only this one.
+    let single_branch_note = if single_branch {
+        format!(
+            " This clone tracks a single branch; fetch the others with \
+             `{WIDEN_ORIGIN_COMMAND}` and `git fetch origin`."
+        )
+    } else {
+        String::new()
+    };
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1523,7 +1555,7 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             .collect::<Vec<_>>()
             .join(", ")
     };
-    match (related.first(), unrelated.is_empty(), current.first()) {
+    let branch_context = match (related.first(), unrelated.is_empty(), current.first()) {
         (Some(first), _, _) => format!(
             " Other branches here: {}; for example `--base {first}`.",
             listed(&related)
@@ -1555,7 +1587,36 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             }
         }
         (None, false, _) | (None, true, None) => String::new(),
-    }
+    };
+    format!("{single_branch_note}{branch_context}")
+}
+
+/// Widens a single-branch clone so a fetch brings every branch of `origin`.
+/// Double quotes keep the `*` literal in Bash, PowerShell and cmd alike.
+const WIDEN_ORIGIN_COMMAND: &str = "git remote set-branches origin \"*\"";
+
+/// True when `origin` is configured to fetch named branches only, which is
+/// what `git clone --single-branch` (implied by `--depth`) writes. A fetch
+/// or `--unshallow` there never creates another branch's `origin/<name>`,
+/// so advice to "fetch the base" needs the widening step first. False when
+/// there is no `origin`, when any refspec carries a wildcard, or when Git
+/// cannot answer: the note is added only on an established single-branch
+/// configuration.
+fn origin_tracks_a_single_branch(root: &Path, git_timeout: Option<Duration>) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["config", "--get-all", "remote.origin.fetch"],
+        git_timeout,
+    )
+    .is_ok_and(|output| {
+        let refspecs = String::from_utf8_lossy(&output.stdout);
+        let mut lines = refspecs
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .peekable();
+        output.status.success() && lines.peek().is_some() && lines.all(|line| !line.contains('*'))
+    })
 }
 
 /// Resolve the diff loader's default base for `root` together with the
@@ -2115,6 +2176,23 @@ fn missing_ref_repair(
             .to_string();
     }
     if is_shallow_repository(root, git_timeout) {
+        // An ancestor offset of a present commit (`HEAD~5`) needs depth
+        // only. A branch, or an offset of one that is absent
+        // (`origin/main~1`), needs its ref fetched, which `--unshallow`
+        // alone never does in a single-branch clone.
+        let needs_a_branch = ancestor_anchor(missing_ref).is_none_or(|anchor| {
+            !git_ref_output(root, &format!("{anchor}^{{commit}}"), git_timeout)
+                .is_some_and(|output| output.status.success())
+        });
+        if needs_a_branch && origin_tracks_a_single_branch(root, git_timeout) {
+            // The widened remote is `origin`, so the fetch names it: an
+            // unqualified fetch follows the current branch's remote.
+            return format!(
+                "This is a shallow clone that tracks a single branch: widen it with \
+                 `{WIDEN_ORIGIN_COMMAND}`, then fetch the missing history with `git fetch \
+                 --unshallow origin`"
+            );
+        }
         return "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
             .to_string();
@@ -4770,6 +4848,85 @@ mod tests {
             "an unrelated branch must not be offered as a base, got: {err}"
         );
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// `git clone --depth 1` is single-branch: `--unshallow` alone deepens
+    /// the tracked branch and never creates `origin/main`. The advice must
+    /// name the widening step, and following it must make the default base
+    /// resolve. A wildcard clone at the same depth is the control.
+    #[test]
+    fn single_branch_shallow_clone_advice_widens_before_unshallow() -> std::io::Result<()> {
+        let origin = unique_fixture_root("single-branch-origin")?;
+        init_git_repo(&origin, "main")?;
+        run_git_checked(&origin, &["checkout", "-b", "feat"])?;
+        fs::write(origin.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&origin, &["add", "."])?;
+        run_git_checked(&origin, &["commit", "-m", "feat"])?;
+        // The remote's default branch stays `main`, as on a hosted remote.
+        run_git_checked(&origin, &["checkout", "main"])?;
+        let origin_url = format!("file://{}", origin.display());
+        let clone = |label: &str, extra: &[&str]| -> std::io::Result<PathBuf> {
+            let dir = unique_fixture_path(label);
+            let dir_arg = dir.to_string_lossy().to_string();
+            let mut args = vec!["clone", "-q", "--depth", "1", "--branch", "feat"];
+            args.extend_from_slice(extra);
+            args.push(&origin_url);
+            args.push(&dir_arg);
+            run_git_checked(dir.parent().unwrap_or(Path::new(".")), &args)?;
+            Ok(dir)
+        };
+
+        let single = clone("single-branch-shallow", &[])?;
+        assert!(origin_tracks_a_single_branch(&single, None));
+        let err = resolve_default_base(&single, None).expect_err("the base was never fetched");
+        assert!(
+            err.contains("tracks a single branch")
+                && err.contains(WIDEN_ORIGIN_COMMAND)
+                && err.contains("git fetch --unshallow origin"),
+            "a single-branch shallow clone must name the widening step, got: {err}"
+        );
+        for base in ["origin/main", "origin/main~1"] {
+            let err = load_diff(&single, Some(base), None, None)
+                .expect_err("origin/main was never fetched");
+            assert!(
+                err.contains(WIDEN_ORIGIN_COMMAND) && err.contains("git fetch --unshallow origin"),
+                "an explicit base on an absent branch must name the widening step, got: {err}"
+            );
+        }
+        // An ancestor offset needs depth only, not another branch.
+        let err = load_diff(&single, Some("HEAD~1"), None, None)
+            .expect_err("a depth-1 clone has no parent commit");
+        assert!(
+            err.contains("git fetch --unshallow") && !err.contains(WIDEN_ORIGIN_COMMAND),
+            "an ancestor base needs only the unshallow repair, got: {err}"
+        );
+
+        // The old advice alone does not repair it, and the full clone it
+        // leaves still names the widening step.
+        run_git_checked(&single, &["fetch", "-q", "--unshallow", "origin"])?;
+        let err = resolve_default_base(&single, None).expect_err("unshallow fetched no base");
+        assert!(
+            err.contains("tracks a single branch") && err.contains(WIDEN_ORIGIN_COMMAND),
+            "a full single-branch clone must still name the widening step, got: {err}"
+        );
+        // Following the advice does.
+        run_git_checked(&single, &["remote", "set-branches", "origin", "*"])?;
+        run_git_checked(&single, &["fetch", "-q", "origin"])?;
+        assert_eq!(
+            resolve_default_base(&single, None).as_deref(),
+            Ok("origin/main")
+        );
+
+        // Control: Git only honours `--no-single-branch` for a shallow
+        // clone, and that clone keeps the wildcard refspec.
+        let wide = clone("wide-shallow", &["--no-single-branch"])?;
+        assert!(!origin_tracks_a_single_branch(&wide, None));
+        assert!(!origin_tracks_a_single_branch(&origin, None), "no origin");
+
+        for dir in [&origin, &single, &wide] {
+            ignore_remove_dir_all(dir);
+        }
         Ok(())
     }
 
