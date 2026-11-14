@@ -12,8 +12,11 @@
 //! "do these bytes still match" (`ConsumedRustSources::first_drift`); this
 //! file only routes events to it.
 
-use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use super::uri::{
+    file_uri_relative_to_root, file_uris_match_on, path_from_file_uri, paths_equal_or_below_on,
+};
 use crate::analysis::consumed_source::ConsumedRustSources;
+use crate::output::path::{host_paths_case_insensitive, path_identity_key_on};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use tower_lsp_server::ls_types::{FileChangeType, FileEvent, LSPAny, Uri};
@@ -75,16 +78,43 @@ pub(super) fn related_test_files<'a>(
     root: &Path,
     files: impl IntoIterator<Item = &'a Path>,
 ) -> BTreeSet<PathBuf> {
+    related_test_files_on(root, files, host_paths_case_insensitive())
+}
+
+/// [`related_test_files`] with host case-insensitivity explicit, mirroring
+/// `file_uris_match_on`: on a case-insensitive host a file recorded under a
+/// differently cased root still strips to its root-relative form.
+pub(super) fn related_test_files_on<'a>(
+    root: &Path,
+    files: impl IntoIterator<Item = &'a Path>,
+    case_insensitive: bool,
+) -> BTreeSet<PathBuf> {
     files
         .into_iter()
         .filter_map(|file| {
-            let relative = file.strip_prefix(root).unwrap_or(file);
+            let relative = strip_root_prefix_on(root, file, case_insensitive);
             relative
                 .components()
                 .all(|part| matches!(part, std::path::Component::Normal(_)))
                 .then(|| relative.to_path_buf())
         })
         .collect()
+}
+
+fn strip_root_prefix_on(root: &Path, file: &Path, case_insensitive: bool) -> PathBuf {
+    if let Ok(relative) = file.strip_prefix(root) {
+        return relative.to_path_buf();
+    }
+    if case_insensitive && paths_equal_or_below_on(root, file, true) {
+        file.components().skip(root.components().count()).collect()
+    } else {
+        file.to_path_buf()
+    }
+}
+
+fn paths_match_on(left: &Path, right: &Path, case_insensitive: bool) -> bool {
+    path_identity_key_on(left, cfg!(windows), case_insensitive)
+        == path_identity_key_on(right, cfg!(windows), case_insensitive)
 }
 
 /// Whether any event names a committed source whose saved bytes moved.
@@ -114,15 +144,27 @@ pub(super) fn events_drift_committed_sources(
     changes: &[FileEvent],
     is_open: &dyn Fn(&Uri) -> bool,
 ) -> bool {
+    events_drift_committed_sources_on(committed, changes, is_open, host_paths_case_insensitive())
+}
+
+/// [`events_drift_committed_sources`] with host case-insensitivity explicit,
+/// mirroring `file_uris_match_on`.
+pub(super) fn events_drift_committed_sources_on(
+    committed: &CommittedSources<'_>,
+    changes: &[FileEvent],
+    is_open: &dyn Fn(&Uri) -> bool,
+    case_insensitive: bool,
+) -> bool {
     changes
         .iter()
-        .any(|event| event_drifts_committed_source(committed, event, is_open))
+        .any(|event| event_drifts_committed_source(committed, event, is_open, case_insensitive))
 }
 
 fn event_drifts_committed_source(
     committed: &CommittedSources<'_>,
     event: &FileEvent,
     is_open: &dyn Fn(&Uri) -> bool,
+    case_insensitive: bool,
 ) -> bool {
     let deleted = event.typ == FileChangeType::DELETED;
     if !deleted && event.typ != FileChangeType::CHANGED {
@@ -138,9 +180,15 @@ fn event_drifts_committed_source(
         // The entry no longer resolves under the root. If its lexical place
         // still names a committed source, that source was replaced by a link
         // pointing outside: drift, without reading the new target.
-        return path
-            .strip_prefix(committed.root)
-            .is_ok_and(|lexical| committed.consumed.digest(lexical).is_some());
+        return paths_equal_or_below_on(committed.root, &path, case_insensitive)
+            && committed
+                .consumed
+                .digest(&strip_root_prefix_on(
+                    committed.root,
+                    &path,
+                    case_insensitive,
+                ))
+                .is_some();
     };
     if committed.consumed.digest(&relative).is_some() {
         return committed
@@ -153,8 +201,11 @@ fn event_drifts_committed_source(
     let carries_diagnostics = committed
         .diagnostic_uris
         .iter()
-        .any(|uri| file_uris_match(uri, &event.uri));
-    let is_related_test = committed.related_test_files.contains(&relative);
+        .any(|uri| file_uris_match_on(uri, &event.uri, case_insensitive));
+    let is_related_test = committed
+        .related_test_files
+        .iter()
+        .any(|file| paths_match_on(file, &relative, case_insensitive));
     if !deleted {
         return carries_diagnostics || is_related_test;
     }
@@ -166,11 +217,13 @@ fn event_drifts_committed_source(
         || committed
             .related_test_files
             .iter()
-            .any(|file| file.starts_with(&relative))
+            .any(|file| paths_equal_or_below_on(&relative, file, case_insensitive))
         || committed.consumed.any_captured_below(&relative)
         || committed.diagnostic_uris.iter().any(|uri| {
-            path_from_file_uri(uri)
-                .is_some_and(|stored| stored != path && stored.starts_with(&path))
+            path_from_file_uri(uri).is_some_and(|stored| {
+                !paths_match_on(&stored, &path, case_insensitive)
+                    && paths_equal_or_below_on(&path, &stored, case_insensitive)
+            })
         });
     // `symlink_metadata` so a dangling link left behind still reads as present
     // (the event named the entry, not its target).
@@ -180,7 +233,7 @@ fn event_drifts_committed_source(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::uri::file_uri_for_path;
+    use crate::lsp::uri::{file_uri_for_path, file_uris_match};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -203,6 +256,12 @@ mod tests {
         std::fs::create_dir_all(path.join("src")).map_err(|err| format!("create root: {err}"))?;
         // Resolve the temp alias once so root-relative keys are stable.
         let path = std::fs::canonicalize(&path).map_err(|err| format!("canonicalize: {err}"))?;
+        // Windows canonicalize returns a verbatim `\\?\` spelling, which the
+        // URI encoder refuses; keep the resolved path in its plain spelling.
+        let path = match path.to_string_lossy().strip_prefix(r"\\?\") {
+            Some(plain) => PathBuf::from(plain),
+            None => path,
+        };
         Ok(TempRoot(path))
     }
 
@@ -252,6 +311,22 @@ mod tests {
         events_drift_committed_sources(&committed, changes, &|uri| {
             open.iter().any(|open| file_uris_match(open, uri))
         })
+    }
+
+    fn drifts_with_tests_on(
+        root: &Path,
+        consumed: &ConsumedRustSources,
+        related_test_files: BTreeSet<PathBuf>,
+        changes: &[FileEvent],
+        case_insensitive: bool,
+    ) -> bool {
+        let committed = CommittedSources {
+            root,
+            consumed,
+            diagnostic_uris: Vec::new(),
+            related_test_files,
+        };
+        events_drift_committed_sources_on(&committed, changes, &|_| false, case_insensitive)
     }
 
     #[test]
@@ -430,6 +505,31 @@ mod tests {
             std::slice::from_ref(&changed[0].uri),
         ));
 
+        // Differently cased root and test path (#14729): the analyzer recorded
+        // the test under an upper-cased root, the editor reports the real
+        // spelling. On a case-insensitive host they are the same file.
+        let cased_root = PathBuf::from(root.0.to_string_lossy().to_uppercase());
+        let cased_files = related_test_files_on(
+            &cased_root,
+            [cased_root.join("TESTS/END_TO_END.RS").as_path()],
+            true,
+        );
+        assert!(drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &changed,
+            true
+        ));
+        // Case-sensitive control: the same differently cased path does not drift.
+        assert!(!drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &changed,
+            false
+        ));
+
         // A delete event is confirmed against the filesystem, and a deleted
         // folder covers the related tests below it.
         let deleted = [event(
@@ -471,6 +571,45 @@ mod tests {
             &folder,
             &[]
         ));
+        // Differently cased test path: a confirmed delete and a deleted
+        // folder both drift on a case-insensitive host, neither does when
+        // case sensitivity is on.
+        let cased_folder = [event(&root.0, "TESTS", FileChangeType::DELETED)?];
+        assert!(drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &deleted,
+            true
+        ));
+        assert!(drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &folder,
+            true
+        ));
+        assert!(drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &cased_folder,
+            true
+        ));
+        assert!(!drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files.clone(),
+            &deleted,
+            false
+        ));
+        assert!(!drifts_with_tests_on(
+            &root.0,
+            &sources,
+            cased_files,
+            &folder,
+            false
+        ));
         Ok(())
     }
 
@@ -486,6 +625,25 @@ mod tests {
         let files = related_test_files(root, listed.iter().map(Path::new));
         let files: Vec<_> = files.iter().map(|file| file.to_string_lossy()).collect();
         assert_eq!(files, ["tests/a.rs", "tests/b.rs"]);
+
+        // Differently cased root (#14729): on a case-insensitive host the
+        // absolute file still strips, keeping its own spelling below the root.
+        let cased_root = Path::new("/WORK/REPO");
+        let cased = related_test_files_on(
+            cased_root,
+            [Path::new("/work/repo/Tests/B.rs"), Path::new("/else/d.rs")],
+            true,
+        );
+        let cased: Vec<_> = cased
+            .iter()
+            .map(|file| file.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(cased, ["Tests/B.rs"]);
+        // Case-sensitive control: the differently cased absolute path is not
+        // under the root, so it is dropped like any escaping path.
+        let sensitive =
+            related_test_files_on(cased_root, [Path::new("/work/repo/Tests/B.rs")], false);
+        assert!(sensitive.is_empty());
     }
 
     #[cfg(unix)]
