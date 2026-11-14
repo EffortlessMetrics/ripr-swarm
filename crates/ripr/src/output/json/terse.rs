@@ -5,7 +5,8 @@
 //! further for LLM/agent consumers that pay per token on findings:
 //!
 //! 1. Repeated prose templates in `evidence_path`, `evidence`, `missing`,
-//!    `assertion_texts` and the `ripr.<stage>.summary` strings (#13673) are
+//!    `assertion_texts`, the `ripr.<stage>.summary` strings and the
+//!    `related_tests[].oracle` / `related_tests[].why` strings (#13673) are
 //!    replaced by stable short codes (`E0001`, ...), and
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
@@ -22,7 +23,7 @@
 //! What terse does *not* do: it never drops a finding, never changes a
 //! verdict/classification/severity/confidence or `ripr` stage state and
 //! confidence, and never touches nested prose outside the coded surfaces
-//! (related-test oracle lines and repair cards stay inline). See
+//! (repair cards and flow-sink text stay inline). See
 //! `docs/OUTPUT_SCHEMA.md` "json-terse" for the consumer-facing contract.
 
 use serde_json::Value;
@@ -42,6 +43,12 @@ const ASSERTION_TEXTS: &str = "assertion_texts";
 /// Key of the prose summary inside each `ripr` stage object, coded like the
 /// prose arrays (#13673).
 const RIPR_SUMMARY_KEY: &str = "summary";
+
+/// Related-test rows whose prose fields are coded (#13673): the oracle line
+/// repeats the finding's `assertion_texts` value and the same test row in
+/// every other finding, and the `why` sentence repeats across rows.
+const RELATED_TESTS: &str = "related_tests";
+const RELATED_TEST_PROSE: [&str; 2] = ["oracle", "why"];
 
 /// Marker stamped at the document head so consumers can key on the rendering
 /// profile without sniffing for the legend.
@@ -107,6 +114,9 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
                 for text in assertions.values().filter_map(Value::as_str) {
                     coder.observe(text);
                 }
+            }
+            for text in related_test_prose(finding) {
+                coder.observe(text);
             }
         }
     }
@@ -250,7 +260,33 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
             }
         }
     }
+    if let Some(Value::Array(rows)) = finding.get_mut(RELATED_TESTS) {
+        for row in rows.iter_mut().filter_map(Value::as_object_mut) {
+            for key in RELATED_TEST_PROSE {
+                if let Some(value) = row.get_mut(key)
+                    && let Some(code) = value.as_str().and_then(|text| coder.code_for(text))
+                {
+                    *value = Value::String(code);
+                }
+            }
+        }
+    }
     drop_same_value_aliases(finding, coder);
+}
+
+/// The `related_tests[].oracle` and `.why` strings, in row order.
+fn related_test_prose(finding: &serde_json::Map<String, Value>) -> Vec<&str> {
+    let Some(Value::Array(rows)) = finding.get(RELATED_TESTS) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(Value::as_object)
+        .flat_map(|row| {
+            RELATED_TEST_PROSE
+                .iter()
+                .filter_map(|key| row.get(*key).and_then(Value::as_str))
+        })
+        .collect()
 }
 
 /// The five `ripr.<stage>.summary` strings, a coded surface since #13673.
@@ -932,6 +968,71 @@ mod tests {
         assert_ne!(summary_code, summary, "{terse}");
         assert_ne!(evidence_code, evidence, "{terse}");
         assert!(summary_code < evidence_code, "{terse}");
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_related_test_oracle_and_why_and_round_trips() -> Result<(), String> {
+        // #13673: every finding lists the same test rows, so the oracle line
+        // and the `why` sentence repeat across findings; the oracle also
+        // repeats the finding's `assertion_texts` value and shares its code.
+        let oracle = "assert_eq!(clamp(5, 0, 10), 5);";
+        let why = "no established call path to the changed code; linked by file location only";
+        let row = serde_json::json!({
+            "file": "src/lib.rs", "line": 10, "name": "clamp_ok",
+            "oracle": oracle, "why": why, "relation_reason": "same_test_file"
+        });
+        let finding = |id: &str| {
+            serde_json::json!({
+                "id": id,
+                "assertion_texts": {"10": oracle},
+                "related_tests": [row.clone(), {"name": "short", "oracle": "assert!(x);", "why": why}]
+            })
+        };
+        let full = serde_json::json!({"findings": [finding("probe:a"), finding("probe:b")]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value =
+            serde_json::from_str(&super::render_terse(&input)?).map_err(|e| e.to_string())?;
+        let legend = terse[LEGEND_KEY].as_object().ok_or("legend")?;
+        let rows = terse["findings"][0]["related_tests"]
+            .as_array()
+            .ok_or("rows")?;
+        let oracle_code = rows[0]["oracle"].as_str().ok_or("oracle")?;
+        let why_code = rows[0]["why"].as_str().ok_or("why")?;
+        assert_eq!(
+            legend.get(oracle_code).and_then(Value::as_str),
+            Some(oracle)
+        );
+        assert_eq!(legend.get(why_code).and_then(Value::as_str), Some(why));
+        assert_eq!(
+            terse["findings"][0]["assertion_texts"]["10"].as_str(),
+            Some(oracle_code),
+            "the assertion text and the oracle line share one code: {terse}"
+        );
+        // Short oracle lines stay inline; non-prose row fields never move.
+        assert_eq!(rows[1]["oracle"].as_str(), Some("assert!(x);"));
+        assert_eq!(rows[1]["why"].as_str(), Some(why_code));
+        assert_eq!(rows[0]["name"], row["name"]);
+        assert_eq!(rows[0]["relation_reason"], row["relation_reason"]);
+        // Expanding every code restores the full document's rows exactly.
+        let mut restored = terse["findings"].clone();
+        for finding in restored.as_array_mut().ok_or("findings")? {
+            for row in finding["related_tests"].as_array_mut().ok_or("rows")? {
+                for key in RELATED_TEST_PROSE {
+                    if let Some(text) = row[key].as_str()
+                        && let Some(original) = legend.get(text)
+                    {
+                        row[key] = original.clone();
+                    }
+                }
+            }
+            if let Some(text) = finding["assertion_texts"]["10"].as_str()
+                && let Some(original) = legend.get(text)
+            {
+                finding["assertion_texts"]["10"] = original.clone();
+            }
+        }
+        assert_eq!(restored, full["findings"]);
         Ok(())
     }
 
