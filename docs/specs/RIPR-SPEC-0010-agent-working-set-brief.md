@@ -469,6 +469,11 @@ Each brief entry must include enough information for an agent to select a
 focused next action without reading the full repo report:
 
 - seam ID, file, line, owner, kind, expression, grip class, and severity;
+- for a match-arm seam whose expression is only the arm head
+  (`Size::Medium =>`), an `arm_result` naming the arm's result when it sits
+  on the head's own line (`450`), read under the flow model's fail-closed
+  same-line rule (#14683). It is omitted when not read; `expression` stays
+  the head;
 - `why_now` reason and confidence;
 - RIPR stage evidence summary;
 - recommended test placement when available;

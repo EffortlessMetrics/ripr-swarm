@@ -593,6 +593,7 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
     );
     route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
+    crate::app::agent_brief::attach_agent_brief_arm_results(&input.root, &mut selection);
     output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
