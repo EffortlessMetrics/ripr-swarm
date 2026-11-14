@@ -312,7 +312,7 @@ fn committed_spec_declarations_reach_actual_check_fast_dispatch() -> Result<(), 
     }
 
     // Return the private repository's net diff to empty, remove its stale leaf
-    // receipt and require the established unrelated/zero-path no-op.
+    // receipt and require the fail-closed NO_COMMITTED_DIFF_SELECTED guard.
     fs::remove_file(root.join(SPEC)).map_err(|error| error.to_string())?;
     git(root, &["add", "--", SPEC])?;
     git(
@@ -331,14 +331,38 @@ fn committed_spec_declarations_reach_actual_check_fast_dispatch() -> Result<(), 
     let leaf_path = root.join("target/ripr/reports/support-tiers.md");
     fs::remove_file(&leaf_path).map_err(|error| error.to_string())?;
     let output = run(root, "check-fast")?;
+    if output.status.success()
+        || leaf_path.exists()
+        || !text(&output).contains("NO_COMMITTED_DIFF_SELECTED")
+    {
+        return Err(format!(
+            "zero-path support diff must fail closed with NO_COMMITTED_DIFF_SELECTED: {}",
+            text(&output)
+        ));
+    }
+
+    // With an unrelated committed change, check-fast succeeds without running check-support-tiers.
+    write(root, "notes.txt", "Unrelated edit.\n")?;
+    git(root, &["add", "--", "notes.txt"])?;
+    git(
+        root,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "unrelated notes edit",
+        ],
+    )?;
+    let output = run(root, "check-fast")?;
     if !output.status.success() || leaf_path.exists() {
         return Err(format!(
-            "zero-path support no-op changed: {}",
+            "unrelated-path support no-op changed: {}",
             text(&output)
         ));
     }
     if !read_report(root, "check-fast.md")?.contains("- check-support-tiers (not applicable)") {
-        return Err("zero-path report omitted support applicability disposition".to_string());
+        return Err("unrelated-path report omitted support applicability disposition".to_string());
     }
     if !read_report(root, "check-fast.md")?.contains(&selector_identity(root)?)
         || fixture.scratch.join("target").exists()

@@ -51,6 +51,11 @@ pub(crate) fn discover(root: &Path) -> Result<Selection, String> {
     // Never rediscover symbolic refs for the inventory: a fetch/commit between
     // commands must not attach paths from another basis to these identities.
     let files = crate::git_changed_files(root, &format!("{merge_base}..{head}"))?;
+    if files.is_empty() {
+        return Err(format!(
+            "NO_COMMITTED_DIFF_SELECTED: committed diff {merge_base}..{head} (origin/main={base}, HEAD={head}) selected 0 files; refusing zero-subject check-fast pass"
+        ));
+    }
     Ok(Selection {
         base,
         head,
@@ -177,30 +182,21 @@ mod tests {
             std::fs::write(root.join("docs/guide.md"), "base")
                 .map_err(|error| error.to_string())?;
             let reverted = commit("revert net change")?;
-            let empty = discover(&root)?;
-            assert_eq!(empty.head, reverted);
-            assert_ne!(empty.head, empty.merge_base);
+            let empty_err = discover(&root).err().ok_or(
+                "net-empty committed diff must fail closed with NO_COMMITTED_DIFF_SELECTED",
+            )?;
             assert!(
-                empty.files.is_empty(),
-                "a valid net-empty diff stays supported"
+                empty_err.contains("NO_COMMITTED_DIFF_SELECTED"),
+                "expected NO_COMMITTED_DIFF_SELECTED for net-empty diff ({reverted}), got: {empty_err}"
             );
-            let diagnostic = empty.diagnostic();
-            for expected in [
-                format!("origin/main={upstream}"),
-                format!("HEAD={reverted}"),
-                format!("merge-base={base}"),
-                "Changed files: 0".to_string(),
-                "Ref freshness: not checked".to_string(),
-                "gates inspect the live worktree".to_string(),
-            ] {
-                assert!(diagnostic.contains(&expected), "{diagnostic}");
-            }
             git(&["checkout", "--detach", &base])?;
-            let behind = discover(&root)?;
-            assert_eq!(behind.base, upstream);
-            assert_eq!(behind.head, base);
-            assert_eq!(behind.merge_base, base);
-            assert!(behind.files.is_empty(), "behind-only is a valid selector");
+            let behind_err = discover(&root)
+                .err()
+                .ok_or("behind-only empty diff must fail closed with NO_COMMITTED_DIFF_SELECTED")?;
+            assert!(
+                behind_err.contains("NO_COMMITTED_DIFF_SELECTED"),
+                "expected NO_COMMITTED_DIFF_SELECTED for behind-only diff, got: {behind_err}"
+            );
             Ok(())
         })();
         let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
