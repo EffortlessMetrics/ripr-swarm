@@ -261,3 +261,14 @@ measurement; no speedup is claimed by this diagnostic increment.
 - Language adapters other than Rust. Their classification does not share this
   index.
 - Any speedup figure. None is claimed before Phase A.
+
+
+### Snapshot memo observations
+
+The Rust snapshot listing records `universe(snapshot_listing)` on each read,
+including empty and warm answers. Local snapshot-macro queries record
+`universe(files)` on each read, not only when their shared memo is built.
+Thus a second probe does not lose the conservative dependency observed by the
+first. These observations carry no digest or complete disk provenance;
+`coverage: unknown` and `reusable: false` remain unchanged. They do not enable
+persistent semantic reuse or establish a performance improvement.
