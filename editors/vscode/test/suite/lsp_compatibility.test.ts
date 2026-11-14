@@ -389,10 +389,29 @@ suite('Standard LSP compatibility probe', () => {
     } else {
       fs.writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
     }
-    const customArgs = ['custom-subcommand', 'argument with space', '', '--stdio'];
+    const marker = path.join(root, 'RIPR_MARKER');
+    const customArgs = [
+      'custom-subcommand',
+      'argument with space',
+      '',
+      `a"&echo RIPR_MARKER>"${marker}"&rem "`,
+      '--stdio'
+    ];
     const result = await probeStandardLspCompatibility(command, useShell, fakeProbeTimeoutMs, undefined, customArgs);
     assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+    assert.ok(!fs.existsSync(marker), 'cmd.exe executed the embedded-quote marker during the shell probe');
+
+    const nativeResult = await probeStandardLspCompatibility(
+      process.execPath,
+      false,
+      fakeProbeTimeoutMs,
+      undefined,
+      [script, ...customArgs]
+    );
+    assert.strictEqual(nativeResult.status, 'compatible', JSON.stringify(nativeResult));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+    assert.ok(!fs.existsSync(marker), 'the embedded-quote marker ran during the native probe');
   });
 
   test('client shell launch preserves metacharacter and spaced .cmd paths with exact argv', async function () {
@@ -401,10 +420,11 @@ suite('Standard LSP compatibility probe', () => {
       return;
     }
     this.timeout(25_000);
-    const customArgs = ['argument with space', '', 'plain'];
     for (const directory of ['A&B', 'ripr tools']) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-client-launch-'));
       temporaryRoots.push(root);
+      const marker = path.join(root, 'RIPR_MARKER');
+      const customArgs = ['argument with space', '', 'plain', `a"&echo RIPR_MARKER>"${marker}"&rem "`];
       const commandRoot = path.join(root, directory);
       fs.mkdirSync(commandRoot, { recursive: true });
       const command = path.join(commandRoot, 'ripr.cmd');
@@ -425,6 +445,16 @@ suite('Standard LSP compatibility probe', () => {
       });
       assert.strictEqual(exitCode, 0, `${directory}: shell could not launch ${command}`);
       assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+      assert.ok(!fs.existsSync(marker), 'cmd.exe executed the embedded-quote marker during the client shell launch');
+
+      const native = cp.spawn(process.execPath, [script, ...customArgs], { shell: false });
+      const nativeExitCode = await new Promise<number | null>((resolve, reject) => {
+        native.once('error', reject);
+        native.once('close', resolve);
+      });
+      assert.strictEqual(nativeExitCode, 0, `${directory}: native launch failed`);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+      assert.ok(!fs.existsSync(marker), 'the embedded-quote marker ran during the client native launch');
     }
   });
 

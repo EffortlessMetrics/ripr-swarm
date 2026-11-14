@@ -639,9 +639,14 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
 }
 
 function windowsDoubleQuoted(argument: string): string {
-  // Preserve empty arguments, embedded quotes, and trailing backslashes before
-  // the closing quote, whether the token goes through cmd.exe or native argv.
+  // Native Windows argv uses a backslash to escape an embedded quote.
   return '"' + argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+function windowsCmdDoubleQuoted(argument: string): string {
+  // cmd.exe instead doubles embedded quotes; a backslash-quote pair closes its
+  // quoted span and exposes following metacharacters as command syntax.
+  return '"' + argument.replace(/(\\*)"/g, '$1$1""').replace(/(\\+)$/, '$1$1') + '"';
 }
 
 /** Preserve configured argument boundaries in the shell probe and client launch. */
@@ -651,7 +656,7 @@ export function windowsShellArguments(args: readonly string[]): string[] {
       || /\s/.test(argument)
       || hasUnsafeShellMetacharacter(argument, true)
       || /[<>]/.test(argument);
-    return needsQuoting ? windowsDoubleQuoted(argument) : argument;
+    return needsQuoting ? windowsCmdDoubleQuoted(argument) : argument;
   });
 }
 
