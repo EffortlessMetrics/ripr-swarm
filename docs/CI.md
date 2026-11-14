@@ -111,9 +111,11 @@ negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding s
 An explicit `VERDICT:` field is recognized only at line start after the same list,
 quote, heading, emphasis or code prefix. Its whole value must be `APPROVE`, with an
 optional 7–40 hexadecimal head SHA, to admit; `BLOCK`, `ABSTAIN`, empty, mixed and
-unrecognized values refuse. An APPROVE field is not a readiness carrier: the separate
-first-line readiness marker is still required. Free-prose retraction on later lines is
-best-effort (#12835). A later line changes the
+unrecognized values refuse. A table row whose first cell is `Verdict` uses that same
+grammar. An APPROVE field is not a readiness carrier: the separate first-line readiness
+marker is still required. A PR description carrying `VERDICT:` or a first-cell
+`Verdict` table row has a competing field and attests nothing, whatever the value.
+Free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
 quote, heading, emphasis or code markers, with a `disposition:` field or a state token;
 it is a state token alone; it carries a `disposition` field label anywhere (such as

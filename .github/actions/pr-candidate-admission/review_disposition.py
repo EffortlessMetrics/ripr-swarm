@@ -97,8 +97,10 @@ STATE_LINE = re.compile(
 # Its whole value must be APPROVE with an optional short or full head SHA. BLOCK,
 # ABSTAIN, empty, mixed and unrecognized values are all negative. An APPROVE field
 # constrains a separate ready marker; it never becomes an attestation carrier itself.
+VERDICT_TABLE_LABEL = r"^[ \t]*\|[ \t*_`]*verdict[ \t*_`]*\|"
 VERDICT_FIELD = re.compile(
-    STATE_LINE_PREFIX + r"verdict[ \t*_`]*:[ \t]*(?P<value>.*)$",
+    STATE_LINE_PREFIX + r"verdict[ \t*_`]*:[ \t]*(?P<value>.*)$"
+    r"|" + VERDICT_TABLE_LABEL + r"(?P<table_value>[^|]*)[ \t*_`]*\|",
     re.IGNORECASE,
 )
 POSITIVE_VERDICT_VALUE = re.compile(r"approve(?:[ \t]+[0-9a-f]{7,40})?[ \t]*", re.IGNORECASE)
@@ -188,16 +190,16 @@ TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # value must be exactly the positive form; an empty value is the unfilled template.
 BODY_FIELD = re.compile(r"^source review:[ \t]*(?P<value>.*?)[ \t]*$", re.IGNORECASE)
 BODY_FIELD_VALUE = re.compile(r"^(?:SOURCE_REVIEW_READY|REVIEW_READY) (?P<sha>[0-9a-f]{40})$")
-# A second, competing state field in the description. The review-body form is a
-# ``disposition:`` line, so a description that carries one (whatever its value, and
-# however it is quoted, listed, emphasised or fenced) is ambiguous and attests nothing.
-# The field shapes match the review side's state lines (#11566): a ``disposition``
-# label after any list (bulleted, numbered, task), quote or emphasis markup or later in
-# the line (``Final disposition:``, ``| Disposition | ... |``), and a table row with a
-# cell that holds only a state token.
+# A second, competing state field in the description. A ``disposition:`` or
+# ``VERDICT:`` line, or a first-cell ``Verdict`` table row, is ambiguous whatever
+# its value and however it is quoted, listed, emphasised or fenced, so it attests
+# nothing. Other field shapes match the review side's state lines (#11566): a
+# ``disposition`` label after list/quote/emphasis markup or later in the line, and a
+# table row with a cell that holds only a state token.
 BODY_COMPETING_FIELD = re.compile(
-    STATE_LINE_PREFIX + r"disposition[ \t*_`]*:"
+    STATE_LINE_PREFIX + r"(?:disposition|verdict)[ \t*_`]*:"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
+    r"|" + VERDICT_TABLE_LABEL + r"[^|]*[ \t*_`]*\|"
     r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|",
     re.IGNORECASE,
 )
@@ -275,7 +277,10 @@ def verdict_disposition(line: str) -> bool | None:
     match = VERDICT_FIELD.match(normalize_body(line))
     if match is None:
         return None
-    return POSITIVE_VERDICT_VALUE.fullmatch(match.group("value")) is not None
+    value = match.group("value")
+    if value is None:
+        value = match.group("table_value")
+    return POSITIVE_VERDICT_VALUE.fullmatch(value.strip()) is not None
 
 
 def strip_negated_change(line: str) -> str:
@@ -784,6 +789,8 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d\nNo blocking findings on this head.", True),
         ("SOURCE_REVIEW_READY\n- **Verdict:** ABSTAIN", False),
         ("SOURCE_REVIEW_READY\n```\nVERDICT: BLOCK\n```", False),
+        ("SOURCE_REVIEW_READY\n| Field | Value |\n| --- | --- |\n| Verdict | BLOCK |", False),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d |", True),
         ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
     ]
     for body, expected in cases:
@@ -855,6 +862,8 @@ def self_test() -> None:
         ("VERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", False),
         ("VERDICT: ABSTAIN", False),
         ("VERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5", True),
+        ("| Verdict | BLOCK |", False),
+        ("| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 |", True),
     ):
         assert reviews_allow_source_attestation(
             [
@@ -911,6 +920,8 @@ def self_test() -> None:
         (f"{line}\n| REPAIR_REQUIRED | fix oracle |", False),
         (f"{line}\n| REPAIR_REQUIRED |", False),
         (f"{line}\n| a | REVIEW_READY | b |", False),  # ambiguous even when positive
+        (f"{line}\n| Verdict | BLOCK |", False),
+        (f"{line}\nVERDICT: APPROVE", False),
         (f"{line}\n| Check | Result |\n| --- | --- |\n| fmt | pass |", True),
         (f"{line}\nAccepted winner and losing candidate disposition (when decided): none", True),
         ("", False),

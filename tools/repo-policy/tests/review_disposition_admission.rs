@@ -1099,3 +1099,43 @@ fn verdict_fields_use_a_closed_positive_grammar() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
+    let head = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let exact_block =
+        "SOURCE_REVIEW_READY\n| Field | Value |\n| --- | --- |\n| Verdict | BLOCK |";
+    let controls = [
+        (exact_block, false),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | MAYBE |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict |  |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE / BLOCK |", false),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 |",
+            true,
+        ),
+    ];
+    for (body, admit) in controls {
+        let reviews = serde_json::json!([review(
+            "reviewer",
+            "COMMENTED",
+            head,
+            "2026-11-14T07:51:00Z",
+            body,
+        )]);
+        expect_outcome(&check_reviews(&reviews, head)?, admit, body)?;
+    }
+
+    let described = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\n| Verdict | BLOCK |"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(&serde_json::json!([]), &described, head, "table-verdict")?,
+        false,
+        "table verdict is a competing PR-description field",
+    )
+}
