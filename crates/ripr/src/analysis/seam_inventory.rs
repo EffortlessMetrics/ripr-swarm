@@ -1285,6 +1285,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
@@ -1335,6 +1336,7 @@ fn compact_classified_seams_from_seams<'a>(
     for seam in seams {
         cancellation::checkpoint()?;
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         classified.push(ClassifiedSeam {
             evidence,
@@ -3676,6 +3678,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
@@ -4809,11 +4812,9 @@ impl<'a> FieldSeamAdmission<'a> {
         let context = self
             .context
             .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
-        Ok(
-            !test_grip_evidence::compact_evidence_for_seam(seam, context)
-                .missing_discriminators
-                .is_empty(),
-        )
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, context);
+        cancellation::checkpoint()?;
+        Ok(!evidence.missing_discriminators.is_empty())
     }
 }
 
@@ -5087,6 +5088,72 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn compact_classification_refuses_deadline_before_publication() -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let path = PathBuf::from("src/value.rs");
+        let index = index_from_files(&[
+            (path.clone(), "pub fn value() -> i32 { 1 }"),
+            (
+                PathBuf::from("tests/value.rs"),
+                "#[test] fn reads_value() { assert_eq!(value(), 1); }",
+            ),
+        ])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        assert_eq!(seams.len(), 1);
+        let started = std::time::Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let clock = Arc::clone(&calls);
+        let live = cancellation::AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                clock.fetch_add(1, Ordering::SeqCst);
+                started
+            }),
+        );
+        let complete = cancellation::with_token(&live, || {
+            compact_classified_seams_from_seams(&seams, &index)
+        })?;
+        assert_eq!(complete.len(), 1);
+        let consultations = calls.load(Ordering::SeqCst);
+        assert!(
+            consultations > 2,
+            "must enter the relation walk before the publication guard"
+        );
+        let clock = Arc::new(AtomicUsize::new(0));
+        let observations = Arc::clone(&clock);
+        // The last live consultation is the post-computation guard. Expire
+        // one consultation earlier, inside the compact computation, so the
+        // guard must reject an already-interrupted result.
+        let deadline = cancellation::AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if observations.fetch_add(1, Ordering::SeqCst) >= consultations - 2 {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let result = cancellation::with_token(&deadline, || {
+            compact_classified_seams_from_seams(&seams, &index)
+        });
+        assert!(
+            result.is_err(),
+            "interrupted compact evidence must not become classified output"
+        );
+        assert_eq!(
+            deadline.observed_abort(),
+            Some(cancellation::AnalysisAbortKind::DeadlineExceeded)
+        );
+        Ok(())
+    }
 
     #[test]
     fn seam_facts_cache_miss_messages_name_each_family_walk() {

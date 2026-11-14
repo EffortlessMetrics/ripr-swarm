@@ -3281,6 +3281,103 @@ fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), Str
 }
 
 #[test]
+fn direct_candidate_walk_observes_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    let prod = PathBuf::from("src/value.rs");
+    let tests = (0..65)
+        .map(|i| format!("#[test] fn case_{i}() {{ assert_eq!(value(), 1); }}\n"))
+        .collect::<String>();
+    let index = index_from_files(&[
+        (prod.clone(), "pub fn value() -> i32 { 1 }"),
+        (PathBuf::from("tests/value.rs"), &tests),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams.first().ok_or("fixture needs a return seam")?;
+    let context = CompactGripContext::new(&index);
+    let owner = related_tests::OwnerContext::resolve(seam, &context);
+    let mut complete = BTreeMap::new();
+    related_tests::match_direct_owner_call(&mut complete, &context, None, &owner);
+    assert_eq!(complete.len(), 65);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                started
+            } else {
+                started + Duration::from_secs(1)
+            }
+        }),
+    );
+    let mut interrupted = BTreeMap::new();
+    cancellation::with_token(&token, || {
+        related_tests::match_direct_owner_call(&mut interrupted, &context, None, &owner);
+    });
+    assert_eq!(
+        interrupted.len(),
+        32,
+        "a live first batch must stop at the next periodic checkpoint"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_discards_seam_when_deadline_expires_during_relation_walk() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass.context.as_ref().ok_or("fixture context must build")?;
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            find_related_tests_with_context(seam, context)
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        })
+        .ok_or("fixture needs a directly related test")?;
+    assert_eq!(pass.evidence_for(std::slice::from_ref(seam)).len(), 1);
+    let started = Instant::now();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::clone(&calls);
+    let token = AnalysisCancellationToken::with_budget(
+        started,
+        Duration::from_secs(1),
+        Arc::new(move || {
+            if clock_calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+                started + Duration::from_secs(1)
+            } else {
+                started
+            }
+        }),
+    );
+    let evidence =
+        cancellation::with_token(&token, || pass.evidence_for(std::slice::from_ref(seam)));
+    assert!(
+        evidence.is_empty(),
+        "the interrupted seam must not become evidence"
+    );
+    assert_eq!(
+        token.observed_abort(),
+        Some(AnalysisAbortKind::DeadlineExceeded)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    Ok(())
+}
+
+#[test]
 fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
     let (index, seams) = parallel_evidence_fixture()?;

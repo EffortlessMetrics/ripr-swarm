@@ -328,6 +328,7 @@ pub(crate) fn evidence_for_seams_reporting_failure(
 > {
     let pass = EvidencePass::new(index);
     let evidence = pass.evidence_for(seams);
+    cancellation::checkpoint()?;
     let limitations = pass.limitations()?;
     Ok((evidence, limitations))
 }
@@ -641,7 +642,10 @@ impl<'index> EvidencePass<'index> {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
-                        let evidence = evidence_for_seam_with_context(seam, context);
+                        let related = find_related_tests_with_context(seam, context);
+                        cancellation::checkpoint().ok()?;
+                        let evidence = evidence_for_seam_with_context(seam, context, related);
+                        cancellation::checkpoint().ok()?;
                         let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
                         if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
                             || processed == seams.len()
@@ -739,7 +743,8 @@ impl<'index> EvidencePass<'index> {
 #[cfg(test)]
 pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripEvidence {
     let context = CompactGripContext::new(index);
-    evidence_for_seam_with_context(seam, &context)
+    let related = find_related_tests_with_context(seam, &context);
+    evidence_for_seam_with_context(seam, &context, related)
 }
 
 /// Whether a test that pins another function lends this seam no oracle
@@ -863,11 +868,11 @@ fn credited_related_tests<'a>(
         .collect()
 }
 
-fn evidence_for_seam_with_context(
+fn evidence_for_seam_with_context<'a>(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
+    mut related_with_reason: Vec<(&'a CompactTest<'a>, RelationReason)>,
 ) -> TestGripEvidence {
-    let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     let best_oracles =
         sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
