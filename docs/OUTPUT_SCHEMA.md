@@ -397,7 +397,9 @@ not edit authorization. No field shape or schema version changes.
 finds the offered route executable, so the reference and the decision cannot
 disagree. The canonical DTO carries the closed action class (see the
 `next_action_class` values list), the exact subject/currentness binding, the
-referenced command or a typed stop, and bounded subordinate alternatives.
+referenced command or a typed stop, and bounded subordinate alternatives
+(for `ripr check`, the two best-ranked unselected findings by the shared
+findings priority, #14266).
 The semantic digest pins the decision's portable parts (schema, producer,
 class, command identity, stop kind, transition labels); displays, stop
 details, and alternative routes stay out like `next_action.display`. The
