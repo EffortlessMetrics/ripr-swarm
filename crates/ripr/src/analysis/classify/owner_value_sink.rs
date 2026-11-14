@@ -275,6 +275,107 @@ pub(in crate::analysis) fn bool_field_assertion(
     reader.inner(read.expr(), 0) == Sink::Record
 }
 
+/// #14701: whether a `use` in `source` (a test's file) may bind the bare
+/// name `owner` to a function other than the owner. An explicit import of
+/// the name is admitted only as a two-segment path from a root-module owner
+/// (`crate::opts`, `super::opts`, `self::opts`, `demo::opts` for an owner in
+/// `src/lib.rs` or `src/main.rs`); a rename to the name, an import from a
+/// deeper module, and a glob below the crate root (`use crate::rival::*`)
+/// may bind another function. Source that does not parse refuses.
+pub(in crate::analysis) fn use_may_rebind_owner(
+    source: &str,
+    owner: &str,
+    owner_file: &std::path::Path,
+) -> bool {
+    let Some(parse) = parse_clean_source_file_memoized(source) else {
+        return true;
+    };
+    let root_owner = owner_file.ends_with("src/lib.rs") || owner_file.ends_with("src/main.rs");
+    let segments = |tree: &ast::UseTree| -> Vec<String> {
+        let mut segments = Vec::new();
+        let mut node = Some(tree.clone());
+        while let Some(current) = node {
+            if let Some(path) = current.path() {
+                let mut parts = path
+                    .segments()
+                    .map(|segment| segment.syntax().text().to_string())
+                    .collect::<Vec<_>>();
+                parts.extend(segments);
+                segments = parts;
+            }
+            node = current
+                .syntax()
+                .parent()
+                .and_then(ast::UseTreeList::cast)
+                .and_then(|list| list.syntax().parent())
+                .and_then(ast::UseTree::cast);
+        }
+        segments
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none())
+        .any(|tree| {
+            let path = segments(&tree);
+            if tree.star_token().is_some() {
+                return path.len() > 1;
+            }
+            let renamed = tree
+                .rename()
+                .and_then(|rename| rename.name())
+                .map(|name| name.text().to_string());
+            let bound = renamed
+                .clone()
+                .or_else(|| path.last().cloned())
+                .unwrap_or_default();
+            if bound != owner {
+                return false;
+            }
+            renamed.is_some() || !root_owner || path.len() != 2
+        })
+}
+
+/// Whether the body assigns through local `name`: the left side of an
+/// assignment (`=`, `+=`, ...) reads `name` at its base, through fields,
+/// indexing, derefs or parentheses (`o.big = true`, `*o = x`, `o.v[0] += 1`).
+fn assigns_through(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    root.descendants()
+        .filter_map(ast::BinExpr::cast)
+        .filter(|binary| matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. })))
+        .any(|binary| {
+            let mut place = binary.lhs();
+            loop {
+                place = match place {
+                    Some(ast::Expr::FieldExpr(field)) => field.expr(),
+                    Some(ast::Expr::IndexExpr(index)) => index.base(),
+                    Some(ast::Expr::ParenExpr(inner)) => inner.expr(),
+                    Some(ast::Expr::PrefixExpr(prefix)) => prefix.expr(),
+                    Some(ast::Expr::PathExpr(path)) => {
+                        break path
+                            .path()
+                            .filter(|path| path.qualifier().is_none())
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|bound| bound.text() == name);
+                    }
+                    // A place this walk cannot read may still write the
+                    // local; refuse it.
+                    Some(other) => break has_identifier(&other.syntax().text().to_string(), name),
+                    None => break false,
+                };
+            }
+        })
+}
+
+fn has_identifier(text: &str, name: &str) -> bool {
+    mask_comments_and_strings(text)
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|part| part == name)
+}
+
 /// The comma-separated arguments of a macro call. The split points are read
 /// from text with string, char and comment contents erased, so a comma or
 /// bracket inside a literal cannot split an argument; the arguments
@@ -792,6 +893,18 @@ impl Reader<'_> {
         {
             return Sink::Absent;
         }
+        // A write-capable initializer (`&mut opts(10)`, `.as_mut()`) lets an
+        // immutable binding change the record before the read, and any
+        // assignment through the name (`o.big = true`, `*o = ..`) replaces
+        // the value the owner returned.
+        if self.credit
+            && (statement.initializer().is_some_and(|initializer| {
+                let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
+                text.contains("&mut") || text.contains("_mut(") || text.contains("as_mut")
+            }) || assigns_through(parse.tree().syntax(), &name))
+        {
+            return Sink::Absent;
+        }
         if statement.let_else().is_some() {
             return self.unfollowed(statement.syntax());
         }
@@ -919,9 +1032,41 @@ mod tests {
             "let o = over(10);\nif let Some(o) = other() {\n assert!(o.big);\n}",
             "let o = over(10);\nfor o in list {\n assert!(o.big);\n}",
             "let o = over(10);\nlet f = |o: Opts| assert!(o.big);",
+            // A write-capable initializer or a write through the name.
+            "let o = &mut over(10);\no.big = true;\nassert!(o.big);",
+            "let o = over(10).as_mut();\nassert!(o.big);",
+            "let o = over(10);\n*o = other();\nassert!(o.big);",
         ] {
             assert!(!pins(body, "assert!(o.big);"), "{body}");
         }
+    }
+
+    #[test]
+    fn a_use_that_may_bind_the_owner_name_elsewhere_refuses_the_pin() {
+        let root = std::path::Path::new("src/lib.rs");
+        let nested = std::path::Path::new("src/opts.rs");
+        for source in [
+            "use super::*;\nfn t() {}",
+            "use crate::opts;\nfn t() {}",
+            "use demo::opts;\nfn t() {}",
+            "use demo::{opts, Opts};\nfn t() {}",
+            "use demo::*;\nfn t() {}",
+            "use crate::rival::other;\nfn t() {}",
+        ] {
+            assert!(!use_may_rebind_owner(source, "opts", root), "{source}");
+        }
+        for source in [
+            "use crate::rival::opts;\nfn t() {}",
+            "use rival::nested::opts;\nfn t() {}",
+            "use crate::rival::*;\nfn t() {}",
+            "use crate::{rival::{opts}};\nfn t() {}",
+            "use crate::make as opts;\nfn t() {}",
+            "fn t() { use crate::rival::opts; }",
+        ] {
+            assert!(use_may_rebind_owner(source, "opts", root), "{source}");
+        }
+        assert!(use_may_rebind_owner("use crate::opts;", "opts", nested));
+        assert!(!use_may_rebind_owner("use super::*;", "opts", nested));
     }
 
     /// #14562: with the changed field `big` kept, the owner's record reaches

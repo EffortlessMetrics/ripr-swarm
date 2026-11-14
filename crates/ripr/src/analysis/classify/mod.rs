@@ -176,7 +176,7 @@ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_rec
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
-pub(in crate::analysis) use owner_value_sink::bool_field_assertion;
+pub(in crate::analysis) use owner_value_sink::{bool_field_assertion, use_may_rebind_owner};
 pub(in crate::analysis) use pinned_shape::{
     withhold_pinned_shape_gap, withhold_result_collect_err_pin,
 };

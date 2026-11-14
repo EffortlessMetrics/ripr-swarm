@@ -898,9 +898,19 @@ reader. The owner call must be the unqualified free call `owner(..)`; a path
 name may be another function and does not pin; so does a call the test
 shadows (a nested `fn opts` or a local `let opts = |n| ..`), a same-name
 import, or a same-name function of the test's own package when the owner
-lives in another. A followed `let` must be immutable, since a `mut` local can
-be overwritten (`o.big = true`) before the read, and no other pattern in the
-test (`if let Some(o)`, `for o in`, a closure parameter) may bind its name. The assertion must also pass the shared execution and macro-binding
+lives in another. A `use` in the test's file that may bind the bare name
+elsewhere also refuses the pin (`use_may_rebind_owner`): a rename to the
+name, an import from below the crate root (`use crate::rival::opts`), a glob
+below the crate root, or any explicit import of the name when the owner is
+not in `src/lib.rs` or `src/main.rs`. A followed `let` must be immutable and
+its initializer write-free (no `&mut`, `as_mut` or `*_mut(..)`), the test may
+not assign through its name (`o.big = true`, `*o = ..`), and no other pattern
+in the test (`if let Some(o)`, `for o in`, a closure parameter) may bind it.
+
+Known under-credit: a field the token reader cannot confirm (a short name
+such as `ok`), or a read through `.clone()` that the field_construction
+recognizer does not follow, can stay weak for one of the two findings. The
+pin only raises strength; it never confirms observation on its own. The assertion must also pass the shared execution and macro-binding
 admission (`OwnerPinSyntax::admits`), outside a `should_panic` test. The
 family gate does not apply that admission to a bare `assert!` for these
 probe families, so a shadowed `assert!` or one after `return` pins nothing.

@@ -19,7 +19,8 @@ use crate::analysis::classify::{
     propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
     reach_evidence, returned_array_construction_plain, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
+    unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
+    wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1201,9 +1202,17 @@ impl ClassifiedProbeEvidence {
         // #14701: the shared execution and macro-binding admission for a
         // bare `assert!` field pin, which the family gate skips for these
         // probe families.
+        // A `use` in the test's file may bind the owner's bare name to
+        // another function of the same crate (`use crate::rival::opts;`),
+        // which the foreign-import defeat does not see.
         let bool_field_pin_admitted = |test: &TestSummary, assertion: &OracleFact| {
             !test.attrs.iter().any(|attr| attr.contains("should_panic"))
                 && pin_syntax.admits(test, assertion, context.index)
+                && context.owner_fn.is_some_and(|owner| {
+                    context.index.files().get(&test.file).is_some_and(|facts| {
+                        !use_may_rebind_owner(&facts.source, &owner.name, &owner.file)
+                    })
+                })
         };
         // #14701: the record field a predicate probe sets, for the same-test
         // pairing's bool-field pin.
