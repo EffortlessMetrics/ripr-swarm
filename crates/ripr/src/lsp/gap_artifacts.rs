@@ -139,9 +139,7 @@ pub(super) enum GapArtifactRejection {
 
 impl GapArtifactIdentity {
     pub(super) fn is_present(&self) -> bool {
-        self.canonical_gap_id.is_some()
-            || self.seam_id.is_some()
-            || self.finding_id.is_some()
+        self.canonical_gap_id.is_some() || self.seam_id.is_some() || self.finding_id.is_some()
     }
 }
 
@@ -326,17 +324,23 @@ impl ValidatedGapArtifact {
             .is_none_or(|root| !root.trim().is_empty());
         let identity_is_present = match self {
             Self::ActionableGaps(payload) => {
-                payload.identities.iter().any(GapArtifactIdentity::is_present)
+                payload
+                    .identities
+                    .iter()
+                    .any(GapArtifactIdentity::is_present)
                     || self.is_no_action_gap()
             }
-            Self::GapDecisionLedger(payload) => {
-                payload.identities.iter().any(GapArtifactIdentity::is_present)
-            }
+            Self::GapDecisionLedger(payload) => payload
+                .identities
+                .iter()
+                .any(GapArtifactIdentity::is_present),
             Self::EvidenceRecord(payload) => payload.identity.is_present(),
             Self::FirstUsefulAction(payload) => payload.identity.is_present(),
             Self::AgentReceipt(payload) => payload.identity.is_present(),
         };
-        let language_is_supported = common.language.is_none_or(|language| language.is_available());
+        let language_is_supported = common
+            .language
+            .is_none_or(|language| language.is_available());
         let status_is_supported = common.language_status.is_none_or(|status| {
             matches!(status, LanguageStatus::Stable | LanguageStatus::Preview)
         });
@@ -5359,8 +5363,8 @@ mod tests {
         );
         assert!(actionable.corpus_currentness_json().is_some());
 
-        let first = validate_gap_artifact(&first_action(), &ctx)
-            .map_err(|err| format!("{err:?}"))?;
+        let first =
+            validate_gap_artifact(&first_action(), &ctx).map_err(|err| format!("{err:?}"))?;
         assert!(matches!(first, ValidatedGapArtifact::FirstUsefulAction(_)));
         assert_eq!(first.corpus_currentness(), None);
         assert!(first.corpus_currentness_json().is_none());
