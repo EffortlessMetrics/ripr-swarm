@@ -21292,9 +21292,11 @@ targeted-rerun receipt shape:
 language features, not only the package version. Its source prefix is
 `<version>+<commit>` for a clean build,
 `<version>+<commit>-dirty+src:<digest>` for uncommitted source changes, or
-`<version>+unknown+src:<digest>` when no commit is recorded. If a dirty or
-commit-less build has no source digest, `process:<pid>:<nanos>` replaces
-`src:<digest>` so persisted entries are not reused across processes.
+`<version>+unknown+src:<digest>` when no commit is recorded. A dirty or
+commit-less build bakes that digest only when it was built with
+`RIPR_PERSISTED_CACHE=1` (see `docs/CONFIGURATION.md`); otherwise it has no
+source digest and `process:<pid>:<nanos>` replaces `src:<digest>` so persisted
+entries are not reused across processes.
 Every form ends with
 `+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
 where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
