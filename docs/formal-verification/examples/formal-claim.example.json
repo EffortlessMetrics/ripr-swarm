@@ -1,0 +1,58 @@
+{
+  "schema": "ripr.formal-claim.v1",
+  "claim_id": "ripr.classification.actionable-only-with-evidence.v1",
+  "claim_generation": 1,
+  "family": "bounded_model_check",
+  "provider": "kani",
+  "criticality": "critical",
+  "phase": "manual",
+  "proposition": "For the five explicitly selected EvidenceState variants, is_actionable() is true exactly for Actionable.",
+  "non_claims": [
+    "Does not establish correct upstream evidence admission.",
+    "The manual five-constructor harness selection is not a compile-time enum-exhaustiveness guard.",
+    "This design example is not a registered assurance claim or proof receipt."
+  ],
+  "owners": [
+    "ripr_contract::domain::EvidenceState::is_actionable"
+  ],
+  "source_closure": [
+    "crates/ripr-contract/src/domain/evidence_state.rs",
+    "crates/ripr/src/kani_smoke.rs"
+  ],
+  "domain": "Actionable, AlreadyObserved, InternalOnly, StaticLimitation, Unknown",
+  "assumptions": [
+    "Symbolic u8 index is restricted to index < 5."
+  ],
+  "trust_dependencies": [
+    "Rust/Kani translation and solver",
+    "Manually maintained constructor selection",
+    "Source closure must be expanded to actual consumed inputs before native applicability is established."
+  ],
+  "observable": "boolean return value",
+  "bounds": {
+    "selection": "index < 5",
+    "unwind_policy": "No explicit unwind attribute on this harness; retain effective native configuration."
+  },
+  "subjects": [
+    "ripr::kani_smoke::evidence_state_actionable_only_for_actionable"
+  ],
+  "required_covers": [
+    "actionable branch reachable",
+    "non-actionable branch reachable"
+  ],
+  "negative_controls": [
+    "Change one non-Actionable state to return true; require a behavioral counterexample, not compile failure or timeout."
+  ],
+  "result_satisfaction": "Every selected subject has one exact current native result and every required cover is reachable.",
+  "currentness_inputs": [
+    "repository/tree",
+    "complete consumed source and configuration",
+    "claim generation",
+    "Rust/Kani/solver versions",
+    "runner generation and command",
+    "features/target/bounds/checks/stubs"
+  ],
+  "transition_policy": "base_and_head_protected_until_replacement_or_retirement",
+  "owner_spec": "RIPR-SPEC-0371",
+  "owner_issue": 12109
+}

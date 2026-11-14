@@ -270,31 +270,59 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         !summary.contains("Safe next action command: `none`"),
         "summary still says there is no safe next action"
     );
-    // Each full report is collapsed under its at-a-glance lines: every
-    // `Full report` opener has its own closer, and no report's top-level
-    // heading (the workflow's own headings are `##` and deeper) is visible
-    // outside a collapsed block.
-    let openers = summary.matches("<details><summary>Full report: ").count();
-    assert!(openers > 0, "summary collapses no full report:\n{summary}");
-    // The governance fold is a `<details>` block too, so compare every opener.
+    // Full reports are named for the uploaded artifact, not inlined
+    // (#14301): no report's top-level heading (the summary's own headings are
+    // `##` and deeper) appears anywhere, and the page stays bounded.
+    assert!(
+        summary.contains("- Full report: `")
+            && summary.contains("` in the `ripr-reports` artifact"),
+        "summary names no full report:\n{summary}"
+    );
+    // The artifact is rooted at `target/` (it uploads `target/ripr` and
+    // `target/ci`), so a named report drops that prefix.
+    assert!(!summary.contains("- Full report: `target/"), "{summary}");
+    // Every line that points into the artifact uses the same form: a
+    // `target/` path there names a file the downloaded archive lacks.
+    let workspace_paths = summary
+        .lines()
+        .filter(|line| line.to_lowercase().contains("artifact") && line.contains("`target/"))
+        .collect::<Vec<_>>();
+    assert!(workspace_paths.is_empty(), "{workspace_paths:#?}");
+    // Each file a line places in the `ripr-reports` artifact is named by its
+    // path there (`ripr/...` or `ci/...`), never a bare or workspace name.
+    let misnamed = summary
+        .lines()
+        .filter(|line| line.contains("the `ripr-reports` artifact"))
+        .flat_map(|line| line.split('`').skip(1).step_by(2))
+        .filter(|name| *name != "ripr-reports")
+        .filter(|name| !(name.starts_with("ripr/") || name.starts_with("ci/")))
+        .collect::<Vec<_>>();
+    assert!(misnamed.is_empty(), "{misnamed:#?}");
+    assert!(
+        summary.contains("- Pilot reports: `ripr/pilot/`")
+            && summary.contains("- CI labels and plan inputs: `ci/`"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("<details><summary>Full report: "),
+        "{summary}"
+    );
     assert_eq!(
         summary.matches("<details").count(),
         summary.matches("</details>").count(),
         "every collapsed block must close"
     );
-    let mut collapsed = false;
     for line in summary.lines() {
-        if line.starts_with("<details><summary>Full report: ") {
-            collapsed = true;
-        } else if line == "</details>" {
-            collapsed = false;
-        } else if !collapsed {
-            assert!(
-                !line.starts_with("# "),
-                "a full report's heading is visible outside its collapsed block: {line}"
-            );
-        }
+        assert!(
+            !line.starts_with("# "),
+            "a full report is inlined in the summary: {line}"
+        );
     }
+    assert!(
+        summary.len() < 20_000,
+        "the step summary must stay bounded; it is {} bytes:\n{summary}",
+        summary.len()
+    );
 
     // The annotation GitHub places on the changed line carries the same
     // repair start, and nothing that points into this runner's checkout
@@ -432,11 +460,9 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             .any(|command| command.contains("--phase before")),
         "a before-phase command must not be labelled as a post-edit step: {deferred:?}"
     );
-    for label in [
-        "ripr agent verify ",
-        "ripr agent receipt ",
-        "ripr assistant-loop proof ",
-    ] {
+    // `ripr assistant-loop proof` is printed by the full reports the summary
+    // names in the artifact rather than inlines (#14301).
+    for label in ["ripr agent verify ", "ripr agent receipt "] {
         assert!(
             deferred.iter().any(|command| command.starts_with(label)),
             "expected the summary to print `{label}...` as a post-edit step: {deferred:?}"
@@ -3468,8 +3494,8 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     Ok(())
 }
 
-/// The CI summary's PR review summary and Recommended next test blocks,
-/// collapsed full reports included, print commands a reader copies on
+/// The CI summary's PR review summary and Recommended next test blocks
+/// print commands a reader copies on
 /// another machine. When `ripr agent start` bound them to the runner's
 /// absolute checkout (#3999), the summary names the repository root `.`
 /// instead, like the Agent review packet block; a sibling path that only
@@ -3541,11 +3567,12 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
             !without_sibling.contains(checkout),
             "{heading:?} prints the runner checkout path:\n{block}"
         );
-        // The at-a-glance line and the collapsed full report both rewrite.
+        // The at-a-glance line rewrites; the full report is named for the
+        // artifact, not inlined (#14301).
         assert_eq!(
             block.matches(relative_verify).count(),
-            2,
-            "{heading:?} must print verify at the repository root twice:\n{block}"
+            1,
+            "{heading:?} must print verify at the repository root once:\n{block}"
         );
     }
     assert!(
@@ -3556,10 +3583,9 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
         summary.contains("ripr agent brief --root '.' --seam-id s1 --json"),
         "{summary}"
     );
-    assert!(
-        summary.contains(&format!("- Notes: `{sibling}`")),
-        "a path that only shares the checkout prefix must stay as written:\n{summary}"
-    );
+    // The sibling-prefix `Notes` line lived only in the inlined full report,
+    // which the summary now names instead (#14301); the rewrite's prefix edge
+    // stays pinned by `repo_relative_*` in `ci_summary/jq.rs`.
 
     if let Some(parent) = root.parent() {
         fs::remove_dir_all(parent)?;

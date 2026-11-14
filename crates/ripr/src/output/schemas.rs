@@ -302,12 +302,10 @@ mod tests {
         })
     }
 
+    // The diff report names its version as a constant (#14067), so the
+    // producer value is read directly instead of parsed out of the source.
     fn live_diff_report_schema_version() -> Result<&'static str, String> {
-        unique_quoted_before_following_lines(
-            include_str!("diff_report.rs"),
-            "schema_version: \"",
-            &["kind: \"ripr_diff\".to_string(),"],
-        )
+        Ok(crate::output::diff_report::DIFF_REPORT_SCHEMA_VERSION)
     }
 
     fn live_targeted_rerun_schema_version() -> Result<&'static str, String> {

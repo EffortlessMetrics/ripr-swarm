@@ -9299,6 +9299,26 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
     // that the workspace scan does not already report at its own site (#14031).
     for (source, local) in [
         ("mod global;\npub use global::*;\n", true),
+        // #14116: a prefix reads the module name without binding it again.
+        (
+            "mod global;\nuse global::*;\npub(crate) use global::{A, B};\n",
+            true,
+        ),
+        (
+            "mod global;\nuse global::*;\nuse global::A as Other;\n",
+            true,
+        ),
+        ("mod global;\nuse global::*;\nuse dep::global as _;\n", true),
+        ("mod global;\nuse global::*;\nuse ::dep::Other;\n", true),
+        ("mod global;\nuse global::*;\nuse ::global::A;\n", false),
+        (
+            "mod global;\nuse global::*;\nuse global /* prefix */ :: {A, B};\n",
+            true,
+        ),
+        (
+            "mod r#global;\nuse r#global::*;\nuse r#global::{A, B};\n",
+            true,
+        ),
         // An inline module's own imports are scoped to it, so a `pub use` inside
         // would reach the root through the glob unseen.
         ("mod global {}\nuse global::*;\n", false),
@@ -9335,6 +9355,22 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         ),
         (
             "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self as g2, x};\npub use global::*;\n",
+            true,
+        ),
+        (
+            "mod global;\nuse dep::{other as r#global};\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse dep /* prefix */ :: global;\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse ::dep::global::{self};\nuse global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nuse ::dep /* prefix */ :: r#global::{self};\nuse global::*;\n",
             false,
         ),
         (
@@ -14467,4 +14503,91 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(file_renames_to(&other, "Fxo"));
         assert!(!file_renames_to(&renames, "Fxo"));
     }
+}
+
+/// #13703: a file read proves the roots of only the rooted spellings the
+/// file itself calls, and answers every other spelling on demand, once. Each
+/// answer equals the eager reading, which proved all 24 spellings.
+#[test]
+fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
+    let sources = [
+        "#[test]\nfn t() { std::assert_eq!(1, 1); }\n",
+        "extern crate other as std;\n#[test]\nfn t() { std::assert_eq!(1, 1); }\n",
+        "use other as core;\n#[test]\nfn t() { core::assert!(true); ::std::assert_ne!(1, 2); }\n",
+        "#[test]\nfn t() { assert!(std::matches!(Some(1), Some(_))); }\n",
+        "#[test]\nfn t() { assert_eq!(1, 1); }\n",
+        "mod std {}\n#[test]\nfn t() { assert_eq!(1, 1); }\n",
+        "fn t( {\n",
+    ];
+    let eager = |source: &str| -> BTreeSet<String> {
+        parse_clean_source_file(source).map_or_else(BTreeSet::new, |file| {
+            let root = file.tree().syntax().clone();
+            STD_ROOTED_ASSERT_EQ
+                .iter()
+                .filter(|path| {
+                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                })
+                .map(|path| (*path).to_string())
+                .collect()
+        })
+    };
+    let readings: Vec<BTreeSet<String>> = sources.iter().map(|source| eager(source)).collect();
+    assert!(
+        readings.iter().any(|set| set.contains("std::assert_eq"))
+            && readings.iter().any(|set| !set.contains("std::assert_eq")),
+        "premise: the eager reading tells the sources apart: {readings:?}"
+    );
+    assert!(
+        readings
+            .iter()
+            .any(|set| !set.is_empty() && set.len() < STD_ROOTED_ASSERT_EQ.len()),
+        "premise: the spelling, not only the source, decides: {readings:?}"
+    );
+    let spellings: Vec<&str> = STD_ROOTED_ASSERT_EQ
+        .iter()
+        .copied()
+        .chain([
+            "assert_eq",
+            "std::fmt::assert_eq",
+            "other::assert_eq",
+            "std::matches",
+        ])
+        .collect();
+    for (source, eager) in sources.iter().zip(&readings) {
+        let rooted = StdRootedCalls::of(source);
+        // Asked twice: the second answer comes from the on-demand memo.
+        for _ in 0..2 {
+            for path in &spellings {
+                assert_eq!(
+                    rooted.is_unrebound(path, source),
+                    eager.contains(*path),
+                    "{path} in {source}"
+                );
+            }
+        }
+    }
+
+    let proofs = || STD_ROOT_PROOFS.with(std::cell::Cell::get);
+    // A file that spells no rooted call proves nothing when it is read.
+    let before = proofs();
+    let plain = StdRootedCalls::of(sources[4]);
+    assert_eq!(proofs(), before, "no rooted call, no root proof");
+    assert!(plain.calls.is_empty() && plain.proved.is_empty());
+    // A spelling the read did not prove is proved once, however often asked.
+    assert!(plain.is_unrebound("std::assert_eq", sources[4]));
+    assert!(plain.is_unrebound("std::assert_eq", sources[4]));
+    assert_eq!(proofs(), before + 1, "one on-demand proof per spelling");
+    // A spelling outside the rooted set is refused without a proof.
+    assert!(!plain.is_unrebound("other::assert_eq", sources[4]));
+    assert_eq!(proofs(), before + 1);
+    // One rooted call proves that one spelling; the matches! call proves its
+    // `assert` twin.
+    let before = proofs();
+    let one = StdRootedCalls::of(sources[0]);
+    assert_eq!(proofs(), before + 1);
+    assert_eq!(one.proved, BTreeSet::from(["std::assert_eq"]));
+    assert!(one.is_unrebound("std::assert_eq", sources[0]));
+    assert_eq!(proofs(), before + 1, "a read-time proof is not repeated");
+    let matches = StdRootedCalls::of(sources[3]);
+    assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
 }

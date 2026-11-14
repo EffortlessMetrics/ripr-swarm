@@ -1,0 +1,10 @@
+#[kani::proof]
+fn cover_pass_compact() {
+    let value: u8 = kani::any();
+    kani::assume(value <= 1);
+    if value > 1 {
+        assert!(false, "an ordinary assertion outside the admitted domain");
+    }
+    kani::cover!(value == 0, "zero is admitted");
+    kani::cover!(value == 1, "one is admitted");
+}

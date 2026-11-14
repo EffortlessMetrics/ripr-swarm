@@ -72,4 +72,8 @@ fn production_cap_is_256_mib() {
         super::MAX_CLI_INPUT_BYTES as usize,
         super::MAX_CLI_INPUT_BYTES
     ));
+    kani::cover!(
+        whole_mib(super::MAX_CLI_INPUT_BYTES) == Some(256),
+        "the production input-cap checks are reached"
+    );
 }

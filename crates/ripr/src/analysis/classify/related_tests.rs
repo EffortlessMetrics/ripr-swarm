@@ -2364,6 +2364,166 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
         && owner_impl_is_root_item_of(index, owner, &owner.file)
 }
 
+/// #14407: [`library_module_path`] of `file`, or `None` when any indexed
+/// file may remap a module to another file with a `path = ..` attribute
+/// (plain or inside `cfg_attr`), since the file path then need not name the
+/// module.
+pub(in crate::analysis) fn indexed_library_module_path(
+    index: &RustIndex,
+    file: &Path,
+) -> Option<Vec<String>> {
+    // `#[path = ..]`, `# [path = ..]` and `#[cfg_attr(.., path = ..)]` all
+    // put `path =` right after `[` or `,`; a `let path = ..` does not.
+    let remaps = index.files().iter().any(|(_, facts)| {
+        if !facts.source.contains("path") {
+            return false;
+        }
+        let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+        super::owner_pin::whole_word_offsets(&masked, "path")
+            .into_iter()
+            .any(|offset| {
+                let after = masked[offset + "path".len()..].trim_start();
+                masked[..offset].trim_end().ends_with(['[', ','])
+                    && after.starts_with('=')
+                    && !after.starts_with("==")
+            })
+    });
+    if remaps {
+        None
+    } else {
+        library_module_path(file)
+    }
+}
+
+/// The module path of a root-library file under `src/` (#14407): `src/lib.rs`
+/// is the crate root (empty), `src/a.rs` and `src/a/mod.rs` are `a`, and
+/// `src/a/b.rs` is `a::b`. Any other file gives `None`.
+pub(in crate::analysis) fn library_module_path(file: &Path) -> Option<Vec<String>> {
+    let rest = file.strip_prefix("src").ok()?;
+    let mut parts: Vec<String> = rest
+        .iter()
+        .map(|part| part.to_str().map(str::to_string))
+        .collect::<Option<_>>()?;
+    let last = parts.pop()?;
+    let stem = last.strip_suffix(".rs")?;
+    if parts.is_empty() && stem == "lib" {
+        return Some(Vec::new());
+    }
+    if parts.is_empty() && stem == "main" {
+        return None;
+    }
+    if stem != "mod" {
+        parts.push(stem.to_string());
+    }
+    (!parts.is_empty()
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        }))
+    .then_some(parts)
+}
+
+/// Whether `owner`'s `impl` is a top-level item of its own file (#14407), so
+/// the file's module path is the type's path.
+pub(in crate::analysis) fn owner_impl_is_top_level_item(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> bool {
+    owner_impl_is_root_item_of(index, owner, &owner.file)
+}
+
+/// Whether the root library file (`src/lib.rs`) puts the owner's impl type
+/// `name` at the crate root (#14407): the owner's file is `src/lib.rs` and it
+/// declares `name` exactly once, unaliased; or the owner's file is a module
+/// of the library that declares `name` once, `src/lib.rs` declares no type of
+/// that name, and `src/lib.rs` re-exports it unrenamed by `pub use` of the
+/// owner's module path (`pub use a::Ty;`, optionally `crate::`/`self::`
+/// prefixed). Anything else, including a re-export from another path, is
+/// `false`.
+pub(in crate::analysis) fn root_library_names_owner_type(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    name: &str,
+) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return false;
+    };
+    if !owner_impl_is_top_level_item(index, owner) {
+        return false;
+    }
+    let root_count = super::owner_pin::source_type_declaration_count(&root.source, name);
+    if owner.file == Path::new("src/lib.rs") {
+        return root_count == 1;
+    }
+    let Some(module) =
+        indexed_library_module_path(index, &owner.file).filter(|module| !module.is_empty())
+    else {
+        return false;
+    };
+    let Some(owner_facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let target = format!("{}::{name}", module.join("::"));
+    let reexports = super::reveal::flattened_pub_use_paths(&root.source)
+        .into_iter()
+        .filter(|item| {
+            item.alias
+                .as_deref()
+                .unwrap_or_else(|| item.path.rsplit("::").next().unwrap_or(item.path.as_str()))
+                == name
+                || item.path.ends_with("::*")
+        })
+        .collect::<Vec<_>>();
+    root_count == 0
+        && super::owner_pin::source_type_declaration_count(&owner_facts.source, name) == 1
+        && reexports.len() == 1
+        && reexports.iter().all(|item| {
+            item.alias.is_none()
+                && ["", "crate::", "self::"]
+                    .iter()
+                    .any(|prefix| item.path == format!("{prefix}{target}"))
+        })
+}
+
+/// Whether the root library file declares, aliases, renames or `pub use`s any
+/// type named `name`, or holds a `pub use` glob, so `krate::name` or a
+/// `use krate::*;` glob may bind it (#14407).
+pub(in crate::analysis) fn library_root_binds_type_name(index: &RustIndex, name: &str) -> bool {
+    let Some(root) = index.files().get(Path::new("src/lib.rs")) else {
+        return true;
+    };
+    super::owner_pin::source_type_declaration_count(&root.source, name) > 0
+        || super::reveal::flattened_pub_use_paths(&root.source)
+            .iter()
+            .any(|item| {
+                item.path.ends_with("::*")
+                    || item.alias.as_deref().unwrap_or_else(|| {
+                        item.path.rsplit("::").next().unwrap_or(item.path.as_str())
+                    }) == name
+            })
+}
+
+/// The factory name [`initializer_names_impl_type`] passes for a
+/// crate-qualified struct literal head (`krate::Ty { .. }`): no associated
+/// function can be spelled `{`, so it never collides with a constructor name.
+const CRATE_QUALIFIED_STRUCT_LITERAL: &str = "{";
+
+/// The root package's library name when `test` may spell the owner's impl type
+/// through it (`krate::Ty`): the owner is a top-level item of a file of the
+/// root package's library (`src/lib.rs` or a module composed under it) and
+/// `test`, an integration test of the root package, names the library
+/// unshadowed (#14036, #14407). `None` otherwise, so a crate-qualified
+/// spelling then establishes nothing.
+pub(in crate::analysis) fn own_crate_qualifier<'a>(
+    index: &'a RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<&'a str> {
+    let krate = index.root_library_name.as_deref()?;
+    (owner_is_root_library_item(index, owner)
+        && root_library_name_is_unshadowed(index, test, krate))
+    .then_some(krate)
+}
+
 /// Whether `krate` is the root package's library identifier and `test` — an
 /// integration test of the root package — names it unshadowed (#14036).
 fn root_library_name_is_unshadowed(index: &RustIndex, test: &TestSummary, krate: &str) -> bool {
@@ -2386,7 +2546,20 @@ fn own_crate_name_unshadowed_in_test(
     test: &TestSummary,
     crate_name: &str,
 ) -> bool {
-    let normalized_test = normalize_path(&test.file);
+    own_crate_name_unshadowed_in_test_crate_root(index, &test.file, &test.body, crate_name)
+}
+
+/// [`own_crate_name_unshadowed_in_test`] for any function of a test-crate
+/// root: `file` is the function's file and `body` its own source text. A
+/// same-file helper an integration test calls reads the crate name by the
+/// same rules as the test itself (#8387).
+pub(super) fn own_crate_name_unshadowed_in_test_crate_root(
+    index: &RustIndex,
+    file: &Path,
+    body: &str,
+    crate_name: &str,
+) -> bool {
+    let normalized_test = normalize_path(file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
         ["tests", file] => file.ends_with(".rs"),
@@ -2396,7 +2569,7 @@ fn own_crate_name_unshadowed_in_test(
     if !is_test_crate_root {
         return false;
     }
-    let Some(facts) = index.files().get(&test.file) else {
+    let Some(facts) = index.files().get(file) else {
         return false;
     };
     if facts.source.contains("include!")
@@ -2420,11 +2593,11 @@ fn own_crate_name_unshadowed_in_test(
             })
     };
     !file_may_bind_name(&stripped_file, crate_name)
-        && !body_binds_owner_name(&test.body, crate_name)
+        && !body_binds_owner_name(body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body)
+        && !may_rebind_crate_name(body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
@@ -2770,23 +2943,49 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
 /// Whether the test file declares a `const` or `static` named `name` anywhere
 /// (fail-closed: scope-aware visibility is a documented known limit).
 fn declares_value_named(source: &str, name: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let name = name.strip_prefix("r#").unwrap_or(name);
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return true;
-    };
-    parse.tree().syntax().descendants().any(|node| {
-        let named = if let Some(item) = ast::Const::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else if let Some(item) = ast::Static::cast(node.clone()) {
-            item.name()
-                .map(|n| n.text().trim_start_matches("r#").to_string())
-        } else {
-            return false;
-        };
-        named.as_deref() == Some(name)
-    })
+    // One walk of the file's tree answers every name. The helper-entry edge
+    // asks once per (probe, calling test, hop), so a diff that changes many
+    // functions of one file re-walked that file, and often re-parsed it, once
+    // per changed function (#11738).
+    let declared = crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::DeclaredValueNames,
+        0,
+        source,
+        || declared_value_names(source).map(std::rc::Rc::new),
+    );
+    declared.is_none_or(|names| names.contains(name))
+}
+
+/// The names of every `const` and `static` item in `source`, raw prefixes
+/// removed; `None` when the source does not parse cleanly.
+fn declared_value_names(source: &str) -> Option<BTreeSet<String>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    #[cfg(test)]
+    DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(walks.get() + 1));
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    Some(
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(|node| {
+                let named = if let Some(item) = ast::Const::cast(node.clone()) {
+                    item.name()
+                } else {
+                    ast::Static::cast(node)?.name()
+                };
+                named.map(|n| n.text().trim_start_matches("r#").to_string())
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-file walks [`declared_value_names`] ran on this thread, so a test
+    /// can prove the walk happens once per source within a run.
+    static DECLARED_VALUE_NAME_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the test body binds `name` (a `let`, a closure or function
@@ -4504,6 +4703,65 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     let_binding_mentions_type_at(body, body, body, body.len(), binding, type_name)
 }
 
+/// Whether the latest `let` of `binding` in `body` (everything before the
+/// use, comments and strings masked) is unannotated and initialized by exactly
+/// the crate-qualified struct literal `krate::type_name { .. }` (#14407): the
+/// same latest-`let` reading [`let_binding_certain_type_head`] gives a
+/// one-segment literal. The caller supplies `krate` only after establishing
+/// that it names the owner's own library unshadowed ([`own_crate_qualifier`]),
+/// and rejects a rebinding after the call itself.
+pub(in crate::analysis) fn let_binding_is_crate_qualified_literal(
+    body: &str,
+    binding: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    // A latest-`let` text read cannot tell block scopes apart, so a second
+    // `let` of the same name anywhere before the use refuses (#14407).
+    let_statement_count(body, binding) == 1
+        && last_let_statement(body, binding).is_some_and(|stmt| {
+            stmt.find('=').is_some_and(|eq| {
+                !stmt[..eq].contains(':')
+                    && initializer_is_crate_qualified_literal(&stmt[eq + 1..], krate, type_name)
+            })
+        })
+}
+
+/// How many `let [mut] binding` statements `body` holds, by the same text
+/// reading as [`last_let_statement`].
+pub(in crate::analysis) fn let_statement_count(body: &str, binding: &str) -> usize {
+    let mut count = 0;
+    let mut rest = body;
+    while let Some(stmt) = last_let_statement(rest, binding) {
+        count += 1;
+        let at = stmt.as_ptr() as usize - rest.as_ptr() as usize;
+        rest = &rest[..at];
+    }
+    count
+}
+
+/// Whether `init` is one struct literal (`Counter { .. }`,
+/// `krate::Counter { .. }`) with nothing after it (#14407).
+pub(in crate::analysis) fn initializer_is_struct_literal(init: &str) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init) && matches!(type_head(init), Some((_, Some(b'{'))))
+}
+
+/// Whether `init` is one struct literal whose head is exactly
+/// `krate::type_name` (`rg::Counter { n: 5 }`), with nothing after it.
+pub(in crate::analysis) fn initializer_is_crate_qualified_literal(
+    init: &str,
+    krate: &str,
+    type_name: &str,
+) -> bool {
+    let init = init.trim();
+    let init = init.strip_suffix(';').map_or(init, str::trim_end);
+    initializer_is_one_head_expr(init)
+        && matches!(type_head(init), Some((segments, Some(b'{')))
+            if segments.as_slice() == [krate, type_name])
+}
+
 fn let_binding_mentions_type_at(
     prefix: &str,
     full_body: &str,
@@ -4669,6 +4927,14 @@ fn initializer_names_impl_type(
         // the type literal `Ty` when a same-named function could run (#8917).
         ([ty], Some(b'(')) => factory("", ty),
         ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
+        // `krate::Ty { .. }` (#14407): the same crate-prefix authority (checked
+        // before the variant arm below, which would otherwise take it); the
+        // literal itself names the type, so no constructor is consulted.
+        ([krate, ty], Some(b'{')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), CRATE_QUALIFIED_STRUCT_LITERAL)
+                // `Ty::Ty { .. }`: a struct variant named like its enum.
+                || (*krate == impl_type && is_variant_name(ty))
+        }
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
         // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
         // through the `krate::Ty` spelling and accepts only the root
@@ -4729,22 +4995,30 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// return type. Workspace-wide names would block a file-local unit struct
 /// `name()` when an unrelated module declares the same free fn (#8917).
 fn free_function_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
-    index.functions().iter().any(|function| {
-        function.file == file
-            && function.name == name
-            && function.item.container == FunctionContainer::Free
-    })
+    let functions = index.functions();
+    let unraw = name.strip_prefix("r#").unwrap_or(name);
+    index
+        .call_identity_memos
+        .function_positions_named(index, unraw)
+        .iter()
+        .filter_map(|&position| functions.get(position))
+        .any(|function| {
+            function.file == file
+                && function.name == name
+                && function.item.container == FunctionContainer::Free
+        })
 }
 
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
     // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
     // shadows the file-level helper.
-    let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
-    let name = unraw(name);
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let functions = index.functions();
     let mut declarations = index
-        .functions()
+        .call_identity_memos
+        .function_positions_named(index, name)
         .iter()
-        .filter(|function| unraw(&function.name) == name);
+        .filter_map(|&position| functions.get(position));
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
     };
@@ -5685,12 +5959,21 @@ fn inherent_receiver_call_resolves_with(
                 head == impl_type
             } else if let Some((krate, ty)) = ty.split_once("::") {
                 // A crate-qualified constructor head (`krate::Ty::new()`,
-                // #14036): the leading segment must be the root package's
-                // library name, unshadowed in this test, and the owner an
-                // item of that library.
-                owner.is_some_and(|owner| owner_is_root_library_item(index, owner))
-                    && root_library_name_is_unshadowed(index, test, krate)
-                    && associated_constructor_names_own_type(index, ty, name, None)
+                // #14036) or struct literal (`krate::Ty { .. }`, #14407): the
+                // leading segment must be the root package's library name,
+                // unshadowed in this test, and the owner an item of that
+                // library. A literal names the type itself; an associated
+                // call must be a constructor of it.
+                owner.is_some_and(|owner| {
+                    own_crate_qualifier(index, test, owner) == Some(krate)
+                        && if name == CRATE_QUALIFIED_STRUCT_LITERAL {
+                            // The literal checks no constructor, so the crate
+                            // root must name the owner's own type.
+                            root_library_names_owner_type(index, owner, ty)
+                        } else {
+                            associated_constructor_names_own_type(index, ty, name, None)
+                        }
+                })
             } else {
                 if associated_constructor_names_own_type(
                     index,
@@ -8187,6 +8470,42 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 /// `other.owner(..)` or path-qualified `Type::owner(..)` spelling.
 #[cfg(test)]
 mod tests {
+    /// #11738: one walk of a source answers every name inside a run memo
+    /// scope, and the answers are the unscoped ones.
+    #[test]
+    fn declared_value_names_are_walked_once_per_source_in_a_scope() {
+        let source =
+            "const LIMIT: u8 = 1;\nstatic r#TABLE: [u8; 1] = [1];\nfn limit() -> u8 { LIMIT }\n";
+        let unparsable = "const LIMIT: u8 = ;\n";
+        let names = ["LIMIT", "TABLE", "r#TABLE", "limit", "missing"];
+        let walks = || super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.get());
+        let unscoped: Vec<bool> = names
+            .iter()
+            .map(|name| super::declares_value_named(source, name))
+            .collect();
+        assert_eq!(unscoped, [true, true, true, false, false]);
+        assert!(
+            super::declares_value_named(unparsable, "missing"),
+            "an unparsable source refuses every name"
+        );
+        let scope = crate::analysis::syntax::run_memo::enter();
+        super::DECLARED_VALUE_NAME_WALKS.with(|walks| walks.set(0));
+        for _ in 0..3 {
+            let scoped: Vec<bool> = names
+                .iter()
+                .map(|name| super::declares_value_named(source, name))
+                .collect();
+            assert_eq!(scoped, unscoped);
+        }
+        assert_eq!(walks(), 1, "one walk answers every name and repeat");
+        assert!(super::declares_value_named(unparsable, "missing"));
+        assert!(super::declares_value_named(unparsable, "LIMIT"));
+        assert_eq!(walks(), 2, "another source is walked once");
+        drop(scope);
+        assert!(super::declares_value_named(source, "LIMIT"));
+        assert!(!super::declares_value_named(source, "missing"));
+        assert_eq!(walks(), 4, "outside a scope every ask walks");
+    }
     use super::*;
     use crate::analysis::facts::{
         FileFacts, FunctionContainer, FunctionSourceRole, SourceRoleProvenance,
@@ -8198,6 +8517,106 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_crate_qualified_struct_literal_receiver_asks_the_crate_authority() {
+        // #14407: `krate::Ty { .. }` reaches the factory under the literal
+        // marker, so only the crate-prefix authority (never a constructor
+        // lookup) decides it.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let factory = |admit: bool| {
+            let asked = &asked;
+            move |ty: &str, name: &str| {
+                asked.borrow_mut().push((ty.to_string(), name.to_string()));
+                admit
+            }
+        };
+        assert!(initializer_names_impl_type(
+            "probe::Counter { n: 5 }",
+            "Counter",
+            &factory(true)
+        ));
+        assert_eq!(
+            asked.borrow().as_slice(),
+            &[(
+                "probe::Counter".to_string(),
+                CRATE_QUALIFIED_STRUCT_LITERAL.to_string()
+            )]
+        );
+        // The authority refusing (a foreign or shadowed crate name) refuses.
+        assert!(!initializer_names_impl_type(
+            "other::Counter { n: 5 }",
+            "Counter",
+            &factory(false)
+        ));
+        asked.borrow_mut().clear();
+        // Another type, a deeper path or a tuple-struct call never asks.
+        for refused in [
+            "probe::Other { n: 5 }",
+            "probe::inner::Counter { n: 5 }",
+            "probe::Counter(5)",
+        ] {
+            assert!(
+                !initializer_names_impl_type(refused, "Counter", &factory(true)),
+                "{refused}"
+            );
+        }
+        assert!(asked.borrow().is_empty(), "{:?}", asked.borrow());
+        // A struct variant named like its enum (`Mode::Mode { .. }`) keeps
+        // the variant reading when the crate authority refuses (#14407 F4).
+        assert!(initializer_names_impl_type(
+            "Mode::Mode { n: 5 }",
+            "Mode",
+            &factory(false)
+        ));
+    }
+
+    #[test]
+    fn a_library_file_maps_to_its_module_path() {
+        let path = |file: &str| library_module_path(Path::new(file));
+        assert_eq!(path("src/lib.rs"), Some(Vec::new()));
+        assert_eq!(path("src/other.rs"), Some(vec!["other".to_string()]));
+        assert_eq!(path("src/a/mod.rs"), Some(vec!["a".to_string()]));
+        assert_eq!(
+            path("src/a/b.rs"),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        for none in ["src/main.rs", "tests/t.rs", "src/a/b.txt", "lib.rs"] {
+            assert_eq!(path(none), None, "{none}");
+        }
+    }
+
+    #[test]
+    fn a_latest_let_names_the_crate_qualified_literal_exactly() {
+        let reads =
+            |body: &str| let_binding_is_crate_qualified_literal(body, "c", "probe", "Counter");
+        assert!(reads("let mut c = probe::Counter { n: 5 };\n"));
+        assert!(reads("let c = probe::Counter { n: 5 };\n"));
+        for refused in [
+            // Another crate, another type, or a one-segment spelling.
+            "let mut c = other::Counter { n: 5 };\n",
+            "let mut c = probe::Other { n: 5 };\n",
+            "let mut c = Counter { n: 5 };\n",
+            // Not one head expression: the chained value may have another type.
+            "let mut c = probe::Counter { n: 5 }.into();\n",
+            // An annotation is read by the existing typed rule, not this one.
+            "let mut c: Wrapper = probe::Counter { n: 5 };\n",
+            // Another binding, or none.
+            "let mut d = probe::Counter { n: 5 };\n",
+            "",
+            // A second `let` of the name, whose block scope a text read
+            // cannot place (#14407 review).
+            "let mut c = other::Gauge { n: 5 };\n{ let mut c = probe::Counter { n: 1 }; }\n",
+            "let mut c = probe::Counter { n: 5 };\nlet mut c = probe::Counter { n: 1 };\n",
+        ] {
+            assert!(!reads(refused), "{refused:?}");
+        }
+        assert!(initializer_is_crate_qualified_literal(
+            " probe::Counter { n: 5 };",
+            "probe",
+            "Counter"
+        ));
+    }
 
     #[test]
     fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
@@ -14856,6 +15275,27 @@ let r = try_parse_summary(\"x\");",
         let index = crate::analysis::facts::build_index(&root, &files)?;
         assert!(!free_function_declared(&index, &site, "Site"));
         assert!(free_function_declared(&index, &other, "Site"));
+        Ok(())
+    }
+
+    #[test]
+    fn free_function_declared_sees_functions_pushed_after_the_bucket_was_built()
+    -> Result<(), String> {
+        let root = temp_dir("free-fn-bucket-invalidation")?;
+        write_manifest(&root)?;
+        let other = write(&root, "tests/other.rs", "fn Site() {}\n")?;
+        let files = vec![other.clone()];
+        let mut index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(!free_function_declared(&index, &other, "Later"));
+        let mut later = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "Site")
+            .cloned()
+            .ok_or("fixture declares Site")?;
+        later.name = "Later".to_string();
+        index.push_function(later);
+        assert!(free_function_declared(&index, &other, "Later"));
         Ok(())
     }
 

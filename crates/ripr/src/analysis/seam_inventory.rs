@@ -456,6 +456,8 @@ fn inventory_classified_seams_report_inner(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
 ) -> Result<ClassifiedSeamsReport, String> {
+    #[cfg(test)]
+    WORKSPACE_CLASSIFIED_INVENTORIES.with(|count| count.set(count.get() + 1));
     // Store failures of the classified-seam and corpus-fingerprint families
     // are collected through the same bounded `{path, stage, error}` row
     // owner as file-fact failures (#9633) and surfaced once per run, success
@@ -4328,6 +4330,71 @@ pub(crate) fn scoped_file_seams(
     let seams = built.seams_in_file(file)?;
     *seam_index = Some(built);
     Ok(seams)
+}
+
+/// Where [`locate_seam_file_at_with_config`] found a seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SeamLocation {
+    /// Root-relative production file that declares the seam.
+    pub(crate) file: PathBuf,
+    /// Whether the capped workspace inventory holds this seam: the cap keeps
+    /// the smallest `SeamSortKey`s, so this is the seam's rank against the
+    /// effective `repo_exposure_seam_limit`. Consumers that still read the
+    /// capped inventory (the repair packet's before phase) cannot find a seam
+    /// for which this is `false`.
+    pub(crate) within_inventory_limit: bool,
+}
+
+/// The production file that declares `seam_id`, or `None` when no seam has
+/// that id (#14369). A seam id is repo-wide, so this walks every production
+/// seam with no exposure seam limit: the capped classified inventory holds
+/// only a prefix of a large workspace, and a seam id past that prefix (any
+/// changed seam `ripr check` reports, for example) would otherwise be
+/// unresolvable. Locating a seam needs no test-grip evidence, so the walk
+/// reads only cached file facts; the caller then runs the file-scoped
+/// classification for the file it names.
+pub(crate) fn locate_seam_file_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    seam_id: &str,
+) -> Result<Option<SeamLocation>, String> {
+    let limit = repo_exposure_seam_limit()?.map(|(limit, _)| limit);
+    let state = collect_workspace_state(root, config)?;
+    let production_files = production_files_from_state_with_role(&state, config);
+    let mut cached = state.build_index(config)?;
+    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    cancellation::checkpoint()?;
+    #[cfg(test)]
+    SEAM_FILE_LOCATIONS.with(|count| count.set(count.get() + 1));
+    let seams = seams_from_index_files(&production_files, &cached.index)?;
+    let Some(target) = seams.iter().find(|seam| seam.id().as_str() == seam_id) else {
+        return Ok(None);
+    };
+    let target_key = SeamSortKey::of(target);
+    // Unique keys that sort before the seam: the capped inventory keeps the
+    // first `limit` of them, so the seam is inside it exactly when fewer than
+    // `limit` precede it.
+    let preceding = seams
+        .iter()
+        .map(SeamSortKey::of)
+        .filter(|key| *key < target_key)
+        .collect::<HashSet<_>>()
+        .len();
+    Ok(Some(SeamLocation {
+        file: target.file().to_path_buf(),
+        within_inventory_limit: limit.is_none_or(|limit| preceding < limit),
+    }))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whole-workspace classified inventories started on this thread.
+    pub(crate) static WORKSPACE_CLASSIFIED_INVENTORIES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    /// Uncapped seam-id walks [`locate_seam_file_at_with_config`] ran on this
+    /// thread.
+    pub(crate) static SEAM_FILE_LOCATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 /// Classify only the seams in `file`, gathering test-grip evidence from a

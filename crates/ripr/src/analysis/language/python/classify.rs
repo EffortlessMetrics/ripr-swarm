@@ -126,6 +126,11 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies in the body of `if TYPE_CHECKING:`, which never
+    /// runs (`type_checking_block.rs`, #14156).
+    pub(super) new_line_type_checking_only: bool,
+    /// The paired old line lay in such a body of the old file.
+    pub(super) old_line_type_checking_only: bool,
     /// The changed line lies inside a string literal that crosses a line
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
@@ -265,9 +270,17 @@ fn classify_change_full<'a>(
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text
-        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
+    // A line in a type-checking-only block (#14156) is the same kind of fact:
+    // it never runs. Runtime code moved INTO such a block (old line
+    // behavioral) keeps its probe.
+    let new_is_noop = no_behavior.new_line_in_docstring
+        || no_behavior.new_line_type_checking_only
+        || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring
+            || no_behavior.old_line_type_checking_only
+            || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }

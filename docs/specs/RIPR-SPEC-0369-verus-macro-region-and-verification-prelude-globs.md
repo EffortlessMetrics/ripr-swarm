@@ -174,6 +174,15 @@ to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
 
+An import path that only reads the module name does not shadow it (#14116):
+`pub(crate) use name::{A, B};`, a member renamed to another name, or an import
+renamed to `_` leaves the local glob intact. Actual leaf bindings, including
+grouped `self` and aliases to the module name, still refuse. An opaque import
+that mentions the module name keeps the prior refusal; this includes absolute
+grouped paths whose bound name is not established. Unrelated absolute imports
+do not shadow the module. This does not relax unresolved-include placement refusal or
+hide public macro imports in the module being globbed.
+
 The rule reads the glob with 2018 path semantics at the top level of any file
 and does not consult the edition. In a 2015-edition crate a non-root file's
 `mod name; pub use name::*;` names a crate-root item instead, so a crate-root

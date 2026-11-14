@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/cache-status.schema.json",
+  "title": "RIPR Cache Status",
+  "description": "The document `ripr cache status --json` writes to stdout: where the ripr cache is, whether it could be read, and how much of it ripr owns. `schema_version` versions this report, not the on-disk cache layers. The counts describe files on disk at the time of the run; they say nothing about whether a later `ripr check` will hit the cache.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cache_dir",
+    "real_cache_dir",
+    "via_symlink",
+    "status",
+    "total_size_bytes",
+    "entry_count",
+    "foreign_entry_count",
+    "foreign_total_size_bytes"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.2" },
+    "cache_dir": {
+      "description": "The cache directory as resolved from `RIPR_CACHE_DIR` or the workspace default, in the host's own path spelling.",
+      "type": "string",
+      "minLength": 1
+    },
+    "real_cache_dir": {
+      "description": "The real directory that was inspected when the configured cache path traverses a symlink or junction, as its leaf or through an ancestor; otherwise `null`.",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "via_symlink": {
+      "description": "`true` exactly when `real_cache_dir` is a string.",
+      "type": "boolean"
+    },
+    "status": {
+      "description": "`ok`; `not_found` (no cache directory yet); `partial` (something under the cache directory could not be read, so the counts are lower bounds); `unavailable` (the inspected path is not a directory, is a broken symlink, or its metadata could not be read).",
+      "enum": ["ok", "not_found", "partial", "unavailable"]
+    },
+    "total_size_bytes": {
+      "description": "Bytes in the recognized ripr cache layers, the set `ripr cache clear` removes.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "entry_count": {
+      "description": "Regular files in the recognized ripr cache layers.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "foreign_entry_count": {
+      "description": "Regular files under the cache directory outside the recognized layers. `ripr cache clear` preserves them.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "foreign_total_size_bytes": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "real_cache_dir": { "type": "null" } } },
+      "then": { "properties": { "via_symlink": { "const": false } } },
+      "else": { "properties": { "via_symlink": { "const": true } } }
+    },
+    {
+      "if": {
+        "properties": { "status": { "enum": ["not_found", "unavailable"] } }
+      },
+      "then": {
+        "properties": {
+          "total_size_bytes": { "const": 0 },
+          "entry_count": { "const": 0 },
+          "foreign_entry_count": { "const": 0 },
+          "foreign_total_size_bytes": { "const": 0 }
+        }
+      }
+    }
+  ]
+}

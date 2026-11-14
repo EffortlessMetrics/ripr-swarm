@@ -122,7 +122,9 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
+  refused envelope (zeroed counts, `run_status: "refused"`), and `agent`
+  renders its refused `stop=` / `next=` / `verify=refused` record (#14452;
+  a timed run's bounded retry rides `next=`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
@@ -163,7 +165,9 @@ reached the caller.
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
 - **Unusable report input**: `ripr reports gap-ledger` with a source that
-  is readable but not valid JSON or not that source kind's shape, and
+  is readable but not valid JSON, not that source kind's shape, or a
+  producer refusal (`downstream_consumable: false`, nothing analyzed;
+  #14434); and
   `ripr policy readiness` with a supplied input that is missing, unreadable,
   not a JSON object, or empty, a baseline delta, waiver aging, suppression
   health or previous readiness input whose `kind` names another report, or a

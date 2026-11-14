@@ -118,6 +118,14 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// (`activation::pushed_collection_compared_whole`), the rule activation
     /// already applies. Only consulted for `field_construction` probes.
     pub(in crate::analysis) pushed_literal_observed: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0228 (#14407): whether the assertion reads, exactly, the
+    /// plain field the changed assignment writes (`self.n = 1`), from the
+    /// binding the test called the owner on, after that call and with no
+    /// rewrite between (`activation::assigned_field_read_confirms`, the rule
+    /// activation and the repository seam already apply). Only consulted for
+    /// `field_construction` probes; it does not depend on the field's name
+    /// being long enough to count as a token match.
+    pub(in crate::analysis) assigned_field_observed: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
     /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
     pub(in crate::analysis) out_parameter_read:
@@ -193,6 +201,7 @@ fn reveal_evidence(
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
+            assigned_field_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -242,6 +251,7 @@ fn reveal_evidence_with_exit(
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
+            assigned_field_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -311,6 +321,7 @@ fn reveal_evidence_proximity_reach_pinning(
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
+            assigned_field_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -1340,6 +1351,37 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     !owner_calls_before_read(body, start_line, binding, method, read_line, impl_type).is_empty()
 }
 
+/// [`owner_call_precedes_read`], also accepting a binding whose latest `let`
+/// initializer is the crate-qualified struct literal `own_crate::impl_type {
+/// .. }` (#14407). `own_crate` is the root library name the caller has already
+/// established the test may spell the owner's type through
+/// (`related_tests::own_crate_qualifier`); `None` adds nothing.
+pub(in crate::analysis) fn owner_call_precedes_read_in_crate(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+    impl_type: Option<&str>,
+    own_crate: Option<&str>,
+) -> bool {
+    owner_call_precedes_read(body, start_line, binding, method, read_line, impl_type)
+        || impl_type.zip(own_crate).is_some_and(|(impl_type, krate)| {
+            owner_calls_before_read(body, start_line, binding, method, read_line, None)
+                .into_iter()
+                .any(|at| {
+                    body.get(..at).is_some_and(|prefix| {
+                        super::related_tests::let_binding_is_crate_qualified_literal(
+                            &mask_comments_and_strings(prefix),
+                            binding,
+                            krate,
+                            impl_type,
+                        )
+                    })
+                })
+        })
+}
+
 /// Whether `binding` at byte `call_at` in `body` names the owner's impl type
 /// (`let x: Inventory = ..`, `Inventory::new()`, ...). Fails closed when the
 /// binding's type cannot be read from the prefix before the call (#7683).
@@ -1371,7 +1413,10 @@ fn owner_call_binding_init_names_impl_type(body: &str, binding: &str, impl_type:
 }
 
 /// The initializer expression of the latest `let [mut] binding = ..` in `body`.
-fn owner_call_binding_let_initializer<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+pub(in crate::analysis) fn owner_call_binding_let_initializer<'a>(
+    body: &'a str,
+    binding: &str,
+) -> Option<&'a str> {
     if binding.is_empty() {
         return None;
     }
@@ -2889,7 +2934,24 @@ fn analyze_related_assertions(
                 && !return_admission.owner_may_exit_before_probe
                 && !test_is_should_panic(test)
                 && (return_admission.pushed_literal_observed)(test, assertion);
-            let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
+            // #14407: an exact read of the plain field the changed assignment
+            // writes (`self.n = 1` read as `c.n` after `c.reset()`) confirms
+            // through the shared RIPR-SPEC-0228 read rule, whatever the field's
+            // name length. The rule already refuses an owner that may leave
+            // before the write and a default-like expected value.
+            // Like the out-parameter and recording-double reads, it needs a
+            // direct owner call that no import, cross-package namesake or
+            // body-level shadow can redirect.
+            let assigned_field_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+                && (return_admission.assigned_field_observed)(test, assertion);
+            let field_collection_read =
+                field_collection_read || keyed_read || pushed_literal_read || assigned_field_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
             // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
@@ -4872,6 +4934,31 @@ pub(super) fn flattened_use_paths(source: &str) -> Vec<UsePath> {
     out
 }
 
+/// [`flattened_use_paths`] restricted to `pub use` declarations, the ones that
+/// re-export an item under the declaring module's path (#14407).
+pub(super) fn flattened_pub_use_paths(source: &str) -> Vec<UsePath> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let mut out = Vec::new();
+    for (at, _) in masked.match_indices("pub") {
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let Some(rest) = masked[at + "pub".len()..]
+            .strip_prefix(char::is_whitespace)
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix("use"))
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+        else {
+            continue;
+        };
+        if let Some(stop) = rest.find(';') {
+            flatten_use_items("", &rest[..stop], &mut out);
+        }
+    }
+    out
+}
+
 fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
     for item in split_top_level_commas(items) {
         let item = item.trim();
@@ -6279,11 +6366,16 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     // at weak) never comes back as strong because of its kind. Rule 1: an
     // inequality is never lifted above its classified strength, whatever
     // that strength is.
-    if (matches!(
-        assertion.strength,
-        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
-    ) || is_inequality_assertion(&assertion.text))
-        && overridden.rank() > assertion.strength.rank()
+    // The rank comparison goes first: with no raising override there is
+    // nothing to refuse, and reading the assertion text for an inequality is
+    // the expensive operand. This runs once per (probe, related assertion),
+    // and every unit test of a file is related to every changed owner in it,
+    // so the text read was most of a large single-file diff (#11738).
+    if overridden.rank() > assertion.strength.rank()
+        && (matches!(
+            assertion.strength,
+            OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+        ) || is_inequality_assertion(&assertion.text))
     {
         assertion.strength.clone()
     } else {
@@ -6319,6 +6411,25 @@ mod tests {
 
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn only_a_plain_pub_use_is_a_reexport() {
+        let paths = flattened_pub_use_paths(
+            "pub mod other;\npub use other::Counter;\nuse dep::Gauge;\npub(crate) use dep::Meter;\npub use a::{b, c as d};\n// pub use x::Y;\n",
+        );
+        let spelled: Vec<_> = paths
+            .iter()
+            .map(|item| (item.path.as_str(), item.alias.as_deref()))
+            .collect();
+        assert_eq!(
+            spelled,
+            [
+                ("other::Counter", None),
+                ("a::b", None),
+                ("a::c", Some("d"))
+            ]
+        );
+    }
+
     #[test]
     fn binding_untouched_after_owner_call_refuses_writes_between_call_and_read() {
         // The body starts at file line 10; the read sits on line 14.
@@ -6689,6 +6800,7 @@ mod tests {
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
+            assigned_field_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
@@ -6963,6 +7075,48 @@ mod tests {
             0,
             "next()"
         ));
+    }
+
+    #[test]
+    fn owner_call_precedes_read_in_crate_admits_only_the_own_crate_literal() {
+        // #14407: the receiver of an integration test is built through the
+        // owner's own library name. The body starts at file line 10; the read
+        // sits on line 13.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let precedes = |lines: &str, own_crate: Option<&str>| {
+            owner_call_precedes_read_in_crate(
+                &body(lines),
+                10,
+                "c",
+                "reset",
+                13,
+                Some("Counter"),
+                own_crate,
+            )
+        };
+        let built =
+            "    let mut c = probe::Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);";
+        assert!(precedes(built, Some("probe")));
+        // Without the established crate name, or under another one, the
+        // qualified literal names no known type.
+        assert!(!precedes(built, None));
+        assert!(!precedes(built, Some("other")));
+        for refused in [
+            // Another crate's or another type's literal.
+            "    let mut c = other::Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+            "    let mut c = probe::Gauge { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);",
+            // The call is on another binding.
+            "    let mut c = probe::Counter { n: 5 };\n    d.reset();\n    assert_eq!(c.n, 1);",
+            // Rebound between the call and the read.
+            "    let mut c = probe::Counter { n: 5 };\n    c.reset(); let c = probe::Counter { n: 1 };\n    assert_eq!(c.n, 1);",
+            // The read comes before the call.
+            "    let mut c = probe::Counter { n: 5 };\n    assert_eq!(c.n, 5);\n    c.reset();",
+        ] {
+            assert!(!precedes(refused, Some("probe")), "{refused}");
+        }
+        // The unqualified spelling keeps its existing authority either way.
+        let plain = "    let mut c = Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);";
+        assert!(precedes(plain, None));
     }
 
     #[test]
@@ -8223,6 +8377,7 @@ mod tests {
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -8323,6 +8478,7 @@ mod tests {
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -8510,6 +8666,7 @@ mod tests {
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -8624,6 +8781,7 @@ mod tests {
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -9051,6 +9209,7 @@ mod tests {
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9147,6 +9306,7 @@ mod tests {
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10534,6 +10694,124 @@ return Err(\"typed pin\".into());
         }
     }
 
+    /// Reveal for one direct-call test, with the RIPR-SPEC-0228 assigned-field
+    /// read answer under the test's control (#14407).
+    fn reveal_with_assigned_field_read(
+        probe: &Probe,
+        test: &TestSummary,
+        reason: RelationReason,
+        assigned_field_observed: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    ) -> (StageEvidence, StageEvidence) {
+        let (observe, discriminate, _, _) = reveal_evidence_with_expression(
+            probe,
+            &probe.expression,
+            &[(test, reason)],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
+                owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                assertion_has_known_implicit_observer: &|_, _| None,
+                sibling_exclusion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
+                expected_operand_value: &|_, _| None,
+                effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
+                collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
+                assigned_field_observed,
+                out_parameter_read: &|_, _| None,
+                getter_reads_field: &|_, _, _| false,
+                getter_reads_key: &|_, _, _| None,
+                owner_argument_names: &[],
+                owner_returns_value: false,
+                owner_may_exit_before_probe: false,
+                constructor_starts_empty: &|_, _, _| false,
+                call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
+            },
+            None,
+        );
+        (observe, discriminate)
+    }
+
+    /// #14407: `self.n = 1` read back as `c.n` after `c.reset()`. The field
+    /// name is too short to be a token match, so before the shared
+    /// RIPR-SPEC-0228 read rule was consulted the exact oracle stayed
+    /// `observation_unverified`.
+    #[test]
+    fn an_exact_read_of_the_assigned_field_confirms_a_short_field_write() {
+        let probe = owned_probe(
+            ProbeFamily::FieldConstruction,
+            "self.n = 1",
+            "impl Counter::reset",
+        );
+        let test = test_with_body_assertions(
+            "reference",
+            "fn reference() {\n    let mut c = probe::Counter { n: 5 };\n    c.reset();\n    assert_eq!(c.n, 1);\n}",
+            vec![oracle(
+                "assert_eq!(c.n, 1);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate) = reveal_with_assigned_field_read(
+            &probe,
+            &test,
+            RelationReason::DirectOwnerCall,
+            &|_, _| true,
+        );
+        assert_eq!(observe.state, StageState::Yes, "{observe:?}");
+        assert_eq!(discriminate.state, StageState::Yes, "{discriminate:?}");
+
+        // The rule refusing (another binding, another field, a rewrite, a
+        // default-like value) leaves the same oracle unconfirmed.
+        let (_, refused) = reveal_with_assigned_field_read(
+            &probe,
+            &test,
+            RelationReason::DirectOwnerCall,
+            &|_, _| false,
+        );
+        assert_ne!(refused.state, StageState::Yes, "{refused:?}");
+        assert!(
+            refused.summary.contains("observation_unverified"),
+            "{refused:?}"
+        );
+
+        // A name-only relation supplies no oracle, whatever the read rule says.
+        let (_, name_only) = reveal_with_assigned_field_read(
+            &probe,
+            &test,
+            RelationReason::WeakTokenSubstring,
+            &|_, _| true,
+        );
+        assert_ne!(name_only.state, StageState::Yes, "{name_only:?}");
+
+        // A `#[should_panic]` test passes when the values differ.
+        let panicking = TestSummary {
+            attrs: crate::analysis::facts::SharedFactSlice::from(vec![
+                "#[should_panic]".to_string(),
+            ]),
+            ..test.clone()
+        };
+        let (_, panics) = reveal_with_assigned_field_read(
+            &probe,
+            &panicking,
+            RelationReason::DirectOwnerCall,
+            &|_, _| true,
+        );
+        assert_ne!(panics.state, StageState::Yes, "{panics:?}");
+    }
+
     // --- #3709 producer-owned guarded Result match ---
 
     /// A guarded Result match whose scrutinee directly calls the probe's
@@ -10959,6 +11237,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11034,6 +11313,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11080,6 +11360,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11145,6 +11426,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11212,6 +11494,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11459,6 +11742,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11508,6 +11792,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11967,6 +12252,7 @@ return Err(\"typed pin\".into());
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
                         pushed_literal_observed: &|_, _| false,
+                        assigned_field_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
                         owner_return_pin_required: false,
@@ -12051,6 +12337,7 @@ return Err(\"typed pin\".into());
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     returned_closure_pin_required: false,
                     out_parameter_read: &|_, _| None,
                     owner_return_pin_required: false,
@@ -12161,6 +12448,7 @@ return Err(\"typed pin\".into());
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -12501,6 +12789,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -12611,6 +12900,7 @@ return Err(\"typed pin\".into());
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
+                    assigned_field_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -12664,6 +12954,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -13168,6 +13459,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -13720,6 +14012,7 @@ return Err(\"typed pin\".into());
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
+                assigned_field_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
