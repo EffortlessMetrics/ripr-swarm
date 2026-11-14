@@ -23747,6 +23747,54 @@ fn given_direct_owner_alias_when_a_nested_bin_module_imports_the_library_root_th
 }
 
 #[test]
+fn given_direct_owner_alias_when_a_library_child_module_imports_the_crate_root_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: `crate::owner` in a library child module names the
+    // library root, so the alias must credit the root owner.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\npub mod child;\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn child_module_uses_the_root_owner() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[("src/lib.rs", library), ("src/child.rs", child)],
+    )?;
+    let files = [PathBuf::from("src/lib.rs"), PathBuf::from("src/child.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(
+        related,
+        vec!["child_module_uses_the_root_owner"],
+        "a library child module's `crate::owner` credits the root owner: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: with no library target, `crate::owner` in a child module
+    // names the binary root `src/main.rs`, so the alias must credit it.
+    let main = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\npub mod child;\n\nfn main() {}\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn bin_child_uses_the_root_owner() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let root = alias_workspace_with_files(
+        "bin_only",
+        &[("src/main.rs", main), ("src/child.rs", child)],
+    )?;
+    let files = [PathBuf::from("src/main.rs"), PathBuf::from("src/child.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/main.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(
+        related,
+        vec!["bin_child_uses_the_root_owner"],
+        "a bin-only child module's `crate::owner` credits the binary root owner: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
 fn given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test()
 -> Result<(), String> {
     // #14508 review control: with no library target, `mod pricing;` in
