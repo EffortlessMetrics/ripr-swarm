@@ -4,6 +4,7 @@ mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
 mod shared_execution_context;
+mod unread_owner_result_field;
 mod warm_entrypoint;
 
 use super::related_tests::context::*;
@@ -18270,7 +18271,7 @@ mod tests {
 }
 
 #[test]
-fn sibling_field_assertion_stays_non_ready() -> Result<(), String> {
+fn sibling_field_assertion_starts_only_the_unread_field_route() -> Result<(), String> {
     let case = refresh_plan_case(
         r#"
 #[cfg(test)]
@@ -18285,7 +18286,30 @@ mod tests {
 }
 "#,
     )?;
-    route_must_stay_unready(&case, "sibling-field assertion")
+    // A sibling-field read never credits the changed field as weakly
+    // observed. Since #13700 the sole binding test that never reads the
+    // changed field starts the route through the unread-field fact instead.
+    let missing = &case.classified.evidence.missing_discriminators;
+    if missing
+        .iter()
+        .any(|fact| fact.reason.contains("observed only by a weak oracle"))
+        || !missing.iter().any(|fact| {
+            fact.reason
+                .contains("is bound but never read by the related test")
+        })
+    {
+        return Err(format!(
+            "a sibling-field read must reach only the unread-field fact: {missing:?}"
+        ));
+    }
+    let eligibility = repair_packet_eligibility(&case.classified);
+    if eligibility.readiness.state != RepairRouteState::Ready || !eligibility.eligible() {
+        return Err(format!(
+            "the unread-field fact must complete the route: {:?}",
+            eligibility.readiness.state
+        ));
+    }
+    Ok(())
 }
 
 #[test]

@@ -617,8 +617,8 @@ against fixture repos.
   owner-result field observation completes the producer-owned missing
   `field_value` fact after known activation; exact field equality stays
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
-  field, token coincidence, unknown activation, failed target authority,
-  mutable field borrow, assertion-message-only field credit, assertion-local
+  field (as a weak observation), token coincidence, unknown activation,
+  failed target authority, mutable field borrow, assertion-message-only field credit, assertion-local
   shadow, and same-name local or imported callees stay non-ready. A grouped
   nested-`super` import of the unique owner completes the route; a foreign
   module, cfg-ambiguous same-name pair, or leading `::` extern-prelude import
@@ -626,6 +626,34 @@ against fixture repos.
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.
+  When the only related test binds the direct owner result once, every
+  other mention of the binding is a plain `binding.<other_field>` read
+  ended by a closing delimiter, a separator or a comparison, logical or
+  arithmetic operator (a call, turbofish, index, assignment, cast, further
+  `.` chain or `..binding` struct-update base refuses), at least one such
+  read appears in the condition of an `assert!` or in the compared
+  operands of an `assert_eq!` or `assert_ne!` that starts on a line after
+  the binding (appearing there, not deciding the assertion), and the test
+  never reads the changed field (#13700), the same fact completes the
+  route if the field's declared visibility reaches that test file (the
+  binding's name in a string literal, a comment, a format or message
+  argument, a `debug_assert!` or another value's field is not such a read;
+  a sibling-field-only
+  assertion is such a test, and an integration test's `use package::owner`
+  import counts when the shared call-identity authority settles it on the
+  owner); a strong or aliased read, a second candidate test, a binding passed
+  elsewhere, shadowed or format-captured, any other mention of the owner's
+  name in the test (a second call compared whole or snapshotted), a `use`
+  alias of the owner anywhere in the test file, a changed field outside the
+  owner's top-level return construction (a nested record such as
+  `Wrapper { inner: Inner { .. } }`), an owner name imported from
+  a rival module or crate, and a field the test file cannot name stay
+  non-ready, as do a changed literal returned from an `async`, `const`,
+  `try` or `gen` block inside the owner and a declared return type that only
+  aliases the constructed struct. Only the test body is scanned: a helper,
+  constant, macro or trait delegation defined outside it that calls the
+  owner is not seen, and neither is an alias re-exported from the
+  production crate (`pub use config::default_config as dc;`).
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

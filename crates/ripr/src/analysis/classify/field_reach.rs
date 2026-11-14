@@ -87,7 +87,18 @@ impl FieldTable {
         let FunctionImplContext::Impl { self_type } = impl_context else {
             return None;
         };
-        let type_name = self_type.split('<').next().unwrap_or(self_type).trim();
+        self.struct_field_reach(self_type.split('<').next().unwrap_or(self_type), field)
+    }
+
+    /// The declared reach of `field` on the record struct `type_name`, when
+    /// this file declares that struct exactly once with that field (#13700:
+    /// a struct literal names its type directly, not through an impl).
+    pub(in crate::analysis) fn struct_field_reach(
+        &self,
+        type_name: &str,
+        field: &str,
+    ) -> Option<FieldReach> {
+        let type_name = type_name.trim();
         if self.struct_counts.get(type_name) != Some(&1) {
             return None;
         }
