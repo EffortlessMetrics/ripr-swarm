@@ -35659,3 +35659,53 @@ fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer(
     }
     Ok(())
 }
+
+/// #14420: a head-only match arm's hover names the result the flow model
+/// read on its line, in the witness's changed expression and the line
+/// hover heading, while the diagnostic's own message and data keep the head.
+#[test]
+fn hover_names_a_head_only_arm_result() -> Result<(), String> {
+    let markup_text = |hover: tower_lsp_server::ls_types::Hover| match hover.contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    };
+    let mut finding = sample_finding();
+    finding.probe.family = ProbeFamily::MatchArm;
+    finding.probe.expression = "Size::Medium =>".to_string();
+    finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+        kind: crate::domain::FlowSinkKind::MatchArm,
+        text: "450".to_string(),
+        line: finding.probe.location.line,
+        owner: None,
+    }];
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let hover = markup_text(super::hover::finding_hover_response(&finding, &diagnostic))?;
+    if !hover.contains("- changed expression: `Size::Medium => 450`") {
+        return Err(format!("finding hover lost the arm result:\n{hover}"));
+    }
+    let line_hover = markup_text(super::hover::line_findings_hover_response(
+        &[&finding],
+        crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
+    ))?;
+    if !line_hover.contains(" match_arm `Size::Medium => 450`") {
+        return Err(format!("line hover lost the arm result:\n{line_hover}"));
+    }
+    let data = diagnostic.data.as_ref().ok_or("diagnostic data missing")?;
+    if data.to_string().contains("=> 450") {
+        return Err(format!("diagnostic data must keep the head: {data}"));
+    }
+
+    // A sink read on another line is not this head's result.
+    let mut elsewhere = finding;
+    elsewhere.flow_sinks[0].line += 1;
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &elsewhere);
+    let hover = markup_text(super::hover::finding_hover_response(
+        &elsewhere,
+        &diagnostic,
+    ))?;
+    if !hover.contains("- changed expression: `Size::Medium =>`\n") {
+        return Err(format!("off-line sink was joined:\n{hover}"));
+    }
+    Ok(())
+}

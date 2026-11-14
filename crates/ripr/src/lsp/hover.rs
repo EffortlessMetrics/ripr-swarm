@@ -277,7 +277,8 @@ pub(super) fn line_findings_hover_response(
             "### `{}` {} `{}`",
             finding.class.as_str(),
             finding.probe.family.as_str(),
-            finding.probe.expression
+            // #14420: a head-only arm names its result (`Size::Medium => 450`).
+            crate::output::flow_sink_line::with_arm_result(finding, &finding.probe.expression)
         ));
         lines.push(format!("Finding: `{}`", finding.id));
         lines.extend([
@@ -767,6 +768,14 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             .and_then(Value::as_str)
         {
             witness.explain_command = command.to_string();
+        }
+        // #14420: a head-only arm names the result the flow model read on its
+        // line (`Size::Medium => 450`), the value a test must pin. Hover text
+        // only: the diagnostic's data and identity keep the head.
+        if let std::borrow::Cow::Owned(joined) =
+            crate::output::flow_sink_line::with_arm_result(finding, &witness.changed_expression)
+        {
+            witness.changed_expression = joined;
         }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
