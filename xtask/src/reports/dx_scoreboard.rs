@@ -2410,7 +2410,7 @@ pub(crate) fn build_report_with_options(
     // headline prints each count rather than a distinct-metric gap total).
     let gate_enabled = gate || strict_completeness;
     let not_measured = rollup["not_measured"].as_u64().unwrap_or(0);
-    let partial_count = rollup["partial"].as_u64().unwrap_or(0);
+    let partial_count = metrics.iter().filter(|row| partially_measured(row)).count() as u64;
     let mut completeness_failures = Vec::new();
     if strict_completeness {
         if not_measured > 0 {
@@ -2455,11 +2455,24 @@ pub(crate) fn build_report_with_options(
     } else {
         "fail"
     };
+    let rebaseline_required: Vec<Value> = comparison_failures
+        .iter()
+        .filter(|item| {
+            !item["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("current: "))
+        })
+        .cloned()
+        .collect();
     let failure_kind = if gate_status != "fail" {
         Value::Null
     } else if !regressions.is_empty() {
         json!("regression")
-    } else if !comparison_failures.is_empty() && failed.is_empty() && ceiling_breaches.is_empty() {
+    } else if !rebaseline_required.is_empty()
+        && rebaseline_required.len() == comparison_failures.len()
+        && failed.is_empty()
+        && ceiling_breaches.is_empty()
+    {
         json!("rebaseline_required")
     } else if !completeness_failures.is_empty() {
         json!("completeness_failed")
@@ -2497,8 +2510,8 @@ pub(crate) fn build_report_with_options(
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
-            "failed_comparisons": comparison_failures.clone(),
-            "rebaseline_required": comparison_failures,
+            "failed_comparisons": comparison_failures,
+            "rebaseline_required": rebaseline_required,
             "completeness_failures": completeness_failures,
             "ceiling_breaches": ceiling_breaches,
             "zero_evidence_boards": zero_evidence_boards,
@@ -3797,6 +3810,42 @@ mod eval_guard_tests {
             "completeness_failed"
         );
 
+        // 2b. below_target partially measured metric also fails under --strict-completeness.
+        let below_target_partial = vec![
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-1".to_string()),
+                outcome: SampleOutcome::Value(150.0),
+                detail: "below target".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-2".to_string()),
+                outcome: SampleOutcome::NotMeasured,
+                detail: "missing".to_string(),
+            },
+        ];
+        let strict_below_partial = build_report_with_options(
+            &config,
+            &boards,
+            &below_target_partial,
+            &context,
+            None,
+            false,
+            true,
+        );
+        assert_eq!(strict_below_partial["gate"]["status"], "fail");
+        assert_eq!(
+            strict_below_partial["gate"]["failure_kind"],
+            "completeness_failed"
+        );
+
         // 3. Complete + comparable passes under --strict-completeness.
         let complete_config = test_config(vec![
             test_metric("speed.a", "speed", "measured"),
@@ -3962,5 +4011,34 @@ mod eval_guard_tests {
                 .is_some_and(Vec::is_empty)
         );
         assert!(gate_failure_message(&regression_report).contains("regression"));
+
+        // Current-run missing case population => comparison_failed, not rebaseline_required.
+        let missing_current_samples = vec![
+            Sample {
+                metric: "trust.abstention".to_string(),
+                repo: None,
+                outcome: SampleOutcome::NotMeasured,
+                detail: "missing current receipt".to_string(),
+            },
+            base_samples[1].clone(),
+        ];
+        let current_failed_report = build_report(
+            &config,
+            &boards,
+            &missing_current_samples,
+            &context,
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(current_failed_report["gate"]["status"], "fail");
+        assert_eq!(
+            current_failed_report["gate"]["failure_kind"],
+            "comparison_failed"
+        );
+        assert!(
+            current_failed_report["gate"]["rebaseline_required"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
     }
 }
