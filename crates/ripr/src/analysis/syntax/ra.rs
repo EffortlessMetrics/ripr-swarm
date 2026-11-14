@@ -1408,6 +1408,54 @@ fn collect_body_shadow_facts(
             }
         }
     }
+    // The enclosing function's own parameters shadow the alias for its whole
+    // body; a `#[rstest]` fixture parameter named like the alias is the
+    // compiling case (#14508 review).
+    if let (Some(body), Some(params)) = (function.body(), function.param_list()) {
+        for param in params.params() {
+            push_scoped_binding_facts(
+                &mut let_bindings,
+                param.pat(),
+                body.syntax().text_range().end(),
+                line_of,
+                fn_line,
+            );
+        }
+    }
+    // A closure inside a macro token tree is not a `ClosureExpr` node, so the
+    // AST walk above cannot see its parameters. Read each token tree's masked
+    // text for `|params|` pairs and bind each name for the rest of the tree
+    // (fail closed, #14508 review).
+    for tree in function
+        .syntax()
+        .descendants()
+        .filter(|node| node.kind() == SyntaxKind::TOKEN_TREE)
+    {
+        let text = crate::analysis::extract::mask_comments_and_strings(&tree.text().to_string());
+        let last = TextSize::from(u32::from(tree.text_range().end()).saturating_sub(1));
+        let (Some(line), Some(end_line)) = (
+            line_of(tree.text_range().start()).checked_sub(fn_line),
+            line_of(last).checked_sub(fn_line),
+        ) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(open) = rest.find('|') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('|') else { break };
+            for segment in after[..close].split(',') {
+                let name_part = segment.split(':').next().unwrap_or(segment);
+                for name in extract_pattern_words(name_part) {
+                    let_bindings.push(LetBindingFact {
+                        line,
+                        scope_end: Some(end_line),
+                        name,
+                    });
+                }
+            }
+            rest = &after[close + 1..];
+        }
+    }
     let_bindings.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     let_bindings.dedup();
     (nested_fn_names, let_bindings)

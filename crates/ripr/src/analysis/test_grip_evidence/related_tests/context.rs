@@ -3342,12 +3342,6 @@ pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases(
     let scan = scan_lexical_use_statements(source);
     let mut aliases: BTreeMap<String, ScopedImportedFunctionAlias> = BTreeMap::new();
     for statement in &scan.statements {
-        let Some(parsed) = collect_direct_owner_import_aliases_from_use(&statement.text) else {
-            continue;
-        };
-        if parsed.is_empty() {
-            continue;
-        }
         let end_line = scan.end_line(statement);
         let mut nested_module_lines = nested_module_line_ranges(
             &scan.line_module_depths,
@@ -3359,6 +3353,34 @@ pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases(
             if statement.start_line <= *line && *line <= end_line {
                 nested_module_lines.push((*line, *line));
             }
+        }
+        let Some(parsed) = collect_direct_owner_import_aliases_from_use(&statement.text) else {
+            // A nearer import that binds the same spelling but names an
+            // unsupported module path (`self::`, `super::`, `::`) still
+            // shadows an outer owner alias. Record a binding that can never
+            // match an owner module, so the call fails closed (#14508 review).
+            for alias in use_statement_alias_names(&statement.text) {
+                aliases
+                    .entry(alias)
+                    .or_insert_with(|| ScopedImportedFunctionAlias {
+                        bindings: Vec::new(),
+                    })
+                    .bindings
+                    .push(ScopedImportedFunctionBinding {
+                        module_path: String::new(),
+                        crate_relative: false,
+                        name: String::new(),
+                        start_line: statement.start_line,
+                        end_line,
+                        module_depth: statement.module_depth,
+                        nested_module_lines: nested_module_lines.clone(),
+                        end_is_partial: scan.end_is_partial(end_line),
+                    });
+            }
+            continue;
+        };
+        if parsed.is_empty() {
+            continue;
         }
         for (alias, imported) in parsed {
             aliases
@@ -3380,6 +3402,31 @@ pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases(
         }
     }
     aliases
+}
+
+/// The `as` aliases a `use` statement binds, even when its module path is not
+/// a supported owner path. A nearer unsupported import still shadows an outer
+/// owner alias (#14508 review). A non-aliased import binds the imported name
+/// itself, which the bare-call reading already handles.
+fn use_statement_alias_names(import: &str) -> Vec<String> {
+    let import = import.trim_end_matches(';').trim();
+    let items: Vec<&str> = match import.split_once("::{") {
+        Some((_, rest)) => rest
+            .strip_suffix('}')
+            .map(|body| body.split(',').map(str::trim).collect())
+            .unwrap_or_default(),
+        None => import
+            .rsplit_once("::")
+            .map(|(_, item)| vec![item.trim()])
+            .unwrap_or_default(),
+    };
+    items
+        .into_iter()
+        .filter(|item| !item.contains("::") && !item.contains('{') && !item.contains('}'))
+        .filter_map(|item| item.split_once(" as ").map(|(_, alias)| alias.trim()))
+        .filter(|alias| !alias.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub(in crate::analysis::test_grip_evidence) fn direct_owner_import_aliases_by_file(

@@ -31,6 +31,10 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_library_child_module_imports_the_crate_root_owner_then_owner_keeps_related_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_owner_then_owner_keeps_related_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_child_module_imports_the_binary_root_then_library_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_nearer_unsupported_import_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_closure_in_a_macro_token_tree_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_the_test_function_parameter_shadows_it_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_cfg_gated_module_has_two_paths_then_owner_gets_no_related_test",
 ]
 fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/corpus.json",
@@ -40,6 +44,7 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
   "crates/ripr/src/analysis/classify/const_flow.rs",
   "crates/ripr/src/analysis/extract/shadow.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0442-aliased-owner-import-credit.md",

@@ -633,10 +633,17 @@ fn resolve_module_chain(index: &RustIndex, root_file: &Path, module_path: &str) 
     let mut current = root_file.to_path_buf();
     for segment in module_path.split('/') {
         let facts = index.files().get(&current)?;
-        let declaration = facts
+        let mut matching = facts
             .module_declarations
             .iter()
-            .find(|declaration| declaration.name == segment)?;
+            .filter(|declaration| declaration.name == segment);
+        let declaration = matching.next()?;
+        // Two `#[cfg]`-gated declarations of one module with different
+        // `#[path]` targets compile different files per configuration; no
+        // static single target exists, so fail closed (#14508 review).
+        if matching.any(|other| other.path_target != declaration.path_target) {
+            return None;
+        }
         let dir = current.parent()?;
         current = match &declaration.path_target {
             ModulePathTarget::Default => {

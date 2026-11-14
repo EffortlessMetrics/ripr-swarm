@@ -25021,3 +25021,91 @@ fn field_write_facts_with_tail(
         .map(|fact| fact.value.clone())
         .collect())
 }
+
+/// Build the lib+integration-test fixture and read the alias seam's evidence.
+fn alias_evidence_for_lib_and_test(
+    lib_src: &str,
+    tests_src: &str,
+) -> Result<TestGripEvidence, String> {
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[("src/lib.rs", lib_src), ("tests/boundary.rs", tests_src)],
+    )?;
+    evidence_for_alias_seam(
+        &root,
+        &[
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("tests/boundary.rs"),
+        ],
+        "src/lib.rs",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nearer_unsupported_import_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: `use self::rival::different as dt;` is not a supported
+    // owner path, but it still binds `dt` nearer than the outer owner alias.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\nmod rival {\n    pub fn different(_amount: i32) -> i32 { 0 }\n}\n\n#[test]\nfn shadowed() {\n    use self::rival::different as dt;\n    assert_eq!(dt(100), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_closure_in_a_macro_token_tree_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a closure inside an assertion macro is an opaque token
+    // tree, so its parameter is not a `ClosureExpr` node.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\n#[test]\nfn shadowed() {\n    assert_eq!((|dt: fn(i32) -> i32| dt(100))(fake), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_test_function_parameter_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a `#[rstest]` fixture parameter named like the alias
+    // shadows it for the whole body.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\n#[rstest]\nfn shadowed(dt: fn(i32) -> i32) {\n    assert_eq!(dt(100), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_cfg_gated_module_has_two_paths_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: two `#[cfg]`-gated `mod pricing;` declarations with
+    // different `#[path]` targets compile different files per configuration.
+    let lib_src = "#[cfg(unix)]\n#[path = \"pricing_unix.rs\"]\nmod pricing;\n#[cfg(windows)]\n#[path = \"pricing_windows.rs\"]\nmod pricing;\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::owner as dt;\n\n    #[test]\n    fn shadowed() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let unix_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let windows_src = "pub fn owner(amount: i32) -> i32 { amount }\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", lib_src),
+            ("src/pricing_unix.rs", unix_src),
+            ("src/pricing_windows.rs", windows_src),
+        ],
+    )?;
+    let evidence = evidence_for_alias_seam(
+        &root,
+        &[
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("src/pricing_unix.rs"),
+            PathBuf::from("src/pricing_windows.rs"),
+        ],
+        "src/pricing_unix.rs",
+    )?;
+    assert!(direct_owner_call_tests(&evidence).is_empty());
+    Ok(())
+}
