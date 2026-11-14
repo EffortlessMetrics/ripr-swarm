@@ -284,6 +284,20 @@ pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
     normalize_output_leaf(left) == normalize_output_leaf(right)
 }
 
+/// Whether writing `output` would replace the file a command reads from
+/// `input` (#14312). Filesystem identity decides: both paths must resolve and
+/// their canonical paths must match, so an absolute spelling or a symlink to
+/// the input is caught, and a `..` after a symlinked directory is not
+/// collapsed lexically into a false match. A missing input has nothing to
+/// replace (reports that tolerate one still write and warn), and a
+/// destination that does not exist yet cannot be an existing input.
+pub(crate) fn output_replaces_input(output: &Path, input: &Path) -> bool {
+    match (std::fs::canonicalize(output), std::fs::canonicalize(input)) {
+        (Ok(output), Ok(input)) => output == input,
+        _ => false,
+    }
+}
+
 fn normalize_output_leaf(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     // Display text uses slash separators even for Unix backslash filenames.

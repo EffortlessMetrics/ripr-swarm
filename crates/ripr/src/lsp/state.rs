@@ -1167,6 +1167,14 @@ pub(super) struct AnalysisSnapshot {
     /// and status counts agree; this count is the disclosure that the
     /// suppression happened — it is never silent.
     pub(super) out_of_scope_test_file_findings: usize,
+    /// Count of findings the projection dropped because their changed owner
+    /// opted out with `#[mutants::skip]` (#14136). The ids come from
+    /// `CheckOutput::withheld_finding_ids`, the one set the CLI renderers
+    /// filter on, and are removed before snapshot construction so
+    /// diagnostics, hover, code actions and lenses agree with `ripr check`.
+    /// Recomputed on every refresh, so removing the attribute brings the
+    /// findings back. This count is the disclosure; it is never silent.
+    pub(super) owner_opt_out_findings: usize,
     /// #7205: changed files whose language adapter was not enabled or
     /// available. The per-document workspace-status row uses this so those
     /// opened documents cannot read as `clean`/`served` while the same
@@ -4862,6 +4870,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -4900,6 +4909,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -4948,6 +4958,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -5004,6 +5015,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

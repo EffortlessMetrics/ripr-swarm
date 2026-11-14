@@ -33,7 +33,17 @@ struct Session {
 
 impl Session {
     fn spawn(root: &Path) -> Result<Self, String> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        Self::spawn_with_env(root, &[])
+    }
+
+    /// Spawn with extra server environment, as a host's `env` block sets it.
+    fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command.env_remove("RIPR_GIT_TIMEOUT");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .args(["mcp", "--stdio", "--root"])
             .arg(root)
             .stdin(Stdio::piped())
@@ -675,6 +685,336 @@ fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
     {
         return Err(format!(
             "an offset past the selection must be an empty disclosed page: {beyond}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14386: `ripr_refresh` reads `RIPR_GIT_TIMEOUT` from the server's
+/// environment through the same parser as `ripr check`. An invalid value
+/// fails the attempt closed with `config_invalid` naming the variable (it
+/// used to be ignored, so MCP silently ran a different deadline than the
+/// CLI), and a valid value (`0` disables the deadline) still analyzes.
+#[test]
+fn refresh_honors_ripr_git_timeout_from_the_server_environment() -> Result<(), String> {
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+
+    let mut invalid = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "soon")])?;
+    initialize_session(&mut invalid)?;
+    let refresh = invalid.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let code = refresh_attempt_failure_code(&refresh, "ripr_refresh")?;
+    if code != "config_invalid" {
+        return Err(format!(
+            "an invalid RIPR_GIT_TIMEOUT must fail the attempt with config_invalid, got {code}"
+        ));
+    }
+    let failure = refresh
+        .pointer("/result/structuredContent/attempt/failure")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let detail = failure.get("detail").and_then(Value::as_str).unwrap_or("");
+    if !detail.contains("RIPR_GIT_TIMEOUT") || !detail.contains("\"soon\"") {
+        return Err(format!(
+            "the refusal must name the variable and the rejected value: {failure}"
+        ));
+    }
+    let recovery = failure
+        .get("recovery")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !recovery.contains("restart the server") {
+        return Err(format!(
+            "the recovery must say a fix needs a server restart: {failure}"
+        ));
+    }
+    drop(invalid);
+
+    let mut disabled = Session::spawn_with_env(&root, &[("RIPR_GIT_TIMEOUT", "0")])?;
+    initialize_session(&mut disabled)?;
+    let refresh = disabled.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let refresh = structured_tool_result(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "RIPR_GIT_TIMEOUT=0 disables the deadline and keeps the analysis: {refresh}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14386: a finite nondefault `RIPR_GIT_TIMEOUT` reaches the git invocations
+/// `ripr_refresh` runs, not only the parser. Every `git` on the server's
+/// `PATH` is a shim that sleeps 3 s, so under `RIPR_GIT_TIMEOUT=1` the first
+/// git call the refresh makes is cut at the 1000 ms deadline and the failure
+/// names it. If the refresh substituted the 300 s default for the configured
+/// value, the shim would finish its sleep instead and no 1000 ms deadline
+/// could appear. This reaches the findings producer only: with every git call
+/// cut, the refresh fails before the committed-source probe runs. The probe
+/// takes the same resolved value from `run_check` by construction and is not
+/// separately exercised here.
+#[cfg(unix)]
+#[test]
+fn refresh_cuts_git_at_the_configured_ripr_git_timeout() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let shim_dir = root.with_file_name(format!(
+        "{}-git-shim",
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root must have a file name")?
+    ));
+    let _shim_guard = FixtureGuard {
+        root: shim_dir.clone(),
+    };
+    std::fs::create_dir_all(&shim_dir).map_err(|error| error.to_string())?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 3\n").map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .into_owned();
+
+    let mut session = Session::spawn_with_env(
+        &root,
+        &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", search_path.as_str())],
+    )?;
+    initialize_session(&mut session)?;
+    let started = Instant::now();
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let elapsed = started.elapsed();
+    refresh_attempt_failure_code(&refresh, "ripr_refresh under a 1 s git deadline")?;
+    let detail = refresh
+        .pointer("/result/structuredContent/attempt/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !detail.contains("git_invocation_timeout") || !detail.contains("1000ms deadline") {
+        return Err(format!(
+            "the refresh must cut git at the configured 1000ms deadline: {refresh}"
+        ));
+    }
+    if elapsed >= Duration::from_secs(30) {
+        return Err(format!(
+            "a 1 s git deadline must end the refresh promptly, took {elapsed:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// #14347: a Rust crate whose changed predicate is only tested from an
+/// unchanged integration test file. With unchanged tests indexed (the
+/// default) the boundary is `exposed`; with
+/// `[analysis] include_unchanged_tests = false` the test is out of the index
+/// and the same predicate reads `no_static_path`.
+/// The guard is installed before any fallible setup, so a failed write or
+/// commit still removes the fixture.
+fn write_unchanged_test_workspace() -> Result<(PathBuf, FixtureGuard), String> {
+    let root = workspace_name("analysis-table");
+    let _ = std::fs::remove_dir_all(&root);
+    let guard = FixtureGuard { root: root.clone() };
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn above(amount: u32, limit: u32) -> bool {\n    amount > limit\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/above.rs"),
+        "use gate::above;\n\n#[test]\nfn boundary_is_exclusive() {\n    assert!(!above(2, 2));\n    assert!(above(3, 2));\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["init", "--quiet", "--initial-branch=main"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "candidate"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn above(amount: u32, limit: u32) -> bool {\n    amount >= limit\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "candidate")?;
+    Ok((root, guard))
+}
+
+/// The sorted exposure classes `ripr_list_gaps` reports after one refresh,
+/// with the session's disclosed profile and desired-input modes.
+fn mcp_classes_and_modes(root: &Path) -> Result<(Vec<String>, String, String), String> {
+    let mut session = Session::spawn(root)?;
+    initialize_session(&mut session)?;
+    let status = session.call(
+        "tools/call",
+        json!({ "name": "ripr_workspace_status", "arguments": {} }),
+    )?;
+    let status = structured_tool_result(&status, "workspace_status")?;
+    let profile_mode = status
+        .pointer("/session/profile/mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("status lost the profile mode: {status}"))?
+        .to_string();
+    let desired_mode = status
+        .pointer("/session/current_desired_input/mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("status lost the desired-input mode: {status}"))?
+        .to_string();
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    structured_tool_result(&refresh, "ripr_refresh")?;
+    let list = session.call(
+        "tools/call",
+        json!({ "name": "ripr_list_gaps", "arguments": {} }),
+    )?;
+    let list = structured_tool_result(&list, "ripr_list_gaps")?;
+    let mut classes = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("list_gaps lost its items: {list}"))?
+        .iter()
+        .map(|item| {
+            item.get("class")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("a listed gap lost its class: {item}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    classes.sort();
+    Ok((classes, profile_mode, desired_mode))
+}
+
+/// The sorted finding classifications `ripr check --format json` reports
+/// on the same root, the CLI side of the parity oracle.
+fn cli_classes(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--format", "json", "--root"])
+        .arg(root)
+        .output()
+        .map_err(|error| format!("spawn ripr check: {error}"))?;
+    let document: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "ripr check did not print JSON ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    let mut classes = document
+        .pointer("/findings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr check lost its findings: {document}"))?
+        .iter()
+        .map(|finding| {
+            finding
+                .get("classification")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("a CLI finding lost its classification: {finding}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    classes.sort();
+    Ok(classes)
+}
+
+#[test]
+fn refresh_honors_the_analysis_table_like_ripr_check() -> Result<(), String> {
+    let (root, _guard) = write_unchanged_test_workspace()?;
+
+    // Control, no ripr.toml: the unchanged test is indexed, so the boundary
+    // is exposed, the session runs draft, and MCP agrees with the CLI.
+    let (default_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if !default_classes.iter().any(|class| class == "exposed") {
+        return Err(format!(
+            "with unchanged tests indexed the boundary must read exposed: {default_classes:?}"
+        ));
+    }
+    if profile_mode != "draft" || desired_mode != "draft" {
+        return Err(format!(
+            "a config-less session must run draft: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_default = cli_classes(&root)?;
+    if cli_default != default_classes {
+        return Err(format!(
+            "MCP and ripr check must agree with defaults: {default_classes:?} vs {cli_default:?}"
+        ));
+    }
+
+    // The repo's [analysis] table now drops unchanged tests and picks a
+    // non-draft mode; a fresh session must apply both, exactly as the CLI.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[analysis]\nmode = \"fast\"\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let (configured_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if configured_classes.is_empty()
+        || configured_classes
+            .iter()
+            .any(|class| class != "no_static_path")
+    {
+        return Err(format!(
+            "include_unchanged_tests = false must drop the unchanged test's reach over MCP: {configured_classes:?}"
+        ));
+    }
+    if profile_mode != "fast" || desired_mode != "fast" {
+        return Err(format!(
+            "the session must disclose the configured mode: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_configured = cli_classes(&root)?;
+    if cli_configured != configured_classes {
+        return Err(format!(
+            "MCP and ripr check must agree under ripr.toml: {configured_classes:?} vs {cli_configured:?}"
+        ));
+    }
+
+    // The mode alone must reach the analysis, not only the disclosed label:
+    // `instant` indexes changed files only, so with unchanged tests still
+    // included the unchanged test drops out and the boundary reads
+    // `no_static_path` again.
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"instant\"\n")
+        .map_err(|error| error.to_string())?;
+    let (instant_classes, profile_mode, desired_mode) = mcp_classes_and_modes(&root)?;
+    if instant_classes.is_empty()
+        || instant_classes
+            .iter()
+            .any(|class| class != "no_static_path")
+    {
+        return Err(format!(
+            "mode = instant must index changed files only over MCP: {instant_classes:?}"
+        ));
+    }
+    if profile_mode != "instant" || desired_mode != "instant" {
+        return Err(format!(
+            "the session must disclose instant: profile {profile_mode}, desired {desired_mode}"
+        ));
+    }
+    let cli_instant = cli_classes(&root)?;
+    if cli_instant != instant_classes {
+        return Err(format!(
+            "MCP and ripr check must agree under mode = instant: {instant_classes:?} vs {cli_instant:?}"
         ));
     }
     Ok(())

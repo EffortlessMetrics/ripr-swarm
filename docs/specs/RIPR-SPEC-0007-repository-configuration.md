@@ -99,6 +99,40 @@ artifact disclosure names `/target/` too. Roots
 relocated by `RIPR_CACHE_DIR` or `[perl].cache_dir`, and projects without a
 `Cargo.toml`, keep the literal-root rule above.
 
+### Self-ignoring default output tree
+
+Once a workspace output guard has established that `target/ripr` is contained, ripr gives
+that tree a `target/ripr/.gitignore` containing `*`: immediately when the tree
+already exists, otherwise on the first atomic write into it under the same
+path spelling the guard used. ripr's own default output therefore stays out of
+`git status` and needs no `.gitignore` edit from the user; a tree written under
+a different spelling is marked by the next guarded run, and until then the
+artifact-ignore probe reports it as uncovered. The guard itself creates no directory, so a
+command that refuses after its guard leaves nothing behind. The file is
+created exclusively and never rewritten: a user's own `target/ripr/.gitignore`
+is kept as written. ripr never creates or edits the repository's own
+`.gitignore`. With an explicit `RIPR_CACHE_DIR`, which waives the cache
+guard's containment check, the tree is marked only after the check passes on
+its own.
+
+Because Git applies that rule to the tree's contents rather than to the
+`target/ripr` name, the artifact-ignore probe treats the existing default
+root as covered when the root itself is ignored, or when its ignore file is
+exactly the one ripr writes and a would-be entry inside it is ignored. A
+user-owned ignore file there is judged by the root probe alone, because it may
+unignore part of the tree, and the Cargo `target` probe never uses the
+fallback.
+Before the first write, the default root needs no warning: doctor and the
+first-`check` note warn only for relocated in-repository roots. A Cargo
+project's whole-`target/` requirement above is unchanged, because the
+self-ignore file covers only `target/ripr`. `check` runs the guard before its
+first-run ignore note, so a tree an older ripr left unignored is judged as the
+run leaves it.
+The committed-source probe that names gitignored source files a diff cannot
+see skips ignored records inside a `target/ripr` tree, at the repository top
+or under a nested root: ripr's own output is not source, so it costs no walk
+of the cache and cannot fail a check through that probe's git calls.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
@@ -463,6 +497,32 @@ when first-pr preflight or an agent-receipt config fingerprint runs,
 then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
+
+### Doctor checks the pytest the Python verify route runs (#13617)
+
+```text
+Given a Python root that is not unittest-only,
+when ripr doctor runs,
+then doctor checks that PATH `python` (the interpreter of the printed
+`python -m pytest` verify command) imports pytest, from a fresh private
+empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
+starting pytest, so no checkout or temp-directory code is executed;
+
+Given PATH `python` cannot import pytest,
+when doctor reports the probe,
+then the result is an advisory warning that never changes the exit code;
+
+Given a project `.venv` or `venv` whose site-packages statically lists
+pytest while PATH `python` lacks it,
+when doctor reports the failure,
+then the warning names that venv's activate script, joined to the selected
+root and shell-quoted so it pastes from the caller's directory; a venv
+without pytest gives no activation advice, and an unreadable venv layout is
+reported as not verified, never as a pass.
+```
+
+The virtualenv is read statically and never executed. Choosing the venv
+interpreter for the printed verify command itself is #13801.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 

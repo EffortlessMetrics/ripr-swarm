@@ -625,6 +625,12 @@ fn implements_trait_in(
 /// Every trait name some `.rs` file under the workspace member directories
 /// declares (`trait Name`, with `pub`, `unsafe` or `auto` before it). The
 /// source is masked first so a commented or quoted `trait` does not count.
+///
+/// The walk never enters a directory the workspace walk never enters
+/// (`is_ignored_dir_name`: `fixtures`, `node_modules`, ...). Those files are
+/// not analysis subjects, so their bytes are not part of the classified cache
+/// key: a `trait` in a compile-fail fixture must not rule reach out, and the
+/// walk must not read bytes the key does not cover (#14068).
 fn member_trait_names(directories: &[PathBuf]) -> HashSet<String> {
     fn walk(directory: &Path, names: &mut HashSet<String>) {
         let Ok(entries) = std::fs::read_dir(directory) else {
@@ -639,7 +645,10 @@ fn member_trait_names(directories: &[PathBuf]) -> HashSet<String> {
                 let skipped = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| name == "target" || name.starts_with('.'));
+                    .is_some_and(|name| {
+                        name.starts_with('.')
+                            || crate::analysis::workspace::is_ignored_dir_name(name)
+                    });
                 if !skipped {
                     walk(&path, names);
                 }
@@ -1991,6 +2000,68 @@ mod tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&workspace);
+        Ok(())
+    }
+
+    /// #14068: a `trait` under a directory the workspace walk never enters
+    /// (`fixtures`, `node_modules`) is not a member's declaration. Those files
+    /// are outside the corpus the classified cache key hashes, and reading them
+    /// let a compile-fail fixture rule reach out. The same trait in the
+    /// member's `src` still removes the allowance.
+    #[test]
+    fn a_trait_under_an_ignored_member_directory_is_not_a_member_declaration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("ripr-ignored-dir-trait-{stamp}"));
+        let member = workspace.join("rmid");
+        std::fs::create_dir_all(member.join("src"))?;
+        std::fs::write(member.join("src/lib.rs"), "pub use std::fmt::Display;\n")?;
+        let declaration = "pub trait Display {\n    fn fmt(&self);\n}\n";
+        let mut owner = function("fmt");
+        owner.id = SymbolId("util/f.rs::impl rmid::Display for Take::fmt".to_string());
+        owner.file = PathBuf::from("util/f.rs");
+        owner.item.container = FunctionContainer::TraitImpl {
+            trait_path: "rmid::Display".to_string(),
+            self_ty: "Take".to_string(),
+        };
+        let index = || {
+            let mut index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("util/f.rs"),
+                    FileFacts {
+                        path: PathBuf::from("util/f.rs"),
+                        source: "pub fn lonely() {}\n".into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: vec![owner.clone()],
+                package_names: BTreeSet::from(["rutil".to_string()]),
+                ..Default::default()
+            });
+            index.workspace_crates = BTreeSet::from(["rmid".to_string(), "rutil".to_string()]);
+            index.workspace_member_dirs = vec![member.clone()];
+            index
+        };
+        let allowed = || {
+            let index = index();
+            let names = UnseenReachNames::build(&index);
+            let direct = owner_may_be_reached_unseen(&owner, &index);
+            assert_eq!(direct, names.may_reach_unseen(&owner));
+            direct
+        };
+        for ignored in ["tests/fixtures", "node_modules/pkg", "fixtures"] {
+            let directory = member.join(ignored);
+            std::fs::create_dir_all(&directory)?;
+            std::fs::write(directory.join("declares.rs"), declaration)?;
+            assert!(allowed(), "trait under {ignored} must not count");
+            std::fs::remove_dir_all(&directory)?;
+        }
+        // Discriminating positive: the walk still reads the member's sources.
+        std::fs::write(member.join("src/declares.rs"), declaration)?;
+        assert!(!allowed(), "trait under src must count");
         let _ = std::fs::remove_dir_all(&workspace);
         Ok(())
     }

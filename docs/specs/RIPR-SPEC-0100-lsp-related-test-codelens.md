@@ -72,7 +72,7 @@ after that prefix MUST comply with the static-language vocabulary:
 | `N == 0` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
 | `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
-| Any TS/Python finding (preview) | Prefix with `"preview: "` |
+| Any TS/Python finding (preview) | Prefix with `"preview: "`; the class in parentheses does not repeat "preview" (#14462) |
 
 Forbidden words in any codeLens title (enforced by `check-static-language`):
 `killed`, `survived`, `proven`, `adequate`, `covered`, `passing`, and the
@@ -97,12 +97,25 @@ A lens click does something useful for its own row (#13389):
   `ripr.showRelatedTest` (also carrying the snapshot `input_identity`) for a
   `window/showDocument` client. A client with neither route, or a snapshot with
   no input identity for the server route, keeps refresh.
-- The target is chosen from the finding's own `related_tests`, the same list
-  the title count comes from, with the code action's rule: a strong-oracle
-  test first, else the lowest relation-confidence rank, ties to the earliest
-  listed. (The code action ranks the seam's related tests; the data source
-  differs, the rule is the same.) Preview-tier (TypeScript, Python) findings
-  navigate the same way and keep their `preview:` title.
+- The target is the witness fix site (`DiagnosticWitness::selected_related_test`),
+  chosen from the finding's own `related_tests`, the same list the title count
+  comes from, so the lens opens the test hover and related information name.
+  Python and Perl findings whose producer declares a suggested test keep that
+  declared target (that declaration is not proximity-filtered); an incomplete
+  or ambiguous declaration selects nothing and the lens keeps refresh. For
+  other findings a test linked only by proximity (same test file, same module,
+  a token substring) is never the target: a call-bearing test matching the
+  finding's suggested test name and file wins first; otherwise a test whose
+  relation runs the owner (a direct call, a helper chain, a followed
+  re-export, or no recorded relation) ranks before one linked only by a name,
+  import or fixture affinity, then the strongest oracle, then the lowest
+  relation-confidence rank, ties to the earliest listed. With only
+  proximity-linked tests the lens keeps refresh, and the title count may then
+  exceed the tests it can open (#5354). The seam code action ranks the seam's
+  related tests with the same proximity exclusion and the same reach-first
+  grouping, but within a group takes a strong oracle first, else the lowest
+  relation-confidence rank. Preview-tier (TypeScript, Python) findings navigate the same way and
+  keep their `preview:` title.
 - The title ends `· open TEST_NAME`. The name has whitespace and control
   characters collapsed to single spaces and is cut at 48 characters with an
   ellipsis. A name containing any forbidden title word (see Honesty rules, for
@@ -116,6 +129,14 @@ A lens click does something useful for its own row (#13389):
   arguments are all equal. Two findings on one row whose related tests share a
   name but live in different files keep two lenses with different targets; two
   findings that resolve to the same test collapse to one.
+- Collapse within one function: a lens whose title, command and arguments equal
+  an earlier lens from a finding with the same probe owner is dropped, and the
+  surviving lens moves to the topmost of those rows. Neighbouring changed lines
+  of one function therefore show one lens instead of a copy above each line.
+  Findings with no recorded owner are not merged across rows. The row-level
+  collapse above still applies after a lens moves, and lenses are returned in
+  row order. Diagnostics and line hover still cover each finding on its own row
+  (#14362).
 - The navigation target is part of the lens-view identity, so a changed target
   triggers `workspace/codeLens/refresh`.
 - Navigation opens a file only. It adds no actionability, repair data or
@@ -249,7 +270,8 @@ output is unchanged).
   lenses on document change).
 - No aggregation lens beyond collapsing: one lens per finding, except that
   findings on one line whose lens range and title are identical share one lens
-  (hover still lists every finding on the line). Aggregation into a single
+  (hover still lists every finding on the line), and identical lenses of one
+  function share the topmost row. Aggregation into a single
   per-file count is a separate UI concern.
 - No Python-specific label differentiation beyond the preview prefix; the same
   softening logic covers both TS and Python for now.
@@ -283,7 +305,7 @@ title:    "Refresh saved-workspace analysis · ripr: no related tests found (no 
 
 ```
 finding:  class=exposed, related_tests.len()=1, language_status=Some(Preview)
-title:    "Refresh saved-workspace analysis · preview: 1 related tests (preview, exposed) · static, cached"
+title:    "Refresh saved-workspace analysis · preview: 1 related test (exposed) · static, cached"
 ```
 
 ### URI mismatch — filter works
@@ -301,6 +323,13 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_zero_related_tests_is_honest`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line`
+- `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_within_one_function`
+- `crates/ripr/src/lsp/lens.rs::tests::lens_click_never_opens_a_proximity_only_test_over_a_calling_one`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_call_bearing_test_over_a_proximity_only_oracle`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::fix_site_prefers_a_calling_test_over_a_stronger_name_only_test`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::a_suggested_proximity_only_test_is_not_the_fix_site`
+- `crates/ripr/src/domain/diagnostic_witness.rs::tests::proximity_only_related_tests_never_become_the_fix_site`
+- `crates/ripr/src/lsp/tests.rs::seam_code_actions_skip_proximity_only_related_tests`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`

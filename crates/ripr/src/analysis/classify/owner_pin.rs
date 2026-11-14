@@ -75,7 +75,7 @@ use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
-    SourceRoleProvenanceEdgeKind,
+    RustIncludeLimitation, SourceRoleProvenanceEdgeKind, literal_include_fragments,
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
@@ -183,13 +183,27 @@ struct TupleChange {
     self_is_type: bool,
 }
 
-/// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
-/// rooted spellings, whether the file can rebind that root.
-#[derive(Clone, Debug, Default)]
+/// A file's `std`/`core`-rooted `assert_eq!` paths and, for the rooted
+/// spellings a caller asks about, whether the file can rebind that root.
+#[derive(Debug, Default)]
 struct StdRootedCalls {
     calls: BTreeSet<String>,
     matches_calls: BTreeSet<String>,
+    /// The spellings in `proved` whose root the file leaves unrebound.
     unrebound: BTreeSet<String>,
+    /// The rooted spellings whose root proof ran while the tree was in hand:
+    /// the file's own rooted calls and the `assert` twins of its rooted
+    /// `matches!` calls, the spellings the context gate asks about. Each
+    /// proof walks the whole file several times and most test files spell
+    /// no rooted call at all: proving all 24 spellings for every file read
+    /// was 31% of a `check` run's 1.47 billion allocations on this
+    /// repository (#13703). Any other spelling is proved on demand by
+    /// [`Self::is_unrebound`].
+    proved: BTreeSet<&'static str>,
+    /// On-demand answers, kept so a spelling the read did not prove (one an
+    /// assertion's text shows but the tree walk did not report as a call)
+    /// costs one parse per file, not one per assertion asked.
+    on_demand: std::sync::Mutex<BTreeMap<&'static str, bool>>,
 }
 
 /// The assertion macros whose execution the shared admission can establish
@@ -346,6 +360,7 @@ thread_local! {
     static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOT_PROOFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl StdRootedCalls {
@@ -356,18 +371,73 @@ impl StdRootedCalls {
             return Self::default();
         };
         let root = file.tree().syntax().clone();
+        let calls = std_rooted_assert_eq_calls(&root);
+        let matches_calls = qualified_matches_paths(&root);
+        let asked: BTreeSet<String> = calls
+            .iter()
+            .cloned()
+            .chain(matches_calls.iter().filter_map(|path| {
+                path.strip_suffix("matches")
+                    .map(|root| format!("{root}assert"))
+            }))
+            .collect();
+        let proved: BTreeSet<&'static str> = STD_ROOTED_ASSERT_EQ
+            .iter()
+            .copied()
+            .filter(|path| asked.contains(*path))
+            .collect();
+        let unrebound = proved
+            .iter()
+            .filter(|path| std_root_proof(path, &root))
+            .map(|path| (*path).to_string())
+            .collect();
         Self {
-            calls: std_rooted_assert_eq_calls(&root),
-            matches_calls: qualified_matches_paths(&root),
-            unrebound: STD_ROOTED_ASSERT_EQ
-                .iter()
-                .filter(|path| {
-                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
-                })
-                .map(|path| (*path).to_string())
-                .collect(),
+            calls,
+            matches_calls,
+            unrebound,
+            proved,
+            on_demand: std::sync::Mutex::default(),
         }
     }
+
+    /// Whether `source` (the text this value was read from) leaves the root
+    /// of the rooted spelling `path` unrebound: exactly the answer an eager
+    /// proof of every spelling at read time gives. A spelling outside
+    /// [`STD_ROOTED_ASSERT_EQ`] or a refused parse is never unrebound.
+    fn is_unrebound(&self, path: &str, source: &str) -> bool {
+        if self.proved.contains(path) {
+            return self.unrebound.contains(path);
+        }
+        let Some(spelling) = STD_ROOTED_ASSERT_EQ
+            .iter()
+            .copied()
+            .find(|known| *known == path)
+        else {
+            return false;
+        };
+        if let Some(known) = self
+            .on_demand
+            .lock()
+            .ok()
+            .and_then(|answers| answers.get(spelling).copied())
+        {
+            return known;
+        }
+        let answer = parse_clean_source_file(source)
+            .is_some_and(|file| std_root_proof(spelling, file.tree().syntax()));
+        if let Ok(mut answers) = self.on_demand.lock() {
+            answers.insert(spelling, answer);
+        }
+        answer
+    }
+}
+
+/// [`crate::analysis::syntax::ra::std_macro_root_is_unrebound`], counted in
+/// test builds so a test can pin which spellings a file read proves.
+fn std_root_proof(path: &str, root: &ra_ap_syntax::SyntaxNode) -> bool {
+    #[cfg(test)]
+    STD_ROOT_PROOFS.with(|count| count.set(count.get() + 1));
+    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, root)
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
@@ -2263,7 +2333,7 @@ impl OwnerPinSyntax {
             }));
         }
         if let Some(path) = qualified.into_iter().find(|path| {
-            !(rooted.unrebound.contains(path)
+            !(rooted.is_unrebound(path, &facts.source)
                 && self.targeted_macro_binding_is_unambiguous(test, assertion.line, path, index))
         }) {
             return Some(AssertionRefusal::Syntax(
@@ -2319,7 +2389,7 @@ impl OwnerPinSyntax {
                                 let path: String = path.split_whitespace().collect();
                                 file == &test.file
                                     && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                                    && rooted.unrebound.contains(&path)
+                                    && rooted.is_unrebound(&path, &facts.source)
                                     && self.targeted_macro_binding_is_unambiguous(
                                         test,
                                         assertion.line,
@@ -2862,6 +2932,12 @@ struct TargetRoots {
     /// mount other crates that way, may compile any file into another
     /// crate, so no file is charged to one root.
     disabled: bool,
+    /// #14116: integration test, bench and example roots holding an
+    /// `include!` whose inert fragment may bind an assertion macro. The
+    /// binding lands in that crate only and nothing imports it, so files
+    /// under these roots are unplaced while every other crate keeps
+    /// placement.
+    tainted: BTreeSet<PathBuf>,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
@@ -3109,11 +3185,172 @@ fn member_own_file(declaring: &Path, literal: &str, member_dir: &Path) -> Option
     (target.is_file() && target.starts_with(member_dir)).then_some(target)
 }
 
+/// #14116: how far one include limitation reaches.
+enum IncludeReach {
+    /// The paste may compile unread source into any crate, or bind a macro
+    /// another crate can import: placement is off for the whole workspace.
+    Workspace,
+    /// The paste stays inside these crate roots, which lose placement. Empty
+    /// when every fragment is read and binds no assertion macro.
+    Roots(BTreeSet<PathBuf>),
+}
+
+/// #14116: the reach of an include limitation. Only an `include!` naming
+/// repository-local files by literal path (inside an inline module, or at
+/// file level with a target the index does not hold) is narrower than the
+/// workspace, and only when every fragment is inert: it declares no
+/// out-of-line module and names no `include!` or `#[path]`, so the paste
+/// compiles no further file.
+///
+/// - An indexed inert fragment that no `mod` edge or recognized target shape
+///   charges to a crate reaches nothing more: [`TargetRoots::roots`] answers
+///   `None` for it, so its macros, globs and bindings are read as sites of a
+///   file that may be compiled anywhere, exactly like the target of a
+///   resolved file-level `include!`.
+/// - An inert fragment the index does not hold (a `fixtures` directory, a
+///   file no module declares) is read from disk with the scan every indexed
+///   file gets. A fragment that binds no assertion macro reaches nothing.
+/// - One that may bind an assertion macro stays inside the including crate
+///   only when that crate is an integration test, bench or example, which
+///   no other crate can import: those roots lose placement and every other
+///   crate keeps it.
+///
+/// Everything else (a dynamic expression, a missing, unreadable or oversized
+/// target, a fragment that mounts files or is itself a module of some crate,
+/// a possible binding inside a library or binary) keeps the workspace-wide
+/// refusal.
+fn include_limitation_reach(
+    index: &RustIndex,
+    limitation: &RustIncludeLimitation,
+    src_dirs: &BTreeSet<PathBuf>,
+) -> IncludeReach {
+    let Some(fragments) = literal_include_fragments(index, limitation) else {
+        return IncludeReach::Workspace;
+    };
+    let mut reach = BTreeSet::new();
+    for fragment in &fragments {
+        if let Some(facts) = index.files().get(fragment) {
+            if facts.used_lexical_fallback
+                || !facts.module_declarations.is_empty()
+                || !own_path_literals(&facts.source, false)
+                    .is_some_and(|literals| literals.is_empty())
+                || target_context_roots(fragment, index, src_dirs).is_some()
+            {
+                return IncludeReach::Workspace;
+            }
+            continue;
+        }
+        let Some(source) = unindexed_inert_fragment(index, fragment) else {
+            return IncludeReach::Workspace;
+        };
+        if fragment_binds_no_assertion_macro(index, &source) {
+            continue;
+        }
+        match target_context_roots(&limitation.parent, index, src_dirs) {
+            Some(roots)
+                if roots
+                    .iter()
+                    .all(|root| root_is_unimportable_target(index, root)) =>
+            {
+                reach.extend(roots);
+            }
+            _ => return IncludeReach::Workspace,
+        }
+    }
+    IncludeReach::Roots(reach)
+}
+
+/// The text of a fragment the index does not hold, when it resolves inside
+/// the repository and is readable, bounded, UTF-8 and mounts nothing.
+fn unindexed_inert_fragment(index: &RustIndex, fragment: &Path) -> Option<String> {
+    let root = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path())?;
+    // The same boundary the include producer keeps: a path that resolves
+    // outside the repository (a symlink) is never read.
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let target = std::fs::canonicalize(root.join(fragment)).ok()?;
+    if !target.starts_with(&canonical_root) {
+        return None;
+    }
+    let bytes = std::fs::read(&target).ok()?;
+    if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok().filter(|source| {
+        own_path_literals(source, false).is_some_and(|literals| literals.is_empty())
+            && !source_may_declare_file_module(source)
+    })
+}
+
+/// Whether the scan every indexed file gets finds no site in `source` that
+/// could bind an assertion macro: no definition, import, glob, opaque
+/// item-position expansion or prelude switch. No module or drop-in crate is
+/// taken as verified, and a file that does not parse reports a site.
+fn fragment_binds_no_assertion_macro(index: &RustIndex, source: &str) -> bool {
+    let names = assertion_context_macros();
+    let (sites, _) = trusted_macro_binding_site_sets(
+        source,
+        index.macro_scope_crates(),
+        &names,
+        &names,
+        &|_, _| false,
+        &|_| false,
+    );
+    sites.is_empty()
+}
+
+/// Whether `root` is an integration test, bench or example crate root: a
+/// crate no other crate can depend on, so nothing it defines is importable.
+/// A manifest may move a library there (`[lib] path = "tests/lib.rs"`); that
+/// root is importable and answers no.
+fn root_is_unimportable_target(index: &RustIndex, root: &Path) -> bool {
+    !index.member_crates.is_custom_lib_path_root(root)
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|directory| {
+                directory == "tests" || directory == "benches" || directory == "examples"
+            })
+}
+
+/// Whether source text may hold an out-of-line `mod name;`, read lexically
+/// so a declaration inside a macro body counts too.
+fn source_may_declare_file_module(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    whole_word_offsets(&masked, "mod")
+        .into_iter()
+        .any(|offset| {
+            masked.get(offset + "mod".len()..).is_some_and(|rest| {
+                rest.trim_start()
+                    .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '#')
+                    .trim_start()
+                    .starts_with(';')
+            })
+        })
+}
+
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
-        let disabled = !index.include_limitations.is_empty()
+        let src_dirs: BTreeSet<PathBuf> = index
+            .files()
+            .iter()
+            .flat_map(|(path, _)| path.ancestors().skip(1))
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            .map(Path::to_path_buf)
+            .collect();
+        let mut tainted = BTreeSet::new();
+        let mut include_reaches_workspace = false;
+        for limitation in &index.include_limitations {
+            match include_limitation_reach(index, limitation, &src_dirs) {
+                IncludeReach::Workspace => include_reaches_workspace = true,
+                IncludeReach::Roots(roots) => tainted.extend(roots),
+            }
+        }
+        let disabled = include_reaches_workspace
             || unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
@@ -3122,15 +3359,9 @@ impl TargetRoots {
                         .iter()
                         .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
             });
-        let src_dirs = index
-            .files()
-            .iter()
-            .flat_map(|(path, _)| path.ancestors().skip(1))
-            .filter(|directory| directory.file_name().is_some_and(|name| name == "src"))
-            .map(Path::to_path_buf)
-            .collect();
         Self {
             disabled,
+            tainted,
             src_dirs,
             memo: SyncMemo::default(),
             binary_macro_roots: SyncMemo::default(),
@@ -3144,7 +3375,8 @@ impl TargetRoots {
         if let Some(roots) = self.memo.borrow().get(file) {
             return roots.clone();
         }
-        let roots = target_context_roots(file, index, &self.src_dirs);
+        let roots = target_context_roots(file, index, &self.src_dirs)
+            .filter(|roots| roots.is_disjoint(&self.tainted));
         self.memo
             .borrow_mut()
             .insert(file.to_path_buf(), roots.clone());
@@ -3167,10 +3399,20 @@ impl TargetRoots {
         if self.disabled {
             return None;
         }
-        if site.crate_local
-            && let Some(roots) = self.roots(file, index)
-        {
-            return Some(roots);
+        if site.crate_local {
+            if let Some(roots) = self.roots(file, index) {
+                return Some(roots);
+            }
+            // #14116: a crate-local site cannot leave its crate, and a crate
+            // that only lost placement to its own unread include is still
+            // known. The site is charged to that crate instead of to every
+            // test in the workspace.
+            if !self.tainted.is_empty()
+                && let Some(roots) = target_context_roots(file, index, &self.src_dirs)
+                && !roots.is_disjoint(&self.tainted)
+            {
+                return Some(roots);
+            }
         }
         self.binary_roots(file, index)
     }
@@ -3184,6 +3426,7 @@ impl TargetRoots {
         }
         let roots = index.execution_context(file).and_then(|context| {
             (!context.roots.is_empty()
+                && context.roots.is_disjoint(&self.tainted)
                 && context
                     .roots
                     .iter()
@@ -4174,6 +4417,9 @@ fn macro_root_verified_in_contexts(
     let Some(context) = index.execution_context(path) else {
         return false;
     };
+    if !context.roots.is_disjoint(&roots.tainted) {
+        return false;
+    }
     // Import authority needs every approved placement, not a uniquely
     // recognized Cargo target. Unlinked source stems retain their physical
     // manifest check; they still cannot establish positive owner identity.
@@ -6413,6 +6659,37 @@ impl OwnerReturnPin {
             ) {
                 (Some(call), None) => (call, right.as_str(), Some(left.as_str())),
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
+                // `let v = owner(..); assert!(v == 4);` fails exactly when
+                // `assert_eq!(v, 4)` does, so the #6974 binding rules decide
+                // whether `v` is the call. A guard twin reads only its own
+                // condition, and a borrowed helper assertion names the
+                // helper's parameters, not the test's bindings (#6482).
+                (None, None)
+                    if !is_guard
+                        && (test.start_line..=test.end_line).contains(&assertion.line)
+                        && owner_named_outside(test, &assertion.text, &self.name) =>
+                {
+                    let bound = |operand: &str| {
+                        let_bound_owner_call(
+                            test,
+                            assertion,
+                            operand,
+                            "",
+                            &self.name,
+                            self.returns_scalar,
+                            false,
+                        )
+                        .and_then(|text| {
+                            self.awaited_call_shape(poll_context, text, &self.name)
+                                .map(|call| (call, text))
+                        })
+                    };
+                    match (bound(left), bound(right)) {
+                        (Some((call, text)), None) => (call, right.as_str(), Some(text)),
+                        (None, Some((call, text))) => (call, left.as_str(), Some(text)),
+                        _ => return false,
+                    }
+                }
                 _ => return false,
             }
         } else if let Some(operands) = matches_pin_condition(&assertion.text)
@@ -11381,12 +11658,77 @@ fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
     })
 }
 
+/// Whether `text` starts with the identifier `name`, spelled bare or raw
+/// (`r#name` is the same identifier).
+fn starts_with_ident(text: &str, name: &str) -> bool {
+    starts_with_word(text, name)
+        || text
+            .strip_prefix("r#")
+            .is_some_and(|rest| starts_with_word(rest, name))
+}
+
 /// Whether masked `text` declares a struct, enum or union named `name`.
 fn declares_type(text: &str, name: &str) -> bool {
     ["struct", "enum", "union"].iter().any(|keyword| {
         whole_word_offsets(text, keyword)
             .into_iter()
-            .any(|offset| starts_with_word(text[offset + keyword.len()..].trim_start(), name))
+            .any(|offset| starts_with_ident(text[offset + keyword.len()..].trim_start(), name))
+    })
+}
+
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` anywhere,
+/// or aliases a type to that name, by a text scan of its comment- and
+/// string-masked code. Any scope counts, so a hit is only ever used to
+/// withhold credit (#14407).
+pub(in crate::analysis) fn source_declares_or_aliases_type(source: &str, name: &str) -> bool {
+    declares_type(&mask_comments_and_strings(source), name) || file_aliases_type(source, name)
+}
+
+/// How many `struct`/`enum`/`union` declarations named `name` `source`
+/// holds at any scope, by a text scan of its comment- and string-masked code,
+/// plus each `as name` rename, plus one when it aliases a type to that name. Used only to withhold credit
+/// when a test shares the owner's file (#14407).
+pub(in crate::analysis) fn source_type_declaration_count(source: &str, name: &str) -> usize {
+    if !source.contains(name) {
+        return 0;
+    }
+    let masked = mask_comments_and_strings(source);
+    let declarations = ["struct", "enum", "union"]
+        .iter()
+        .map(|keyword| {
+            whole_word_offsets(&masked, keyword)
+                .into_iter()
+                .filter(|offset| {
+                    starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
+                })
+                .count()
+        })
+        .sum::<usize>();
+    // A `use path::Other as Name;` rename brings another type in under the
+    // name, like an alias.
+    let renames = whole_word_offsets(&masked, "as")
+        .into_iter()
+        .filter(|offset| starts_with_ident(masked[offset + "as".len()..].trim_start(), name))
+        .count();
+    declarations + renames + usize::from(file_aliases_type(source, name))
+}
+
+/// Whether `source` declares a `struct`/`enum`/`union` named `name` on a line
+/// before file line `line` (1-based), by a text scan of its comment- and
+/// string-masked code (#14407).
+pub(in crate::analysis) fn source_declares_type_before_line(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(source);
+    ["struct", "enum", "union"].iter().any(|keyword| {
+        whole_word_offsets(&masked, keyword)
+            .into_iter()
+            .any(|offset| {
+                starts_with_ident(masked[offset + keyword.len()..].trim_start(), name)
+                    && masked[..offset].matches('\n').count() + 1 < line
+            })
     })
 }
 
@@ -13646,7 +13988,8 @@ fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize,
 /// #6974: the initializer of `operand` when it is a plain identifier the
 /// test binds exactly once, by an immutable `let operand [: T] = <init>;`,
 /// and uses nowhere else but as a whole operand of its own `assert_eq!`
-/// assertions after that `let`. Any other use (a `mut` binding, a borrow,
+/// assertions, or one whole side of a plain lone-equality `assert!(v == e)`
+/// (#14085), after that `let`. Any other use (a `mut` binding, a borrow,
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
@@ -13709,7 +14052,8 @@ fn let_bound_owner_call<'a>(
                     .count()
                     == 1
                     && in_text == 1
-            });
+            })
+            || lone_equality_names_operand_once(&other.text, operand, projection, in_text);
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
@@ -13756,7 +14100,14 @@ fn let_bound_owner_call<'a>(
     let next = &rest[..end];
     let after = &rest[end + 1..];
     let tail_of_line = &after[..after.find('\n').unwrap_or(after.len())];
-    if !next.starts_with("assert_eq!")
+    // A lone-equality `assert!(v == e)` opens the statement in place of the
+    // `assert_eq!`; a bool owner's bare `assert!(v)` keeps the scalar route.
+    let opener = if !bare_condition && is_plain_macro(&assertion.text, "assert") {
+        "assert!"
+    } else {
+        "assert_eq!"
+    };
+    if !next.starts_with(opener)
         || !contains_as_whole_word(next, operand)
         || !tail_of_line.trim().is_empty()
         || assertion.line != next_line
@@ -13764,6 +14115,27 @@ fn let_bound_owner_call<'a>(
         return None;
     }
     let_initializer(binding)
+}
+
+/// Whether `text` is one plain `assert!(lhs == rhs)` (RIPR-SPEC-0197
+/// lone-equality pins) with `operand` as exactly one whole side and named
+/// nowhere else in it, message arguments included. It reads `operand` as
+/// the `assert_eq!` with the same two sides does.
+fn lone_equality_names_operand_once(
+    text: &str,
+    operand: &str,
+    projection: &str,
+    mentions: usize,
+) -> bool {
+    mentions == 1
+        && is_plain_macro(text, "assert")
+        && equality_condition_operands(text).is_some_and(|sides| {
+            sides
+                .iter()
+                .filter(|side| side.trim().strip_suffix(projection).map(str::trim) == Some(operand))
+                .count()
+                == 1
+        })
 }
 
 /// cell-0094 review: whether the line `assertion_line` starts with a

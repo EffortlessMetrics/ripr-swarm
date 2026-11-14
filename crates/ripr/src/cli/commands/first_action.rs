@@ -241,6 +241,21 @@ fn parse_first_action_options(args: &[String]) -> Result<FirstActionOptions, Str
         return Err("first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)".to_string());
     }
 
+    super::refuse_output_naming_input(
+        "first-action",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--assistant-proof", assistant_proof.as_deref()),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--receipt", receipt.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--editor-context", editor_context.as_deref()),
+        ],
+    )?;
     Ok(FirstActionOptions {
         root,
         pr_guidance,

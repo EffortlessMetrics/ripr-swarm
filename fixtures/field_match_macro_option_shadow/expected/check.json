@@ -25,7 +25,7 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach charge: selected"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: None =>"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: lease.timeout"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
@@ -36,11 +36,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 5)", "related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001);", "source assertion argument value 1001 at line 12", "source function argument value lease = 600 at line 12"],
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: lease.timeout", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: lease.timeout (line 5)", "related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001);", "source assertion argument value 1001 at line 12", "source function argument value lease = 600 at line 12"],
       "flow_sinks": [
-        {"kind":"match_arm","text":"None =>","line":5}
+        {"kind":"match_arm","text":"lease.timeout","line":5}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected", "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: lease.timeout", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach charge: selected", "limitation_last_established_edge: owner parameter field `lease.elapsed` is the changed tail match selector", "limitation_first_unresolved_edge: `lease.elapsed` value at the owner invocation and whether a related assertion observes that invocation's returned value", "limitation_analyzer_route: analysis/rust-field-match-selector", "limitation_non_claim: named analyzer limitation only; no coverage, test adequacy, gap absence, or same-invocation proof"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "12": "assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001);"

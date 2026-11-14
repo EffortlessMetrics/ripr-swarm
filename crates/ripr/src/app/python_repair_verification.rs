@@ -3589,6 +3589,183 @@ mod python_repair_verification_semantics {
     }
 
     // ------------------------------------------------------------------
+    // Rollback guard operational failures and the bounded git readers.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bounded_git_readers_trim_text_keep_bytes_and_refuse_failures() -> Result<(), String> {
+        let fixture = rollback_fixture("git-readers")?;
+        let root = fixture.root.as_path();
+        std::fs::write(root.join("raw.bin"), [0xffu8, 0xfe, b'\n', b'\n'])
+            .map_err(|error| format!("write raw blob: {error}"))?;
+        rollback_git(root, &["add", "raw.bin"])?;
+        rollback_git(root, &["commit", "-qm", "raw"])?;
+        let blob = git_text_with_limit(root, &["rev-parse", "HEAD:raw.bin"])?;
+        ensure(
+            blob.len() == 40 && blob.trim() == blob,
+            format!("the text reader must return a trimmed object id: {blob:?}"),
+        )?;
+
+        // Text readers trim trailing whitespace; the byte reader never does.
+        let head_text = git_text_with_limit(root, &["rev-parse", "HEAD"])?;
+        let head_bytes = git_bytes_with_limit(root, &["rev-parse", "HEAD"])?;
+        ensure(
+            head_bytes.ends_with(b"\n") && head_bytes.len() == head_text.len() + 1,
+            format!("the byte reader must keep the trailing newline: {head_bytes:?}"),
+        )?;
+        let raw = git_bytes_with_limit(root, &["cat-file", "blob", &blob])?;
+        ensure(
+            raw == [0xffu8, 0xfe, b'\n', b'\n'],
+            format!("the byte reader must return the blob untouched: {raw:?}"),
+        )?;
+
+        // Non-UTF-8 output is a refusal for the text reader, never lossy text.
+        let utf8 = refusal_of(
+            git_text_with_limit(root, &["cat-file", "blob", &blob]),
+            "non-UTF-8 text",
+        )?;
+        ensure(
+            utf8.contains("git cat-file emitted non-UTF-8 output"),
+            format!("the text reader must name the non-UTF-8 output: {utf8}"),
+        )?;
+
+        // A failing git command names the subcommand on both readers.
+        for (label, error) in [
+            (
+                "text",
+                refusal_of(
+                    git_text_with_limit(root, &["cat-file", "blob", &"0".repeat(40)]),
+                    "text failure",
+                )?,
+            ),
+            (
+                "bytes",
+                refusal_of(
+                    git_bytes_with_limit(root, &["cat-file", "blob", &"0".repeat(40)]),
+                    "bytes failure",
+                )?,
+            ),
+        ] {
+            ensure(
+                error.contains("git cat-file failed:")
+                    && error.contains("then rerun the verify phase"),
+                format!("the {label} reader must name the failed subcommand: {error}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The captured baseline of a clean selected target plus its applied edit,
+    /// ready for `run_rollback`.
+    fn rollback_with_applied_edit(
+        label: &str,
+    ) -> Result<(RollbackFixture, crate::edit_cage::AttemptBaseline, String), String> {
+        let fixture = rollback_fixture(label)?;
+        let baseline =
+            crate::edit_cage::capture_attempt_baseline(&fixture.root, &rollback_policy()?)?;
+        std::fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() { assert!(true); }\n",
+        )
+        .map_err(|error| format!("write applied edit: {error}"))?;
+        let head = crate::agent::artifact::current_git_head(&fixture.root)?;
+        Ok((fixture, baseline, head))
+    }
+
+    fn rollback_block_reason(
+        fixture: &RollbackFixture,
+        baseline: &crate::edit_cage::AttemptBaseline,
+        head: &str,
+    ) -> Result<String, String> {
+        let outcome = run_rollback(
+            &fixture.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            baseline,
+            head,
+        );
+        ensure(
+            outcome.state == "blocked" && outcome.post_rollback_head.is_none(),
+            format!("an unverifiable or failed restore must block, got {outcome:?}"),
+        )?;
+        outcome
+            .reason
+            .ok_or_else(|| "the block must carry a reason".to_string())
+    }
+
+    fn edit_still_on_disk(fixture: &RollbackFixture) -> Result<(), String> {
+        let content = std::fs::read_to_string(fixture.root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read target after blocked rollback: {error}"))?;
+        ensure(
+            content.contains("assert!(true)"),
+            "a blocked rollback must leave the applied edit untouched",
+        )
+    }
+
+    #[test]
+    fn rollback_treats_an_unreadable_baseline_blob_as_destructive() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("blob-missing")?;
+        // Positive control: with the blob present the same inputs prove.
+        let control = rollback_with_applied_edit("blob-control")?;
+        let proved = run_rollback(
+            &control.0.root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &control.1,
+            &control.2,
+        );
+        ensure(
+            proved.state == "proved",
+            format!("the control restore must prove, got {proved:?}"),
+        )?;
+
+        // Removing the loose baseline blob makes the destruction guard
+        // unable to compare content: the restore is refused, not attempted.
+        let oid = git_text_with_limit(&fixture.root, &["rev-parse", "HEAD:tests/pricing.rs"])?;
+        let loose = fixture
+            .root
+            .join(".git/objects")
+            .join(&oid[..2])
+            .join(&oid[2..]);
+        std::fs::remove_file(&loose)
+            .map_err(|error| format!("remove loose blob {}: {error}", loose.display()))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("the baseline index blob") && reason.contains("could not be read"),
+            format!("the refusal must name the unreadable blob: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
+    }
+
+    #[test]
+    fn rollback_treats_an_unreadable_index_as_destructive() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("index-corrupt")?;
+        std::fs::write(fixture.root.join(".git/index"), b"not an index")
+            .map_err(|error| format!("corrupt index: {error}"))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("the current git index entry could not be read"),
+            format!("the refusal must name the unreadable index: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
+    }
+
+    #[test]
+    fn rollback_reports_a_failed_restore_instead_of_proving_it() -> Result<(), String> {
+        let (fixture, baseline, head) = rollback_with_applied_edit("restore-fails")?;
+        // A held index lock lets the read-only guard pass but fails the
+        // checkout; the failure is reported and never read as a proof.
+        std::fs::write(fixture.root.join(".git/index.lock"), b"")
+            .map_err(|error| format!("hold index lock: {error}"))?;
+        let reason = rollback_block_reason(&fixture, &baseline, &head)?;
+        ensure(
+            reason.contains("git restore of the changed paths failed"),
+            format!("the block must name the failed restore: {reason}"),
+        )?;
+        edit_still_on_disk(&fixture)
+    }
+
+    // ------------------------------------------------------------------
     // Phase entry refusals against a real durable attempt.
     // ------------------------------------------------------------------
 

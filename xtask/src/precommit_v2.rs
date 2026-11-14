@@ -192,7 +192,14 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
                 crate::precommit(coverage)
             }
         },
-        &mut run_status,
+        &mut |program, args| {
+            // Hosted `ci-policy` keeps Cargo's own job count (#13705).
+            if ci_policy {
+                run_status(program, args)
+            } else {
+                run_status_with_envs(program, args, crate::cargo_job_cap::local_precommit_envs())
+            }
+        },
     )
 }
 
@@ -1039,8 +1046,16 @@ fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<CommandDiagnostic, PrecommitError> {
+    run_status_with_envs(program, args, &[])
+}
+
+fn run_status_with_envs(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Result<CommandDiagnostic, PrecommitError> {
     // Same no-cap shared-runner path as `cargo_bytes` (#4150).
-    let captured = capture_output_without_timeout(program, args, &[], "precommit command");
+    let captured = capture_output_without_timeout(program, args, envs, "precommit command");
     let diagnostic = CommandDiagnostic::captured(program, args, &captured);
     let output = captured.map_err(|error| {
         PrecommitError::new(

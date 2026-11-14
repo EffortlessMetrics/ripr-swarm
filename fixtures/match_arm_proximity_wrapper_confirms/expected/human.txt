@@ -13,7 +13,7 @@ Start here:
   File: ./src/lib.rs:23
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:seconds:match_arm:match_arm:unit_fortnight
-  Changed behavior: Unit::Fortnight =>
+  Changed behavior: Unit::Fortnight => 1_209_600
   Related test (1 of 3 matched rows): src/lib.rs:36 seconds_total
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

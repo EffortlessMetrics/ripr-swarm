@@ -172,16 +172,38 @@ pub(crate) fn resolve_test_stub(
     selector: &TestStubSelector,
 ) -> Result<TestStubResolution, TestStubError> {
     match selector {
-        // A seam id is repo-wide, so it is looked up in the full inventory.
+        // A seam id is repo-wide, so it is located by the uncapped seam walk
+        // and then classified with its own file, the same file-scoped
+        // classification `ripr check` validates the printed command against
+        // (#14369). The capped workspace inventory held only a prefix of a
+        // large repository, so a changed seam past it was "not found" after a
+        // repo-wide evidence walk.
         TestStubSelector::SeamId(id) => {
-            let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+            let not_found = || TestStubError::NotFound(format!("seam_id {id} was not found"));
+            let location = analysis::locate_seam_file_at_with_config(root, config, id)
+                .map_err(TestStubError::Operational)?
+                .ok_or_else(not_found)?;
+            let scoped =
+                analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+                    .map_err(TestStubError::Operational)?;
+            scoped
+                .require_complete_evidence("test stub")
                 .map_err(TestStubError::Operational)?;
-            let entry = classified
+            let entry = scoped
+                .classified
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == id)
-                .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
+                .ok_or_else(not_found)?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, config, entry, source))
+            let mut resolution = resolution_for(root, config, entry, source);
+            // `ripr agent repair --phase before` still reads the capped
+            // workspace inventory, so a repair start for a seam past the cap
+            // would be refused: the route cannot be established, so it is
+            // omitted (RIPR-SPEC-0287) while the stub itself stands.
+            if !location.within_inventory_limit {
+                resolution.next_repair = None;
+            }
+            Ok(resolution)
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -550,10 +572,32 @@ fn narrowed_ambiguity(
             narrowed = true;
         }
     }
-    validate_ambiguity(root, config, candidates, narrowed, reason, || {
-        analysis::inventory_classified_seams_at_with_config(root, config)
-            .map(|(classified, _)| classified)
-    })
+    // Every candidate came from one `--at` line, so the file's own classified
+    // seams hold them all. Classifying the whole workspace here cost a cold
+    // repo-wide evidence walk per ambiguous finding (about 16 minutes on
+    // ripr-swarm, #14369); the file-scoped classification is the one
+    // `inventory_entry_facts` already trusts, and it fails closed when its
+    // evidence is incomplete.
+    let scoped = scoped_file(root, file);
+    validate_ambiguity(
+        root,
+        config,
+        candidates,
+        narrowed,
+        reason,
+        || match scoped {
+            Some(relative) => {
+                // The complete file-scope inventory reuses its result, so
+                // several ambiguous findings in one file classify it once.
+                let scoped =
+                    analysis::inventory_file_guidance_at_with_config(root, config, &relative)?;
+                scoped.require_complete_evidence("test stub")?;
+                Ok(scoped.classified)
+            }
+            None => analysis::inventory_classified_seams_at_with_config(root, config)
+                .map(|(classified, _)| classified),
+        },
+    )
 }
 
 /// The validation half of `narrowed_ambiguity`, with the classified inventory
@@ -2146,16 +2190,74 @@ mod tests {
                 .map(|seam| seam.id().as_str().to_string())
                 .collect::<Vec<_>>();
             assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
+            let workspace = analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get);
             let decision = narrowed_ambiguity(
                 &root,
                 &config,
                 "src/lib.rs",
                 "y: 3",
                 "several seams".to_string(),
-                ids,
+                ids.clone(),
                 &mut index,
             );
+            // A second ambiguous finding in the same file reuses the file's
+            // complete classified inventory instead of rebuilding the
+            // workspace index (#14369 review).
+            let (again, rebuilds) = analysis::index_build_probe::observe(|| {
+                narrowed_ambiguity(
+                    &root,
+                    &config,
+                    "src/lib.rs",
+                    "y: 3",
+                    "several seams".to_string(),
+                    ids.clone(),
+                    &mut index,
+                )
+            });
+            assert_eq!(again, decision, "the reused decision is the same");
+            assert_eq!(
+                rebuilds, 0,
+                "a repeated ambiguity reuses the file inventory"
+            );
+            // The printed `--seam-id` command, run as printed, must produce
+            // the same seam's stub; it is located by the uncapped seam walk
+            // (#14369). The seam-cap case runs as a subprocess in
+            // `agent_stub_compiles`, since the cap is process-wide.
+            let executed = match &decision {
+                StubRouteDecision::SeamStub { seam_id } => {
+                    let located = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get);
+                    let resolved = resolve_test_stub(
+                        &root,
+                        &config,
+                        &TestStubSelector::SeamId(seam_id.clone()),
+                    );
+                    let walks = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get) - located;
+                    Some((walks, resolved))
+                }
+                _ => None,
+            };
+            let workspace =
+                analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get) - workspace;
             let _ = std::fs::remove_dir_all(&root);
+            // #14369: candidates from one file are validated, and the seam id
+            // then resolved, against that file's classified seams, never a
+            // whole-workspace inventory.
+            assert_eq!(
+                workspace, 0,
+                "a file-scoped ambiguity must not classify the whole workspace"
+            );
+            if let (StubRouteDecision::SeamStub { seam_id }, Some((walks, resolved))) =
+                (&decision, executed)
+            {
+                assert_eq!(walks, 1, "a seam id is located by the uncapped seam walk");
+                let resolution = resolved.map_err(|error| format!("{error:?}"))?;
+                assert_eq!(&resolution.seam_id, seam_id, "the printed seam resolves");
+                assert!(
+                    resolution.outcome.is_ok() && resolution.weak_oracle_guidance.is_none(),
+                    "the printed seam-id command yields a stub: {:?}",
+                    resolution.outcome
+                );
+            }
             Ok(decision)
         };
         let decision = decide("narrow-weak", &weak)?;
@@ -3008,6 +3110,28 @@ mod tests {
         .map(|entry| entry.seam.id().as_str().to_string())
         .ok_or("fixture must classify a seam")?;
         assert!(inventory_entry_facts(&control, &config, "src/lib.rs", &seam_id).is_some());
+        // #14369: the seam-id stub and the ambiguity validator classify the
+        // file too, so they get the same guard; unarmed, both see the seam.
+        let by_id = TestStubSelector::SeamId(seam_id.clone());
+        let healthy =
+            resolve_test_stub(&control, &config, &by_id).map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let ambiguity = |root: &Path| {
+            narrowed_ambiguity(
+                root,
+                &config,
+                "src/lib.rs",
+                "x >= 100",
+                "several seams".to_string(),
+                vec![seam_id.clone()],
+                &mut None,
+            )
+        };
+        let decision = ambiguity(&control);
+        assert!(
+            !matches!(decision, StubRouteDecision::Withheld { .. }),
+            "unarmed, the candidate is validated: {decision:?}"
+        );
         let _ = std::fs::remove_dir_all(&control);
 
         for point in [1u8, 2u8] {
@@ -3023,6 +3147,28 @@ mod tests {
                 }
                 other => return Err(format!("point {point}: expected refusal: {other:?}")),
             }
+            let by_id_refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &by_id)
+            };
+            let decision = {
+                let _armed = WarmPanicGuard::arm(point);
+                ambiguity(&root)
+            };
+            match by_id_refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                }
+                other => {
+                    return Err(format!(
+                        "point {point}: expected seam-id refusal: {other:?}"
+                    ));
+                }
+            }
+            assert!(
+                matches!(decision, StubRouteDecision::Withheld { .. }),
+                "point {point}: stand-in seams must not validate a route: {decision:?}"
+            );
             let facts = {
                 let _armed = WarmPanicGuard::arm(point);
                 let stand_in = analysis::inventory_diff_scoped_classified_seams_at_with_config(

@@ -155,7 +155,8 @@ impl RefusalRemedy {
     /// The primary step is the instructed one, not the first mention: a
     /// conditional fallback (`if it persists, run ...`) or an explanatory
     /// mention (`X is a `ripr check` finding ID`) never becomes the primary
-    /// remedy while an instructed step exists. See [`Role`].
+    /// remedy while an instructed step exists (the private `Role` of each
+    /// mention decides).
     pub fn from_prose(prose: &str) -> Self {
         let commands = stated_mentions(prose, is_ripr_command);
         let tools = stated_tool_mentions(prose);

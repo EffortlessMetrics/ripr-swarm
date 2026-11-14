@@ -87,6 +87,15 @@ Rules:
   producer.
 - An absent optional artifact (no gap decision ledger, no canonical delta)
   is a normal state and records no outcome.
+- Findings whose changed owner carries `#[mutants::skip]` (#14136) are the
+  ones `ripr check` withholds: the snapshot is built without the ids in
+  `CheckOutput::withheld_finding_ids`, so diagnostics, hover, code actions
+  and lenses publish nothing for them, and workspace status discloses the
+  count and the `owner_mutants_skip` reason under
+  `diagnostics.owner_opt_out_findings` and `diagnostics.owner_opt_out_reason`
+  (`null` when nothing is withheld). The disclosure is typed on the snapshot,
+  not a component outcome, and a refresh recomputes it, so removing the
+  attribute brings the findings back.
 
 ### Single run-status aggregation
 

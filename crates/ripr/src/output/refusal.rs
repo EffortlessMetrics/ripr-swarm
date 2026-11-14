@@ -114,6 +114,15 @@ impl RefusalBlock {
 /// runnable. The richer `remedy` object stays beside it for the consumer that
 /// wants the detail.
 fn next_from_remedy(remedy: &RefusalRemedy) -> Option<RefusalNext> {
+    runnable_command(remedy).map(|command| RefusalNext {
+        purpose: PURPOSE_STATED_STEP,
+        command: command.to_string(),
+    })
+}
+
+/// The remedy's command when it is safe to run as-is (see
+/// [`next_from_remedy`]); the one owner every refusal renderer asks.
+pub(crate) fn runnable_command(remedy: &RefusalRemedy) -> Option<&str> {
     if remedy.kind.as_str() != "command"
         || remedy.conditional
         || remedy.prose_has_more
@@ -121,10 +130,7 @@ fn next_from_remedy(remedy: &RefusalRemedy) -> Option<RefusalNext> {
     {
         return None;
     }
-    remedy.command.as_ref().map(|command| RefusalNext {
-        purpose: PURPOSE_STATED_STEP,
-        command: command.clone(),
-    })
+    remedy.command.as_deref()
 }
 
 #[cfg(test)]

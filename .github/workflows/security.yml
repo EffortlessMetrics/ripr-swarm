@@ -6,6 +6,15 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: "Optional dependency comparison base: full commit SHA; supply with head_sha"
+        type: string
+        required: false
+      head_sha:
+        description: "Optional candidate commit: full SHA; supply with base_sha"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -17,7 +26,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Select immutable cargo-deny subject
+        id: subject
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_SHA: ${{ github.sha }}
+          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          head_sha="$RUN_SHA"
+          if [[ -n "$INPUT_BASE_SHA" || -n "$INPUT_HEAD_SHA" ]]; then
+            if [[ "$EVENT_NAME" != workflow_dispatch || ! "$INPUT_BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$INPUT_HEAD_SHA" =~ ^[0-9a-f]{40}$ || "$INPUT_BASE_SHA" == "$INPUT_HEAD_SHA" ]]; then
+              echo '::error::Candidate security requires distinct full base_sha and head_sha commit IDs on manual dispatch.'
+              exit 1
+            fi
+            head_sha="$INPUT_HEAD_SHA"
+          fi
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Security source is not an immutable commit ID.'; exit 1; }
+          printf 'head_sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ steps.subject.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Verify cargo-deny checkout
+        env:
+          HEAD_SHA: ${{ steps.subject.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] || { echo '::error::cargo-deny checkout does not match its selected commit.'; exit 1; }
+          printf 'cargo-deny source: `%s`\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -69,18 +109,60 @@ jobs:
 
   dependency-review:
     name: dependency-review
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'pull_request')
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.base_sha != '' || inputs.head_sha != '')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Select immutable dependency comparison
+        id: subject
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BASE_SHA: ${{ inputs.base_sha }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            base_sha="$INPUT_BASE_SHA"
+            head_sha="$INPUT_HEAD_SHA"
+          elif [[ "$EVENT_NAME" == pull_request ]]; then
+            base_sha="$PR_BASE_SHA"
+            head_sha="$PR_HEAD_SHA"
+          else
+            echo '::error::Dependency comparison requires a selected manual pair or a PR event.'
+            exit 1
+          fi
+          if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ || ! "$head_sha" =~ ^[0-9a-f]{40}$ || "$base_sha" == "$head_sha" ]]; then
+            echo '::error::Dependency comparison requires distinct full base and head commit IDs.'
+            exit 1
+          fi
+          printf 'base_sha=%s\nhead_sha=%s\n' "$base_sha" "$head_sha" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ steps.subject.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Verify dependency-review checkout
+        env:
+          BASE_SHA: ${{ steps.subject.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.subject.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] || { echo '::error::Dependency-review checkout does not match its selected commit.'; exit 1; }
+          printf 'Dependency comparison: `%s` to `%s`\n' "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+        # Only immutable values from the selector enter the action/API comparison.
+        # The action refuses an unavailable comparison; it is not a main scan.
 
       # TODO: upgrade when GitHub publishes a Node-24-backed Dependency Review
-      # release. v4 remains the official hard security gate for dependency diffs.
+      # release. This advisory result does not change required-check membership.
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
+          base-ref: ${{ steps.subject.outputs.base_sha }}
+          head-ref: ${{ steps.subject.outputs.head_sha }}
           fail-on-severity: high
           deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0

@@ -80,7 +80,9 @@ pub(crate) fn probes_for_file_with_relations(
     );
     // Old-side line numbers of this file's removed lines whose positional
     // replacement is a guard-only arm edit, one entry per such edit: that
-    // edit's predicate already carries the old guard as `before`.
+    // edit's predicate already carries the old guard as `before`. #7945: also
+    // the old lines of a multi-line `&&`/`||` chain that an added predicate
+    // carries whole as `before` (`family_before`).
     let mut guard_edit_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
@@ -231,6 +233,13 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_attribute_lines = old_source
         .map(attribute_continuation_lines)
         .unwrap_or_default();
+    // #8389: the entries of a multi-line `use a::{\n    B,\n    C,\n};` sit on
+    // lines that do not start with `use`, but they are import text, like the
+    // single-line form `should_ignore_changed_line` already skips.
+    let added_use_lines = find_file_facts(index, &changed.path)
+        .map(|facts| use_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_use_lines = old_source.map(use_continuation_lines).unwrap_or_default();
     let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
@@ -242,6 +251,15 @@ pub(crate) fn probes_for_file_with_relations(
     } else {
         added_type_bound_lines(index, changed)
     };
+    // Added lines whose only lexical family is `static_unknown`: a type-bound
+    // line, or (#14094) a string-literal continuation line, whose text is
+    // data even when it reads like code. A removed line pairs with them on
+    // that family alone.
+    let added_static_only = added_bounds
+        .iter()
+        .zip(&changed.added_lines)
+        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
     // token text, not a Rust expression. One `static_unknown` probe per
@@ -285,8 +303,10 @@ pub(crate) fn probes_for_file_with_relations(
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
         // after macro membership: inside a `macro_rules!` transcriber they
         // are emitted tokens, so an edit there is a macro-definition edit.
+        // `//` inside a string literal is string data, not a comment (#14094).
         if text.is_empty()
-            || text.starts_with("//")
+            || (text.starts_with("//")
+                && !added_string_continuations.contains(&added.new_side_line))
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
         {
@@ -316,8 +336,10 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text)
+        if (should_ignore_changed_line(text)
+            && !added_string_continuations.contains(&added.new_side_line))
             || added_attribute_lines.contains(&added.new_side_line)
+            || added_use_lines.contains(&added.new_side_line)
             || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
         {
             continue;
@@ -507,11 +529,13 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                let before = removed_before(
+                let before = family_before(
+                    &shape.family,
                     shape.start_line,
                     &canonical_text,
                     changed,
                     &added_run_starts,
+                    &mut guard_edit_counterparts,
                 );
                 // #5312 (widening #6995): a canonical shape's `after` is the
                 // parser shape, not the whole line, so cut the same span from
@@ -578,8 +602,15 @@ pub(crate) fn probes_for_file_with_relations(
                 {
                     continue;
                 }
-                let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                    .map(|line| arm_before(&shape.family, line, changed, old_source));
+                let before = family_before(
+                    &shape.family,
+                    added.new_side_line,
+                    text,
+                    changed,
+                    &added_run_starts,
+                    &mut guard_edit_counterparts,
+                )
+                .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -590,10 +621,18 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        let families = classify_changed_line_against(text, removed_counterpart.as_deref())
-            .into_iter()
-            .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
-            .collect::<Vec<_>>();
+        // #14094: a line wholly inside a multi-line string literal holds no
+        // code. Its text (`if x > 3 { return Err(e) }` in a help message)
+        // selects no behavioral family; the literal's own rule below decides
+        // whether the edited text keeps one `static_unknown`.
+        let families = if added_string_continuations.contains(&added.new_side_line) {
+            vec![ProbeFamily::StaticUnknown]
+        } else {
+            classify_changed_line_against(text, removed_counterpart.as_deref())
+                .into_iter()
+                .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
+                .collect::<Vec<_>>()
+        };
         // #3294: a changed simple `let` initializer that only lands in the
         // static-unknown catch-all retargets to its same-function predicate
         // uses when the binding reaches them directly. The changed
@@ -637,8 +676,15 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 continue;
             }
-            let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
-                .map(|line| arm_before(&family, line, changed, old_source));
+            let before = family_before(
+                &family,
+                added.new_side_line,
+                text,
+                changed,
+                &added_run_starts,
+                &mut guard_edit_counterparts,
+            )
+            .map(|line| arm_before(&family, line, changed, old_source));
             let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -712,10 +758,16 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text) || removed_attribute_lines.contains(&removed.line) {
+        if should_ignore_changed_line(text)
+            || removed_attribute_lines.contains(&removed.line)
+            || removed_use_lines.contains(&removed.line)
+        {
             continue;
         }
-        let families = if removed_bounds.lines[removed_index] {
+        // #14094: deleted string-literal text is not deleted code either.
+        let families = if removed_bounds.lines[removed_index]
+            || removed_string_continuations.contains(&removed.line)
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line(text)
@@ -733,7 +785,7 @@ pub(crate) fn probes_for_file_with_relations(
                 removed,
                 &family,
                 changed,
-                &added_bounds,
+                &added_static_only,
                 &added_run_starts,
             ) || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
@@ -1438,6 +1490,84 @@ fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usiz
             out.extend(at + 2..=last + 1);
         }
         at = end + 1;
+    }
+    out
+}
+
+/// 1-based lines of `source` that continue a multi-line `use` declaration
+/// (`use std::collections::{\n    BTreeMap,\n    HashMap,\n};`): every line
+/// after the one whose first token is `use` or `pub use`, through the line
+/// holding the terminating `;`. The openers are exactly the single-line forms
+/// `should_ignore_changed_line` skips, so a visibility-qualified re-export
+/// (`pub(crate) use`) keeps its probes on every line. Read from
+/// comment/string-masked text. Fail closed: the closing line counts only when
+/// nothing but whitespace follows the `;`, and a declaration that never
+/// closes, closes outside its braces, or holds a character no `use` tree can
+/// hold marks nothing, and neither does a line inside a token-observing
+/// macro invocation ([`token_macro_lines`]). A declaration that opens on the
+/// line where the previous one closed (`}; use b::{`) is not an opener, so its
+/// entries keep their probes.
+fn use_continuation_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    // Cheap reject: most files hold no wrapped import.
+    if !source.contains("use ") {
+        return out;
+    }
+    let masked = mask_comments_and_strings(source);
+    let lines = masked.lines().collect::<Vec<_>>();
+    let mut at = 0;
+    while at < lines.len() {
+        let rest = lines[at].trim_start();
+        let Some(mut text) = rest
+            .strip_prefix("pub use ")
+            .or_else(|| rest.strip_prefix("use "))
+        else {
+            at += 1;
+            continue;
+        };
+        let mut depth = 0usize;
+        let mut end = at;
+        // `Some(clean)` once the terminating `;` is found; `clean` is whether
+        // only whitespace follows it. `None` when the text is not a `use` tree.
+        let closed = 'scan: loop {
+            for (offset, ch) in text.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => match depth.checked_sub(1) {
+                        Some(next) => depth = next,
+                        None => break 'scan None,
+                    },
+                    ';' if depth == 0 => {
+                        break 'scan Some(text[offset + 1..].trim().is_empty());
+                    }
+                    ':' | ',' | '*' | '_' | '#' | '$' => {}
+                    ch if ch.is_alphanumeric() || ch.is_whitespace() => {}
+                    _ => break 'scan None,
+                }
+            }
+            end += 1;
+            match lines.get(end) {
+                Some(next) => text = next,
+                None => break None,
+            }
+        };
+        let Some(clean_close) = closed else {
+            at += 1;
+            continue;
+        };
+        if end > at {
+            // 1-based: line index `at` is line `at + 1`.
+            let last = if clean_close { end } else { end - 1 };
+            out.extend(at + 2..=last + 1);
+        }
+        at = end + 1;
+    }
+    // A token-observing macro (`stringify!`, `assert!`, ..) turns its
+    // arguments into data, so import-shaped tokens inside one are not an
+    // import and keep their probes.
+    if !out.is_empty() {
+        let observed = token_macro_lines(source);
+        out.retain(|line| !observed.contains(line));
     }
     out
 }
@@ -2386,7 +2516,7 @@ fn has_matching_added_line(
     removed_line: &ChangedLine,
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
-    added_bounds: &[bool],
+    added_static_only: &[bool],
     added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
@@ -2398,7 +2528,7 @@ fn has_matching_added_line(
             {
                 return false;
             }
-            let added_families = if added_bounds[index] {
+            let added_families = if added_static_only[index] {
                 vec![ProbeFamily::StaticUnknown]
             } else {
                 classify_changed_line(line.text.trim())
@@ -2408,7 +2538,7 @@ fn has_matching_added_line(
             // reads `static_unknown` rather than `call_deletion` (#8027).
             // A different callee is a real deletion and does not pair.
             let accumulator_rewrite = *removed_family == ProbeFamily::CallDeletion
-                && !added_bounds[index]
+                && !added_static_only[index]
                 && is_accumulator_rewrite_of(&removed_line.text, &line.text);
             if !accumulator_rewrite && !added_families.iter().any(|family| family == removed_family)
             {
@@ -2686,6 +2816,113 @@ fn removed_before(
 ) -> Option<String> {
     replaced_line_counterpart(added_new_side_line, changed)
         .or_else(|| nearby_removed_line(added_new_side_line, added, changed, added_run_starts))
+}
+
+/// A probe's `before` text for its family. A predicate whose old side
+/// continues one `&&`/`||` chain across removed lines reads that whole
+/// chain (`removed_connective_block`); everything else reads
+/// `removed_before`.
+///
+/// The chain's old lines go to `represented`: the predicate now holds them
+/// as its old side, so probing each again as deleted behavior would read one
+/// operand of the chain (`if other > 0`) as a predicate of its own and
+/// credit an input at that operand's boundary (#7945).
+fn family_before(
+    family: &ProbeFamily,
+    added_new_side_line: usize,
+    added: &str,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+    represented: &mut Vec<usize>,
+) -> Option<String> {
+    if *family == ProbeFamily::Predicate
+        && let Some((block, chain_lines)) =
+            removed_connective_block(added_new_side_line, changed, added_run_starts)
+    {
+        represented.extend(chain_lines);
+        return Some(block);
+    }
+    removed_before(added_new_side_line, added, changed, added_run_starts)
+}
+
+/// The whole old side of a replacement block whose removed lines continue
+/// one `&&`/`||` chain across lines (rustfmt's `if a` / `&& b` / `{`), with
+/// the old-side numbers of the chain's lines: each line that starts or ends
+/// with a connective and the neighbour it continues. `None` unless the block
+/// removes at least two consecutive old lines, one of them starts or ends
+/// with a connective, and the block is one statement head: outside strings
+/// and comments it holds no `;`, no `}` and at most one `{`.
+///
+/// #7945: pairing names one removed line as a predicate's `before`, which
+/// hides an operand on another line from `same_connectives`, so a dropped
+/// conjunct kept the surviving comparison's boundary credit. The lines are
+/// joined into the chain's one-line spelling so the shape cut and the
+/// connective comparison read it as they read a one-line edit. A block
+/// holding a comment keeps its line breaks instead, so a `//` comment cannot
+/// swallow the lines after it; such a block is never cut and is compared
+/// whole.
+///
+/// A block holding more than one statement head (`if a &&` / `b { return
+/// 1; }` / `if points < 100 {`) is not read whole: its connectives belong to
+/// several predicates, and one predicate's old `&&` could stand in for an
+/// operand another predicate gained. Such a block keeps the single-line
+/// pairing of `removed_before`, and its lines keep their own probes.
+fn removed_connective_block(
+    added_new_side_line: usize,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+) -> Option<(String, Vec<usize>)> {
+    let run_start = added_run_start(added_new_side_line, added_run_starts);
+    let block = changed
+        .removed_lines
+        .iter()
+        .filter(|line| line.new_side_line == run_start)
+        .collect::<Vec<_>>();
+    if block.len() < 2
+        || block
+            .windows(2)
+            .any(|pair| pair[1].line != pair[0].line + 1)
+    {
+        return None;
+    }
+    let source = block
+        .iter()
+        .map(|line| line.text.trim())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Masked, so a connective inside a string or comment is not one. Masking
+    // keeps byte offsets and line breaks.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&source);
+    if masked.contains([';', '}']) || masked.matches('{').count() > 1 {
+        return None;
+    }
+    let masked = masked.lines().map(str::trim).collect::<Vec<_>>();
+    let leads = |line: &str| line.starts_with("&&") || line.starts_with("||");
+    let trails = |line: &str| line.ends_with("&&") || line.ends_with("||");
+    let mut chain_lines = Vec::new();
+    for (at, removed) in block.iter().enumerate() {
+        let line = masked.get(at).copied().unwrap_or_default();
+        let next = masked.get(at + 1).copied().unwrap_or_default();
+        let previous = at
+            .checked_sub(1)
+            .and_then(|previous| masked.get(previous).copied())
+            .unwrap_or_default();
+        if leads(line) || trails(line) || leads(next) || trails(previous) {
+            chain_lines.push(removed.line);
+        }
+    }
+    if chain_lines.is_empty() {
+        return None;
+    }
+    // Raw text, so a `//` inside a string keeps the line breaks too: that
+    // only forgoes the cut.
+    let commented = source.contains("//") || source.contains("/*");
+    let block = if commented {
+        source
+    } else {
+        source.replace('\n', " ")
+    };
+    Some((block, chain_lines))
 }
 
 /// A match-arm probe's whole old line, with an uncut arm head joined to
@@ -3083,6 +3320,82 @@ mod tests {
             let in_attribute = probes_for(attribute);
             assert!(in_attribute.is_empty(), "{attribute}: {in_attribute:?}");
         }
+    }
+
+    #[test]
+    fn multi_line_use_entries_seed_no_probe_but_the_same_text_as_code_does() {
+        // #8389, dogfood (ripgrep `68b3c9e`): an entry added to or removed
+        // from a wrapped `use a::{..};` is import text, like `use a::B;`.
+        let entry = "limit::threshold,";
+        let added = |source: &str| {
+            let at = source
+                .lines()
+                .position(|line| line.trim() == entry)
+                .map_or(0, |index| index + 1);
+            assert!(at > 0, "premise: the source holds the entry: {source}");
+            block_probes(source, &[(at, entry)], &[])
+        };
+        let as_code = added("let c = call(\n    limit::threshold,\n);\n");
+        assert!(
+            !as_code.is_empty(),
+            "control: the same text outside a use declaration must still seed a probe"
+        );
+        for import in [
+            "use config::{\n    limit::threshold,\n};\nfn f() {}\n",
+            "pub use config::{\n    inner::{\n        limit::threshold,\n    },\n    other,\n};\n",
+        ] {
+            let in_import = added(import);
+            assert!(in_import.is_empty(), "{import}: {in_import:?}");
+        }
+        // A visibility-qualified re-export can retarget existing call sites,
+        // so its single-line form is probed and its entries stay probed too.
+        let scoped = added("pub(crate) use config::{\n    limit::threshold,\n};\n");
+        assert!(!scoped.is_empty(), "{scoped:?}");
+        // The removed side reads the old file: dropping the entry from the
+        // wrapped import seeds nothing; dropping the same text from a call does.
+        let removed = |head: &str| block_probes(head, &[], &[(2, 2, entry)]);
+        let dropped_import = removed("use config::{\n};\nfn f() {}\n");
+        assert!(dropped_import.is_empty(), "{dropped_import:?}");
+        let dropped_argument = removed("let c = call(\n);\n");
+        assert!(
+            !dropped_argument.is_empty(),
+            "control: {dropped_argument:?}"
+        );
+    }
+
+    #[test]
+    fn use_continuation_lines_cover_the_span_and_fail_closed() {
+        let lines = |source: &str| {
+            use_continuation_lines(source)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        // Lines after the opener through the closing `};`.
+        assert_eq!(
+            lines("use a::{\n    B,\n    c::D as E,\n};\nfn f() {}\n"),
+            [2, 3, 4]
+        );
+        assert_eq!(lines("    pub use a::\n        b::*;\n"), [2]);
+        // A one-line import has no continuation line.
+        assert!(lines("use a::{B, C};\nfn f() {}\n").is_empty());
+        // The closing line counts only when nothing follows the `;`.
+        assert_eq!(lines("use a::{\n    B,\n}; fn f() {\n    g();\n}\n"), [2]);
+        // Comment text does not move the span.
+        assert_eq!(lines("use a::{\n    B, // ; }\n    C,\n};\n"), [2, 3, 4]);
+        // Unclosed, closed outside its braces, or not a `use` tree: nothing.
+        assert!(lines("use a::{\n    B,\nfn f() {}\n").is_empty());
+        assert!(lines("use a::{\n    B,\n    C\n").is_empty());
+        assert!(lines("use a::\n    B }\n;\n").is_empty());
+        assert!(lines("use a::{\n    B = c(1),\n};\n").is_empty());
+        // Import-shaped tokens inside a token-observing macro are its data.
+        assert!(
+            lines("fn f() -> &'static str {\n    stringify!({\n        use a::{\n            B,\n        };\n    })\n}\n")
+                .is_empty()
+        );
+        // Only `use` and `pub use` as the first token of a line open a span.
+        assert!(lines("pub(crate) use a::{\n    B,\n};\n").is_empty());
+        assert!(lines("let v = x; use a::{\n    B,\n};\n").is_empty());
+        assert!(lines("reuse a::{\n    B,\n};\n").is_empty());
     }
 
     #[test]

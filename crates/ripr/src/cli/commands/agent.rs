@@ -2531,10 +2531,41 @@ impl AfterPhaseRefusalContext {
             return line;
         };
         match crate::app::task_first::repair_start_refusal(root, &manifest.seam_id) {
+            // The only hold is the uncommitted target, which the refused
+            // changes themselves may be: undoing them lifts it, so the gate
+            // has not refused the tree the recovery leaves behind.
+            Some(refusal) if refusal.held_by_uncommitted_target() => {
+                start_recipe_undecided(root, &line)
+            }
             Some(_) => crate::app::agent_status::without_start_recipe(&line),
             None => line,
         }
     }
+}
+
+/// The opening of the edit-cage recovery line for refused changes.
+const UNDO_REFUSED_CHANGES: &str = "undo the refused changes";
+
+/// A narrated recovery whose new-attempt recipe is withheld only because the
+/// attempt's inline test target has uncommitted changes. On the edit-cage
+/// line those can be the refused changes themselves, so the line points at
+/// the command that asks the gate again once they are undone, instead of
+/// stating that no new attempt is offered.
+fn start_recipe_undecided(root: &Path, line: &str) -> String {
+    let cleaned = crate::app::agent_status::without_start_recipe(line);
+    // The `ripr repair` facade has no `--store`, so for a custom-store attempt
+    // it would ask about, and start in, the default store instead; keep the
+    // withheld wording there.
+    if !line.contains(UNDO_REFUSED_CHANGES) || line.contains(" --store ") {
+        return cleaned;
+    }
+    let ask_again = format!(
+        "no new attempt can start while the refused changes are in place; once they are undone, `ripr repair --root {}` says whether one can start",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+            &root.to_string_lossy()
+        ))
+    );
+    cleaned.replace(crate::app::agent_status::START_RECIPE_WITHHELD, &ask_again)
 }
 
 /// The recorded refusal: the final error, then the narration that named its
@@ -4135,7 +4166,7 @@ fn repair_after_cage_recovery_lines(
         return lines;
     }
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}{UNDO_REFUSED_CHANGES}, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `{restart}` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }
@@ -5042,6 +5073,35 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// #14271 review: the `ripr repair` facade has no `--store`, so the
+    /// ask-again pointer is offered only for a default-store attempt; a
+    /// custom-store line keeps the withheld wording.
+    #[test]
+    fn refused_edit_ask_again_pointer_is_withheld_for_a_custom_store() {
+        let root = std::path::Path::new("repo");
+        let line = |store: &str| {
+            format!(
+                "to recover: {}, set your test edit aside (for example `git stash`), run `ripr agent repair --root repo --seam s{store} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints.",
+                super::UNDO_REFUSED_CHANGES
+            )
+        };
+        let default_store = super::start_recipe_undecided(root, &line(""));
+        assert!(
+            default_store.contains("`ripr repair --root"),
+            "{default_store}"
+        );
+        let custom = line(" --store /tmp/attempts");
+        let custom_store = super::start_recipe_undecided(root, &custom);
+        assert!(
+            !custom_store.contains("`ripr repair --root"),
+            "{custom_store}"
+        );
+        assert_eq!(
+            custom_store,
+            crate::app::agent_status::without_start_recipe(&custom)
+        );
+    }
 
     /// The not-found hint for a gap-shaped id mentions `ripr check` only to
     /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.

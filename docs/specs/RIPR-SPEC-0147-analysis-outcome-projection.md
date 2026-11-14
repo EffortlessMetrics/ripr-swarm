@@ -210,7 +210,8 @@ projection does not analyze those regions.
   finding; review-comments names the dropped file the same way;
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
-- human and JSON output carry the same limitation kind and recovery route;
+- human and JSON output carry the same limitation kind and recovery route,
+  and the producer's bounded detail when one is recorded (#14398);
 - gate and PR-evidence-summary consumers fail closed or disclose the same
   incomplete typed outcome rather than deriving a clean result from zero
   candidates;
@@ -275,7 +276,8 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
 
 - parser and language-adapter limitations reach one typed pipeline outcome;
 - complete zero-result and incomplete zero-result fixtures remain distinct;
-- human and JSON projections disclose the same typed kind and recovery route;
+- human and JSON projections disclose the same typed kind, bounded detail and
+  recovery route;
 - stable outcome identity excludes absolute checkout paths;
 - SARIF run-level and diff-scoped badge projections disclose the typed outcome
   and fail closed for incomplete zero-result input.

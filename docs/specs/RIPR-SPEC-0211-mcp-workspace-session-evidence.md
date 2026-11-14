@@ -151,8 +151,10 @@ official SDK transport:
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
   (workspace diff against the resolved default branch or the explicit
-  refresh `base` with `base_revision` when present, draft mode, built-in
-  defaults), current attempt state (`no_snapshot`, `in_flight`,
+  refresh `base` with `base_revision` when present, the analysis mode from
+  `ripr.toml` `[analysis] mode` (`draft` when unset), and the workspace's own
+  configuration, whose `[analysis]` table the refresh applies through the same
+  owner `ripr check` uses), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh
   (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
@@ -699,6 +701,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `config_identity`, `built_in_defaults` when none resolves,
   `detected_not_loaded` when the file cannot be read or parsed), and an
   unparseable config fails the attempt closed with `config_invalid`.
+  The git invocations of a refresh's check are bounded by
+  `RIPR_GIT_TIMEOUT` from the server environment when set, else the
+  `ripr check` default, through the CLI's parser (#14386); an invalid value
+  fails the attempt closed with `config_invalid` naming the variable.
 - No support-tier promotion.
 - No durable snapshot persistence; the session is in-memory and a server
   restart drops it (a fresh `ripr_refresh` rebuilds it).
@@ -833,6 +839,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   refresh/list/get_gap with the `loaded` posture, a config-less rust
   workspace keeps the defaults posture, and an unparseable `ripr.toml`
   fails the refresh closed with `config_invalid`.
+- `crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment`
+  — #14386: an invalid server `RIPR_GIT_TIMEOUT` fails the refresh with
+  `config_invalid` naming the variable and a restart recovery; `0` keeps
+  the analysis.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
   owned with RIPR-SPEC-0214).

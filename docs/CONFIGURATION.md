@@ -345,7 +345,7 @@ that needs the tuning.
 | `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
-| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. |
+| `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. `ripr mcp` refreshes read it from the server's environment with the same default and parser; there an invalid value fails the refresh with `config_invalid`. |
 | `RIPR_CHECK_TIMEOUT` | `600` | Wall-clock budget in seconds for one `ripr check` diff or worktree analysis (#5369). Past the budget the run is stopped and refuses with `analysis_timeout` (exit non-zero, no findings, never a clean pass). `0` disables the budget. Must be a non-negative integer; an invalid value fails closed with an error naming the variable. An explicit `ripr check --timeout SECS` overrides the environment value. |
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
 | `RIPR_MAX_REPO_INDEX_FILES` | `1200` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
@@ -535,6 +535,16 @@ ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
+For Python roots, doctor checks that the PATH `python` (the interpreter the
+printed `python -m pytest` verify route runs, not a standalone `pytest` binary)
+can import pytest. It runs `python -c 'import pytest'` from a private empty
+directory with `PYTHONSAFEPATH=1` and `PYTHONPATH` unset, so no checkout or temp
+directory code runs. It does not start pytest, so a broken pytest entry point
+that still imports is not detected. A missing
+pytest is an advisory warning and never changes the exit code. When a project
+`.venv` or `venv` has pytest installed but PATH `python` does not, the warning
+suggests activating the venv before running the printed verify command; the
+virtualenv is read statically and never executed.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
@@ -1136,8 +1146,8 @@ them. It does not enable runtime mutation execution or CI blocking policy.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. |
-| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. |
+| `mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Default analysis mode when not set by a CLI flag or LSP initialization option. MCP `ripr_refresh` uses it too, since it takes no mode argument. |
+| `include_unchanged_tests` | boolean | `true` | Whether unchanged tests may be indexed as static evidence. Applies to `ripr check`, the LSP and MCP `ripr_refresh` alike. |
 | `production_like_targets` | array of repository-relative paths | `[]` (empty — no opt-in) | Workspace-relative targets opted in as production-like test infrastructure (#3283, RIPR-SPEC-0153): analyzed as production behavior rather than test evidence. Paths must be repository-relative with `/` separators — backslashes, drive/scheme prefixes, leading `/`, and `..` escape fail closed at parse time. |
 | `test_harnesses` | array of `[[analysis.test_harnesses]]` tables | `[]` (empty — no registration recognized) | Repository-governed test-harness registrations (#3532, RIPR-SPEC-0153). Registration is explicit configuration only: without an entry, no custom harness or registered test producer is recognized. See `[analysis.test_harnesses]` entries below. |
 

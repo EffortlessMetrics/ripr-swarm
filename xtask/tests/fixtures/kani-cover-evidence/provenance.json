@@ -1,0 +1,130 @@
+{
+  "issue": 14460,
+  "kind": "Authored provenance for unmodified native standalone Kani captures",
+  "observed_kani": "Kani Rust Verifier 0.68.0 (standalone)",
+  "observed_cbmc": "6.11.0",
+  "command_semantics": "Each command was freshly executed with a relative source filename from the fixed generic working directory recorded per run. Source and raw stream bytes are unchanged; restore the .rs suffix to rerun. Each native execution had a separate 60-second outer deadline.",
+  "native_output_format": "default regular",
+  "native_harness_timeout_seconds": 30,
+  "runs": [
+    {
+      "fixture": "cover-pass-compact",
+      "command": [
+        "kani",
+        "cover-pass-compact.rs",
+        "-Z",
+        "unstable-options",
+        "--harness-timeout",
+        "30s"
+      ],
+      "working_directory": "/tmp/ripr-kani-cover-controls",
+      "outer_deadline_seconds": 60,
+      "exit": 0,
+      "seconds": 0.244,
+      "source_sha256": "7439d65824c3a9de95308ec172cfd6de0daeb3d63dfca80fc31e489af24f97d7",
+      "stdout_sha256": "af3f47e81c4702ecbd0c8e7fad059976ae24f178cd349c072d81fed77e078a27",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4",
+      "source_file": "cover-pass-compact.rs.txt",
+      "stdout_file": "cover-pass-compact.stdout.txt",
+      "stderr_file": "cover-pass-compact.stderr.txt",
+      "upstream_source": null
+    },
+    {
+      "fixture": "cover-fail",
+      "command": [
+        "kani",
+        "cover-fail.rs",
+        "-Z",
+        "unstable-options",
+        "--harness-timeout",
+        "30s"
+      ],
+      "working_directory": "/tmp/ripr-kani-cover-controls",
+      "outer_deadline_seconds": 60,
+      "exit": 0,
+      "seconds": 0.217,
+      "source_sha256": "f00bef470994e96f7f5e9f2bae50c295b1c91f63f099024e6e1ce588ab8d574e",
+      "stdout_sha256": "ab6573c068742be126c32d27baf5d5e05e0d53110e39b60c09928422cca77d50",
+      "stderr_sha256": "a1e67aaf81f1d1b5add5b863b0e915acac6626cc2841b858a4e9ebcf330cf901",
+      "source_file": "cover-fail.rs.txt",
+      "stdout_file": "cover-fail.stdout.txt",
+      "stderr_file": "cover-fail.stderr.txt",
+      "upstream_source": "https://github.com/model-checking/kani/blob/0d2328a93f0e0ff66132d6bfa1a7d884877cf862/tests/expected/cover/cover-fail/main.rs"
+    },
+    {
+      "fixture": "cover-unreachable",
+      "command": [
+        "kani",
+        "cover-unreachable.rs",
+        "-Z",
+        "unstable-options",
+        "--harness-timeout",
+        "30s"
+      ],
+      "working_directory": "/tmp/ripr-kani-cover-controls",
+      "outer_deadline_seconds": 60,
+      "exit": 0,
+      "seconds": 0.189,
+      "source_sha256": "a1687843c1bfca5d218b844d28d1c1064ff2f10e0c1de0d4c632ba1e4bce61ca",
+      "stdout_sha256": "a9829d3d4f322afe3bbe7c81a306f40bb26e4cf1b0ed5fd741b0c51bf9158e0c",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4",
+      "source_file": "cover-unreachable.rs.txt",
+      "stdout_file": "cover-unreachable.stdout.txt",
+      "stderr_file": "cover-unreachable.stderr.txt",
+      "upstream_source": "https://github.com/model-checking/kani/blob/0d2328a93f0e0ff66132d6bfa1a7d884877cf862/tests/expected/cover/cover-unreachable/main.rs"
+    },
+    {
+      "fixture": "cover-undetermined-compact",
+      "command": [
+        "kani",
+        "cover-undetermined-compact.rs",
+        "-Z",
+        "unstable-options",
+        "--harness-timeout",
+        "30s"
+      ],
+      "working_directory": "/tmp/ripr-kani-cover-controls",
+      "outer_deadline_seconds": 60,
+      "exit": 1,
+      "seconds": 0.181,
+      "source_sha256": "bb68501d87ad6256d503f50ccd67297fc1513c549db5995f83cb03bf98cf9bea",
+      "stdout_sha256": "2c05082f02ac8935421bc424c0111032409ee6973fcacf04a78d538803bf6d66",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4",
+      "source_file": "cover-undetermined-compact.rs.txt",
+      "stdout_file": "cover-undetermined-compact.stdout.txt",
+      "stderr_file": "cover-undetermined-compact.stderr.txt",
+      "upstream_source": null
+    },
+    {
+      "fixture": "no-cover",
+      "command": [
+        "kani",
+        "no-cover.rs",
+        "-Z",
+        "unstable-options",
+        "--harness-timeout",
+        "30s"
+      ],
+      "working_directory": "/tmp/ripr-kani-cover-controls",
+      "outer_deadline_seconds": 60,
+      "exit": 0,
+      "seconds": 0.207,
+      "source_sha256": "c619acbd3e553c28eb89dbc88bfb3708e07c2434dc8a875723226dc278a16c9e",
+      "stdout_sha256": "efda9c4c610d38cd8181a6d45bd0bd2df38f4e5e40207c5569d569711e79a154",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4",
+      "source_file": "no-cover.rs.txt",
+      "stdout_file": "no-cover.stdout.txt",
+      "stderr_file": "no-cover.stderr.txt",
+      "upstream_source": null
+    }
+  ],
+  "non_claims": [
+    "Offline parser tests replay retained bytes and do not run the verifier.",
+    "These standalone fixtures do not qualify the ripr or ripr-contract package harnesses.",
+    "No authenticated execution, complete native inventory, toolchain coverage or full-lane qualification is claimed."
+  ],
+  "observed_compiler": "rustc 1.100.0-nightly (8925ea358 2026-08-20)",
+  "observed_llvm": "23.1.0",
+  "kani_driver_sha256": "a0f84272664e45a6b9f1ad7671c2e20aa4523676fb57f5310c18b0a359278a6d",
+  "cbmc_binary_sha256": "01ae2ae74a9dc5673631e42256f780393081650f4a22d6f4220566c0deb1643a"
+}

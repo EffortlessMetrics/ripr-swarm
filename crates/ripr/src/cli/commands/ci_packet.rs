@@ -77,6 +77,9 @@ pub(super) struct CiPacketOptions {
 
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    crate::cli::commands_context::ensure_command_root(&options.root, COMMAND)?;
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}; install ripr again, or run it by its full path"))?;
