@@ -1461,10 +1461,10 @@ spent 10 s of sleep per queued head, which alone exceeded the job cap once most
 eligible heads were queued. A non-queued head that reads `unknown` is the lazy
 first read after a base push and resolves on its own. A head whose
 mergeability is still unreadable is classified `mergeability unreadable`,
-counted in the sweep totals, and re-read by the next sweep, so the deferral is
-at most one sweep interval (30 minutes). That is not a resolution bound: a head
-that stays queued can stay unreadable across sweeps, because GitHub does not
-resolve mergeability for a queued head. Conflict detection requires `mergeable_state == "dirty"`, so
+counted in the sweep totals, and re-read by the next sweep, so each sweep
+defers a head at most once per interval; a queued head can stay unresolved for
+as long as it remains queued, because GitHub does not resolve mergeability for
+a queued head. Conflict detection requires `mergeable_state == "dirty"`, so
 conflict notices are unavailable for those heads — and a queued head is the
 worst place to lose that signal, because it is about to merge. The sweep says so
 per head and in its totals rather than implying coverage; the queue's own
