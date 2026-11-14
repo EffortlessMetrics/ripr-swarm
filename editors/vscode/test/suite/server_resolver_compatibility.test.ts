@@ -9,6 +9,7 @@ import {
   missingServerRemedy,
   probeServerVersion,
   resolveServer,
+  serverLaunchCommand,
   ServerResolverRuntime,
   serverVersionOlderThan
 } from '../../src/serverResolver';
@@ -527,6 +528,50 @@ suite('Server resolver stale PATH version (#13638)', () => {
       assert.strictEqual(observedUseShell, process.platform === 'win32');
       assert.deepStrictEqual(observedArgs, customArgs);
       assert.strictEqual(result.needsShell, process.platform === 'win32' ? true : undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fallback PATH probe forwards config.serverArgs and serverLaunchCommand quotes spaced shell commands', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-resolver-fallback-args-'));
+    const customArgs = ['custom-lsp', '--stdio'];
+    let observedArgs: readonly string[] | undefined;
+    const runtime: ServerResolverRuntime = {
+      probeCandidate: async (command, source, detail, _useShell, installationState = 'unmanaged', serverArgs) => {
+        if (source === 'path') {
+          observedArgs = serverArgs;
+        }
+        return {
+          command,
+          source,
+          detail,
+          installationState,
+          compatibilityResult: compatibleLspEvidence
+        };
+      }
+    };
+    try {
+      const result = await resolveServer(
+        stubContext(root),
+        { ...config(), autoDownload: false, serverArgs: customArgs },
+        stubOutput(),
+        runtime
+      );
+      assert.ok('command' in result, JSON.stringify(result));
+      assert.deepStrictEqual(observedArgs, customArgs);
+      assert.strictEqual(
+        serverLaunchCommand('C:\\Program Files\\ripr\\ripr.cmd', true),
+        '"C:\\Program Files\\ripr\\ripr.cmd"'
+      );
+      assert.strictEqual(
+        serverLaunchCommand('"C:\\Program Files\\ripr\\ripr.cmd"', true),
+        '"C:\\Program Files\\ripr\\ripr.cmd"'
+      );
+      assert.strictEqual(
+        serverLaunchCommand('C:\\Program Files\\ripr\\ripr.exe', false),
+        'C:\\Program Files\\ripr\\ripr.exe'
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

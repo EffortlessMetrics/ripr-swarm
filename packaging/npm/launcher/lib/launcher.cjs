@@ -202,9 +202,13 @@ function resolveNativeExecutable(options) {
     // MODULE_NOT_FOUND can also mean an installed package's manifest or exports
     // target is missing. Retain the legacy code without claiming directory absence.
     const code = error && error.code === "MODULE_NOT_FOUND" ? "native_package_missing" : "native_package_resolution_failed";
+    const platformOptions = options.platformOptions || {};
+    const effectivePlatform = platformOptions.platform || process.platform;
+    const effectiveArch = platformOptions.arch || process.arch;
+    const cpuHint = effectivePlatform === "win32" && effectiveArch === "arm64" ? "--cpu=x64 and " : "";
     throw new LauncherError(
       code,
-      `cannot resolve required native package ${selected.package}@${contract.version}: ${reason}; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
+      `cannot resolve required native package ${selected.package}@${contract.version}: ${reason}; reinstall ${LAUNCHER_NAME}@${contract.version} with ${cpuHint}optional dependencies enabled`,
       error,
     );
   }

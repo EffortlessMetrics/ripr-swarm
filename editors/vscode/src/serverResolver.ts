@@ -226,7 +226,7 @@ export async function resolveServer(
     downloadFailure = `No prebuilt ripr server target is known for ${process.platform}/${process.arch}.`;
   }
 
-  const pathResult = earlyPathResult ?? (await probePathServer(runtime));
+  const pathResult = earlyPathResult ?? (await probePathServer(runtime, config.serverArgs));
   if (isResolved(pathResult)) {
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
@@ -280,6 +280,17 @@ async function probePathServer(
   const probeWithShell = process.platform === 'win32';
   const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged', serverArgs);
   return isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
+}
+
+/**
+ * Quote a server command containing whitespace when spawning through `shell: true`
+ * so `cmd.exe` does not split paths like `C:\Program Files\...\ripr.cmd` (#14659).
+ */
+export function serverLaunchCommand(command: string, needsShell?: boolean): string {
+  if (needsShell && /\s/.test(command) && !/^".*"$/.test(command)) {
+    return `"${command}"`;
+  }
+  return command;
 }
 
 /**

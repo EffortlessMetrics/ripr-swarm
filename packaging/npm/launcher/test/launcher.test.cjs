@@ -238,6 +238,26 @@ test("detects glibc and rejects musl or unknown Linux libc", () => {
     launcher.selectPlatform(contract.platforms, { platform: "win32", arch: "arm64" }).rustTarget,
     "x86_64-pc-windows-msvc",
   );
+  const missingFixture = nativeFixture({ createExecutable: false });
+  try {
+    assert.throws(
+      () =>
+        launcher.resolveNativeExecutable({
+          launcherRoot: missingFixture.launcherRoot,
+          platformOptions: { platform: "win32", arch: "arm64" },
+          resolver: {
+            resolve: () => {
+              throw Object.assign(new Error("Cannot find module"), { code: "MODULE_NOT_FOUND" });
+            },
+          },
+        }),
+      (error) =>
+        error.code === "native_package_missing" &&
+        error.message.includes("with --cpu=x64 and optional dependencies enabled"),
+    );
+  } finally {
+    cleanup(missingFixture.root);
+  }
   assert.throws(() => launcher.selectPlatform(contract.platforms, { platform: "linux", arch: "x64", libc: "musl" }), {
     code: "platform_unsupported",
   });

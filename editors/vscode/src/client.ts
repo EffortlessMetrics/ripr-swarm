@@ -20,7 +20,8 @@ import {
   ResolveFailure,
   ResolveFailureKind,
   ResolvedServer,
-  resolutionFailureRecovery
+  resolutionFailureRecovery,
+  serverLaunchCommand
 } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
@@ -836,13 +837,12 @@ export class RiprClientController {
     });
 
     const serverOptions: ServerOptions = {
-      command: server.command,
+      command: serverLaunchCommand(server.command, server.needsShell),
       args: config.serverArgs,
       options: {
         cwd: this.workspaceRoot,
-        // A win32 PATH shim resolved through the shell probe must be spawned
-        // with the same launch semantics (#2079 review); explicit paths keep
-        // shell-free spawns.
+        // A win32 PATH or .cmd/.bat shim resolved through the shell probe must
+        // be spawned with the same launch semantics (#2079, #14647).
         ...(server.needsShell ? { shell: true } : {})
       }
     };
