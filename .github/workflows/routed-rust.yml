@@ -70,6 +70,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
@@ -100,9 +102,37 @@ jobs:
           idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # A queued PR is built from the base repository's queue branch, so a
-            # fork-authored PR is only visible through the PR itself.
-            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || HEAD_REPO="unresolved"
-            [ "$HEAD_REPO" = "unresolved" ] || HEAD_REPO="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
+            # fork-authored PR is only visible through the PR itself. In a batched
+            # merge group (#8082), every constituent PR in base..head must belong
+            # to the base repository before self-hosted runners can be selected.
+            if [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] && [[ "$GROUP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$GROUP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              ref_pr="${BASH_REMATCH[1]}"
+              compare="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/compare/${GROUP_BASE_SHA}...${GROUP_HEAD_SHA}" 2>/dev/null || true)"
+              constituent_prs="$(jq -r --arg base "$GROUP_BASE_SHA" --arg head "$GROUP_HEAD_SHA" --arg ref_pr "$ref_pr" '
+                select(.status == "ahead" and .merge_base_commit.sha == $base and (.commits | type == "array") and .total_commits == (.commits | length) and .total_commits >= 1)
+                | .commits as $c
+                | select(all($c[]; (.parents | length) == 1))
+                | select($c[0].parents[0].sha == $base and $c[-1].sha == $head)
+                | select(all(range(1; $c | length); $c[.].parents[0].sha == $c[. - 1].sha))
+                | [$c[] | (.commit.message | split("\n")[0] | capture("\\(#(?<pr>[1-9][0-9]*)\\)$").pr)] as $prs
+                | select(($prs | unique | length) == ($prs | length) and $prs[-1] == $ref_pr)
+                | $prs[]
+              ' <<<"$compare" 2>/dev/null || true)"
+              if [ -n "$constituent_prs" ]; then
+                HEAD_REPO="$REPOSITORY"
+                while IFS= read -r c_pr; do
+                  c_repo="$(GH_TOKEN="$PR_READ_TOKEN" gh api "repos/${REPOSITORY}/pulls/${c_pr}" --jq '.head.repo.full_name // "unresolved"' 2>/dev/null || echo unresolved)"
+                  if [ "$c_repo" != "$REPOSITORY" ]; then
+                    HEAD_REPO="$c_repo"
+                    break
+                  fi
+                done <<<"$constituent_prs"
+              else
+                HEAD_REPO="unresolved"
+              fi
+            else
+              HEAD_REPO="unresolved"
+            fi
           fi
           if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
@@ -227,6 +257,7 @@ jobs:
       pr: ${{ steps.entry.outputs.pr }}
       head: ${{ steps.entry.outputs.head }}
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
+      constituents: ${{ steps.entry.outputs.constituents }}
       request: ${{ steps.entry.outputs.request }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -296,41 +327,56 @@ jobs:
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry=""
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry="" constituents="[]"
           if [ "$EVENT_NAME" = "merge_group" ]; then
-            # The queue branch is named .../pr-<number>-<sha>. The PR comes from
-            # the name; the exact head is the PR's live head, which must match
-            # the name's sha when that sha is a PR head (a push after enqueue)
-            # and may equal the group's base otherwise. Admission is per PR: the
-            # queued commit must be one squash commit of that PR directly on the
-            # group's base, so the workflow itself refuses a batch (fail closed)
-            # even if the ruleset group size is misconfigured. Its tree must be
-            # that head merged onto the base (checked below).
+            # The queue branch is named .../pr-<number>-<sha>. In a single-PR or
+            # batched merge group (#8082), GitHub constructs a linear chain of
+            # squash commits from GROUP_BASE_SHA to GROUP_HEAD_SHA, one per
+            # constituent PR in queue order, ending with the ref's PR. Bind
+            # every constituent commit by its single parent, (#N) subject, live
+            # PR ref/head, merge-tree onto the previous commit, and queue entry.
             [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-([0-9a-f]{40})$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
-            pr="${BASH_REMATCH[1]}" ref_sha="${BASH_REMATCH[2]}"
-            current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
-            head="$(jq -r '.head.sha' <<<"$current")"
+            ref_pr="${BASH_REMATCH[1]}" ref_sha="${BASH_REMATCH[2]}"
+            [[ "$GROUP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$GROUP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::merge group base or head sha is invalid"; exit 1; }
+            { [ "$(git rev-parse --is-shallow-repository)" = false ] || git fetch --no-tags --unshallow origin; } || { echo "::error::cannot complete history to bind the queued commit to PR #${ref_pr}"; exit 1; }
+            git cat-file -e "${GROUP_BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$GROUP_BASE_SHA"
+            git cat-file -e "${GROUP_HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$GROUP_HEAD_SHA"
+            git merge-base --is-ancestor "$GROUP_BASE_SHA" "$GROUP_HEAD_SHA" || { echo "::error::group base $GROUP_BASE_SHA is not an ancestor of group head $GROUP_HEAD_SHA"; exit 1; }
+            commits="$(git rev-list --reverse "${GROUP_BASE_SHA}..${GROUP_HEAD_SHA}")"
+            [ -n "$commits" ] || { echo "::error::merge group ${GROUP_BASE_SHA}..${GROUP_HEAD_SHA} contains no commits"; exit 1; }
+            expected_parent="$GROUP_BASE_SHA"
+            seen_prs=","
+            all_labels=""
+            while IFS= read -r c_sha; do
+              parents_line="$(git rev-list --parents -n 1 "$c_sha")"
+              read -r _self p1 p2_extra <<<"$parents_line"
+              [ -n "${p1:-}" ] && [ -z "${p2_extra:-}" ] && [ "$p1" = "$expected_parent" ] || { echo "::error::queued commit ${c_sha} is not a single-parent commit directly on ${expected_parent}"; exit 1; }
+              subject="$(git log -1 --format=%s "$c_sha")"
+              [[ "$subject" =~ \(#([1-9][0-9]*)\)$ ]] || { echo "::error::queued commit ${c_sha} subject does not name a PR (#N): $subject"; exit 1; }
+              c_pr="${BASH_REMATCH[1]}"
+              [[ "$seen_prs" != *",$c_pr,"* ]] || { echo "::error::duplicate constituent PR #${c_pr} in merge group"; exit 1; }
+              seen_prs="${seen_prs}${c_pr},"
+              current="$(gh api "repos/${REPOSITORY}/pulls/${c_pr}")"
+              c_head="$(jq -r '.head.sha' <<<"$current")"
+              [[ "$c_head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::PR #${c_pr} head sha is invalid: $c_head"; exit 1; }
+              fetched="$(git fetch --no-tags origin "refs/pull/${c_pr}/head" && git rev-parse FETCH_HEAD)" && [ "$fetched" = "$c_head" ] || { echo "::error::refs/pull/${c_pr}/head (${fetched:-unfetched}) is not the live head $c_head of PR #${c_pr}"; exit 1; }
+              merged="$(git merge-tree --write-tree "$expected_parent" "$c_head")" && [ "${merged%%$'\n'*}" = "$(git rev-parse "${c_sha}^{tree}")" ] || { echo "::error::queued commit ${c_sha} is not PR #${c_pr} head $c_head merged onto ${expected_parent}"; exit 1; }
+              queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$c_pr")
+              c_queue_entry=$(jq -er --arg head "$c_head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
+              c_labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
+              [ -z "$c_labels" ] || all_labels="${all_labels:+${all_labels},}${c_labels}"
+              constituents="$(jq -c --argjson pr "$c_pr" --arg head "$c_head" --arg qe "$c_queue_entry" '. + [{pr: $pr, head: $head, queue_entry: $qe}]' <<<"$constituents")"
+              expected_parent="$c_sha"
+              pr="$c_pr"
+              head="$c_head"
+              queue_entry="$c_queue_entry"
+            done <<<"$commits"
+            [ "$expected_parent" = "$GROUP_HEAD_SHA" ] || { echo "::error::merge group chain ended at $expected_parent instead of $GROUP_HEAD_SHA"; exit 1; }
+            [ "$pr" = "$ref_pr" ] || { echo "::error::merge group tip PR #$pr does not match queue ref PR #$ref_pr"; exit 1; }
             { [ "$ref_sha" = "$head" ] || [ "$ref_sha" = "$GROUP_BASE_SHA" ]; } || { echo "::error::queue ref sha $ref_sha is neither the live head $head of PR #${pr} (pushed after enqueue) nor the group base $GROUP_BASE_SHA"; exit 1; }
-            commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
-            parents="$(jq -r '.parents | length' <<<"$commit")"
-            subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"
-            parent="$(jq -r '.parents[0].sha // empty' <<<"$commit")"
-            # A group's base is the parent of its first commit, so a one-entry
-            # group has base == the queued commit's parent; a batch does not.
-            { [ "$parents" = "1" ] && [ "$parent" = "$GROUP_BASE_SHA" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents, parent $parent, base $GROUP_BASE_SHA: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
-            # The ref sha and commit dates do not bind the live head to the queued
-            # commit, so bind by content: the queued tree must be exactly the live
-            # head merged onto the group base. The head comes from the PR's own
-            # ref and must still be the head read above; no match, merge conflict
-            # or missing history refuses (fail closed).
-            { [ "$(git rev-parse --is-shallow-repository)" = false ] || git fetch --no-tags --unshallow origin; } || { echo "::error::cannot complete history to bind the queued commit to PR #${pr}"; exit 1; }
-            fetched="$(git fetch --no-tags origin "refs/pull/${pr}/head" && git rev-parse FETCH_HEAD)" && [ "$fetched" = "$head" ] || { echo "::error::refs/pull/${pr}/head (${fetched:-unfetched}) is not the live head $head of PR #${pr}"; exit 1; }
-            merged="$(git merge-tree --write-tree "$GROUP_BASE_SHA" "$head")" && [ "${merged%%$'\n'*}" = "$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")" ] || { echo "::error::queued commit ${GROUP_HEAD_SHA} is not PR #${pr} head $head merged onto base $GROUP_BASE_SHA"; exit 1; }
-            queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$pr")
-            queue_entry=$(jq -er --arg head "$head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
-            labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
+            labels="$(printf '%s' "$all_labels" | tr ',' '\n' | sed '/^$/d' | awk '!seen[$0]++' | paste -sd, -)"
           fi
-          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "constituents=$constituents"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
         uses: ./.admission-trusted/.github/actions/pr-candidate-admission
@@ -342,6 +388,90 @@ jobs:
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
+      - name: Admit additional merge-group constituents
+        if: github.event_name == 'merge_group' && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TIP_PR: ${{ steps.entry.outputs.pr }}
+          CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
+          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
+        run: |
+          set -euo pipefail
+          count="$(jq -r 'length' <<<"$CONSTITUENTS")"
+          [ "$count" -le 1 ] && exit 0
+          action_root="$GITHUB_WORKSPACE/.admission-trusted/.github/actions/pr-candidate-admission"
+          packet_path="policy/release-hard-cut-admission.json"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          open_prs="$tmp/open-prs.json"
+          gh api --paginate "repos/${REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+          docs_flag=()
+          [ "$DOCS_ONLY" = "true" ] && docs_flag=(--docs-only)
+          while IFS=$'\t' read -r c_pr c_head; do
+            [ "$c_pr" != "$TIP_PR" ] || continue
+            current="$tmp/current-${c_pr}.json"
+            pr_files="$tmp/files-${c_pr}.json"
+            pr_comments="$tmp/comments-${c_pr}.json"
+            base_commit="$tmp/base-${c_pr}.json"
+            packet="$tmp/packet-${c_pr}.json"
+            packet_meta="$tmp/packet-meta-${c_pr}.json"
+            cut_commit="$tmp/cut-${c_pr}.json"
+            proposed_packet="$tmp/proposed-${c_pr}.json"
+            attrs="$tmp/attrs-${c_pr}"
+            result="$tmp/result-${c_pr}.json"
+            cut_result="$tmp/cut-result-${c_pr}.json"
+            gh api "repos/${REPOSITORY}/pulls/${c_pr}" > "$current"
+            gh api --paginate "repos/${REPOSITORY}/pulls/${c_pr}/files?per_page=100" | jq -s 'add' > "$pr_files"
+            comments_total=1
+            probed="$(gh api -i "repos/${REPOSITORY}/issues/${c_pr}/comments?per_page=1" | sed -n 's/^[Ll]ink:.*[?&]page=\([0-9]\{1,\}\)>; rel="last".*/\1/p' | tail -1)"
+            case "$probed" in ''|*[!0-9]*) ;; *) comments_total="$probed" ;; esac
+            gh api "repos/${REPOSITORY}/issues/${c_pr}/comments?per_page=100&page=$(( (comments_total + 99) / 100 ))" > "$pr_comments"
+            base_ref="$(jq -r '.base.ref // empty' "$current")"
+            base_sha="$(gh api "repos/${REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+            [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::constituent PR #${c_pr} base sha unresolved"; exit 1; }
+            gh api "repos/${REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>/dev/null; then
+              jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$packet"
+            else
+              cp "${GITHUB_WORKSPACE}/${packet_path}" "$packet"
+            fi
+            cut_args=()
+            cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet" 2>/dev/null || true)"
+            if [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] && gh api "repos/${REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit" 2>/dev/null; then
+              cut_args=(--cut-commit "$cut_commit")
+            fi
+            proposed_args=()
+            if gh api "repos/${REPOSITORY}/contents/${packet_path}?ref=${c_head}" > "$packet_meta" 2>/dev/null; then
+              jq -r '.content' "$packet_meta" | tr -d '\r\n' | base64 --decode > "$proposed_packet" && proposed_args=(--proposed-packet "$proposed_packet") || rm -f "$proposed_packet"
+            fi
+            attrs_args=()
+            if gh api -H "Accept: application/vnd.github.raw" "repos/${REPOSITORY}/contents/.gitattributes?ref=${base_sha}" > "$attrs" 2>/dev/null; then
+              attrs_args=(--generated-attributes "$attrs")
+            fi
+            python3 "$action_root/candidate_admission.py" \
+              --current "$current" \
+              --open-prs "$open_prs" \
+              --expected-head "$c_head" \
+              --max-changed-files 160 \
+              --max-changed-lines 3000 \
+              --pr-files "$pr_files" \
+              --base-sha "$base_sha" \
+              --comments "$pr_comments" \
+              "${attrs_args[@]}" \
+              "${docs_flag[@]}" > "$result"
+            [ "$(jq -r '.status' "$result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
+            python3 "$action_root/release_cut_admission.py" \
+              --packet "$packet" \
+              --current "$current" \
+              --base-commit "$base_commit" \
+              --pr-files "$pr_files" \
+              --expected-head "$c_head" \
+              "${proposed_args[@]}" \
+              "${cut_args[@]}" > "$cut_result"
+            [ "$(jq -r '.status' "$cut_result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
+          done < <(jq -r '.[] | "\(.pr)\t\(.head)"' <<<"$CONSTITUENTS")
       - name: Select admitted qualification scope
         id: scope
         shell: bash
@@ -389,12 +519,20 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ steps.entry.outputs.pr }}
           PR_HEAD: ${{ steps.entry.outputs.head }}
+          CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
         run: |
           set -euo pipefail
-          python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$PR_HEAD"
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            while IFS=$'\t' read -r c_pr c_head; do
+              python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$c_pr" --head "$c_head"
+            done < <(jq -r '.[] | "\(.pr)\t\(.head)"' <<<"$CONSTITUENTS")
+          else
+            python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$PR_HEAD"
+          fi
       # Unresolved review threads fail the end-of-run eligibility recheck about an
       # hour later, after every test shard went green. Refuse at request time
       # instead, naming the threads. A read failure is only a warning: the final
@@ -406,36 +544,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
         run: |
           set -uo pipefail
           warn() { echo "::warning::review-thread pre-check $1; leaving it to the final eligibility recheck"; exit 0; }
           q='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved comments(first:1){nodes{url}}}pageInfo{hasNextPage endCursor}}}}}'
-          threads=""
-          cursor=""
-          page=0
-          while :; do
-            page=$((page + 1))
-            [ "$page" -le 20 ] || warn "read more than 20 pages"
-            if [ -n "$cursor" ]; then
-              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER" -F cursor="$cursor") || warn "could not read threads"
-            else
-              frame=$(gh api graphql -f query="$q" -F number="$PR_NUMBER") || warn "could not read threads"
+          check_pr_threads() {
+            local pr_num="$1" threads="" cursor="" page=0 frame count
+            while :; do
+              page=$((page + 1))
+              [ "$page" -le 20 ] || warn "read more than 20 pages"
+              if [ -n "$cursor" ]; then
+                frame=$(gh api graphql -f query="$q" -F number="$pr_num" -F cursor="$cursor") || warn "could not read threads"
+              else
+                frame=$(gh api graphql -f query="$q" -F number="$pr_num") || warn "could not read threads"
+              fi
+              jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")' <<<"$frame" >/dev/null || warn "got an unexpected response"
+              threads+=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | "- " + (.comments.nodes[0].url // "unknown thread")' <<<"$frame")$'\n'
+              [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame")" = true ] || break
+              cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$frame")
+            done
+            threads=$(printf '%s' "$threads" | sed '/^$/d')
+            if [ -n "$threads" ]; then
+              count=$(printf '%s\n' "$threads" | wc -l)
+              if [ "$EVENT_NAME" = "merge_group" ]; then
+                echo "::error::PR #$pr_num has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then re-enqueue the PR."
+              else
+                echo "::error::PR #$pr_num has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
+              fi
+              printf '%s\n' "$threads"
+              exit 1
             fi
-            jq -e '.errors == null and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")' <<<"$frame" >/dev/null || warn "got an unexpected response"
-            threads+=$(jq -r '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | "- " + (.comments.nodes[0].url // "unknown thread")' <<<"$frame")$'\n'
-            [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame")" = true ] || break
-            cursor=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' <<<"$frame")
-          done
-          threads=$(printf '%s' "$threads" | sed '/^$/d')
-          if [ -n "$threads" ]; then
-            count=$(printf '%s\n' "$threads" | wc -l)
-            if [ "$EVENT_NAME" = "merge_group" ]; then
-              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then re-enqueue the PR."
-            else
-              echo "::error::PR #$PR_NUMBER has $count unresolved review thread(s); the final eligibility recheck would fail this run after the tests finish. Reply to and resolve every thread (bot threads included), then remove and re-add the merge-ready label."
-            fi
-            printf '%s\n' "$threads"
-            exit 1
+          }
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            while IFS= read -r c_pr; do
+              check_pr_threads "$c_pr"
+            done < <(jq -r '.[].pr' <<<"$CONSTITUENTS")
+          else
+            check_pr_threads "$PR_NUMBER"
           fi
 
   rust-cx43:
@@ -727,9 +873,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.admission.outputs.pr }}
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          CONSTITUENTS: ${{ needs.admission.outputs.constituents }}
           TRUSTED_ADMISSION_SHA: ${{ needs.admission.outputs.trusted_sha }}
         run: |
           set -euo pipefail
@@ -740,7 +888,13 @@ jobs:
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] && [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] \
             && [ "$(git hash-object --no-filters "$trusted/$path")" = "$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" ] \
             || { echo "::error::trusted review-disposition verifier differs from the immutable source"; exit 1; }
-          python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            while IFS=$'\t' read -r c_pr c_head; do
+              python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$c_pr" --head "$c_head"
+            done < <(jq -r '.[] | "\(.pr)\t\(.head)"' <<<"$CONSTITUENTS")
+          else
+            python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
+          fi
       - name: Recheck initially admitted eligibility
         id: eligibility
         timeout-minutes: 2
@@ -752,6 +906,7 @@ jobs:
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
           EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
           EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
+          CONSTITUENTS: ${{ needs.admission.outputs.constituents }}
           ADMISSION_REASON: ${{ needs.admission.outputs.reason }}
           EVENT_NAME: ${{ github.event_name }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
@@ -767,31 +922,24 @@ jobs:
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
             [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
             read_pr() {
-              local response status_line headers http=unframed native=0
+              local target_pr="$1" target_head="$2" response status_line headers http=unframed native=0
               pr=
               # Preserve the final LF of a bodyless frame and the native exit.
-              response=$(read_exit=0; timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null || read_exit=$?; printf '.'; exit "$read_exit") || native=$?
+              response=$(read_exit=0; timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$target_pr" --method GET --include 2>/dev/null || read_exit=$?; printf '.'; exit "$read_exit") || native=$?
               response=${response%.}
-              # gh writes an LF status line, CRLF headers, then a CRLF blank line.
-              # Keep provider body/stderr out of logs; classify retries only from the frame.
               status_line=${response%%$'\n'*}
               if [[ "$response" != *$'\n'* ]] || ! [[ "$status_line" =~ ^HTTP/[0-9]+\.[0-9]+\ ([0-9]{3})\ [[:print:]]+$ ]]; then
-                echo "::error::PR read has an invalid HTTP frame (native exit $native)"
-                return "$((native == 0 ? 1 : native))"
+                echo "::error::PR read has an invalid HTTP frame (native exit $native)"; return "$((native == 0 ? 1 : native))"
               fi
-              http=${BASH_REMATCH[1]}
-              headers=${response#*$'\n'}
+              http=${BASH_REMATCH[1]} headers=${response#*$'\n'}
               if [[ "$headers" == $'\r\n'* ]]; then pr=${headers#$'\r\n'}
               elif [[ "$headers" == *$'\r\n\r\n'* ]]; then
-                pr=${headers#*$'\r\n\r\n'}
-                headers=${headers%%$'\r\n\r\n'*}
+                pr=${headers#*$'\r\n\r\n'} headers=${headers%%$'\r\n\r\n'*}
                 if ! printf '%s' "$headers" | jq -Rse 'split("\r\n") | all(test("^[^[:space:]:]+: [^\\r\\n]*$"))' >/dev/null; then
-                  echo "::error::PR read has invalid HTTP headers (native exit $native, HTTP $http)"
-                  pr=; return "$((native == 0 ? 1 : native))"
+                  echo "::error::PR read has invalid HTTP headers (native exit $native, HTTP $http)"; pr=; return "$((native == 0 ? 1 : native))"
                 fi
               else
-                echo "::error::PR read has an incomplete HTTP frame (native exit $native, HTTP $http)"
-                return "$((native == 0 ? 1 : native))"
+                echo "::error::PR read has an incomplete HTTP frame (native exit $native, HTTP $http)"; return "$((native == 0 ? 1 : native))"
               fi
               if [ "$native" -ne 0 ]; then
                 echo "::error::PR read failed at stage $why (native exit $native, HTTP $http, collection $collection/3)"
@@ -800,23 +948,15 @@ jobs:
               fi
               [ "$http" = 200 ] || { pr=; return 1; }
               jq -se 'length == 1 and (.[0] | type == "object")' <<<"$pr" >/dev/null || return
-              # A history-sync admission (#12437) also needs its label to still be present.
-              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
-                .number == $number and .state == "open" and .draft == false and
-                .head.sha == $head and .head.repo.full_name == $repo and
+              jq -e --arg repo "$REPOSITORY" --arg head "$target_head" --argjson number "$target_pr" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
+                .number == $number and .state == "open" and .draft == false and .head.sha == $head and .head.repo.full_name == $repo and
                 .base.ref == "main" and .base.repo.full_name == $repo and
                 ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready"))) and
                 ($reason != "history_sync_admitted" or ($event == "pull_request" and (.labels | type == "array" and any(.name == "history-sync"))))
               ' <<<"$pr" >/dev/null
             }
-            # Same-head succession (#4986, #8082): a newer run of this workflow for
-            # the same head (merge group: same queue-entry commit) and request
-            # kind, or a newer attempt of this run, revokes this invocation. Every
-            # read is paginated and any failure, truncation or ambiguity refuses.
-            # An ordinary label event is another run title, so it revokes nothing;
-            # re-applying `merge-ready` creates a new run and intentionally
-            # supersedes the older request. The read is last, so it is as late as
-            # this step can make it; it is not atomic with check publication.
+            # Same-head succession (#4986, #8082): a newer run of this workflow for the
+            # same head (merge group: same queue-entry commit) or newer attempt revokes this run.
             read_succession() {
               local run run_head title wf number spage=0 seen=0 total=0 list got all=""
               run=$(gh api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID") || return
@@ -824,9 +964,7 @@ jobs:
               else run_head=$EXPECTED_HEAD title="Merge-ready request $EXPECTED_HEAD"; fi
               [[ "$run_head" =~ ^[0-9a-f]{40}$ ]] || return 1
               jq -e --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
-                .id == $id and .run_attempt == $attempt and .head_sha == $head and .event == $event and
-                .display_title == $title and .repository.full_name == $repo and
-                (.run_number | type == "number" and . > 0) and (.workflow_id | type == "number")
+                .id == $id and .run_attempt == $attempt and .head_sha == $head and .event == $event and .display_title == $title and .repository.full_name == $repo and (.run_number | type == "number" and . > 0) and (.workflow_id | type == "number")
               ' <<<"$run" >/dev/null || return
               wf=$(jq -er '.workflow_id' <<<"$run") || return
               number=$(jq -er '.run_number' <<<"$run") || return
@@ -842,36 +980,48 @@ jobs:
                 [ "$got" -gt 0 ] || return 1
               done
               jq -s -e --argjson seen "$seen" --argjson id "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson wf "$wf" --argjson number "$number" --arg head "$run_head" --arg event "$EVENT_NAME" --arg title "$title" --arg repo "$REPOSITORY" '
-                length == $seen and
-                all(.[]; (.id | type == "number") and (.run_number | type == "number") and (.run_attempt | type == "number") and
-                  (.workflow_id | type == "number") and (.head_sha | type == "string") and (.event | type == "string") and
-                  (.display_title | type == "string") and (.repository.full_name | type == "string")) and
+                length == $seen and all(.[]; (.id | type == "number") and (.run_number | type == "number") and (.run_attempt | type == "number") and (.workflow_id | type == "number") and (.head_sha | type == "string") and (.event | type == "string") and (.display_title | type == "string") and (.repository.full_name | type == "string")) and
                 ([.[].id] | unique | length) == length and
                 ([.[] | select(.id == $id and .run_number == $number and .run_attempt == $attempt)] | length) == 1 and
-                ([.[] | select(.workflow_id == $wf and .head_sha == $head and .event == $event and .display_title == $title and
-                  .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
+                ([.[] | select(.workflow_id == $wf and .head_sha == $head and .event == $event and .display_title == $title and .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
               ' <<<"$all" >/dev/null
             }
-            why=pull_request_state
-            read_pr || return
-            why=review_decision_and_threads
-            while :; do
-              page=$((page + 1)); [ "$page" -le 100 ] || return 1
-              frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
-              jq -e --arg head "$EXPECTED_HEAD" --arg event "$EVENT_NAME" --arg entry "$EXPECTED_QUEUE_ENTRY" '
-                .errors == null and (.data.repository.pullRequest |
-                  has("reviewDecision") and .headRefOid == $head and
-                  (.reviewDecision as $decision | [null,"APPROVED","REVIEW_REQUIRED"] | index($decision) != null) and
-                  ($event != "merge_group" or ($entry != "" and .mergeQueueEntry.id == $entry)) and
-                  (.reviewThreads.nodes | type == "array" and all(.isResolved == true)) and
-                  (.reviewThreads.pageInfo.hasNextPage | type == "boolean"))
-              ' <<<"$frame" >/dev/null || return
-              more=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame") || return
-              [ "$more" = true ] || break
-              cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
-            done
-            why=pull_request_state_after_threads
-            read_pr || return
+            check_pr_eligibility() {
+              local target_pr="$1" target_head="$2" target_entry="$3"
+              cursor=null page=0
+              why=pull_request_state
+              read_pr "$target_pr" "$target_head" || return
+              why=review_decision_and_threads
+              while :; do
+                page=$((page + 1)); [ "$page" -le 100 ] || return 1
+                frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$target_pr" -F cursor="$cursor") || return
+                jq -e --arg head "$target_head" --arg event "$EVENT_NAME" --arg entry "$target_entry" '
+                  .errors == null and (.data.repository.pullRequest |
+                    has("reviewDecision") and .headRefOid == $head and
+                    (.reviewDecision as $decision | [null,"APPROVED","REVIEW_REQUIRED"] | index($decision) != null) and
+                    ($event != "merge_group" or ($entry != "" and .mergeQueueEntry.id == $entry)) and
+                    (.reviewThreads.nodes | type == "array" and all(.isResolved == true)) and
+                    (.reviewThreads.pageInfo.hasNextPage | type == "boolean"))
+                ' <<<"$frame" >/dev/null || return
+                more=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame") || return
+                [ "$more" = true ] || break
+                cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
+              done
+              why=pull_request_state_after_threads
+              read_pr "$target_pr" "$target_head" || return
+            }
+            if [ "$EVENT_NAME" = "merge_group" ]; then
+              jq -e --argjson tip_pr "$PR_NUMBER" --arg tip_head "$EXPECTED_HEAD" --arg tip_entry "$EXPECTED_QUEUE_ENTRY" '
+                type == "array" and length >= 1 and
+                all(.[]; (.pr | type == "number") and (.head | test("^[0-9a-f]{40}$")) and (.queue_entry | type == "string" and length > 0)) and
+                .[-1].pr == $tip_pr and .[-1].head == $tip_head and .[-1].queue_entry == $tip_entry
+              ' <<<"$CONSTITUENTS" >/dev/null || return 1
+              while IFS=$'\t' read -r c_pr c_head c_entry; do
+                check_pr_eligibility "$c_pr" "$c_head" "$c_entry" || return
+              done < <(jq -r '.[] | "\(.pr)\t\(.head)\t\(.queue_entry)"' <<<"$CONSTITUENTS")
+            else
+              check_pr_eligibility "$PR_NUMBER" "$EXPECTED_HEAD" "$EXPECTED_QUEUE_ENTRY" || return
+            fi
             why=same_head_succession
             read_succession
           }

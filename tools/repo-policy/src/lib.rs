@@ -1329,8 +1329,8 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "{ [ \"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\" != \"$REPOSITORY\" ]",
         ),
         (
-            "refuse merge groups that carry more than one queued PR",
-            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+            "bind every constituent commit in a merge group to a single-parent linear chain",
+            "[ -n \"${p1:-}\" ] && [ -z \"${p2_extra:-}\" ] && [ \"$p1\" = \"$expected_parent\" ]",
         ),
         (
             "bind the queue ref sha to the live head or group base",
@@ -1338,11 +1338,11 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "require the PR ref to still name the live head before binding the queued commit",
-            "[ \"$fetched\" = \"$head\" ]",
+            "[ \"$fetched\" = \"$c_head\" ]",
         ),
         (
             "bind the queued commit's tree to the live head merged onto the group base",
-            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+            "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         ),
         (
             "consume the same-head succession read as the last live eligibility check",
