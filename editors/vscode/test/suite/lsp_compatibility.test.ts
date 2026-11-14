@@ -1,11 +1,11 @@
 import * as assert from 'assert';
-import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason, windowsShellArguments } from '../../src/lspCompatibility';
 import { probeServerVersion, serverLaunchCommand } from '../../src/serverResolver';
+import { spawnClientProcess } from '../clientLaunch';
 
 // A terminated descendant is reparented to PID 1. Where PID 1 does not reap
 // orphans (some containers), it stays a zombie and `kill(pid, 0)` still
@@ -436,7 +436,7 @@ suite('Standard LSP compatibility probe', () => {
       );
       fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
       const launchArgs = windowsShellArguments(customArgs);
-      const child = cp.spawn(serverLaunchCommand(command, true), launchArgs, { shell: true });
+      const child = spawnClientProcess(serverLaunchCommand(command, true), launchArgs, true);
       assert.deepStrictEqual(child.spawnargs.slice(0, 4), [process.env.ComSpec ?? 'cmd.exe', '/d', '/s', '/c']);
       assert.strictEqual(child.spawnargs[4], `"${serverLaunchCommand(command, true)} ${launchArgs.join(' ')}"`);
       const exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -447,7 +447,7 @@ suite('Standard LSP compatibility probe', () => {
       assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
       assert.ok(!fs.existsSync(marker), 'cmd.exe executed the embedded-quote marker during the client shell launch');
 
-      const native = cp.spawn(process.execPath, [script, ...customArgs], { shell: false });
+      const native = spawnClientProcess(process.execPath, [script, ...customArgs], false);
       const nativeExitCode = await new Promise<number | null>((resolve, reject) => {
         native.once('error', reject);
         native.once('close', resolve);
