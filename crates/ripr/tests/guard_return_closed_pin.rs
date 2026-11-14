@@ -162,10 +162,10 @@ fn guard_return_class(before: &str, assertions: &str) -> Result<ExposureClass, S
 #[test]
 fn an_exact_pin_whose_literal_takes_the_changed_guard_is_exposed() -> Result<(), String> {
     for assertions in [
-        "assert_eq!(discount(200), 20);",
-        // The old value pinned: the test fails on the new code instead.
         "assert_eq!(discount(200), 40);",
-        "assert_eq!(20, discount(200));",
+        // The old value pinned: the test fails on the new code instead.
+        "assert_eq!(discount(200), 20);",
+        "assert_eq!(40, discount(200));",
     ] {
         assert_eq!(
             guard_return_class(BEFORE, assertions)?,
@@ -205,5 +205,43 @@ fn a_pin_that_cannot_tell_the_versions_apart_stays_below_exposed() -> Result<(),
         guard_return_class(&agreeing, "assert_eq!(discount(100), 20);")?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+/// The diff also moves the guard condition, so the old owner is not the new
+/// one with only the return line swapped back: `rate(300)` is 60 on both real
+/// versions (the old tail, the new guard), and the pin cannot notice the
+/// change.
+#[test]
+fn a_diff_that_also_changes_the_guard_keeps_the_pin_unproven() -> Result<(), String> {
+    let after = "pub fn rate(t: u32) -> u32 {
+    if t > 200 {
+        return t / 5;
+    }
+    t * 2 / 10
+}";
+    let before = "pub fn rate(t: u32) -> u32 {
+    if t > 500 {
+        return t / 10;
+    }
+    t * 2 / 10
+}";
+    let findings = TempRepo::create(
+        &lib(after, "assert_eq!(rate(300), 60);"),
+        &fn_diff(before, after),
+    )?
+    .findings()?;
+    let changed = finding_on_line(&findings, 3, "t / 5")?;
+    assert_ne!(changed.class, ExposureClass::Exposed, "{changed:?}");
+    // The same pin with only the return line changed tells the versions
+    // apart (30 before, 60 after), so it is credited.
+    let only_return = before.replace("t > 500", "t > 200");
+    let findings = TempRepo::create(
+        &lib(after, "assert_eq!(rate(300), 60);"),
+        &fn_diff(&only_return, after),
+    )?
+    .findings()?;
+    let changed = finding_on_line(&findings, 3, "t / 5")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
     Ok(())
 }

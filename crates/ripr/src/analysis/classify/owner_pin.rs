@@ -5010,7 +5010,12 @@ enum ReturnPathGate {
     /// different values, and the pinned value must be one of the two, so the
     /// exact pin fails on one version. Any shape the subset cannot evaluate
     /// refuses.
-    ClosedGuardReturn(super::owner_value::ClosedChange),
+    ClosedGuardReturn {
+        change: super::owner_value::ClosedChange,
+        /// The changed line's old text as the gate rebuilt it, which the
+        /// diff's own old line must match.
+        old_line: String,
+    },
 }
 
 /// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
@@ -5283,6 +5288,21 @@ impl OwnerReturnPin {
     /// short-circuit and adaptor paths require their own pinned-input gates.
     pub(in crate::analysis) fn is_unconditional_boolean_tail(&self) -> bool {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
+    }
+
+    /// #14387: whether a guard-return pin's rebuilt old line is the diff's own
+    /// old text for the owner's only changed line (`sole_change`). Every
+    /// other gate does not read it and answers `true`.
+    pub(in crate::analysis) fn closed_guard_old_line_matches(
+        &self,
+        sole_change: Option<&str>,
+    ) -> bool {
+        match &self.path {
+            ReturnPathGate::ClosedGuardReturn { old_line, .. } => {
+                sole_change.is_some_and(|old| old.trim() == old_line.trim())
+            }
+            _ => true,
+        }
     }
 
     /// The owner-side gates: `None` when the probe is not a return value
@@ -6905,7 +6925,7 @@ impl OwnerReturnPin {
         // #14387: a guard-return pin holds only where the two versions
         // provably return different values for this call's literal arguments
         // and the pin names one of them.
-        if let ReturnPathGate::ClosedGuardReturn(closed) = &self.path
+        if let ReturnPathGate::ClosedGuardReturn { change: closed, .. } = &self.path
             && !(helper.is_none()
                 && substituted.is_none()
                 && !unwrapped
@@ -8441,7 +8461,7 @@ impl ReturnPathGate {
             Self::WholeValueField(gate) => gate.admits(expected),
             // Read per call in `admits_candidate`, where the call's literal
             // arguments are known.
-            Self::ClosedGuardReturn(_) => true,
+            Self::ClosedGuardReturn { .. } => true,
         }
     }
 }
@@ -9301,8 +9321,8 @@ fn closed_guard_return(
         return None;
     }
     let old_line = after.replacen(&statement, &format!("{before};"), 1);
-    super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)
-        .map(ReturnPathGate::ClosedGuardReturn)
+    let change = super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)?;
+    Some(ReturnPathGate::ClosedGuardReturn { change, old_line })
 }
 
 /// Whether the owner's return value can only have come through the changed

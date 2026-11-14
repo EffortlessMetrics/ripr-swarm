@@ -2494,9 +2494,12 @@ owner pin when both versions of the owner fall inside the closed integer
 subset (`owner_value`, #12716). That subset covers integer parameters of one
 type, guards of the form `if COND { return RET; }`, and an integer or
 `Ok`/`Some`/`Err`/`None` tail. The changed line must be the whole statement,
-and the old and new texts must both be `return <value>`, so only that guard's
-returned value moves. Every condition and every other exit are then the same
-in both versions.
+and the old and new texts must both be `return <value>`. The diff must replace
+that one line and change no other line of the owner, and the diff's old text
+must match the line the gate rebuilds. Only that guard's returned value moves,
+so every condition and every other exit are the same in both versions. A diff
+that also moves a guard condition (`t > 500` to `t > 200`) refuses, because
+the old owner is then not the new one with the return line swapped back.
 
 The pin holds per call:
 - the pinned call is a bare owner call with plain decimal literal arguments;

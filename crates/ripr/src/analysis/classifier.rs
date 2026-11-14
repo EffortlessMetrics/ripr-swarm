@@ -327,6 +327,9 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    context.owner_sole_change = changed_file
+        .zip(owner_fn)
+        .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -881,6 +884,32 @@ fn restore_reveal_misses(
     for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
         test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #14387: the old text of `line` when it is the one line of `owner` the diff
+/// replaces: exactly one added line inside the owner, at `line`, paired with
+/// exactly one removed line inside it.
+fn owner_sole_change(
+    changed: &crate::analysis::diff::ChangedFile,
+    owner: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+) -> Option<String> {
+    let inside = |at: usize| (owner.start_line..=owner.end_line).contains(&at);
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| inside(added.new_side_line));
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| inside(removed.new_side_line));
+    let (Some(added), None, Some(removed), None) =
+        (added.next(), added.next(), removed.next(), removed.next())
+    else {
+        return None;
+    };
+    let paired = changed.replaced_line_counterpart(line)?;
+    (added.new_side_line == line && paired.text == removed.text).then(|| removed.text.clone())
 }
 
 #[cfg(test)]

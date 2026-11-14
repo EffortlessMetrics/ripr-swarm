@@ -1382,7 +1382,7 @@ mod tests {
         let Some(change) = change else {
             return;
         };
-        // 200 takes the changed guard: 40 before, 20 after.
+        // 200 takes the changed guard: 20 before, 40 after.
         assert!(change.pin_discriminates("discount", "discount(200)", "20"));
         assert!(change.pin_discriminates("discount", "discount(200)", "40"));
         // A value neither version returns, an earlier guard, the tail.
