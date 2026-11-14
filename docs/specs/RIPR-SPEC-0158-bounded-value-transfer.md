@@ -177,6 +177,17 @@ exercised boundary from a missing one.
   `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
+- Compound predicate boundary (#9637): comparison binds tighter than `&&`
+  and `||`, so the equality-boundary reading of a predicate with a top-level
+  connective uses only its one comparison operand, never the whole text
+  split at the first comparison operator. `s.starts_with('-') && s.len() > 1`
+  reads `s.len()` against `1`, not `s.starts_with('-') && s.len()`, which no
+  input can equal. The connective scan skips brackets and string and char
+  literals. Two or more comparison operands, an operand the pre-edit text
+  already holds unchanged (`x > 1 && a` to `x > 1 && b`), an empty operand,
+  or text the scan cannot balance give no boundary reading, so the stage
+  falls back to its existing unknown or connective-change reason. A
+  predicate with no top-level connective is read whole, as before.
 - Literal byte-length boundary (#9637): diff analysis also reads one closed
   owner shape, `fn f(text: &str, width: usize) -> bool { let end =
   text.as_bytes().len(); end <= width }`, with immutable parameters and local,
@@ -520,6 +531,10 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
 `literal_only_integer_expressions_fold_to_their_value` and
 `literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic`);
 `crates/ripr/tests/literal_arithmetic_observation.rs`;
+`analysis/classify/activation.rs`
+`a_compound_predicate_reads_only_its_one_changed_comparison` and
+`crates/ripr/tests/compound_predicate_boundary.rs` (compound predicate
+boundary);
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
 `exact_values_compare_plain_decimals_by_digits_only` and
