@@ -19,7 +19,9 @@ jobs:
     # self-hosted group, and a job pinned to it queues for 24h and is cancelled
     # every week (#14641). Matches the hosted posture of security.yml.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 45 min is about 1.7x the 26.4 min the scan took on a hosted runner
+    # (run 43558949264), so a slow week does not truncate a real scan.
+    timeout-minutes: 45
 
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
