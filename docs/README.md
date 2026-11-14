@@ -52,6 +52,7 @@ result means.
 ## Contributing and repository operation
 
 - [Contributing](../CONTRIBUTING.md) — development setup and validation.
+- [Cargo build-artifact lifecycle](BUILD_ARTIFACTS.md) — private target ownership, incremental policy, receipted checkout cleanup, and CI boundaries.
 - [Scoped PR contract](SCOPED_PR_CONTRACT.md) — keep one coherent change and evidence denominator.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
 - Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), [validation](agent-context/validation.md), and the [PR convergence runbook](agent-context/convergence-runbook.md).

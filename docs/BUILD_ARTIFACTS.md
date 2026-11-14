@@ -1,0 +1,121 @@
+# Cargo build-artifact lifecycle
+
+RIPR gives every checkout one explicit Cargo ownership boundary: its own `target/` directory. We do not share a mutable target or build directory across worktrees, and we do not use age as a proxy for whether an unknown workspace is live.
+
+This contract is the Cargo-specific closeout under [bounded local storage and proof retention](PR_AUTOMATION.md#bounded-local-storage-and-proof-retention). That procedure establishes resource ownership and consumer release; this tool inventories and removes only the exact checkout-owned target state after that judgment.
+
+| Class | Location | Lifecycle |
+|---|---|---|
+| Cargo intermediates and final outputs | the checkout's exact `target/` | Private to that checkout; removed at checkout disposal |
+| RIPR cache, reports, receipts, and retained evidence | `target/ripr/` | Preserved by Cargo-artifact cleanup and managed by RIPR contracts |
+| CI-owned Cargo state | the job's explicit `CARGO_TARGET_DIR` | Owned, cached, and deleted by that job's existing lifecycle |
+
+`.cargo/config.toml` disables incremental compilation by default. Agent worktrees are normally short-lived, so retaining another object graph in every checkout creates large low-reuse directories. A deliberate long-lived checkout can opt in for one command or session with `CARGO_INCREMENTAL=1`; that does not make the target shareable.
+
+The forced `TEMP`, `TMP`, and `TMPDIR` redirect remains intentional. It keeps linker and test scratch off the Windows system drive and inside the checkout's disposal boundary.
+
+## Why there is no global TTL collector
+
+Cargo can build nested fixture workspaces and caller-selected manifests that are not registered Git worktrees. A pool-wide age rule cannot prove those trees are inactive. The repository therefore does not delete compiler state belonging to another manifest, checkout, or host-level target owner.
+
+Cleanup is an explicit terminal operation for the current checkout. The caller stops Cargo and any other target writer in that checkout, reviews the exact direct children selected under its resolved `target/`, and then applies deletion. This is an ownership-and-release decision, not a liveness guess.
+
+The utility identifies the enclosing Git checkout, not merely the nearest `Cargo.toml` and `.cargo/config.toml`. A nested fixture may carry its own Cargo configuration without gaining authority over a separate target owner.
+
+## Build the cleanup utility
+
+The utility is a dependency-free standalone Rust source set. Compile it into the retained `target/ripr` tree so it remains executable while `target/debug`, `target/release`, and leaked scratch are removed.
+
+### Bash
+
+```bash
+mkdir -p target/ripr/tools
+rustc --edition=2024 tools/cargo-artifacts/main.rs \
+  -o target/ripr/tools/cargo-artifacts
+```
+
+### PowerShell
+
+```powershell
+New-Item -ItemType Directory -Force target/ripr/tools | Out-Null
+rustc --edition=2024 tools/cargo-artifacts/main.rs `
+  -o target/ripr/tools/cargo-artifacts.exe
+```
+
+The sources use only the Rust standard library. They can be compiled before the workspace itself is healthy and do not allocate another Cargo target.
+
+## Commands
+
+From any directory inside the Git checkout:
+
+```bash
+target/ripr/tools/cargo-artifacts report
+target/ripr/tools/cargo-artifacts clean-current
+target/ripr/tools/cargo-artifacts clean-current --apply
+```
+
+On Windows, use `target/ripr/tools/cargo-artifacts.exe`.
+
+Every cleanup is a dry run unless `--apply` is present. The default soft budget is 12 GB of removable current-checkout state; override the reporting threshold with `--max-size-gb <n>`. The budget does not authorize broader deletion.
+
+The utility writes:
+
+- `target/ripr/reports/cargo-artifacts.json`
+- `target/ripr/reports/cargo-artifacts.md`
+
+The JSON receipt is authoritative. Markdown is a human-readable projection written only after the corresponding JSON publication succeeds; the two files are not claimed to be an atomic pair. Each file is first written and synced to an exclusively created same-directory temporary file. Replacing an existing receipt preserves the previous directory entry under a unique backup name until the new entry is published, so a failed publication restores or visibly retains the previous record instead of truncating it. A pre-existing hard link is replaced as a directory entry and its other links are not modified.
+
+`--no-receipt` is available only for isolated dry-run diagnostics and tests. Destructive cleanup always retains a receipt.
+
+### `report`
+
+`report` resolves Cargo's current metadata offline and inventories the current checkout's exact `target/`. It reports removable bytes, retained `target/ripr` bytes, file counts, and soft-budget pressure. It does not delete.
+
+### `clean-current`
+
+`clean-current` selects every direct entry of the current checkout's exact `target/` except `target/ripr/`. Case variants of the evidence-directory name are conservatively retained and counted as evidence as well. The removable set includes Cargo profiles, fingerprints, incremental state left by earlier configurations, and top-level test/linker scratch.
+
+Before selecting or deleting, it refuses:
+
+- a directory that is not inside a plain-file/plain-directory Git checkout marker;
+- non-empty `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR`, or `CARGO_BUILD_BUILD_DIR` overrides;
+- a Cargo `workspace_root` other than the current repository;
+- a `target_directory` other than `<repository>/target`;
+- a `build_directory` that is not exactly the same path as that target;
+- symlinks, Windows reparse points, special files, unreadable paths, and non-direct deletion candidates.
+
+The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings. On Windows, a verbatim path prefix may be normalized, but case differences are accepted only when both existing paths canonicalize to the same filesystem object. An unresolved case-only difference is refused because a case-sensitive directory can contain distinct `target` and `TARGET` entries.
+
+Apply mode writes the initial authoritative JSON receipt before mutation. Before each deletion it records that entry as `pending`, rechecks it, and renames the direct child to a unique `.cargo-artifacts-delete-*` direct child inside the same target. Recursive removal starts only after that same-filesystem quarantine succeeds and is revalidated. A locked tree, mount point, disappearing source, newly detected link/reparse point, or rename failure therefore stops before recursive removal. A writer that incorrectly recreates the original Cargo path is not writing inside the quarantined tree being removed.
+
+A successful removal is confirmed in the next JSON receipt. If that publication fails, the previous synced JSON remains authoritative and still marks the entry pending; if restoration itself fails, the error names the visible backup path containing that prior record. If recursive removal fails, the quarantined direct child remains visible and eligible for a later receipted pass. Markdown publication failure cannot erase or invalidate the authoritative JSON state.
+
+This transaction boundary still assumes the required quiescent-checkout precondition. The tool does not claim atomic exclusion against an adversarial actor that discovers and mutates the unique quarantine after release was asserted.
+
+## Agent lifecycle
+
+1. **Start work normally.** Each checkout gets its own `target/`; never point sibling worktrees at one mutable `CARGO_TARGET_DIR`.
+2. **Inspect pressure when it matters.** Compile the utility once and run `report` before a build-heavy campaign when disk state is unknown or constrained.
+3. **Keep evidence separate.** `target/ripr` is not disposable compiler state. Use RIPR's own cache/report lifecycle for it.
+4. **Dispose deliberately.** Reconcile consumers through the bounded-storage procedure, stop Cargo and other target writers, run `clean-current`, inspect the direct-child selection, then rerun with `--apply` immediately before removing or retiring the checkout.
+5. **Retain the receipt.** It records selected, deleted, preserved, pending, failed, and over-budget state.
+
+Do not substitute wildcard deletion, an unkeyed shared target, or undifferentiated `cargo clean`. `cargo clean` owns Cargo's target as a whole; this repository deliberately retains a different evidence class under `target/ripr`.
+
+## CI ownership
+
+A CI workflow that sets `CARGO_TARGET_DIR` continues to own all Cargo intermediates and final outputs under that path. Because the repository does not set a separate `build-dir`, existing cache and terminal-cleanup boundaries remain complete. The checkout cleanup utility refuses those overrides rather than deleting caller-owned CI or qualification state.
+
+## Existing split-pool remnants
+
+An earlier draft of this change used a sibling `.ripr-swarm-build` pool. The final design does not own or delete that path. On a host that exercised the draft, remove such a pool only after independently confirming that no Cargo process or checkout still references it.
+
+## Verification
+
+The standalone source set carries its own standard-library unit tests. Repository CI compiles and runs them directly with `rustc --test` through:
+
+```bash
+cargo test -p xtask --test cargo_artifact_lifecycle
+```
+
+The suite covers Git-checkout-root discrimination, Windows JSON paths, verbatim-prefix handling and unresolved case refusal, top-level metadata discrimination, exact target/build ownership, direct-child selection, quarantine-before-removal, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, literal JSON rendering, hard-link-safe receipt replacement, failed-publication restoration, JSON authority when Markdown publication fails, pending/partial-failure receipts, and symlink non-traversal.
