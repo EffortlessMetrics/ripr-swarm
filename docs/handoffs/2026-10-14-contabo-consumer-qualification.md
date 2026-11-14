@@ -230,11 +230,19 @@ or filename substitution is added merely to satisfy the importer.
 
 The prepared caller selects the distinct `ripr-product` lane rather than the
 incompatible older `ripr` lane. The immutable central transport recognizes the
-unchanged member-contract blob `bf03be85b64fab0927ddb9f8d61083e39f33972d`, adapter
+historical member-contract blob `bf03be85b64fab0927ddb9f8d61083e39f33972d`, adapter
 blob `351b83e04c28359115eb4b60e1fce3e8614bcfb8` and source-derived corpus mapping.
 These exact code/contract bytes must remain unchanged unless the central owner
 reviews and publishes a corresponding transport update. New consumer tests live
 in `xtask/tests/contabo_result_policy.rs`, outside that pinned adapter blob.
+
+The current PR-evidence compatibility repair retains all 19 member paths but
+moves the cheap unavailable-comparison marker into its actual `ripr-pr` producer
+group. This changes the contract bytes; the historical central pin does not
+establish acceptance of this candidate. A corresponding central-owner review
+and published transport update remain required before transport qualification.
+The local declared-group materialization test establishes only local member and
+gate behavior, not central upload, import, or activation.
 
 The lightweight result policy consumes only the centrally authenticated import
 at `EM_CI_ARTIFACT_DIR`. It binds the selected successful owned standard result
@@ -245,10 +253,11 @@ reimplement authentication, compile the product or fabricate missing analysis.
 The complete reusable call, including packaging, import, policy and final result,
 must succeed; its selected proof envelope alone is insufficient.
 
-The source compatibility preflight reads genuine immutable Git objects through
-the exact decoded public transport: the existing contract resolves 19 core
-members and all 16 command blocks, and its adapter/contract/source checks pass.
-This is source compatibility, not a real product packet or runtime qualification.
+The historical source compatibility preflight read genuine immutable Git objects
+through the exact decoded public transport: the pinned contract resolved 19 core
+members and all 16 command blocks, and its adapter/contract/source checks passed.
+That result is not current-candidate source compatibility, a real product packet,
+or runtime qualification.
 The former retained-preflight receipt publication was cancelled by the user; it
 remains excluded. Current source and sanitized new proof use only this authorized
 repository candidate. No duplicate uploader, package, live allowance, image
