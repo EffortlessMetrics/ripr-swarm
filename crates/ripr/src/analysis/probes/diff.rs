@@ -515,8 +515,10 @@ pub(crate) fn probes_for_file_with_relations(
                 shape.family == ProbeFamily::MatchArm
                     && removed_counterpart.as_deref().is_some_and(|removed| {
                         let header = canonical_probe_text(text, shape.text);
+                        // A `=>` in a string literal (`match t.find("=>")`)
+                        // is not an arm on the header line.
                         header.starts_with("match ")
-                            && !header.contains("=>")
+                            && !mask_comments_and_strings(&header).contains("=>")
                             && removed_span_of_shape(text, &header, removed.trim())
                                 .is_some_and(|old| old != header && old.starts_with("match "))
                     })
@@ -554,8 +556,9 @@ pub(crate) fn probes_for_file_with_relations(
                         match removed_span_of_shape(text, &shape_text, removed.trim()) {
                             Some(old) => old == shape_text,
                             // No locatable cut: unchanged only when the old
-                            // line still holds the same text.
-                            None => removed.contains(shape_text.as_str()),
+                            // line still holds the same text as a token run
+                            // (`total > limit` is not inside `subtotal > limit`).
+                            None => super::classify::contains_token_run(removed, &shape_text),
                         }
                     })
                     && canonical_shapes.iter().any(|header| {
@@ -5008,6 +5011,47 @@ mod tests {
             .collect::<Vec<_>>();
         families.sort();
         assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
+    }
+
+    /// #14722 review: a comparison whose text occurs in the old line only
+    /// inside a longer identifier (`total > limit` in `subtotal > limit`)
+    /// changed, so it keeps its own probe beside the unclassified header.
+    #[test]
+    fn a_comparison_found_only_inside_an_old_identifier_is_kept() {
+        let probes = shapes_probes(
+            "match (total > limit, true) {",
+            "match (subtotal > limit, false) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match (total > limit, true)"),
+                (ProbeShapeKind::Predicate, "total > limit"),
+            ],
+            "",
+        );
+
+        let mut families = probes
+            .iter()
+            .map(|probe| probe.family.as_str().to_string())
+            .collect::<Vec<_>>();
+        families.sort();
+        assert_eq!(families, vec!["predicate", "static_unknown"], "{probes:?}");
+    }
+
+    /// #14722 review: a `=>` inside a string literal in the scrutinee is not
+    /// an arm, so the scrutinee-only header still reads as unclassified.
+    #[test]
+    fn a_string_arrow_in_the_scrutinee_does_not_keep_a_match_arm() {
+        let probes = shapes_probes(
+            "match text.find(\"=>\") {",
+            "match text.rfind(\"=>\") {",
+            &[(ProbeShapeKind::MatchArm, "match text.find(\"=>\")")],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
     }
 
     /// #14722: an arm edit on a line that also holds the header reaches past

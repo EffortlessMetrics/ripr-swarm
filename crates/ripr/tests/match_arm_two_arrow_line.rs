@@ -289,3 +289,42 @@ fn an_untouched_comparison_in_an_edited_tuple_scrutinee_is_no_finding() -> Resul
     assert_eq!(header[0].class, ExposureClass::StaticUnknown, "{header:?}");
     Ok(())
 }
+
+/// #14722 review: a changed comparison whose text the old line holds only
+/// inside a longer identifier (`total > limit` in `subtotal > limit`) keeps
+/// its own predicate finding beside the header's unclassified one.
+#[test]
+fn a_comparison_inside_an_old_identifier_keeps_its_finding() -> Result<(), String> {
+    let output = check_scrutinee_crate(
+        "pub fn pick(subtotal: i32, total: i32, limit: i32) -> u8 {\n    match (total > limit, true) {\n        (true, true) => 1,\n        _ => 0,\n    }\n}\n",
+        "use match_scrutinee_only::pick;\n\n#[test]\nfn over_limit_picks_one() {\n    assert_eq!(pick(0, 5, 1), 1);\n}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn pick(subtotal: i32, total: i32, limit: i32) -> u8 {\n-    match (subtotal > limit, false) {\n+    match (total > limit, true) {\n         (true, true) => 1,\n         _ => 0,\n     }\n }\n",
+    )?;
+    let header = findings_on_line(&output, 2);
+    let mut families = header
+        .iter()
+        .map(|finding| finding.probe.family.as_str().to_string())
+        .collect::<Vec<_>>();
+    families.sort();
+    assert_eq!(families, vec!["predicate", "static_unknown"], "{header:?}");
+    Ok(())
+}
+
+/// #14722 review: a `=>` inside a string literal in the scrutinee
+/// (`match text.rfind("=>")` to `match text.find("=>")`) is not an arm, so
+/// the scrutinee-only edit still reads as unclassified, not a match-arm gap.
+#[test]
+fn a_string_arrow_in_the_scrutinee_is_not_a_match_arm_gap() -> Result<(), String> {
+    let output = check_scrutinee_crate(
+        "pub fn arrow_at(text: &str) -> usize {\n    match text.find(\"=>\") {\n        Some(at) => at,\n        None => 0,\n    }\n}\n",
+        "use match_scrutinee_only::arrow_at;\n\n#[test]\nfn finds_the_arrow() {\n    assert_eq!(arrow_at(\"a => b\"), 2);\n}\n",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn arrow_at(text: &str) -> usize {\n-    match text.rfind(\"=>\") {\n+    match text.find(\"=>\") {\n         Some(at) => at,\n         None => 0,\n     }\n }\n",
+    )?;
+    let header = findings_on_line(&output, 2);
+    let families = header
+        .iter()
+        .map(|finding| finding.probe.family.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{header:?}");
+    Ok(())
+}

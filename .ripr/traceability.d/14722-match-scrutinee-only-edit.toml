@@ -11,9 +11,14 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::an_unchanged_return_beside_the_scrutinee_edit_does_not_drop_the_header",
   "crates/ripr/src/analysis/probes/diff.rs::a_changed_comparison_beside_a_second_scrutinee_edit_is_kept",
   "crates/ripr/src/analysis/probes/diff.rs::an_arm_edit_beside_an_unchanged_header_stays_a_match_arm",
+  "crates/ripr/src/analysis/probes/diff.rs::a_comparison_found_only_inside_an_old_identifier_is_kept",
+  "crates/ripr/src/analysis/probes/diff.rs::a_string_arrow_in_the_scrutinee_does_not_keep_a_match_arm",
   "crates/ripr/tests/match_arm_two_arrow_line.rs::a_scrutinee_only_edit_is_not_a_weak_match_arm_gap",
   "crates/ripr/tests/match_arm_two_arrow_line.rs::an_untouched_comparison_in_an_edited_tuple_scrutinee_is_no_finding",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_comparison_inside_an_old_identifier_keeps_its_finding",
+  "crates/ripr/tests/match_arm_two_arrow_line.rs::a_string_arrow_in_the_scrutinee_is_not_a_match_arm_gap",
 ]
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/probes/classify.rs",
 ]
