@@ -199,3 +199,63 @@ fn a_nested_match_in_the_body_keeps_the_whole_line_and_names_no_unselected_arm()
     assert_uncut_verdict(&finding);
     Ok(())
 }
+
+/// #14722: an edit wholly inside a `match` scrutinee (`rfind` to `find`,
+/// arms unchanged) changed no arm. It is not a match-arm finding that asks
+/// for an assertion naming the changed arm; it reads like the same
+/// expression edit on a plain line, with no weak gap to repair.
+#[test]
+fn a_scrutinee_only_edit_is_not_a_weak_match_arm_gap() -> Result<(), String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-match-scrutinee-only-{}-{sequence}",
+        std::process::id()
+    ));
+    let repo = TempRepo { root };
+    std::fs::create_dir_all(repo.root.join("src"))
+        .map_err(|error| format!("create source directory failed: {error}"))?;
+    std::fs::create_dir_all(repo.root.join("tests"))
+        .map_err(|error| format!("create test directory failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("Cargo.toml"),
+        "[package]\nname = \"match-scrutinee-only\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )
+    .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("src/lib.rs"),
+        "pub fn last_dot(name: &str) -> usize {\n    match name.find('.') {\n        None => 0,\n        Some(at) => at,\n    }\n}\n",
+    )
+    .map_err(|error| format!("write source failed: {error}"))?;
+    // `find` returns 1 here where `rfind` returned 3, so this test already
+    // tells the edit apart.
+    std::fs::write(
+        repo.root.join("tests/last_dot.rs"),
+        "use match_scrutinee_only::last_dot;\n\n#[test]\nfn the_last_dot_wins() {\n    assert_eq!(last_dot(\"a.b.c\"), 3);\n}\n",
+    )
+    .map_err(|error| format!("write test failed: {error}"))?;
+    std::fs::write(
+        repo.root.join("diff.patch"),
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn last_dot(name: &str) -> usize {\n-    match name.rfind('.') {\n+    match name.find('.') {\n         None => 0,\n         Some(at) => at,\n     }\n }\n",
+    )
+    .map_err(|error| format!("write diff failed: {error}"))?;
+
+    let output = repo.check()?;
+    if format!("{output:?}").contains("MalformedDiff") {
+        return Err("the fixture diff must parse cleanly".to_string());
+    }
+    let header = output
+        .findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .collect::<Vec<_>>();
+    assert_eq!(header.len(), 1, "one finding for the header: {header:?}");
+    let finding = header[0];
+    assert_eq!(
+        finding.probe.expression, "match name.find('.')",
+        "the probe is the changed header: {finding:?}"
+    );
+    assert_ne!(finding.probe.family, ProbeFamily::MatchArm, "{finding:?}");
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+    Ok(())
+}

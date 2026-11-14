@@ -504,12 +504,49 @@ pub(crate) fn probes_for_file_with_relations(
             {
                 guard_edit_counterparts.push(removed.line);
             }
+            // A `match` header whose edit sits wholly inside its scrutinee
+            // (`match name.rfind(..)` to `match name.find(..)`) changed no
+            // arm, so arm confirmation (an assertion naming the changed arm)
+            // is the wrong discriminator for it (#14722). Another shape inside
+            // the scrutinee carries the edit when the line has one; otherwise
+            // the header reads as an unclassified change, as the same
+            // expression edit does on a plain line.
+            let scrutinee_only_header = |shape: &super::classify::ParserProbeShape| {
+                shape.family == ProbeFamily::MatchArm
+                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                        let header = canonical_probe_text(text, shape.text);
+                        header.starts_with("match ")
+                            && !header.contains("=>")
+                            && removed_span_of_shape(text, &header, removed.trim())
+                                .is_some_and(|old| old != header && old.starts_with("match "))
+                    })
+            };
+            let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
+                let header = canonical_probe_text(text, shape.text);
+                canonical_shapes.iter().any(|other| {
+                    other.family != ProbeFamily::MatchArm
+                        && other.family != ProbeFamily::StaticUnknown
+                        && header.contains(canonical_probe_text(text, other.text).as_str())
+                })
+            };
+            let carried_header = |shape: &super::classify::ParserProbeShape| {
+                scrutinee_only_header(shape) && scrutinee_carried(shape)
+            };
             let canonical_shapes = canonical_shapes
                 .iter()
                 .filter(|shape| {
-                    !unchanged_return(shape) && !respelled_return(shape) && !guard_only_arm(shape)
+                    !unchanged_return(shape)
+                        && !respelled_return(shape)
+                        && !guard_only_arm(shape)
+                        && !carried_header(shape)
                 })
-                .cloned()
+                .map(|shape| {
+                    let mut shape = shape.clone();
+                    if scrutinee_only_header(&shape) {
+                        shape.family = ProbeFamily::StaticUnknown;
+                    }
+                    shape
+                })
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
                 let key = (shape.start_byte, shape.family.as_str().to_string());
@@ -4762,8 +4799,9 @@ mod tests {
         );
     }
 
-    /// #7037: the `match` scrutinee shape is a MatchArm shape too, so a
-    /// changed scrutinee is cut to the old scrutinee without the brace.
+    /// #7037: a changed scrutinee is cut to the old scrutinee without the
+    /// brace. #14722: no arm changed, so the header is not a match-arm probe;
+    /// it reads as an unclassified change.
     #[test]
     fn match_scrutinee_edit_cuts_before_to_the_old_scrutinee() {
         let probes = single_shape_probes(
@@ -4774,12 +4812,68 @@ mod tests {
             "",
         );
 
-        let arm = probes
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::MatchArm),
+            "{probes:?}"
+        );
+        let header = probes
             .iter()
-            .find(|probe| probe.family == ProbeFamily::MatchArm);
+            .find(|probe| probe.family == ProbeFamily::StaticUnknown);
         assert_eq!(
-            arm.and_then(|probe| probe.before.as_deref()),
+            header.and_then(|probe| probe.before.as_deref()),
             Some("match kind"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a scrutinee edit whose changed comparison is its own shape is
+    /// that predicate's finding; the header adds no second probe.
+    #[test]
+    fn a_scrutinee_predicate_edit_is_the_predicate_probe_alone() {
+        let probes = shapes_probes(
+            "match a >= b {",
+            "match a > b {",
+            &[
+                (ProbeShapeKind::MatchArm, "match a >= b"),
+                (ProbeShapeKind::Predicate, "a >= b"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::Predicate], "{probes:?}");
+    }
+
+    /// #14722: an arm edit on a line that also holds the header keeps its
+    /// match-arm probe, and an unchanged header never becomes a probe of
+    /// its own.
+    #[test]
+    fn an_arm_edit_beside_an_unchanged_header_stays_a_match_arm() {
+        let probes = shapes_probes(
+            "match kind { 0 => 2, _ => 9 }",
+            "match kind { 0 => 1, _ => 9 }",
+            &[
+                (ProbeShapeKind::MatchArm, "match kind"),
+                (ProbeShapeKind::MatchArm, "0 =>"),
+            ],
+            "",
+        );
+
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "{probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family == ProbeFamily::MatchArm),
             "{probes:?}"
         );
     }
