@@ -17,6 +17,13 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
+    let temp_root = std::env::temp_dir();
+    if let Err(err) = std::fs::create_dir_all(&temp_root) {
+        return Err(format!(
+            "create temporary diff root {} failed: {err}; check the temp directory is writable (set TMPDIR, or TEMP on Windows, to a writable directory)",
+            temp_root.display()
+        ));
+    }
     // Per-invocation private directory directly under the OS temp dir
     // (#2102). A fixed shared name like `/tmp/ripr-diff` lets the first local
     // account own the directory and deny every other account (cross-user
@@ -31,8 +38,7 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
         } else {
             format!("-{attempt}")
         };
-        let dir =
-            std::env::temp_dir().join(format!("ripr-diff-{}-{stamp}{suffix}", std::process::id()));
+        let dir = temp_root.join(format!("ripr-diff-{}-{stamp}{suffix}", std::process::id()));
         #[cfg(unix)]
         let builder = {
             use std::os::unix::fs::DirBuilderExt;
