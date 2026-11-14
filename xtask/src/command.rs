@@ -588,7 +588,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "branch-inventory [--input <path>] [--dry-run]",
         "branch-inventory apply --plan <path> --digest <digest>",
         "gh-pr-status --pr <number>",
-        "ci-budget [--workflow <name>] [--limit <n>] [--input <path>]",
+        "ci-budget [--workflow <name>] [--limit <n>] [--input <path>] [--all-attempts]",
         "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
         "module-health [--threshold <n>]",
         "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
@@ -950,12 +950,12 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Reads one GitHub PR and reports safe next action.",
         ),
         command_entry(
-            "ci-budget [--workflow <name>] [--limit <n>] [--input <path>]",
+            "ci-budget [--workflow <name>] [--limit <n>] [--input <path>] [--all-attempts]",
             "external_state_read",
             "target/ripr/reports/ci-budget.{json,md}",
             false,
             false,
-            "Reads recent routed-workflow runs through gh (or a supplied --input JSON file) and writes an advisory CI budget and merge-queue hygiene report; it separates disk-guard infrastructure tempfails (issue #1058) from product failures, never reruns or mutates any run, and changes no CI behavior.",
+            "Reads recent routed-workflow runs through gh (or a supplied --input JSON file); opt-in --all-attempts reads bounded numbered attempts and complete native job pages, with unknown failure classification when logs are not collected. Writes an advisory CI budget and merge-queue hygiene report; it separates disk-guard infrastructure tempfails (issue #1058) from product failures, never reruns or mutates any run, and changes no CI behavior.",
         ),
         command_entry(
             "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
@@ -3035,6 +3035,14 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{command_catalog, help_message, levenshtein};
+
+    #[test]
+    fn ci_budget_help_advertises_all_attempt_observation() -> Result<(), String> {
+        let help = help_message(&["ci-budget".into()])?;
+        assert!(help.contains("--all-attempts"));
+        assert!(help.contains("numbered attempts"));
+        Ok(())
+    }
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {
