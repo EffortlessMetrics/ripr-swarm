@@ -275,22 +275,31 @@ pub(in crate::analysis) fn bool_field_assertion(
     reader.inner(read.expr(), 0) == Sink::Record
 }
 
-/// #14701: whether a `use` in `source` (a test's file) may bind the bare
-/// name `owner` to a function other than the owner. An explicit import of
-/// the name is admitted only as a two-segment path from a root-module owner
-/// (`crate::opts`, `super::opts`, `self::opts`, `demo::opts` for an owner in
-/// `src/lib.rs` or `src/main.rs`); a rename to the name, an import from a
-/// deeper module, and a glob below the crate root (`use crate::rival::*`)
-/// may bind another function. Source that does not parse refuses.
+/// #14701: whether a `use` in `source` (the file `test_file`) may bind the
+/// bare name `owner` to a function other than the owner in `owner_file`.
+///
+/// A `self`- or `super`-rooted import (`use super::*;`, `use super::opts;`)
+/// is admitted only in the owner's own file, and only when it names the
+/// file's module itself: its `super` count equals the inline `mod` depth of
+/// the `use` (`mod tests { use super::*; }`). In any other file the module
+/// it names depends on where that file sits in the module tree, which this
+/// reader cannot see, so it refuses. An explicit import of the name is
+/// otherwise admitted only as a two-segment path from a root-module owner
+/// (`crate::opts`, `demo::opts` for an owner in `src/lib.rs` or
+/// `src/main.rs`); a rename to the name, an import from a deeper module, and
+/// a glob below the crate root (`use crate::rival::*`) may bind another
+/// function. Source that does not parse refuses.
 pub(in crate::analysis) fn use_may_rebind_owner(
     source: &str,
     owner: &str,
     owner_file: &std::path::Path,
+    test_file: &std::path::Path,
 ) -> bool {
     let Some(parse) = parse_clean_source_file_memoized(source) else {
         return true;
     };
     let root_owner = owner_file.ends_with("src/lib.rs") || owner_file.ends_with("src/main.rs");
+    let same_file = owner_file == test_file;
     let segments = |tree: &ast::UseTree| -> Vec<String> {
         let mut segments = Vec::new();
         let mut node = Some(tree.clone());
@@ -320,9 +329,7 @@ pub(in crate::analysis) fn use_may_rebind_owner(
         .filter(|tree| tree.use_tree_list().is_none())
         .any(|tree| {
             let path = segments(&tree);
-            if tree.star_token().is_some() {
-                return path.len() > 1;
-            }
+            let glob = tree.star_token().is_some();
             let renamed = tree
                 .rename()
                 .and_then(|rename| rename.name())
@@ -331,10 +338,36 @@ pub(in crate::analysis) fn use_may_rebind_owner(
                 .clone()
                 .or_else(|| path.last().cloned())
                 .unwrap_or_default();
-            if bound != owner {
+            if !glob && bound != owner {
                 return false;
             }
-            renamed.is_some() || !root_owner || path.len() != 2
+            if renamed.is_some() {
+                return true;
+            }
+            let relative = path
+                .first()
+                .is_some_and(|first| first == "self" || first == "super");
+            if relative {
+                let supers = path.iter().take_while(|part| *part == "super").count();
+                let selfs = path.iter().take_while(|part| *part == "self").count();
+                let depth = tree
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .filter(|module| module.item_list().is_some())
+                    .count();
+                let names_file_module = match (selfs, supers) {
+                    (1, 0) => depth == 0,
+                    (0, supers) => supers == depth,
+                    _ => false,
+                };
+                let rest = path.len() - supers - selfs;
+                return !same_file || !names_file_module || rest != usize::from(!glob);
+            }
+            if glob {
+                return path.len() > 1;
+            }
+            !root_owner || path.len() != 2
         })
 }
 
@@ -367,6 +400,20 @@ fn assigns_through(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
                     None => break false,
                 };
             }
+        })
+}
+
+/// Whether the body takes a mutable borrow whose operand reads local `name`
+/// (`&mut *o`, `& mut o.big`): the alias it creates can write the record
+/// before the read without assigning through the name itself.
+fn borrows_mutably(root: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    root.descendants()
+        .filter_map(ast::RefExpr::cast)
+        .filter(|borrow| borrow.mut_token().is_some())
+        .any(|borrow| {
+            borrow
+                .expr()
+                .is_some_and(|operand| has_identifier(&operand.syntax().text().to_string(), name))
         })
 }
 
@@ -899,9 +946,21 @@ impl Reader<'_> {
         // the value the owner returned.
         if self.credit
             && (statement.initializer().is_some_and(|initializer| {
-                let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
-                text.contains("&mut") || text.contains("_mut(") || text.contains("as_mut")
-            }) || assigns_through(parse.tree().syntax(), &name))
+                let text: String =
+                    mask_comments_and_strings(&initializer.syntax().text().to_string())
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .collect();
+                text.contains("&mut")
+                    || text.contains("_mut(")
+                    || text.contains("as_mut")
+                    || initializer
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::RefExpr::cast)
+                        .any(|borrow| borrow.mut_token().is_some())
+            }) || assigns_through(parse.tree().syntax(), &name)
+                || borrows_mutably(parse.tree().syntax(), &name))
         {
             return Sink::Absent;
         }
@@ -1035,6 +1094,8 @@ mod tests {
             // A write-capable initializer or a write through the name.
             "let o = &mut over(10);\no.big = true;\nassert!(o.big);",
             "let o = over(10).as_mut();\nassert!(o.big);",
+            "let o = & mut over(10);\nlet alias = &mut *o;\nalias.big = true;\nassert!(o.big);",
+            "let o = &\tmut over(10);\nassert!(o.big);",
             "let o = over(10);\n*o = other();\nassert!(o.big);",
         ] {
             assert!(!pins(body, "assert!(o.big);"), "{body}");
@@ -1045,15 +1106,20 @@ mod tests {
     fn a_use_that_may_bind_the_owner_name_elsewhere_refuses_the_pin() {
         let root = std::path::Path::new("src/lib.rs");
         let nested = std::path::Path::new("src/opts.rs");
+        let deeper = std::path::Path::new("src/a/b.rs");
         for source in [
-            "use super::*;\nfn t() {}",
+            "mod tests {\n use super::*;\n fn t() {}\n}",
+            "mod tests {\n use super::opts;\n fn t() {}\n}",
             "use crate::opts;\nfn t() {}",
             "use demo::opts;\nfn t() {}",
             "use demo::{opts, Opts};\nfn t() {}",
             "use demo::*;\nfn t() {}",
             "use crate::rival::other;\nfn t() {}",
         ] {
-            assert!(!use_may_rebind_owner(source, "opts", root), "{source}");
+            assert!(
+                !use_may_rebind_owner(source, "opts", root, root),
+                "{source}"
+            );
         }
         for source in [
             "use crate::rival::opts;\nfn t() {}",
@@ -1063,10 +1129,36 @@ mod tests {
             "use crate::make as opts;\nfn t() {}",
             "fn t() { use crate::rival::opts; }",
         ] {
-            assert!(use_may_rebind_owner(source, "opts", root), "{source}");
+            assert!(use_may_rebind_owner(source, "opts", root, root), "{source}");
         }
-        assert!(use_may_rebind_owner("use crate::opts;", "opts", nested));
-        assert!(!use_may_rebind_owner("use super::*;", "opts", nested));
+        assert!(use_may_rebind_owner(
+            "use crate::opts;",
+            "opts",
+            nested,
+            nested
+        ));
+        let inline = "mod tests {\n use super::*;\n fn t() {}\n}";
+        assert!(!use_may_rebind_owner(inline, "opts", nested, nested));
+        // `super` names a module this reader can place only in the owner's
+        // own file, and only at the depth of the `use`: from a test file
+        // elsewhere (`crate::a::b`) or from a nested inline module it names
+        // a parent module that may define a rival of the same name.
+        for (source, test_file) in [
+            ("use super::*;\nfn t() {}", deeper),
+            ("use super::opts;\nfn t() {}", deeper),
+            ("mod tests {\n use super::*;\n fn t() {}\n}", deeper),
+            ("mod tests {\n use super::opts;\n fn t() {}\n}", deeper),
+            ("use super::*;\nfn t() {}", root),
+            ("mod outer {\n mod tests {\n  use super::*;\n }\n}", root),
+            ("mod outer {\n mod tests {\n  use super::opts;\n }\n}", root),
+            ("mod tests {\n use self::opts;\n}", root),
+            ("mod tests {\n use super::super::*;\n}", root),
+        ] {
+            assert!(
+                use_may_rebind_owner(source, "opts", root, test_file),
+                "{source} in {test_file:?}"
+            );
+        }
     }
 
     /// #14562: with the changed field `big` kept, the owner's record reaches

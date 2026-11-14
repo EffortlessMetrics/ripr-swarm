@@ -49,7 +49,7 @@ fn finding(body: &str, family: &str) -> Result<Value, String> {
     let manifest =
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
     let lib = format!(
-        "#[derive(Clone, Debug, PartialEq)]\npub struct Opts {{\n    pub retries: u32,\n    pub big: bool,\n}}\n\nimpl Opts {{\n    pub fn summary(&self) -> u32 {{\n        self.retries\n    }}\n}}\n\npub fn opts(n: u32) -> Opts {{\n    Opts {{\n        retries: 3,\n        big: n >= 10,\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        {body}\n    }}\n}}\n"
+        "#[derive(Clone, Debug, PartialEq)]\npub struct Opts {{\n    pub retries: u32,\n    pub big: bool,\n}}\n\nimpl Opts {{\n    pub fn summary(&self) -> u32 {{\n        self.retries\n    }}\n}}\n\npub fn opts(n: u32) -> Opts {{\n    Opts {{\n        retries: 3,\n        big: n >= 10,\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        {body}\n    }}\n}}\n\npub mod rival {{\n    pub fn opts(_: u32) -> super::Opts {{\n        super::Opts {{\n            retries: 3,\n            big: true,\n        }}\n    }}\n}}\n"
     );
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -16,1 +16,1 @@\n-        big: n > 10,\n+        big: n >= 10,\n";
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
@@ -174,6 +174,7 @@ fn a_bare_assert_on_anything_else_stays_weak() -> Result<(), String> {
         "crate::opts(10);\n        use rival::opts;\n        assert!(opts(10).big);",
         "crate::opts(10);\n        use crate::rival::opts;\n        assert!(opts(10).big);",
         "let o = &mut opts(10);\n        o.big = true;\n        assert!(o.big);",
+        "let o = & mut opts(10);\n        let alias = &mut *o;\n        alias.big = true;\n        assert!(o.big);",
         "let _ = opts(10);\n        fn opts(_: u32) -> Opts { Opts { retries: 3, big: true } }\n        assert!(opts(10).big);",
     ] {
         for family in ["predicate", "field_construction"] {

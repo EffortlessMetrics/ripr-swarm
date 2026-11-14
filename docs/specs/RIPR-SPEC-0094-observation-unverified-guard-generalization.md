@@ -902,10 +902,16 @@ lives in another. A `use` in the test's file that may bind the bare name
 elsewhere also refuses the pin (`use_may_rebind_owner`): a rename to the
 name, an import from below the crate root (`use crate::rival::opts`), a glob
 below the crate root, or any explicit import of the name when the owner is
-not in `src/lib.rs` or `src/main.rs`. A followed `let` must be immutable and
-its initializer write-free (no `&mut`, `as_mut` or `*_mut(..)`), the test may
-not assign through its name (`o.big = true`, `*o = ..`), and no other pattern
-in the test (`if let Some(o)`, `for o in`, a closure parameter) may bind it.
+not in `src/lib.rs` or `src/main.rs`. A `self`- or `super`-rooted import
+(`use super::*;`, `use super::opts;`) is admitted only in the owner's own file
+and only when its `super` count equals the inline `mod` depth of the `use`, so
+it names the owner's module (`mod tests { use super::*; }`); in another file,
+or from a deeper inline module, it may name a parent module with a rival of the
+same name. A followed `let` must be immutable and its initializer write-free (no
+mutable borrow, however spaced, `as_mut` or `*_mut(..)`), the test may neither
+assign through its name (`o.big = true`, `*o = ..`) nor take a mutable borrow
+of it (`let alias = &mut *o;`), and no other pattern in the test
+(`if let Some(o)`, `for o in`, a closure parameter) may bind it.
 
 Known under-credit: a field the token reader cannot confirm (a short name
 such as `ok`), or a read through `.clone()` that the field_construction
