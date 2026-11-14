@@ -24,7 +24,9 @@ use super::diagnostics::{
     workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
-    GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
+    GapArtifactCorpusCurrentness, GapArtifactIdentity, GapArtifactRejection,
+    ValidatedActionableGapsArtifact, ValidatedGapArtifact, ValidatedGapArtifactCommon,
+    ValidatedGapDecisionLedgerArtifact,
 };
 use super::hover::{
     NoEvidenceState, classified_seam_hover_response, diagnostic_covers_position,
@@ -3969,26 +3971,31 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
         vec![diagnostic],
         Vec::new(),
     );
-    snapshot.gap_artifacts.push(ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
-        identities: vec![GapArtifactIdentity {
-            canonical_gap_id: Some("gap:py:pricing".to_string()),
-            seam_id: None,
-            finding_id: None,
-        }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
-        verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-        receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    });
+    snapshot
+        .gap_artifacts
+        .push(ValidatedGapArtifact::GapDecisionLedger(
+            ValidatedGapDecisionLedgerArtifact {
+                common: ValidatedGapArtifactCommon {
+                    root: Some(".".to_string()),
+                    language: Some(LanguageId::Python),
+                    language_status: Some(LanguageStatus::Preview),
+                    gap_state: Some("actionable".to_string()),
+                    related_paths: vec!["tests/test_pricing.py".to_string()],
+                    static_limit_kinds: vec!["missing_import_graph".to_string()],
+                    has_text_static_limit: false,
+                },
+                corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+                identities: vec![GapArtifactIdentity {
+                    canonical_gap_id: Some("gap:py:pricing".to_string()),
+                    seam_id: None,
+                    finding_id: None,
+                }],
+                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                verify_command_specs: Vec::new(),
+                receipt_command_specs: Vec::new(),
+            },
+        ));
     snapshot
         .gap_artifact_rejections
         .push(GapArtifactRejection::WrongRoot(
@@ -4782,16 +4789,23 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
 #[cfg(feature = "lang-python")]
 fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> {
     let mut missing_verify = validated_gap_artifact();
-    missing_verify.verify_command_specs.clear();
+    missing_verify
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_verify, "missing verify")?;
 
     let mut missing_receipt = validated_gap_artifact();
-    missing_receipt.receipt_command_specs.clear();
+    missing_receipt
+        .receipt_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted receipt specs".to_string())?
+        .clear();
     assert_gap_action_specs_omitted(missing_receipt, "missing receipt")?;
 
     let mut malformed = validated_gap_artifact();
     malformed
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .program
@@ -4800,7 +4814,8 @@ fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> 
 
     let mut role_mismatch = validated_gap_artifact();
     role_mismatch
-        .verify_command_specs
+        .verify_command_specs_mut()
+        .ok_or_else(|| "validated fixture omitted verify specs".to_string())?
         .first_mut()
         .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
         .role = crate::domain::CommandRole::Receipt;
@@ -16265,19 +16280,22 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
 }
 
 fn validated_gap_artifact() -> ValidatedGapArtifact {
-    ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: Some(".".to_string()),
+    ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+        common: ValidatedGapArtifactCommon {
+            root: Some(".".to_string()),
+            language: Some(LanguageId::Python),
+            language_status: Some(LanguageStatus::Preview),
+            gap_state: Some("actionable".to_string()),
+            related_paths: vec!["tests/test_pricing.py".to_string()],
+            static_limit_kinds: vec!["missing_import_graph".to_string()],
+            has_text_static_limit: false,
+        },
+        corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
             seam_id: None,
             finding_id: None,
         }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
         verify_commands: vec!["ripr agent verify --root . --json".to_string()],
         receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
         verify_command_specs: vec![crate::agent::command_specs::agent_verify_command_spec(
@@ -16292,9 +16310,7 @@ fn validated_gap_artifact() -> ValidatedGapArtifact {
             "seam-a",
             Some("receipt.json"),
         )],
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    }
+    })
 }
 
 fn sample_analysis_snapshot(
@@ -20440,26 +20456,29 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
         diagnostics
             .snapshot
             .gap_artifacts
-            .push(ValidatedGapArtifact {
-                kind: GapArtifactKind::ActionableGaps,
-                corpus_currentness: None,
-                root: Some(".".to_string()),
-                identities: vec![GapArtifactIdentity {
-                    canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
-                    seam_id: None,
-                    finding_id: None,
-                }],
-                language: Some(LanguageId::Rust),
-                language_status: Some(LanguageStatus::Stable),
-                gap_state: Some("actionable".to_string()),
-                related_paths: vec!["src/pricing.rs".to_string()],
-                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-                verify_command_specs: Vec::new(),
-                receipt_command_specs: Vec::new(),
-                static_limit_kinds: Vec::new(),
-                has_text_static_limit: false,
-            });
+            .push(ValidatedGapArtifact::ActionableGaps(
+                ValidatedActionableGapsArtifact {
+                    common: ValidatedGapArtifactCommon {
+                        root: Some(".".to_string()),
+                        language: Some(LanguageId::Rust),
+                        language_status: Some(LanguageStatus::Stable),
+                        gap_state: Some("actionable".to_string()),
+                        related_paths: vec!["src/pricing.rs".to_string()],
+                        static_limit_kinds: Vec::new(),
+                        has_text_static_limit: false,
+                    },
+                    corpus_currentness: GapArtifactCorpusCurrentness::CurrentRustWorkspace,
+                    identities: vec![GapArtifactIdentity {
+                        canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
+                        seam_id: None,
+                        finding_id: None,
+                    }],
+                    verify_commands: vec!["ripr agent verify --root . --json".to_string()],
+                    receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
+                    verify_command_specs: Vec::new(),
+                    receipt_command_specs: Vec::new(),
+                },
+            ));
         diagnostics
             .snapshot
             .gap_artifact_rejections

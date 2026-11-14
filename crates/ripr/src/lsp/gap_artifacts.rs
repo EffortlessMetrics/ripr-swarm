@@ -25,21 +25,70 @@ pub(super) enum GapArtifactCorpusCurrentness {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ValidatedGapArtifact {
-    pub(super) kind: GapArtifactKind,
-    pub(super) corpus_currentness: Option<GapArtifactCorpusCurrentness>,
+pub(super) struct ValidatedGapArtifactCommon {
     pub(super) root: Option<String>,
-    pub(super) identities: Vec<GapArtifactIdentity>,
     pub(super) language: Option<LanguageId>,
     pub(super) language_status: Option<LanguageStatus>,
     pub(super) gap_state: Option<String>,
     pub(super) related_paths: Vec<String>,
+    pub(super) static_limit_kinds: Vec<String>,
+    pub(super) has_text_static_limit: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValidatedActionableGapsArtifact {
+    pub(super) common: ValidatedGapArtifactCommon,
+    pub(super) corpus_currentness: GapArtifactCorpusCurrentness,
+    pub(super) identities: Vec<GapArtifactIdentity>,
     pub(super) verify_commands: Vec<String>,
     pub(super) receipt_commands: Vec<String>,
     pub(super) verify_command_specs: Vec<CommandSpec>,
     pub(super) receipt_command_specs: Vec<CommandSpec>,
-    pub(super) static_limit_kinds: Vec<String>,
-    pub(super) has_text_static_limit: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValidatedGapDecisionLedgerArtifact {
+    pub(super) common: ValidatedGapArtifactCommon,
+    pub(super) corpus_currentness: GapArtifactCorpusCurrentness,
+    pub(super) identities: Vec<GapArtifactIdentity>,
+    pub(super) verify_commands: Vec<String>,
+    pub(super) receipt_commands: Vec<String>,
+    pub(super) verify_command_specs: Vec<CommandSpec>,
+    pub(super) receipt_command_specs: Vec<CommandSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValidatedFirstUsefulActionArtifact {
+    pub(super) common: ValidatedGapArtifactCommon,
+    pub(super) identity: GapArtifactIdentity,
+    pub(super) verify_commands: Vec<String>,
+    pub(super) receipt_commands: Vec<String>,
+    pub(super) verify_command_specs: Vec<CommandSpec>,
+    pub(super) receipt_command_specs: Vec<CommandSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValidatedEvidenceRecordArtifact {
+    pub(super) common: ValidatedGapArtifactCommon,
+    pub(super) identity: GapArtifactIdentity,
+    pub(super) verify_commands: Vec<String>,
+    pub(super) verify_command_specs: Vec<CommandSpec>,
+    pub(super) receipt_command_specs: Vec<CommandSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ValidatedAgentReceiptArtifact {
+    pub(super) common: ValidatedGapArtifactCommon,
+    pub(super) identity: GapArtifactIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ValidatedGapArtifact {
+    ActionableGaps(ValidatedActionableGapsArtifact),
+    EvidenceRecord(ValidatedEvidenceRecordArtifact),
+    FirstUsefulAction(ValidatedFirstUsefulActionArtifact),
+    GapDecisionLedger(ValidatedGapDecisionLedgerArtifact),
+    AgentReceipt(ValidatedAgentReceiptArtifact),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -88,14 +137,165 @@ pub(super) enum GapArtifactRejection {
     WrongRoot(String),
 }
 
+impl GapArtifactIdentity {
+    pub(super) fn is_present(&self) -> bool {
+        self.canonical_gap_id.is_some()
+            || self.seam_id.is_some()
+            || self.finding_id.is_some()
+    }
+}
+
 impl ValidatedGapArtifact {
+    pub(super) fn kind(&self) -> GapArtifactKind {
+        match self {
+            Self::ActionableGaps(_) => GapArtifactKind::ActionableGaps,
+            Self::EvidenceRecord(_) => GapArtifactKind::EvidenceRecord,
+            Self::FirstUsefulAction(_) => GapArtifactKind::FirstUsefulAction,
+            Self::GapDecisionLedger(_) => GapArtifactKind::GapDecisionLedger,
+            Self::AgentReceipt(_) => GapArtifactKind::AgentReceipt,
+        }
+    }
+
+    pub(super) fn common(&self) -> &ValidatedGapArtifactCommon {
+        match self {
+            Self::ActionableGaps(payload) => &payload.common,
+            Self::EvidenceRecord(payload) => &payload.common,
+            Self::FirstUsefulAction(payload) => &payload.common,
+            Self::GapDecisionLedger(payload) => &payload.common,
+            Self::AgentReceipt(payload) => &payload.common,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn common_mut(&mut self) -> &mut ValidatedGapArtifactCommon {
+        match self {
+            Self::ActionableGaps(payload) => &mut payload.common,
+            Self::EvidenceRecord(payload) => &mut payload.common,
+            Self::FirstUsefulAction(payload) => &mut payload.common,
+            Self::GapDecisionLedger(payload) => &mut payload.common,
+            Self::AgentReceipt(payload) => &mut payload.common,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn corpus_currentness(&self) -> Option<GapArtifactCorpusCurrentness> {
+        match self {
+            Self::ActionableGaps(payload) => Some(payload.corpus_currentness),
+            Self::GapDecisionLedger(payload) => Some(payload.corpus_currentness),
+            Self::EvidenceRecord(_) | Self::FirstUsefulAction(_) | Self::AgentReceipt(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn root(&self) -> Option<&str> {
+        self.common().root.as_deref()
+    }
+
+    pub(super) fn identities(&self) -> &[GapArtifactIdentity] {
+        match self {
+            Self::ActionableGaps(payload) => &payload.identities,
+            Self::GapDecisionLedger(payload) => &payload.identities,
+            Self::EvidenceRecord(payload) => std::slice::from_ref(&payload.identity),
+            Self::FirstUsefulAction(payload) => std::slice::from_ref(&payload.identity),
+            Self::AgentReceipt(payload) => std::slice::from_ref(&payload.identity),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn language(&self) -> Option<LanguageId> {
+        self.common().language
+    }
+
+    pub(super) fn language_status(&self) -> Option<LanguageStatus> {
+        self.common().language_status
+    }
+
+    pub(super) fn gap_state(&self) -> Option<&str> {
+        self.common().gap_state.as_deref()
+    }
+
+    pub(super) fn related_paths(&self) -> &[String] {
+        &self.common().related_paths
+    }
+
+    pub(super) fn verify_commands(&self) -> &[String] {
+        match self {
+            Self::ActionableGaps(payload) => &payload.verify_commands,
+            Self::GapDecisionLedger(payload) => &payload.verify_commands,
+            Self::FirstUsefulAction(payload) => &payload.verify_commands,
+            Self::EvidenceRecord(payload) => &payload.verify_commands,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    pub(super) fn receipt_commands(&self) -> &[String] {
+        match self {
+            Self::ActionableGaps(payload) => &payload.receipt_commands,
+            Self::GapDecisionLedger(payload) => &payload.receipt_commands,
+            Self::FirstUsefulAction(payload) => &payload.receipt_commands,
+            Self::EvidenceRecord(_) | Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    pub(super) fn verify_command_specs(&self) -> &[CommandSpec] {
+        match self {
+            Self::ActionableGaps(payload) => &payload.verify_command_specs,
+            Self::GapDecisionLedger(payload) => &payload.verify_command_specs,
+            Self::FirstUsefulAction(payload) => &payload.verify_command_specs,
+            Self::EvidenceRecord(payload) => &payload.verify_command_specs,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    pub(super) fn receipt_command_specs(&self) -> &[CommandSpec] {
+        match self {
+            Self::ActionableGaps(payload) => &payload.receipt_command_specs,
+            Self::GapDecisionLedger(payload) => &payload.receipt_command_specs,
+            Self::FirstUsefulAction(payload) => &payload.receipt_command_specs,
+            Self::EvidenceRecord(payload) => &payload.receipt_command_specs,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn verify_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
+        match self {
+            Self::ActionableGaps(payload) => Some(&mut payload.verify_command_specs),
+            Self::GapDecisionLedger(payload) => Some(&mut payload.verify_command_specs),
+            Self::FirstUsefulAction(payload) => Some(&mut payload.verify_command_specs),
+            Self::EvidenceRecord(payload) => Some(&mut payload.verify_command_specs),
+            Self::AgentReceipt(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn receipt_command_specs_mut(&mut self) -> Option<&mut Vec<CommandSpec>> {
+        match self {
+            Self::ActionableGaps(payload) => Some(&mut payload.receipt_command_specs),
+            Self::GapDecisionLedger(payload) => Some(&mut payload.receipt_command_specs),
+            Self::FirstUsefulAction(payload) => Some(&mut payload.receipt_command_specs),
+            Self::EvidenceRecord(payload) => Some(&mut payload.receipt_command_specs),
+            Self::AgentReceipt(_) => None,
+        }
+    }
+
+    pub(super) fn static_limit_kinds(&self) -> &[String] {
+        &self.common().static_limit_kinds
+    }
+
+    pub(super) fn has_text_static_limit(&self) -> bool {
+        self.common().has_text_static_limit
+    }
+
     pub(super) fn corpus_currentness_json(&self) -> Option<Value> {
-        let kind = match self.kind {
-            GapArtifactKind::GapDecisionLedger => "gap_decision_ledger",
-            GapArtifactKind::ActionableGaps => "actionable_gaps",
-            _ => return None,
+        let (kind, currentness) = match self {
+            Self::GapDecisionLedger(payload) => ("gap_decision_ledger", payload.corpus_currentness),
+            Self::ActionableGaps(payload) => ("actionable_gaps", payload.corpus_currentness),
+            Self::EvidenceRecord(_) | Self::FirstUsefulAction(_) | Self::AgentReceipt(_) => {
+                return None;
+            }
         };
-        let (scope, currentness, limitation) = match self.corpus_currentness? {
+        let (scope, currentness, limitation) = match currentness {
             GapArtifactCorpusCurrentness::CurrentRustWorkspace => {
                 ("rust_workspace", "current", None)
             }
@@ -119,54 +319,52 @@ impl ValidatedGapArtifact {
     }
 
     pub(super) fn is_safe_projection_input(&self) -> bool {
-        let kind_is_supported = matches!(
-            self.kind,
-            GapArtifactKind::ActionableGaps
-                | GapArtifactKind::EvidenceRecord
-                | GapArtifactKind::FirstUsefulAction
-                | GapArtifactKind::GapDecisionLedger
-                | GapArtifactKind::AgentReceipt
-        );
-        let root_is_present_or_deferred = self
+        let common = self.common();
+        let root_is_present_or_deferred = common
             .root
             .as_ref()
             .is_none_or(|root| !root.trim().is_empty());
-        let identity_is_present = self.identities.iter().any(|identity| {
-            identity.canonical_gap_id.is_some()
-                || identity.seam_id.is_some()
-                || identity.finding_id.is_some()
-        }) || (self.kind == GapArtifactKind::ActionableGaps
-            && self.is_no_action_gap());
-        let language_is_supported = self.language.is_none_or(|language| language.is_available());
-        let status_is_supported = self.language_status.is_none_or(|status| {
+        let identity_is_present = match self {
+            Self::ActionableGaps(payload) => {
+                payload.identities.iter().any(GapArtifactIdentity::is_present)
+                    || self.is_no_action_gap()
+            }
+            Self::GapDecisionLedger(payload) => {
+                payload.identities.iter().any(GapArtifactIdentity::is_present)
+            }
+            Self::EvidenceRecord(payload) => payload.identity.is_present(),
+            Self::FirstUsefulAction(payload) => payload.identity.is_present(),
+            Self::AgentReceipt(payload) => payload.identity.is_present(),
+        };
+        let language_is_supported = common.language.is_none_or(|language| language.is_available());
+        let status_is_supported = common.language_status.is_none_or(|status| {
             matches!(status, LanguageStatus::Stable | LanguageStatus::Preview)
         });
-        let gap_state_is_present_or_deferred = self
+        let gap_state_is_present_or_deferred = common
             .gap_state
             .as_ref()
             .is_none_or(|state| !state.trim().is_empty());
-        let path_payloads_are_present = self
+        let path_payloads_are_present = common
             .related_paths
             .iter()
             .all(|path| !path.trim().is_empty());
         let command_payloads_are_present = self
-            .verify_commands
+            .verify_commands()
             .iter()
-            .chain(self.receipt_commands.iter())
+            .chain(self.receipt_commands().iter())
             .all(|command| !command.trim().is_empty());
         let typed_command_specs_are_valid = self
-            .verify_command_specs
+            .verify_command_specs()
             .iter()
-            .chain(self.receipt_command_specs.iter())
+            .chain(self.receipt_command_specs().iter())
             .all(|command| command.validate().is_ok());
-        let static_limits_are_structured_or_text = self
+        let static_limits_are_structured_or_text = common
             .static_limit_kinds
             .iter()
             .all(|kind| known_static_limit_kind(kind))
-            || self.has_text_static_limit;
+            || common.has_text_static_limit;
 
-        kind_is_supported
-            && root_is_present_or_deferred
+        root_is_present_or_deferred
             && identity_is_present
             && language_is_supported
             && status_is_supported
@@ -178,12 +376,12 @@ impl ValidatedGapArtifact {
     }
 
     pub(super) fn is_actionable_gap(&self) -> bool {
-        self.gap_state.as_deref() == Some("actionable")
+        self.gap_state() == Some("actionable")
     }
 
     pub(super) fn is_no_action_gap(&self) -> bool {
         matches!(
-            self.gap_state.as_deref(),
+            self.gap_state(),
             Some(
                 "already_improved"
                     | "baseline_only"
@@ -196,11 +394,11 @@ impl ValidatedGapArtifact {
     }
 
     pub(super) fn is_preview(&self) -> bool {
-        self.language_status == Some(LanguageStatus::Preview)
+        self.language_status() == Some(LanguageStatus::Preview)
     }
 
     pub(super) fn has_static_limit(&self) -> bool {
-        !self.static_limit_kinds.is_empty() || self.has_text_static_limit
+        !self.static_limit_kinds().is_empty() || self.has_text_static_limit()
     }
 }
 
@@ -275,6 +473,187 @@ fn validate_workspace_gap_artifact(
     Some(validate_gap_artifact(&value, context))
 }
 
+enum PendingGapArtifact {
+    ActionableGaps {
+        common: ValidatedGapArtifactCommon,
+        identities: Vec<GapArtifactIdentity>,
+        verify_commands: Vec<String>,
+        receipt_commands: Vec<String>,
+        verify_command_specs: Vec<CommandSpec>,
+        receipt_command_specs: Vec<CommandSpec>,
+    },
+    GapDecisionLedger {
+        common: ValidatedGapArtifactCommon,
+        identities: Vec<GapArtifactIdentity>,
+        verify_commands: Vec<String>,
+        receipt_commands: Vec<String>,
+        verify_command_specs: Vec<CommandSpec>,
+        receipt_command_specs: Vec<CommandSpec>,
+    },
+    FirstUsefulAction(ValidatedFirstUsefulActionArtifact),
+    EvidenceRecord(ValidatedEvidenceRecordArtifact),
+    AgentReceipt(ValidatedAgentReceiptArtifact),
+}
+
+impl PendingGapArtifact {
+    fn common(&self) -> &ValidatedGapArtifactCommon {
+        match self {
+            Self::ActionableGaps { common, .. } | Self::GapDecisionLedger { common, .. } => common,
+            Self::FirstUsefulAction(payload) => &payload.common,
+            Self::EvidenceRecord(payload) => &payload.common,
+            Self::AgentReceipt(payload) => &payload.common,
+        }
+    }
+
+    fn common_mut(&mut self) -> &mut ValidatedGapArtifactCommon {
+        match self {
+            Self::ActionableGaps { common, .. } | Self::GapDecisionLedger { common, .. } => common,
+            Self::FirstUsefulAction(payload) => &mut payload.common,
+            Self::EvidenceRecord(payload) => &mut payload.common,
+            Self::AgentReceipt(payload) => &mut payload.common,
+        }
+    }
+
+    fn verify_commands(&self) -> &[String] {
+        match self {
+            Self::ActionableGaps {
+                verify_commands, ..
+            }
+            | Self::GapDecisionLedger {
+                verify_commands, ..
+            } => verify_commands,
+            Self::FirstUsefulAction(payload) => &payload.verify_commands,
+            Self::EvidenceRecord(payload) => &payload.verify_commands,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    fn receipt_commands(&self) -> &[String] {
+        match self {
+            Self::ActionableGaps {
+                receipt_commands, ..
+            }
+            | Self::GapDecisionLedger {
+                receipt_commands, ..
+            } => receipt_commands,
+            Self::FirstUsefulAction(payload) => &payload.receipt_commands,
+            Self::EvidenceRecord(_) | Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    fn verify_command_specs(&self) -> &[CommandSpec] {
+        match self {
+            Self::ActionableGaps {
+                verify_command_specs,
+                ..
+            }
+            | Self::GapDecisionLedger {
+                verify_command_specs,
+                ..
+            } => verify_command_specs,
+            Self::FirstUsefulAction(payload) => &payload.verify_command_specs,
+            Self::EvidenceRecord(payload) => &payload.verify_command_specs,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    fn receipt_command_specs(&self) -> &[CommandSpec] {
+        match self {
+            Self::ActionableGaps {
+                receipt_command_specs,
+                ..
+            }
+            | Self::GapDecisionLedger {
+                receipt_command_specs,
+                ..
+            } => receipt_command_specs,
+            Self::FirstUsefulAction(payload) => &payload.receipt_command_specs,
+            Self::EvidenceRecord(payload) => &payload.receipt_command_specs,
+            Self::AgentReceipt(_) => &[],
+        }
+    }
+
+    fn has_missing_identity(&self) -> bool {
+        match self {
+            Self::ActionableGaps {
+                common, identities, ..
+            } => {
+                identities.is_empty()
+                    && !matches!(
+                        common.gap_state.as_deref(),
+                        Some(
+                            "already_improved"
+                                | "baseline_only"
+                                | "no_actionable_seam"
+                                | "suppressed"
+                                | "acknowledged"
+                                | "waived"
+                        )
+                    )
+            }
+            Self::GapDecisionLedger { identities, .. } => identities.is_empty(),
+            Self::FirstUsefulAction(_) | Self::EvidenceRecord(_) | Self::AgentReceipt(_) => false,
+        }
+    }
+
+    fn into_validated(
+        self,
+        corpus_currentness: Option<GapArtifactCorpusCurrentness>,
+    ) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+        match self {
+            Self::ActionableGaps {
+                common,
+                identities,
+                verify_commands,
+                receipt_commands,
+                verify_command_specs,
+                receipt_command_specs,
+            } => Ok(ValidatedGapArtifact::ActionableGaps(
+                ValidatedActionableGapsArtifact {
+                    common,
+                    corpus_currentness: corpus_currentness.ok_or(
+                        GapArtifactRejection::UnverifiableSubject(
+                            "source_subject_corpus_scope_missing",
+                        ),
+                    )?,
+                    identities,
+                    verify_commands,
+                    receipt_commands,
+                    verify_command_specs,
+                    receipt_command_specs,
+                },
+            )),
+            Self::GapDecisionLedger {
+                common,
+                identities,
+                verify_commands,
+                receipt_commands,
+                verify_command_specs,
+                receipt_command_specs,
+            } => Ok(ValidatedGapArtifact::GapDecisionLedger(
+                ValidatedGapDecisionLedgerArtifact {
+                    common,
+                    corpus_currentness: corpus_currentness.ok_or(
+                        GapArtifactRejection::UnverifiableSubject(
+                            "source_subject_corpus_scope_missing",
+                        ),
+                    )?,
+                    identities,
+                    verify_commands,
+                    receipt_commands,
+                    verify_command_specs,
+                    receipt_command_specs,
+                },
+            )),
+            Self::FirstUsefulAction(payload) => {
+                Ok(ValidatedGapArtifact::FirstUsefulAction(payload))
+            }
+            Self::EvidenceRecord(payload) => Ok(ValidatedGapArtifact::EvidenceRecord(payload)),
+            Self::AgentReceipt(payload) => Ok(ValidatedGapArtifact::AgentReceipt(payload)),
+        }
+    }
+}
+
 pub(super) fn validate_gap_artifact(
     artifact: &Value,
     context: &GapArtifactValidationContext<'_>,
@@ -300,28 +679,30 @@ pub(super) fn validate_gap_artifact(
         GapArtifactKind::AgentReceipt => validate_agent_receipt(artifact, report_root)?,
     };
 
-    validate_language(context, validation.language, validation.language_status)?;
-    validate_paths(context.root, &validation.related_paths)?;
-    validate_commands(context.root, &validation.verify_commands)?;
-    validate_commands(context.root, &validation.receipt_commands)?;
+    validate_language(
+        context,
+        validation.common().language,
+        validation.common().language_status,
+    )?;
+    validate_paths(context.root, &validation.common().related_paths)?;
+    validate_commands(context.root, validation.verify_commands())?;
+    validate_commands(context.root, validation.receipt_commands())?;
     validate_typed_command_specs(
-        &validation.verify_command_specs,
+        validation.verify_command_specs(),
         crate::domain::CommandRole::Verify,
     )?;
     validate_typed_command_specs(
-        &validation.receipt_command_specs,
+        validation.receipt_command_specs(),
         crate::domain::CommandRole::Receipt,
     )?;
     validate_static_limits(artifact)?;
-    normalize_static_limits(artifact, &mut validation);
-    if validation.identities.is_empty()
-        && !(validation.kind == GapArtifactKind::ActionableGaps && validation.is_no_action_gap())
-    {
+    normalize_static_limits(artifact, validation.common_mut());
+    if validation.has_missing_identity() {
         return Err(GapArtifactRejection::MissingIdentity);
     }
-    validation.corpus_currentness =
+    let corpus_currentness =
         validate_source_subject(artifact, kind, context.root, context.repo_config)?;
-    Ok(validation)
+    validation.into_validated(corpus_currentness)
 }
 
 /// Extracts the files one record or packet makes claims about.
@@ -451,7 +832,7 @@ pub(super) fn source_subject_result(check: SourceSubjectCheck) -> Result<(), Gap
 fn validate_first_useful_action(
     artifact: &Value,
     report_root: Option<&str>,
-) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+) -> Result<PendingGapArtifact, GapArtifactRejection> {
     let selected = artifact.get("selected");
     let target = artifact.get("target");
     let commands = artifact.get("commands");
@@ -465,31 +846,33 @@ fn validate_first_useful_action(
     let verify_commands = string_values(&[path_value(commands, &["verify"])]);
     let receipt_commands = string_values(&[path_value(commands, &["receipt"])]);
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(commands)?;
-    Ok(ValidatedGapArtifact {
-        kind: GapArtifactKind::FirstUsefulAction,
-        corpus_currentness: None,
-        root: report_root.map(ToOwned::to_owned),
-        identities: vec![identity],
-        language: language_from_value(artifact)?,
-        language_status: language_status_from_value(artifact)?,
-        gap_state: artifact
-            .get("status")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        related_paths,
-        verify_commands,
-        receipt_commands,
-        verify_command_specs,
-        receipt_command_specs,
-        static_limit_kinds: Vec::new(),
-        has_text_static_limit: false,
-    })
+    Ok(PendingGapArtifact::FirstUsefulAction(
+        ValidatedFirstUsefulActionArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: report_root.map(ToOwned::to_owned),
+                language: language_from_value(artifact)?,
+                language_status: language_status_from_value(artifact)?,
+                gap_state: artifact
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                related_paths,
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            identity,
+            verify_commands,
+            receipt_commands,
+            verify_command_specs,
+            receipt_command_specs,
+        },
+    ))
 }
 
 fn validate_gap_decision_ledger(
     artifact: &Value,
     report_root: Option<&str>,
-) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+) -> Result<PendingGapArtifact, GapArtifactRejection> {
     let records = artifact
         .get("records")
         .or_else(|| artifact.get("gap_records"))
@@ -566,21 +949,21 @@ fn validate_gap_decision_ledger(
                 .map(ToOwned::to_owned)
         });
     }
-    Ok(ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        corpus_currentness: None,
-        root: report_root.map(ToOwned::to_owned),
+    Ok(PendingGapArtifact::GapDecisionLedger {
+        common: ValidatedGapArtifactCommon {
+            root: report_root.map(ToOwned::to_owned),
+            language,
+            language_status,
+            gap_state,
+            related_paths,
+            static_limit_kinds: Vec::new(),
+            has_text_static_limit: false,
+        },
         identities,
-        language,
-        language_status,
-        gap_state,
-        related_paths,
         verify_commands,
         receipt_commands,
         verify_command_specs,
         receipt_command_specs,
-        static_limit_kinds: Vec::new(),
-        has_text_static_limit: false,
     })
 }
 
@@ -588,7 +971,7 @@ fn validate_actionable_gaps(
     artifact: &Value,
     report_root: Option<&str>,
     context: &GapArtifactValidationContext<'_>,
-) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+) -> Result<PendingGapArtifact, GapArtifactRejection> {
     if report_has_run_limitations(artifact) {
         return Err(GapArtifactRejection::MalformedArtifact(
             "actionable-gaps report must not carry run_limitations for editor projection",
@@ -717,21 +1100,21 @@ fn validate_actionable_gaps(
         })
     };
 
-    Ok(ValidatedGapArtifact {
-        kind: GapArtifactKind::ActionableGaps,
-        corpus_currentness: None,
-        root: report_root.map(ToOwned::to_owned),
+    Ok(PendingGapArtifact::ActionableGaps {
+        common: ValidatedGapArtifactCommon {
+            root: report_root.map(ToOwned::to_owned),
+            language,
+            language_status,
+            gap_state,
+            related_paths,
+            static_limit_kinds: Vec::new(),
+            has_text_static_limit: false,
+        },
         identities,
-        language,
-        language_status,
-        gap_state,
-        related_paths,
         verify_commands,
         receipt_commands,
         verify_command_specs,
         receipt_command_specs,
-        static_limit_kinds: Vec::new(),
-        has_text_static_limit: false,
     })
 }
 
@@ -1134,7 +1517,7 @@ fn actionable_packet_workspace_relative_file_token(value: &str) -> Option<String
 fn validate_evidence_record(
     artifact: &Value,
     report_root: Option<&str>,
-) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+) -> Result<PendingGapArtifact, GapArtifactRejection> {
     let identity = identity_from_sources(&[
         Some(artifact),
         artifact.get("canonical_item"),
@@ -1155,30 +1538,31 @@ fn validate_evidence_record(
         path_value(recommendation, &["verify_command"]),
     ]);
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(canonical_item)?;
-    Ok(ValidatedGapArtifact {
-        kind: GapArtifactKind::EvidenceRecord,
-        corpus_currentness: None,
-        root: report_root.map(ToOwned::to_owned),
-        identities: vec![identity],
-        language: language_from_value(artifact)?,
-        language_status: language_status_from_value(artifact)?,
-        gap_state: path_value(canonical_item, &["gap_state"])
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        related_paths,
-        verify_commands,
-        receipt_commands: Vec::new(),
-        verify_command_specs,
-        receipt_command_specs,
-        static_limit_kinds: Vec::new(),
-        has_text_static_limit: false,
-    })
+    Ok(PendingGapArtifact::EvidenceRecord(
+        ValidatedEvidenceRecordArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: report_root.map(ToOwned::to_owned),
+                language: language_from_value(artifact)?,
+                language_status: language_status_from_value(artifact)?,
+                gap_state: path_value(canonical_item, &["gap_state"])
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                related_paths,
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            identity,
+            verify_commands,
+            verify_command_specs,
+            receipt_command_specs,
+        },
+    ))
 }
 
 fn validate_agent_receipt(
     artifact: &Value,
     report_root: Option<&str>,
-) -> Result<ValidatedGapArtifact, GapArtifactRejection> {
+) -> Result<PendingGapArtifact, GapArtifactRejection> {
     let identity = identity_from_sources(&[Some(artifact), artifact.get("selected")])
         .ok_or(GapArtifactRejection::MissingIdentity)?;
     let inputs = artifact.get("inputs");
@@ -1187,25 +1571,23 @@ fn validate_agent_receipt(
         path_value(inputs, &["verify"]),
         path_value(artifact.get("target"), &["file"]),
     ]);
-    Ok(ValidatedGapArtifact {
-        kind: GapArtifactKind::AgentReceipt,
-        corpus_currentness: None,
-        root: report_root.map(ToOwned::to_owned),
-        identities: vec![identity],
-        language: language_from_value(artifact)?,
-        language_status: language_status_from_value(artifact)?,
-        gap_state: artifact
-            .get("movement")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        related_paths,
-        verify_commands: Vec::new(),
-        receipt_commands: Vec::new(),
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
-        static_limit_kinds: Vec::new(),
-        has_text_static_limit: false,
-    })
+    Ok(PendingGapArtifact::AgentReceipt(
+        ValidatedAgentReceiptArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: report_root.map(ToOwned::to_owned),
+                language: language_from_value(artifact)?,
+                language_status: language_status_from_value(artifact)?,
+                gap_state: artifact
+                    .get("movement")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                related_paths,
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            identity,
+        },
+    ))
 }
 
 fn command_specs_from_value(
@@ -1227,8 +1609,8 @@ fn command_specs_from_value(
 /// Return only the typed routes already validated from the matched snapshot
 /// artifact. Request-side diagnostic data is never authoritative here.
 pub(super) fn command_specs_for_projection(artifact: &ValidatedGapArtifact) -> Option<Value> {
-    let verify = &artifact.verify_command_specs;
-    let receipt = &artifact.receipt_command_specs;
+    let verify = artifact.verify_command_specs();
+    let receipt = artifact.receipt_command_specs();
     validate_typed_command_specs(verify, crate::domain::CommandRole::Verify).ok()?;
     validate_typed_command_specs(receipt, crate::domain::CommandRole::Receipt).ok()?;
     if verify.is_empty() || receipt.is_empty() {
@@ -1417,14 +1799,14 @@ fn validate_static_limits(artifact: &Value) -> Result<(), GapArtifactRejection> 
     Ok(())
 }
 
-fn normalize_static_limits(artifact: &Value, validation: &mut ValidatedGapArtifact) {
+fn normalize_static_limits(artifact: &Value, common: &mut ValidatedGapArtifactCommon) {
     let mut seen = BTreeSet::new();
     for kind in static_limit_kind_values(artifact) {
         if seen.insert(kind.clone()) {
-            validation.static_limit_kinds.push(kind);
+            common.static_limit_kinds.push(kind);
         }
     }
-    validation.has_text_static_limit = contains_text_static_limit(artifact);
+    common.has_text_static_limit = contains_text_static_limit(artifact);
 }
 
 fn identity_from_sources(sources: &[Option<&Value>]) -> Option<GapArtifactIdentity> {
@@ -2808,21 +3190,21 @@ mod tests {
             "acknowledged",
             "waived",
         ] {
-            validated.gap_state = Some(status.to_string());
+            validated.common_mut().gap_state = Some(status.to_string());
             assert!(validated.is_no_action_gap(), "{status}");
             assert!(!validated.is_actionable_gap(), "{status}");
         }
 
-        validated.gap_state = Some("unchanged_after_attempt".to_string());
+        validated.common_mut().gap_state = Some("unchanged_after_attempt".to_string());
         assert!(!validated.is_no_action_gap());
         assert!(!validated.is_actionable_gap());
 
-        validated.language_status = Some(LanguageStatus::Stable);
+        validated.common_mut().language_status = Some(LanguageStatus::Stable);
         assert!(!validated.is_preview());
-        validated.static_limit_kinds.clear();
-        validated.has_text_static_limit = false;
+        validated.common_mut().static_limit_kinds.clear();
+        validated.common_mut().has_text_static_limit = false;
         assert!(!validated.has_static_limit());
-        validated.has_text_static_limit = true;
+        validated.common_mut().has_text_static_limit = true;
         assert!(validated.has_static_limit());
         Ok(())
     }
@@ -2889,15 +3271,15 @@ mod tests {
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
 
-        assert_eq!(validated.kind, GapArtifactKind::FirstUsefulAction);
-        assert_eq!(validated.root.as_deref(), Some("."));
-        assert_eq!(validated.identities[0].seam_id.as_deref(), Some("seam-1"));
-        assert_eq!(validated.gap_state.as_deref(), Some("actionable"));
-        assert_eq!(validated.related_paths.len(), 3);
-        assert_eq!(validated.verify_commands.len(), 1);
-        assert_eq!(validated.receipt_commands.len(), 1);
-        assert_eq!(validated.verify_command_specs.len(), 1);
-        assert_eq!(validated.receipt_command_specs.len(), 1);
+        assert_eq!(validated.kind(), GapArtifactKind::FirstUsefulAction);
+        assert_eq!(validated.root(), Some("."));
+        assert_eq!(validated.identities()[0].seam_id.as_deref(), Some("seam-1"));
+        assert_eq!(validated.gap_state(), Some("actionable"));
+        assert_eq!(validated.related_paths().len(), 3);
+        assert_eq!(validated.verify_commands().len(), 1);
+        assert_eq!(validated.receipt_commands().len(), 1);
+        assert_eq!(validated.verify_command_specs().len(), 1);
+        assert_eq!(validated.receipt_command_specs().len(), 1);
         Ok(())
     }
 
@@ -2926,8 +3308,8 @@ mod tests {
         };
         let validated =
             validate_gap_artifact(&artifact, &context).map_err(|err| format!("{err:?}"))?;
-        assert_eq!(validated.kind, GapArtifactKind::FirstUsefulAction);
-        assert!(validated.verify_commands[0].contains(" > "));
+        assert_eq!(validated.kind(), GapArtifactKind::FirstUsefulAction);
+        assert!(validated.verify_commands()[0].contains(" > "));
 
         artifact["commands"]["verify"] =
             json!("ripr agent verify --root . --json > /elsewhere/target/ripr/v.json");
@@ -2944,23 +3326,23 @@ mod tests {
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
 
-        assert_eq!(validated.kind, GapArtifactKind::ActionableGaps);
+        assert_eq!(validated.kind(), GapArtifactKind::ActionableGaps);
         assert_eq!(
-            validated.identities[0].canonical_gap_id.as_deref(),
+            validated.identities()[0].canonical_gap_id.as_deref(),
             Some("gap:rust:pricing-boundary")
         );
-        assert_eq!(validated.language, Some(LanguageId::Rust));
-        assert_eq!(validated.language_status, Some(LanguageStatus::Stable));
-        assert_eq!(validated.gap_state.as_deref(), Some("actionable"));
+        assert_eq!(validated.language(), Some(LanguageId::Rust));
+        assert_eq!(validated.language_status(), Some(LanguageStatus::Stable));
+        assert_eq!(validated.gap_state(), Some("actionable"));
         assert!(validated.is_actionable_gap());
         assert!(validated.is_safe_projection_input());
-        assert_eq!(validated.verify_commands.len(), 1);
-        assert_eq!(validated.receipt_commands.len(), 1);
-        assert_eq!(validated.verify_command_specs.len(), 1);
-        assert_eq!(validated.receipt_command_specs.len(), 1);
+        assert_eq!(validated.verify_commands().len(), 1);
+        assert_eq!(validated.receipt_commands().len(), 1);
+        assert_eq!(validated.verify_command_specs().len(), 1);
+        assert_eq!(validated.receipt_command_specs().len(), 1);
         assert!(
             validated
-                .related_paths
+                .related_paths()
                 .iter()
                 .any(|path| path == "tests/pricing.rs::below_threshold_has_no_discount")
         );
@@ -3007,14 +3389,20 @@ mod tests {
         let artifact = actionable_gaps_report();
         let mut valid = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|error| format!("{error:?}"))?;
-        valid.verify_command_specs = vec![command.clone()];
+        *valid
+            .verify_command_specs_mut()
+            .ok_or_else(|| "actionable gaps omitted verify command specs".to_string())? =
+            vec![command.clone()];
         if !valid.is_safe_projection_input() {
             return Err("valid typed command spec was rejected".to_string());
         }
 
         let mut invalid_command = command;
         invalid_command.program.clear();
-        valid.receipt_command_specs = vec![invalid_command];
+        *valid
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "actionable gaps omitted receipt command specs".to_string())? =
+            vec![invalid_command];
         if valid.is_safe_projection_input() {
             return Err("invalid typed command spec was accepted".to_string());
         }
@@ -3075,17 +3463,23 @@ mod tests {
 
         let mut multiple = validated.clone();
         let verify_spec = multiple
-            .verify_command_specs
+            .verify_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "validated artifact omitted verify command spec".to_string())?;
         let receipt_spec = multiple
-            .receipt_command_specs
+            .receipt_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "validated artifact omitted receipt command spec".to_string())?;
-        multiple.verify_command_specs.push(verify_spec);
-        multiple.receipt_command_specs.push(receipt_spec);
+        multiple
+            .verify_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted verify command specs".to_string())?
+            .push(verify_spec);
+        multiple
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted receipt command specs".to_string())?
+            .push(receipt_spec);
         let projected_multiple = command_specs_for_projection(&multiple)
             .ok_or_else(|| "multiple producer specs were omitted".to_string())?;
         if !projected_multiple["verify"].is_array() || !projected_multiple["receipt"].is_array() {
@@ -3095,15 +3489,22 @@ mod tests {
         }
 
         let mut empty = validated.clone();
-        empty.verify_command_specs.clear();
-        empty.receipt_command_specs.clear();
+        empty
+            .verify_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted verify command specs".to_string())?
+            .clear();
+        empty
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted receipt command specs".to_string())?
+            .clear();
         if command_specs_for_projection(&empty).is_some() {
             return Err("empty producer specs were projected".to_string());
         }
 
         let mut invalid = validated.clone();
         invalid
-            .verify_command_specs
+            .verify_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted verify command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "validated artifact omitted verify command spec".to_string())?
             .program
@@ -3114,7 +3515,8 @@ mod tests {
 
         let mut mismatched = validated;
         mismatched
-            .receipt_command_specs
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "validated artifact omitted receipt command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "validated artifact omitted receipt command spec".to_string())?
             .role = crate::domain::CommandRole::Verify;
@@ -3145,9 +3547,9 @@ mod tests {
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
 
-        assert_eq!(validated.kind, GapArtifactKind::ActionableGaps);
-        assert!(validated.identities.is_empty());
-        assert_eq!(validated.gap_state.as_deref(), Some("no_actionable_seam"));
+        assert_eq!(validated.kind(), GapArtifactKind::ActionableGaps);
+        assert!(validated.identities().is_empty());
+        assert_eq!(validated.gap_state(), Some("no_actionable_seam"));
         assert!(validated.is_no_action_gap());
         assert!(validated.is_safe_projection_input());
         Ok(())
@@ -3609,15 +4011,15 @@ mod tests {
         let enabled =
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust, LanguageId::Python]))
                 .map_err(|err| format!("{err:?}"))?;
-        assert_eq!(enabled.kind, GapArtifactKind::GapDecisionLedger);
-        assert_eq!(enabled.language, Some(LanguageId::Python));
-        assert_eq!(enabled.language_status, Some(LanguageStatus::Preview));
+        assert_eq!(enabled.kind(), GapArtifactKind::GapDecisionLedger);
+        assert_eq!(enabled.language(), Some(LanguageId::Python));
+        assert_eq!(enabled.language_status(), Some(LanguageStatus::Preview));
         assert_eq!(
-            enabled.static_limit_kinds,
-            vec!["missing_import_graph".to_string()]
+            enabled.static_limit_kinds(),
+            ["missing_import_graph".to_string()]
         );
         assert_eq!(
-            enabled.identities[0].canonical_gap_id.as_deref(),
+            enabled.identities()[0].canonical_gap_id.as_deref(),
             Some("gap:py:pricing")
         );
         Ok(())
@@ -3644,10 +4046,10 @@ mod tests {
             &context(&[LanguageId::Rust, LanguageId::TypeScript]),
         )
         .map_err(|err| format!("{err:?}"))?;
-        assert_eq!(enabled.language, Some(LanguageId::JavaScript));
-        assert_eq!(enabled.language_status, Some(LanguageStatus::Preview));
+        assert_eq!(enabled.language(), Some(LanguageId::JavaScript));
+        assert_eq!(enabled.language_status(), Some(LanguageStatus::Preview));
         assert_eq!(
-            enabled.identities[0].canonical_gap_id.as_deref(),
+            enabled.identities()[0].canonical_gap_id.as_deref(),
             Some("gap:js:pricing")
         );
         Ok(())
@@ -3667,8 +4069,8 @@ mod tests {
             validate_gap_artifact(&artifact, &context(&[LanguageId::Rust, LanguageId::Python]))
                 .map_err(|err| format!("{err:?}"))?;
 
-        assert_eq!(validated.identities.len(), 2);
-        assert_eq!(validated.gap_state.as_deref(), Some("actionable"));
+        assert_eq!(validated.identities().len(), 2);
+        assert_eq!(validated.gap_state(), Some("actionable"));
         assert!(validated.is_actionable_gap());
         assert!(validated.is_preview());
         Ok(())
@@ -3709,7 +4111,7 @@ mod tests {
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
 
-        assert_eq!(validated.gap_state.as_deref(), Some("no_actionable_seam"));
+        assert_eq!(validated.gap_state(), Some("no_actionable_seam"));
         assert!(validated.is_no_action_gap());
         assert!(!validated.is_actionable_gap());
         Ok(())
@@ -3941,9 +4343,9 @@ mod tests {
 
         let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
-        assert_eq!(validated.kind, GapArtifactKind::EvidenceRecord);
-        assert!(validated.has_text_static_limit);
-        assert!(validated.static_limit_kinds.is_empty());
+        assert_eq!(validated.kind(), GapArtifactKind::EvidenceRecord);
+        assert!(validated.has_text_static_limit());
+        assert!(validated.static_limit_kinds().is_empty());
         Ok(())
     }
 
@@ -4390,13 +4792,13 @@ mod tests {
             report
                 .artifacts
                 .iter()
-                .any(|artifact| artifact.kind == GapArtifactKind::ActionableGaps)
+                .any(|artifact| artifact.kind() == GapArtifactKind::ActionableGaps)
         );
         assert!(
             report
                 .artifacts
                 .iter()
-                .any(|artifact| artifact.kind == GapArtifactKind::FirstUsefulAction)
+                .any(|artifact| artifact.kind() == GapArtifactKind::FirstUsefulAction)
         );
 
         fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
@@ -4542,8 +4944,8 @@ mod tests {
         let healthy = actionable_gaps_report();
         let admitted = validate_gap_artifact(&healthy, &context(&[LanguageId::Rust]))
             .map_err(|error| format!("healthy full-admission control: {error:?}"))?;
-        assert_eq!(admitted.kind, GapArtifactKind::ActionableGaps);
-        assert!(!admitted.identities.is_empty());
+        assert_eq!(admitted.kind(), GapArtifactKind::ActionableGaps);
+        assert!(!admitted.identities().is_empty());
         assert!(command_payload_is_safe(
             &TEST_ROOT,
             "cargo test -p ordinary_shop above_threshold_discounts"
@@ -4939,5 +5341,74 @@ mod tests {
                 "unsafe input must also be withheld at the editor guard: {command:?}"
             );
         }
+    }
+
+    #[test]
+    fn validated_gap_artifact_enum_enforces_variant_payload_invariants() -> Result<(), String> {
+        let ctx = context(&[LanguageId::Rust]);
+
+        let actionable = validate_gap_artifact(&actionable_gaps_report(), &ctx)
+            .map_err(|err| format!("{err:?}"))?;
+        assert!(matches!(
+            actionable,
+            ValidatedGapArtifact::ActionableGaps(_)
+        ));
+        assert_eq!(
+            actionable.corpus_currentness(),
+            Some(GapArtifactCorpusCurrentness::CurrentRustWorkspace)
+        );
+        assert!(actionable.corpus_currentness_json().is_some());
+
+        let first = validate_gap_artifact(&first_action(), &ctx)
+            .map_err(|err| format!("{err:?}"))?;
+        assert!(matches!(first, ValidatedGapArtifact::FirstUsefulAction(_)));
+        assert_eq!(first.corpus_currentness(), None);
+        assert!(first.corpus_currentness_json().is_none());
+        assert_eq!(first.identities().len(), 1);
+
+        let evidence_json = json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "seam_id": "seam-ev",
+            "location": { "file": "src/lib.rs", "line": 1 },
+            "canonical_item": {
+                "gap_state": "actionable",
+                "verify_command": "ripr agent verify --root . --json"
+            },
+            "evidence_path": {}
+        });
+        let evidence =
+            validate_gap_artifact(&evidence_json, &ctx).map_err(|err| format!("{err:?}"))?;
+        assert!(matches!(evidence, ValidatedGapArtifact::EvidenceRecord(_)));
+        assert_eq!(evidence.corpus_currentness(), None);
+        assert!(evidence.corpus_currentness_json().is_none());
+        assert_eq!(evidence.identities().len(), 1);
+        assert!(evidence.receipt_commands().is_empty());
+
+        let receipt_json = json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "agent_receipt",
+            "canonical_gap_id": "gap:rust:receipt",
+            "movement": "evidence_improved",
+            "inputs": {
+                "verify": "target/ripr/verify.json"
+            },
+            "target": {
+                "file": "src/lib.rs"
+            }
+        });
+        let receipt =
+            validate_gap_artifact(&receipt_json, &ctx).map_err(|err| format!("{err:?}"))?;
+        assert!(matches!(receipt, ValidatedGapArtifact::AgentReceipt(_)));
+        assert_eq!(receipt.corpus_currentness(), None);
+        assert!(receipt.corpus_currentness_json().is_none());
+        assert_eq!(receipt.identities().len(), 1);
+        assert!(receipt.verify_commands().is_empty());
+        assert!(receipt.receipt_commands().is_empty());
+        assert!(receipt.verify_command_specs().is_empty());
+        assert!(receipt.receipt_command_specs().is_empty());
+        assert!(receipt.is_safe_projection_input());
+        Ok(())
     }
 }

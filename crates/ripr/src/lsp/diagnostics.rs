@@ -3020,7 +3020,7 @@ fn load_gap_ledger_records(
         repo_config,
     };
     match validate_gap_artifact(&artifact, &context) {
-        Ok(validated) if validated.kind == GapArtifactKind::GapDecisionLedger => {}
+        Ok(validated) if validated.kind() == GapArtifactKind::GapDecisionLedger => {}
         Ok(_) => {
             return failed(
                 "gap_ledger_wrong_kind",
