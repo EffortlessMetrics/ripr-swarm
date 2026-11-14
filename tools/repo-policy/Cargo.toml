@@ -7,13 +7,13 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Match the existing workspace variant; retain PID custody until group cleanup.
+libc = "0.2"
 rustix = { version = "1.1.5", features = ["process", "event", "fs"] }
 
 [build-dependencies]
