@@ -2211,6 +2211,7 @@ pub(crate) struct RunContext {
     pub(crate) corpus: Vec<Value>,
 }
 
+#[cfg(test)]
 pub(crate) fn build_report(
     config: &Config,
     boards: &[String],
