@@ -420,6 +420,33 @@ fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<()
 }
 
 #[test]
+fn a_separate_placement_failure_keeps_the_direct_glob_explanation() -> Result<(), String> {
+    // The mounting include is not the only reason placement is unavailable:
+    // the unrelated parser fallback independently disables it too.
+    let repo = TempRepo::create(&[
+        (
+            "src/lib.rs",
+            "pub mod a;\npub mod b;\npub mod broken;\npub mod gen;\n",
+        ),
+        ("src/broken.rs", "fn broken(\n"),
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusal = only_refusal(&found)?;
+    assert!(
+        refusal.contains("`use rayon::prelude::*;` at src/a.rs:1 glob-imports"),
+        "{refusal:?}"
+    );
+    for unexpected in ["placement is unavailable", "first include limitation"] {
+        assert!(!refusal.contains(unexpected), "{refusal:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_public_glob_keeps_its_direct_explanation_with_an_include_present() -> Result<(), String> {
     // A `pub use ...::*;` is unconfined by construction, so no placement
     // decision can change it: naming an include would blame an unrelated

@@ -2829,6 +2829,7 @@ fn placement_include_explains(
         && site.module_local
         && site.scope.is_none()
         && roots.disabled
+        && !roots.non_include_disabled
         && index.execution_context(path).is_some()
         // What `roots` would answer with placement on: the file is in a
         // recognized crate that the include does not taint, so the disabled
@@ -2973,6 +2974,10 @@ struct TargetRoots {
     /// mount other crates that way, may compile any file into another
     /// crate, so no file is charged to one root.
     disabled: bool,
+    /// A lexical fallback, unknown module target, or unseen unindexed member
+    /// also disabled placement. When one is present, the include is not the
+    /// sole reason confinement is unavailable and must not be named as it.
+    non_include_disabled: bool,
     /// The first include limitation whose paste reaches the workspace. This
     /// explains placement loss without blaming an inert include or a separate
     /// unresolved `#[path]` / unindexed member; it is disclosed only for a
@@ -3401,8 +3406,7 @@ impl TargetRoots {
                 IncludeReach::Roots(roots) => tainted.extend(roots),
             }
         }
-        let disabled = include_reaches_workspace
-            || unindexed_member_is_unseen_compilation_target(index)
+        let non_include_disabled = unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
@@ -3411,7 +3415,8 @@ impl TargetRoots {
                         .any(|declaration| declaration.path_target == ModulePathTarget::Unknown)
             });
         Self {
-            disabled,
+            disabled: include_reaches_workspace || non_include_disabled,
+            non_include_disabled,
             workspace_include,
             tainted,
             src_dirs,
