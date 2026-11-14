@@ -13,7 +13,7 @@ use super::{read_optional_text_for_report, write_text_file};
 
 pub(in crate::cli) fn assistant_loop(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_assistant_loop_help();
+        help::print_group_help("assistant-loop", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {

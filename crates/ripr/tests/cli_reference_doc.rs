@@ -48,12 +48,6 @@ fn text<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
 }
 
-/// Families whose leaves keep their own sections for now. Folding every
-/// family in one change exceeds the ordinary candidate size, so `baseline`
-/// folds with the leaf-scoped help change (#14314) that replaces these
-/// sections with per-leaf help.
-const FOLD_SKIP: &[&str] = &["baseline"];
-
 fn render() -> Result<String, String> {
     let catalog: serde_json::Value =
         serde_json::from_str(&run(&["help", "--json"])?).map_err(|error| error.to_string())?;
@@ -91,17 +85,10 @@ fn render() -> Result<String, String> {
         let mut args = vec!["help"];
         args.extend(path.split(' '));
         let text_out = run(&args)?.trim_end().to_string();
-        let body = if FOLD_SKIP
-            .iter()
-            .any(|family| path == *family || path.starts_with(&format!("{family} ")))
-        {
-            text_out.clone()
-        } else {
-            text_out
-                .split_once('\n')
-                .map_or(text_out.as_str(), |(_, rest)| rest)
-                .to_string()
-        };
+        let body = text_out
+            .split_once('\n')
+            .map_or(text_out.as_str(), |(_, rest)| rest)
+            .to_string();
         if !by_body.contains_key(&body) {
             order.push(body.clone());
             full_body.insert(body.clone(), text_out);

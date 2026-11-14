@@ -29,7 +29,8 @@ pub const ANALYSIS_FAILED_REPAIR_ROUTE: &str = "analysis/failure";
 pub const GIT_TIMEOUT_REPAIR_ROUTE: &str = "analysis/git-timeout";
 
 pub const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
-     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
+     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, \
+     RIPR_GIT_TIMEOUT in the server environment for MCP sessions, the \
      gitTimeoutMs initialization option for editor sessions — then re-run.";
 
 /// Crate-internal error used for semantic control flow.
@@ -516,7 +517,8 @@ mod tests {
             concat!(
                 "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated).",
                 " Repair route: raise or disable the git deadline (0 disables it) — ",
-                "--git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the ",
+                "--git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, ",
+                "RIPR_GIT_TIMEOUT in the server environment for MCP sessions, the ",
                 "gitTimeoutMs initialization option for editor sessions — then re-run."
             )
         );

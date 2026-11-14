@@ -1,0 +1,2 @@
+xtask/tests/workflow_lint_jactionlint.rs|Command::new|1|ci/workflow-lint|#13637: runs the workflow-lint jactionlint step under bash with local tar, a byte-comparison sha256sum stand-in, and a stand-in fetch script in a private temp directory; no network.
+xtask/tests/workflow_lint_jactionlint.rs|use std::process::Command|1|ci/workflow-lint|#13637: imports Command for the isolated bash replay of the workflow-lint run block.

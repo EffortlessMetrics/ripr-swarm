@@ -69,6 +69,9 @@ GENERATED_DECLARATION_ALLOWED = (
     re.compile(r"^(?:\*\*/)?Cargo\.lock$"),
     re.compile(r"^fixtures/(?:[A-Za-z0-9_.\-*]+/)*expected/\*\*$"),
     re.compile(r"^metrics/public-proof/\*\*$"),
+    # The canonical report promoted from `cargo xtask dx-scoreboard`.
+    # Other baselines and the handwritten scoreboard configuration stay counted.
+    re.compile(r"^metrics/dx-scoreboard/baseline\.json$"),
     # Fact packets a pinned producer wrote for a verdict-corpus case. Data only
     # (.json), sha256-pinned by the case rows, whose provenance and edits stay
     # in the counted cases/ files.
@@ -406,7 +409,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/**, metrics/dx-scoreboard/baseline.json and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -1192,6 +1195,9 @@ def self_test() -> None:
         "**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh", "*.json",
         "**/*.md", ".claude/**", ".github/**", "crates/**", "scripts/*", "package.json",
         "policy/**", "CLAUDE.md", "fixtures/**/input/**",
+        "metrics/**", "metrics/dx-scoreboard/**", "metrics/dx-scoreboard/*.json",
+        "metrics/dx-scoreboard/baseline.json*", "metrics/dx-scoreboard/baselineXjson",
+        "metrics/dx-scoreboard/agent-baseline.json", "xtask/metrics/dx-scoreboard/baseline.json",
         "fixtures/perl-verdict-corpus/**", "fixtures/perl-verdict-corpus/subjects/**",
         "fixtures/perl-verdict-corpus/cases/**", "fixtures/packets/**",
         "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
@@ -1210,6 +1216,35 @@ def self_test() -> None:
         "xtask/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
+    baseline_path = "metrics/dx-scoreboard/baseline.json"
+    baseline_declaration = f"{baseline_path} linguist-generated\n"
+    assert check_generated_declarations(baseline_declaration) == [], "canonical scoreboard baseline is generated"
+    baseline_rules = parse_generated_rules(baseline_declaration)
+    for kept in (
+        "metrics/dx-scoreboard/agent-baseline.json", "metrics/dx-scoreboard/baseline.jsonl",
+        "metrics/dx-scoreboard/baseline.json.bak", "metrics/dx-scoreboard/baselineXjson",
+        "xtask/metrics/dx-scoreboard/baseline.json", "benchmarks/dx_scoreboard/scoreboards.toml",
+    ):
+        assert not is_generated(kept, baseline_rules), kept
+    for generated_lines, counted_lines, reason in (
+        (5166, 580, "candidate_current_unique_bounded"),
+        (5166, 3001, "qualification_scope_oversized"),
+        (40001, 580, "generated_scope_oversized"),
+    ):
+        baseline_files = [
+            {"filename": baseline_path, "additions": generated_lines, "deletions": 0},
+            {"filename": "metrics/dx-scoreboard/agent-baseline.json", "additions": 1, "deletions": 0},
+            {"filename": "benchmarks/dx_scoreboard/scoreboards.toml", "additions": counted_lines - 1, "deletions": 0},
+        ]
+        generated = generated_totals(baseline_files, baseline_rules, 3)
+        assert generated == (1, generated_lines)
+        baseline_pr = fixture(
+            body=fixture_body(), head=head, changed_files=3,
+            additions=generated_lines + counted_lines, deletions=0,
+        )
+        result = decide(baseline_pr, [baseline_pr], head, False, max_files, max_lines, *generated)
+        assert result["reason"] == reason, (generated_lines, counted_lines, result)
+        assert result["changed_files"] == 2 and result["changed_lines"] == counted_lines
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
     assert is_generated("fixtures/perl-verdict-corpus/packets/a.json", corpus_rules)
     # A data file of another type beside the packets stays counted in the totals.

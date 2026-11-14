@@ -604,6 +604,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_receiver.rs::test_module_child_file_keeps_no_direct_call",
   "crates/ripr/tests/crate_qualified_receiver.rs::enum_variant_spelling_is_not_a_constructor_receiver",
   "crates/ripr/tests/crate_qualified_receiver.rs::function_local_namesake_type_method_gets_no_credit",
+  "crates/ripr/tests/crate_qualified_receiver.rs::crate_qualified_receiver_of_a_same_named_type_in_another_module_gets_no_direct_call",
+  "crates/ripr/tests/crate_qualified_receiver.rs::crate_qualified_receiver_of_the_only_type_in_a_module_stays_a_direct_owner_call",
   "fixtures/rust_qualified_foreign_receiver",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
@@ -8197,6 +8199,7 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names",
   "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref",
+  "crates/ripr/src/analysis/diff/load.rs::tests::single_branch_shallow_clone_advice_widens_before_unshallow",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_names_the_end_the_flag_wants",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_quotes_no_missing_or_unsafe_end",
   "crates/ripr/src/analysis/diff/load.rs::tests::revision_range_repair_leaves_single_revisions_alone",
@@ -14645,11 +14648,24 @@ tests = [
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_exit_mapping_matches_the_typed_contract",
   "crates/ripr/src/cli/command.rs::tests::help_json_parses_the_machine_discovery_route",
   "crates/ripr/tests/cli_smoke.rs::help_json_is_deterministic_across_roots_env_and_side_effect_free",
+  "crates/ripr/src/cli/help_leaf.rs::tests::every_shared_body_leaf_has_scoped_help",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_has_the_leaf_section_and_no_sibling_section",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_leads_with_the_catalog_summary",
+  "crates/ripr/src/cli/help_leaf.rs::tests::gate_subcommands_keep_the_shared_body",
+  "crates/ripr/src/cli/help_leaf.rs::tests::multi_usage_leaves_keep_every_own_line_and_no_sibling_line",
+  "crates/ripr/src/cli/help_leaf.rs::tests::scoped_help_lists_exactly_the_flags_suggestions_know",
+  "crates/ripr/src/cli/help_leaf.rs::tests::every_leaf_keeps_its_own_contract_paragraphs",
+  "crates/ripr/src/cli/help_leaf.rs::tests::a_path_without_a_shared_body_has_no_scoped_help",
+  "crates/ripr/tests/cli_help_json_flags.rs::shared_body_leaf_rows_list_only_the_leaf_flags",
+  "crates/ripr/tests/cli_help_json_flags.rs::every_leaf_row_flag_is_accepted_by_the_leaf_parser",
+  "crates/ripr/tests/cli_help_json_flags.rs::every_leaf_usage_flag_is_in_the_leaf_row",
+  "crates/ripr/tests/cli_help_json_flags.rs::leaf_help_is_scoped_and_family_help_is_unchanged",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/main.rs",
   "crates/ripr/src/cli/help_json.rs",
+  "crates/ripr/src/cli/help_leaf.rs",
   "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/cli/commands/agent_card.rs",
   "crates/ripr/src/cli/commands/agent_stub.rs",
@@ -20377,6 +20393,10 @@ tests = [
   "crates/ripr/src/output/badge/tests.rs::refusal_badge_summary_applies_the_degraded_state_convention",
   "crates/ripr/src/output/repo_exposure.rs::refusal_document_keeps_the_format_contract_with_zeroed_metrics",
   "crates/ripr/src/output/agent_seam_packets.rs::refusal_document_keeps_the_packet_envelope_with_no_packets",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::json_family_refusals_keep_the_scope_guard_identity",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::refused_exposure_summary_keeps_the_normal_summary_shape",
+  "crates/ripr/src/output/repo_seams.rs::refusal_tests::refusal_json_escapes_the_message",
+  "crates/ripr/tests/cli_smoke.rs::check_refusal_sweep_every_machine_format_prints_a_document",
 ]
 fixtures = []
 code = [

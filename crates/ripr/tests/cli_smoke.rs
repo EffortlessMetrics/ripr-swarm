@@ -1961,7 +1961,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(4) {
+        if value["schema_version"] != serde_json::json!(5) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -5686,6 +5686,67 @@ fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
     }
     if value["color"] != "lightgrey" {
         return Err(format!("badge color must be lightgrey: {value}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #14499: on a refused run, every machine format a program parses prints a
+/// non-empty refusal document naming the typed identity, and none echoes
+/// `ripr.toml` content; the prose formats keep stdout empty.
+#[test]
+fn check_refusal_sweep_every_machine_format_prints_a_document() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-refusal-sweep", 1)?;
+    let root_arg = root.display().to_string();
+    std::fs::write(root.join("ripr.toml"), "[canary_table_14499]\n")
+        .map_err(|err| err.to_string())?;
+    let machine = [
+        "agent",
+        "json",
+        "json-compact",
+        "json-terse",
+        "check-findings-json",
+        "github",
+        "missed-txt",
+        "sarif",
+        "sarif-compact",
+        "badge-json",
+        "badge-shields",
+        "badge-plus-json",
+        "badge-plus-shields",
+        "repo-badge-json",
+        "repo-badge-shields",
+        "repo-badge-plus-json",
+        "repo-badge-plus-shields",
+        "repo-seams-json",
+        "repo-exposure-json",
+        "repo-exposure-summary-json",
+        "repo-sarif",
+        "repo-sarif-compact",
+        "agent-seam-packets-json",
+    ];
+    for format in machine {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        let stdout =
+            assert_machine_refusal_basics(&output).map_err(|err| format!("{format}: {err}"))?;
+        if !stdout.contains("config_invalid") {
+            return Err(format!("{format} must name config_invalid:\n{stdout}"));
+        }
+        if stdout.contains("canary_table_14499") {
+            return Err(format!(
+                "{format} must not echo ripr.toml content:\n{stdout}"
+            ));
+        }
+        if !matches!(format, "agent" | "github" | "missed-txt") {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .map_err(|err| format!("{format} refusal must parse as JSON: {err}\n{stdout}"))?;
+        }
+    }
+    for format in ["human", "human-full", "repo-seams-md", "repo-exposure-md"] {
+        let output = run_ripr(&["check", "--format", format, "--root", &root_arg]);
+        if output.status.code() != Some(2) || !output.stdout.is_empty() {
+            return Err(format!("{format} keeps its refusal on stderr: {output:?}"));
+        }
     }
     ignore_remove_dir_all(&root);
     Ok(())
@@ -11160,9 +11221,9 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 /// missing diff file exits 2, like the diff-scoped formats. #7332 changed
 /// what the two JSON repo formats write on that refusal: `repo-exposure-json`
 /// and `agent-seam-packets-json` render their format's refusal document
-/// (`run_status: "refused"`) on stdout instead of zero bytes, while
-/// `repo-sarif` still has no honest refusal shape and stays empty. A
-/// resolvable base keeps working.
+/// (`run_status: "refused"`) on stdout instead of zero bytes, and since
+/// #14499 `repo-sarif` renders the refusal SARIF run (scope `repo_seam`,
+/// `run.properties.run_status: "refused"`). A resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -11203,10 +11264,15 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 String::from_utf8_lossy(&output.stderr)
             );
             if format == "repo-sarif" {
-                assert!(
-                    output.stdout.is_empty(),
-                    "{format} {bad:?} wrote stdout on a failed invocation"
+                // #14499: the refusal SARIF run, never zero bytes.
+                let sarif: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                let run = &sarif["runs"][0];
+                assert_eq!(
+                    run["properties"]["run_status"], "refused",
+                    "{format} {bad:?}"
                 );
+                assert_eq!(run["properties"]["scope"], "repo_seam", "{format} {bad:?}");
+                assert_eq!(run["results"], serde_json::json!([]), "{format} {bad:?}");
             } else {
                 // #7332: the JSON repo formats carry their refusal document
                 // on stdout rather than zero bytes.
@@ -36667,6 +36733,148 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     })();
     let _ = std::fs::remove_dir_all(&cwd);
     result
+}
+
+/// `first-pr` only reads its artifacts after the root passes its preflight, so
+/// the rows need a real committed Cargo project; in an empty directory the
+/// command stops at its wrong-root recovery packet and never touches the
+/// flag. With a project, an endless `--check-output` is refused at the shared
+/// limit (exit 2), and an endless `--gap-ledger` takes the command's
+/// established malformed-artifact route (exit 0, a packet that names the limit)
+/// instead of growing until the process is ended.
+#[cfg(unix)]
+#[test]
+fn first_pr_artifact_flags_from_endless_device_reach_the_input_limit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("endless-first-pr");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let check_output = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        assert_input_limit_refusal(&check_output, "first-pr --check-output /dev/zero");
+        let ledger = run_ripr_with_deadline_in(
+            Some(&root),
+            &[
+                "first-pr",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                "/dev/zero",
+            ],
+            Stdio::null(),
+            ENDLESS_INPUT_BUDGET,
+        )?;
+        let stdout = String::from_utf8_lossy(&ledger.stdout);
+        assert_eq!(
+            ledger.status.code(),
+            Some(0),
+            "first-pr --gap-ledger keeps its malformed-artifact exit:\n{}",
+            String::from_utf8_lossy(&ledger.stderr)
+        );
+        assert!(
+            stdout.contains("State: malformed artifact")
+                && stdout.contains("268435456 byte input limit (256 MiB)"),
+            "the packet must name the limit, not the wrong-root recovery:\n{stdout}"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+/// `receipt check --ledger` reads the gap decision ledger after the receipt
+/// itself validates, so a valid receipt is needed to reach the read. An endless
+/// ledger must hit the shared input limit and name it.
+#[cfg(unix)]
+#[test]
+fn receipt_check_ledger_from_endless_device_is_refused_at_input_limit() -> Result<(), std::io::Error>
+{
+    let cwd = unique_temp_workspace("endless-receipt-ledger");
+    std::fs::create_dir_all(&cwd)?;
+    let receipt = cwd.join("receipt.json");
+    std::fs::write(
+        &receipt,
+        serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": "gap:test:ledger",
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-06-14T00:00:00Z"
+        })
+        .to_string(),
+    )?;
+    let receipt_arg = receipt.display().to_string();
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "receipt",
+            "check",
+            "--path",
+            &receipt_arg,
+            "--ledger",
+            "/dev/zero",
+        ],
+        Stdio::null(),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    assert_input_limit_refusal(&output?, "receipt check --ledger /dev/zero");
+    Ok(())
+}
+
+/// `pr-comments summary --raw -` reads the pages from standard input after it
+/// has read the review comments packet; an endless producer must hit the same
+/// cap as the file-backed routes.
+#[cfg(unix)]
+#[test]
+fn pr_comments_summary_raw_stdin_from_endless_stream_is_refused_at_input_limit()
+-> Result<(), std::io::Error> {
+    let cwd = unique_temp_workspace("endless-summary-stdin");
+    let review = cwd.join("target").join("ripr").join("review");
+    std::fs::create_dir_all(&review)?;
+    std::fs::write(review.join("comments.json"), "{\"comments\":[]}")?;
+    let output = run_ripr_with_deadline_in(
+        Some(&cwd),
+        &[
+            "pr-comments",
+            "summary",
+            "--pull-request",
+            "1",
+            "--head-sha",
+            "abc",
+            "--raw",
+            "-",
+        ],
+        Stdio::from(std::fs::File::open("/dev/zero")?),
+        ENDLESS_INPUT_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+    let output = output?;
+    assert_input_limit_refusal(&output, "pr-comments summary --raw - < /dev/zero");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not read standard input"),
+        "the refusal must name standard input:\n{stderr}"
+    );
+    Ok(())
 }
 
 /// A cloned repository's `rust-toolchain.toml` can name a toolchain `path`,

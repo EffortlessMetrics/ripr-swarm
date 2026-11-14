@@ -460,3 +460,43 @@ replayable retry, so `next=` is absent. Config file content stays on stderr.
 - `crates/ripr/src/output/refusal.rs::runnable_command`
 - `crates/ripr/src/cli/commands/check.rs::refuse_agent`
 - `crates/ripr/src/app/timeout_refusal.rs::TimeoutRefusalProjection::replayable_recovery_command`
+
+## Amendment (#14499): every machine check format
+
+The #7332 amendment left `json-terse`, `check-findings-json`, the Shields and
+`badge-plus-*` / `repo-badge-*` badges, `repo-sarif` / `repo-sarif-compact`,
+`repo-seams-json` and `repo-exposure-summary-json` writing zero bytes on a
+refused run. Each now renders its own refusal document from the same
+`RefusalNotice`; the shapes are listed in
+[OUTPUT_SCHEMA](../OUTPUT_SCHEMA.md). The prose formats (`human`,
+`human-full`, `repo-seams-md`, `repo-exposure-md`) keep stdout empty.
+
+- `json-terse` and `check-findings-json` share the `json` envelope, scope
+  guards first, so a `diff_scope_oversized` / `repo_scope_oversized` refusal
+  keeps its identity in every JSON-family format. `check-findings-json` carries
+  no `artifact` identity, and the verify artifact validator rejects it.
+- Every badge family renders the degraded `refused: <identity>` badge
+  (`warn`, `lightgrey`, zeroed counts) under its own kind and scope; the Shields
+  projections keep exactly four fields.
+- `repo-sarif` renders the refusal SARIF run with scope `repo_seam`.
+- `repo-seams-json` and `repo-exposure-summary-json` add `run_status:
+  "refused"` and one typed `limitations[]` entry to their own envelopes, with
+  empty `seams` / an all-zero summary of the normal shape.
+
+## Test Mapping (Amendment #14499)
+
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::every_machine_format_carries_a_refusal_document`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::json_family_refusals_keep_the_scope_guard_identity`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::check_findings_json_refusal_is_rejected_as_a_verify_artifact`
+- `crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::refused_exposure_summary_keeps_the_normal_summary_shape`
+- `crates/ripr/src/output/repo_seams.rs::refusal_tests::refusal_json_escapes_the_message`
+- `crates/ripr/tests/cli_smoke.rs::check_refusal_sweep_every_machine_format_prints_a_document`
+
+## Implementation Mapping (Amendment #14499)
+
+- `crates/ripr/src/cli/commands/check.rs::machine_refusal_document`
+- `crates/ripr/src/cli/commands/check.rs::check_json_refusal`
+- `crates/ripr/src/output/badge/summaries.rs::refusal_badge_summary_for`
+- `crates/ripr/src/output/sarif.rs::render_repo_refusal_sarif`
+- `crates/ripr/src/output/repo_seams.rs::render_refusal_json`
+- `crates/ripr/src/output/repo_exposure.rs::render_summary_refusal_json`

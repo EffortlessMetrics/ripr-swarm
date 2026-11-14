@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz -o "$RUNNER_TEMP/jactionlint.tar.gz"
+          curl --fail --silent --show-error --location --retry 5 https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz -o "$RUNNER_TEMP/jactionlint.tar.gz"
           printf '%s\n' "5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5  $RUNNER_TEMP/jactionlint.tar.gz" > "$RUNNER_TEMP/jactionlint.sha256"
           sha256sum --check "$RUNNER_TEMP/jactionlint.sha256"
           tar -xzf "$RUNNER_TEMP/jactionlint.tar.gz" -C "$RUNNER_TEMP" jactionlint

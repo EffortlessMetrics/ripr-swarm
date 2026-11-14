@@ -49,3 +49,26 @@ fn selector_rejects_location_lookalikes_that_only_contain_file_text() {
     assert!(!selector_matches_location("src/lib.rs", &finding));
     assert!(!selector_matches_location("src/lib.rs:042", &finding));
 }
+
+/// #14386: the MCP git deadline is `RIPR_GIT_TIMEOUT` when set, else the
+/// `ripr check` default, through the same parser the CLI uses.
+#[test]
+fn env_or_default_git_timeout_matches_the_cli_contract() {
+    use crate::app::{default_cli_git_timeout, env_or_default_git_timeout};
+    use std::env::VarError;
+    use std::time::Duration;
+    assert_eq!(
+        env_or_default_git_timeout(Err(VarError::NotPresent)),
+        Ok(Some(default_cli_git_timeout()))
+    );
+    assert_eq!(
+        env_or_default_git_timeout(Ok("12".to_string())),
+        Ok(Some(Duration::from_secs(12)))
+    );
+    assert_eq!(env_or_default_git_timeout(Ok("0".to_string())), Ok(None));
+    let error = env_or_default_git_timeout(Ok("soon".to_string()))
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("RIPR_GIT_TIMEOUT"), "{error}");
+    assert!(error.contains("\"soon\""), "{error}");
+}
