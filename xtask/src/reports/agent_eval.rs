@@ -206,18 +206,33 @@ fn capture(
         stderr_bytes: 4 * 1024 * 1024,
     };
     let context = format!("{} {}", program.display(), args.join(" "));
-    // The caller's `RIPR_*` settings would change what is measured.
+    // Isolate every scenario child, including analyzer/MCP/Cargo Git descendants.
+    // cwd alone does not override inherited repository/index/object routing or
+    // Git configuration injection (notably under `git bisect run`).
     let ambient: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| name.starts_with("RIPR_"))
+        .filter(|name| {
+            let name = name.to_ascii_uppercase();
+            name.starts_with("RIPR_") || name.starts_with("GIT_")
+        })
         .collect();
     let ambient: Vec<&str> = ambient.iter().map(String::as_str).collect();
+    // Removing config selectors must not fall back to caller global/system config.
+    // Reapply only trusted scenario settings (identity, Cargo target, MCP tools).
+    let mut isolated_envs = envs.to_vec();
+    isolated_envs.extend([
+        (
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        ),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ]);
     // An empty input closes stdin instead of inheriting the caller's.
     let output = capture_bytes_in_dir_with_input_env_budget(
         program,
         args,
         (cwd, Some(input.unwrap_or_default())),
-        (envs, &ambient),
+        (&isolated_envs, &ambient),
         budget,
         &context,
     )?;
@@ -1688,3 +1703,7 @@ verify=refused|outcome=complete_with_findings\n";
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "agent_eval/isolation_tests.rs"]
+mod isolation_tests;

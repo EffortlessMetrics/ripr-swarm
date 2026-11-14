@@ -79,8 +79,13 @@ copy of the scenario repository, so first-run state cannot leak between routes.
 - A silent control counts only when `check --format agent` exited 0, its
   header says `gaps=0` and it printed no `stop=`. The weak and reference
   checks also need exit 0. `--write-baseline` refuses `--compare`.
-- The eval clears the caller's `RIPR_*` environment, closes stdin, runs git
-  without hooks, and replaces the scratch root with `<root>` before measuring.
+- Every scenario subprocess clears inherited `RIPR_*` and `GIT_*` variables,
+  including repository, worktree, index, object-store and configuration routing.
+  Global and system Git configuration are disabled for these children. This
+  boundary also covers analyzer, MCP and Cargo descendants; changing cwd alone
+  does not isolate Git under `git bisect run`. Explicit scenario commit identity
+  is retained. The eval closes stdin, runs scenario Git without hooks, and
+  replaces the scratch root with `<root>` before measuring.
 
 ## Scenarios
 
