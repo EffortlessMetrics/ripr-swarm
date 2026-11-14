@@ -27,8 +27,6 @@ tests = [
 ]
 fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/corpus.json",
-  "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-alias-crate.json",
-  "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-alias-external.json",
 ]
 code = [
   "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
