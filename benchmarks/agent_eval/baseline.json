@@ -1,13 +1,13 @@
 {
   "advisory": true,
-  "ripr_version": "ripr 0.11.0 (5bb25ee98a472ce3a040a24f671a63137926c329-dirty)",
+  "ripr_version": "ripr 0.11.0 (0431578892271d3fa63ccd1af528c120dc5c04e1)",
   "routes": [
-    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1403,"total_tokens":8642},
-    {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1403,"total_tokens":1403},
-    {"answered":5,"route":"cli-human","scenarios":6,"tokens_to_answer":5150,"total_tokens":6260},
-    {"answered":6,"route":"cli-json-terse","scenarios":6,"tokens_to_answer":23472,"total_tokens":23472},
+    {"answered":6,"route":"cli-agent-loop","scenarios":6,"tokens_to_answer":1496,"total_tokens":8735},
+    {"answered":6,"route":"cli-agent-find","scenarios":6,"tokens_to_answer":1496,"total_tokens":1496},
+    {"answered":5,"route":"cli-human","scenarios":6,"tokens_to_answer":5257,"total_tokens":6367},
+    {"answered":6,"route":"cli-json-terse","scenarios":6,"tokens_to_answer":23665,"total_tokens":23665},
     {"answered":6,"route":"agent-brief","scenarios":6,"tokens_to_answer":8701,"total_tokens":8701},
-    {"answered":6,"route":"mcp","scenarios":6,"tokens_to_answer":52117,"total_tokens":54995}
+    {"answered":6,"route":"mcp","scenarios":6,"tokens_to_answer":52119,"total_tokens":56658}
   ],
   "scenarios": [
     {
@@ -295,13 +295,13 @@
       "keyed_gaps": 1,
       "loop": {
         "expected_gap_lines": [10],
-        "extra_gaps": 0,
+        "extra_gaps": 1,
         "find_exit": 0,
-        "gaps_header": 1,
+        "gaps_header": 2,
         "missed_gaps": 0,
         "reference_key_valid": true,
-        "reference_test_closes_loop": true,
-        "reported_gap_lines": [10],
+        "reference_test_closes_loop": false,
+        "reported_gap_lines": [10,10],
         "silent_on_control": null,
         "weak_key_valid": true,
         "weak_test_still_flagged": true
@@ -312,46 +312,46 @@
           "failed_steps": 0,
           "route": "cli-agent-loop",
           "steps": [
-            {"bytes":701,"exit":0,"step":"find","tokens":277},
+            {"bytes":922,"exit":0,"step":"find","tokens":370},
             {"bytes":679,"exit":0,"step":"detail:explain","tokens":261},
             {"bytes":3524,"exit":0,"step":"detail:context","tokens":1367}
           ],
-          "tokens_to_answer": 277,
-          "total_bytes": 4904,
-          "total_tokens": 1905
+          "tokens_to_answer": 370,
+          "total_bytes": 5125,
+          "total_tokens": 1998
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-agent-find",
           "steps": [
-            {"bytes":701,"exit":0,"step":"find","tokens":277}
+            {"bytes":922,"exit":0,"step":"find","tokens":370}
           ],
-          "tokens_to_answer": 277,
-          "total_bytes": 701,
-          "total_tokens": 277
+          "tokens_to_answer": 370,
+          "total_bytes": 922,
+          "total_tokens": 370
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-human",
           "steps": [
-            {"bytes":3727,"exit":0,"step":"check","tokens":1159}
+            {"bytes":4103,"exit":0,"step":"check","tokens":1266}
           ],
-          "tokens_to_answer": 1159,
-          "total_bytes": 3727,
-          "total_tokens": 1159
+          "tokens_to_answer": 1266,
+          "total_bytes": 4103,
+          "total_tokens": 1266
         },
         {
           "answer_reached": true,
           "failed_steps": 0,
           "route": "cli-json-terse",
           "steps": [
-            {"bytes":9547,"exit":0,"step":"check","tokens":4313}
+            {"bytes":10190,"exit":0,"step":"check","tokens":4506}
           ],
-          "tokens_to_answer": 4313,
-          "total_bytes": 9547,
-          "total_tokens": 4313
+          "tokens_to_answer": 4506,
+          "total_bytes": 10190,
+          "total_tokens": 4506
         },
         {
           "answer_reached": true,
@@ -373,12 +373,13 @@
             {"bytes":11900,"exit":0,"step":"tools/list","tokens":4319},
             {"bytes":5822,"exit":0,"step":"ripr_workspace_status","tokens":1077},
             {"bytes":3290,"exit":0,"step":"ripr_refresh","tokens":554},
-            {"bytes":4870,"exit":0,"step":"ripr_list_gaps","tokens":922},
-            {"bytes":8839,"exit":0,"step":"ripr_get_gap#1","tokens":1729}
+            {"bytes":4884,"exit":0,"step":"ripr_list_gaps","tokens":924},
+            {"bytes":8839,"exit":0,"step":"ripr_get_gap#1","tokens":1729},
+            {"bytes":8591,"exit":0,"step":"ripr_get_gap#2","tokens":1661}
           ],
-          "tokens_to_answer": 9166,
-          "total_bytes": 36644,
-          "total_tokens": 9166
+          "tokens_to_answer": 9168,
+          "total_bytes": 45249,
+          "total_tokens": 10829
         }
       ],
       "summary": "a constructor gains a long-flag spelling; tests assert another field"
