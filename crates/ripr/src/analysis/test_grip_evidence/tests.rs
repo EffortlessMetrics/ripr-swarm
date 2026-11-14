@@ -23795,6 +23795,35 @@ fn given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_
 }
 
 #[test]
+fn given_direct_owner_alias_when_a_binary_child_module_imports_the_binary_root_then_library_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a package with both `src/lib.rs` and `src/main.rs` has
+    // two compilation units. `src/child.rs` is declared only by the binary, so
+    // `crate::owner` in it names the binary's re-export, never the library
+    // owner.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "pub fn binary_value(_: i32) -> i32 { 800 }\n\npub use crate::binary_value as owner;\n\nmod child;\n\nfn main() {}\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn binary_child() {\n    assert_eq!(dt(100), 800);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", library),
+            ("src/main.rs", binary),
+            ("src/child.rs", child),
+        ],
+    )?;
+    let files = ["src/lib.rs", "src/main.rs", "src/child.rs"].map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty() && evidence.observed_values.is_empty(),
+        "a binary-only child module's `crate::owner` must not credit the library root: {:?} / {:?}",
+        evidence.related_tests,
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
 fn given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test()
 -> Result<(), String> {
     // #14508 review control: with no library target, `mod pricing;` in

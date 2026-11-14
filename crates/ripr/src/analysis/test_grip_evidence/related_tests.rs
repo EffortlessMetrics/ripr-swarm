@@ -595,14 +595,35 @@ fn crate_root_file_for_test(index: &RustIndex, test_file: &Path) -> Option<PathB
     }
     let prefix = package_prefix(test_file).unwrap_or_default();
     let lib = PathBuf::from(format!("{prefix}src/lib.rs"));
-    if index_has_file(index, &lib) {
+    let main = PathBuf::from(format!("{prefix}src/main.rs"));
+    let (lib_exists, main_exists) = (index_has_file(index, &lib), index_has_file(index, &main));
+    if lib_exists != main_exists {
+        return Some(if lib_exists { lib } else { main });
+    }
+    if !lib_exists {
+        return None;
+    }
+    // A package can hold a library and a default binary, and a `src/` module
+    // belongs to whichever root declares it; preferring `src/lib.rs` would
+    // credit the library for a binary-only child module (#14508 review).
+    let normalized = normalize_path(test_file);
+    if normalized == normalize_path(&lib) {
         return Some(lib);
     }
-    let main = PathBuf::from(format!("{prefix}src/main.rs"));
-    if index_has_file(index, &main) {
+    if normalized == normalize_path(&main) {
         return Some(main);
     }
-    None
+    let module_path = module_path_for_index(index, test_file)?;
+    let module_path = module_path.strip_suffix("/mod").unwrap_or(&module_path);
+    let declares = |root: &Path| {
+        resolve_module_chain(index, root, module_path)
+            .is_some_and(|resolved| normalize_path(&resolved) == normalized)
+    };
+    match (declares(&lib), declares(&main)) {
+        (true, false) => Some(lib),
+        (false, true) => Some(main),
+        _ => None,
+    }
 }
 
 /// Resolve a slash-separated `crate::` chain from `root_file` the way rustc

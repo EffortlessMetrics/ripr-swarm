@@ -30,6 +30,7 @@ tests = [
   "crates/ripr/src/analysis/extract/shadow.rs::fact_authority_tests::scoped_shadow_sees_a_binding_in_a_later_loop",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_library_child_module_imports_the_crate_root_owner_then_owner_keeps_related_test",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_owner_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_direct_owner_alias_when_a_binary_child_module_imports_the_binary_root_then_library_owner_gets_no_related_test",
 ]
 fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/corpus.json",
