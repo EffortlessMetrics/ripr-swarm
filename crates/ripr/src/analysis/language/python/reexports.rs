@@ -567,7 +567,7 @@ fn all_declaration_of(body: &[Stmt]) -> AllDeclaration {
 /// and class bodies are not. Top-level imports count only when `imports` is
 /// set (the initializer reader already weighs its own top-level imports);
 /// imports inside a block always count.
-fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
+pub(super) fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
     let target = |expr: &Expr| target_binds(expr, name);
     let block = |body: &[Stmt]| body.iter().any(|stmt| stmt_binds(stmt, name, true));
     match stmt {
@@ -622,7 +622,7 @@ fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
 /// A module-level `from other import *` may bind any public name, so a
 /// star import cannot vouch for a single binding. Searches every compound
 /// statement, including `except` handlers.
-fn is_star_import(stmt: &Stmt) -> bool {
+pub(super) fn is_star_import(stmt: &Stmt) -> bool {
     let block = |body: &[Stmt]| body.iter().any(is_star_import);
     match stmt {
         Stmt::ImportFrom(s) => s.names.iter().any(|alias| alias.name.as_str() == "*"),
@@ -661,7 +661,7 @@ fn handlers_have_star_import(handlers: &[ast::ExceptHandler]) -> bool {
 /// `__dict__`, `setattr`, `sys.modules`). Scans identifier tokens, so
 /// whitespace between the name and its call (`globals ()`) cannot hide a
 /// mention; any mention, even in a comment, fails closed.
-fn writes_namespace_dynamically(source: &str) -> bool {
+pub(super) fn writes_namespace_dynamically(source: &str) -> bool {
     let mut previous = "";
     for token in source
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
