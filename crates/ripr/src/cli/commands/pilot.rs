@@ -2312,4 +2312,131 @@ mod tests {
             Some(Err("the inventory used pilot's whole deadline".to_string()))
         );
     }
+
+    #[test]
+    fn pilot_cli_gap_normalize_parent_components_resolves_or_refuses() {
+        // Accepted: lexical `.`/`..` resolution inside the root.
+        assert_eq!(
+            normalize_parent_components(Path::new("target/./ripr/pilot")),
+            Some(PathBuf::from("target/ripr/pilot"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("target/ripr/../reports")),
+            Some(PathBuf::from("target/reports"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("a/..")),
+            Some(PathBuf::new())
+        );
+        // Refused: a `..` that climbs above the root cannot be anchored.
+        assert_eq!(normalize_parent_components(Path::new("../outside")), None);
+        assert_eq!(normalize_parent_components(Path::new("a/../../b")), None);
+    }
+
+    #[test]
+    fn pilot_cli_gap_unavailable_reason_maps_typed_causes() {
+        let fallback = "fallback reason";
+        let missing = CoreError::message(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert_eq!(
+            current_change_unavailable_reason(&missing, fallback),
+            "git is not on PATH"
+        );
+        let timeout = CoreError::git_invocation_timeout("git diff", 10, true);
+        assert_eq!(
+            current_change_unavailable_reason(&timeout, fallback),
+            "git timed out"
+        );
+        let not_repo = CoreError::message("/tmp/x is not inside a Git work tree");
+        assert_eq!(
+            current_change_unavailable_reason(&not_repo, fallback),
+            "not a Git work tree"
+        );
+        // Anything else yields the caller's fixed fallback, never the raw
+        // message (paths and git stderr belong to `ripr check`).
+        let other = CoreError::message("fatal: bad object /secret/path");
+        assert_eq!(
+            current_change_unavailable_reason(&other, fallback),
+            fallback
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_value_flags_reject_non_numeric_and_unknown_mode() {
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "many"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"many\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "-3"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"-3\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--timeout-ms", "soon"])),
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"soon\"".to_string())
+        );
+        let error = match parse_pilot_options(&args(&["--mode", "bogus"])) {
+            Ok(_) => String::new(),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("bogus"),
+            "unknown --mode must be refused and echo the value: {error:?}"
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_repeated_root_conflicts_but_identical_repeat_is_accepted() -> Result<(), String>
+    {
+        assert_eq!(
+            parse_pilot_options(&args(&["--root", "a", "--root", "b"])),
+            Err("pilot takes --root once (got 'a' and 'b')".to_string())
+        );
+        let same = parse_pilot_options(&args(&["--root", "a", "--root", "a"]))?;
+        assert_eq!(same.root, Path::new("a"));
+        assert!(same.root_explicit);
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_flag_edges_quiet_mode_and_defaults() -> Result<(), String> {
+        // `--quiet` is a bare switch: it must not consume the next token.
+        let quiet_then_root = parse_pilot_options(&args(&["--quiet", "--root", "r"]))?;
+        assert!(quiet_then_root.quiet);
+        assert_eq!(quiet_then_root.root, Path::new("r"));
+        // Defaults: nothing typed means nothing explicit.
+        let defaults = parse_pilot_options(&args(&[]))?;
+        assert!(!defaults.quiet);
+        assert!(!defaults.root_explicit);
+        assert!(!defaults.out_explicit);
+        assert!(!defaults.explicit.mode);
+        assert_eq!(defaults.max_seams, 5);
+        assert_eq!(defaults.timeout_ms, DEFAULT_PILOT_TIMEOUT_MS);
+        assert!(!defaults.timeout_explicit);
+        // A typed `--mode` marks the mode explicit so config cannot override it.
+        let moded = parse_pilot_options(&args(&["--mode", "ready"]))?;
+        assert_eq!(moded.mode, Mode::Ready);
+        assert!(moded.explicit.mode);
+        // A later occurrence of a value flag wins.
+        let last = parse_pilot_options(&args(&["--max-seams", "2", "--max-seams", "9"]))?;
+        assert_eq!(last.max_seams, 9);
+        // `--out` is explicit even when it names the default location.
+        let out = parse_pilot_options(&args(&["--root", "r", "--out", "target/ripr/pilot"]))?;
+        assert!(out.out_explicit);
+        assert_eq!(out.out_dir, Path::new("target/ripr/pilot"));
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_timings_path_sits_beside_the_summary() {
+        let artifacts = packet_dir_artifacts(Path::new("some/packet"));
+        assert_eq!(
+            pilot_timings_path(&artifacts),
+            artifacts
+                .pilot_summary_json
+                .parent()
+                .map(|dir| dir.join("pilot-timings.json"))
+                .unwrap_or_default()
+        );
+        assert!(pilot_timings_path(&artifacts).ends_with("pilot-timings.json"));
+    }
 }

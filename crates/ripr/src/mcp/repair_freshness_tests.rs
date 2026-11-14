@@ -1188,3 +1188,149 @@ fn blocked_baseline_reports_are_bounded_after_complete_selection() -> Result<(),
     }
     Ok(())
 }
+
+/// The retained packet bytes the durable route projection reads, with the
+/// loaded manifest that names them. Calling the projection directly bypasses
+/// the store's digest validation, so each case isolates the route logic.
+fn retained_packet(
+    root: &Path,
+    id: &RepairAttemptId,
+) -> Result<
+    (
+        crate::app::repair_attempt::RepairAttemptManifest,
+        PathBuf,
+        Value,
+    ),
+    String,
+> {
+    let manifest = load_repair_attempt_manifest(root, id)?;
+    let artifact = find_manifest_artifact_by_role(&manifest, "agent_packet")
+        .ok_or("fixture manifest must retain an agent_packet")?;
+    let path = root.join(&artifact.path);
+    let packet: Value = serde_json::from_slice(
+        &std::fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((manifest, path, packet))
+}
+
+#[test]
+fn durable_command_routes_project_typed_specs_tagged_with_their_route_role() -> Result<(), String> {
+    let (root, id) = prepared("routes-typed")?;
+    let (manifest, path, packet) = retained_packet(&root, &id)?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert!(limitations.is_empty(), "{limitations:?}");
+    let roles: Vec<_> = routes
+        .iter()
+        .map(|route| route["route_role"].clone())
+        .collect();
+    assert_eq!(roles, vec![json!("verify"), json!("receipt")]);
+    // The typed spec itself, not a reconstruction of its display, is projected.
+    let verify: crate::domain::CommandSpec =
+        serde_json::from_value(packet["command_specs"]["verify"].clone())
+            .map_err(|error| error.to_string())?;
+    let mut expected = command_spec_document(&verify);
+    expected["route_role"] = json!("verify");
+    assert_eq!(routes[0], expected);
+    // A batch-shaped packet is read from its first packet entry.
+    write(
+        &path,
+        &json!({"packets": [{"command_specs": packet["command_specs"].clone()}]}).to_string(),
+    )?;
+    let (nested, nested_limitations) = durable_command_routes(&root, &manifest);
+    assert_eq!(nested, routes);
+    assert!(nested_limitations.is_empty());
+    Ok(())
+}
+
+#[test]
+fn durable_command_routes_report_an_unreadable_or_non_json_packet_without_routes()
+-> Result<(), String> {
+    let (root, id) = prepared("routes-unreadable")?;
+    let (manifest, path, _) = retained_packet(&root, &id)?;
+    write(&path, "{ not json")?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert!(routes.is_empty());
+    assert_eq!(
+        limitations,
+        vec!["the retained packet is not JSON; command routes stay unprojected".to_string()]
+    );
+    std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert!(routes.is_empty());
+    assert_eq!(limitations.len(), 1, "{limitations:?}");
+    assert!(
+        limitations[0].contains("could not be read; command routes stay unprojected"),
+        "{limitations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_command_routes_stay_silent_for_legacy_packets_and_missing_artifacts()
+-> Result<(), String> {
+    let (root, id) = prepared("routes-legacy")?;
+    let (mut manifest, path, _) = retained_packet(&root, &id)?;
+    // A legacy packet without a command_specs block is normal: no routes and
+    // no limitation to report.
+    write(&path, &json!({"seam_id": "seam:freshness"}).to_string())?;
+    assert_eq!(
+        durable_command_routes(&root, &manifest),
+        (Vec::new(), Vec::new())
+    );
+    // A manifest that retains no packet at all projects nothing.
+    manifest
+        .artifacts
+        .retain(|artifact| artifact.role != "agent_packet");
+    assert_eq!(
+        durable_command_routes(&root, &manifest),
+        (Vec::new(), Vec::new())
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_command_routes_refuse_a_spec_under_the_wrong_role_or_invalid_shape() -> Result<(), String>
+{
+    let (root, id) = prepared("routes-wrong-role")?;
+    let (manifest, path, packet) = retained_packet(&root, &id)?;
+    let specs = &packet["command_specs"];
+    let with_specs = |specs: Value| {
+        let mut changed = packet.clone();
+        changed["command_specs"] = specs;
+        write(&path, &changed.to_string())
+    };
+    // A receipt spec filed under `verify` is not a verify route; the valid
+    // receipt route survives and the refusal names the role.
+    with_specs(json!({"verify": specs["receipt"].clone(), "receipt": specs["receipt"].clone()}))?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0]["route_role"], "receipt");
+    assert_eq!(
+        limitations,
+        vec![
+            "the retained packet's verify route is not a valid typed CommandSpec and stays unprojected"
+                .to_string()
+        ]
+    );
+    // A block that does not parse as a CommandSpec is omitted, never rebuilt.
+    with_specs(json!({"verify": {"display": "cargo test"}, "receipt": specs["receipt"].clone()}))?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0]["route_role"], "receipt");
+    assert!(limitations[0].contains("verify route is not a valid typed CommandSpec"));
+    // Both slots swapped: nothing is projected and both roles are named.
+    with_specs(json!({"verify": specs["receipt"].clone(), "receipt": specs["verify"].clone()}))?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert!(routes.is_empty());
+    assert_eq!(limitations.len(), 2);
+    assert!(limitations[0].contains("verify route"));
+    assert!(limitations[1].contains("receipt route"));
+    // An absent slot is skipped silently.
+    with_specs(json!({"verify": specs["verify"].clone()}))?;
+    let (routes, limitations) = durable_command_routes(&root, &manifest);
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0]["route_role"], "verify");
+    assert!(limitations.is_empty());
+    Ok(())
+}

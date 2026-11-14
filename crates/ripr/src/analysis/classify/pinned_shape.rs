@@ -883,4 +883,415 @@ mod tests {
             Some(Shape::ClosureTail)
         ));
     }
+
+    fn test_fact(attrs: &[&str], body: &str, assertions: &[&str]) -> TestFact {
+        TestFact {
+            name: "pins".to_string(),
+            file: std::path::PathBuf::from("tests/it.rs"),
+            start_line: 1,
+            end_line: 9,
+            body: body.into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            assertions: assertions
+                .iter()
+                .map(|text| crate::analysis::facts::OracleFact {
+                    line: 2,
+                    text: (*text).to_string(),
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    observed_tokens: Vec::new(),
+                    ok_value_observed: None,
+                })
+                .collect(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: attrs.iter().map(|attr| (*attr).to_string()).collect(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
+        }
+    }
+
+    #[test]
+    fn whole_call_accepts_the_call_applied_unwrapped_or_collected_and_nothing_else() {
+        for accepted in [
+            "owner(1)",
+            "  owner(1)  ",
+            "owner(1)(2)",
+            "owner(1).unwrap()",
+            "owner(f(1, 2))",
+            "owner(1).collect()",
+            "owner(1).collect::<Vec<_>>()",
+            "owner(1).collect::<Vec<Vec<u8>>>()",
+        ] {
+            assert!(is_whole_call(accepted, "owner"), "{accepted}");
+        }
+        for refused in [
+            "owner",
+            "owner_two(1)",
+            "other(1)",
+            "wrap(owner(1))",
+            "owner(1).len()",
+            "owner(1) + 1",
+            "owner(1",
+            "owner(1).collect::<Vec<_>(",
+            "owner(1).collect",
+        ] {
+            assert!(!is_whole_call(refused, "owner"), "{refused}");
+        }
+    }
+
+    #[test]
+    fn degenerate_input_is_an_empty_none_or_bare_zero_argument() {
+        for degenerate in [
+            "f([])",
+            "f(None)",
+            "f(\"\")",
+            "f(0)",
+            "f(1, 0)",
+            "f(Vec::new())",
+            "f(String::new())",
+            "f(&[])",
+        ] {
+            assert!(degenerate_input(degenerate), "{degenerate}");
+        }
+        for readable in [
+            "f(10)",
+            "f(1.0)",
+            "f(0.5)",
+            "f(a0)",
+            "f(x_0)",
+            "f(\"a b\")",
+            "f(vec![1])",
+            "f(Some(1))",
+        ] {
+            assert!(!degenerate_input(readable), "{readable}");
+        }
+    }
+
+    #[test]
+    fn zero_literals_are_integer_zeros_in_any_radix_or_suffix() {
+        for zero in ["0", "-0", " 0 ", "00", "0_u32", "0i64", "0x0", "0b0", "0o0"] {
+            assert!(is_zero_literal(zero), "{zero}");
+        }
+        for nonzero in ["1", "10", "-1", "0x1", "0x", "0b1", "0.5", "", "x0"] {
+            assert!(!is_zero_literal(nonzero), "{nonzero}");
+        }
+    }
+
+    #[test]
+    fn contains_name_matches_whole_identifiers_only() {
+        assert!(contains_name("owner(1)", "owner"));
+        assert!(contains_name("1 + owner", "owner"));
+        assert!(contains_name("x.owner()", "owner"));
+        assert!(contains_name("owner_two + owner", "owner"));
+        for text in ["owner_two(1)", "my_owner(1)", "owners", "ownér", "other"] {
+            assert!(!contains_name(text, "owner"), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_the_accumulator_shape_reads_a_zero_element_and_a_walked_empty_argument() {
+        // A zero element is degenerate for the other shapes but not for the
+        // accumulator, which walks every element.
+        let call = "sum(&[0, 2])";
+        assert!(degenerate_pin(Shape::ClosureTail, None, "sum", call, "2"));
+        assert!(!degenerate_pin(
+            Shape::AccumulatedLocal,
+            Some(0),
+            "sum",
+            call,
+            "2"
+        ));
+        // An empty literal in a position that is not walked does not count.
+        let call = "sum(&[1, 2], Vec::new())";
+        assert!(!degenerate_pin(
+            Shape::AccumulatedLocal,
+            Some(0),
+            "sum",
+            call,
+            "3"
+        ));
+        assert!(degenerate_pin(
+            Shape::AccumulatedLocal,
+            Some(1),
+            "sum",
+            call,
+            "3"
+        ));
+        // Without a walked position the whole call text is read.
+        assert!(degenerate_pin(
+            Shape::AccumulatedLocal,
+            None,
+            "sum",
+            call,
+            "3"
+        ));
+        // An empty walked run or a zero total adds nothing a pin could notice.
+        assert!(degenerate_pin(
+            Shape::AccumulatedLocal,
+            Some(0),
+            "sum",
+            "sum(&[])",
+            "3"
+        ));
+        assert!(degenerate_pin(
+            Shape::AccumulatedLocal,
+            Some(0),
+            "sum",
+            "sum(&[1, 2])",
+            "0_u32"
+        ));
+    }
+
+    #[test]
+    fn a_pin_must_run_unconditionally_in_the_test_body() {
+        let run = |body: &str, assertion: &str| assertion_runs_unconditionally(body, assertion);
+        let pin = "assert_eq!(f(1), 2);";
+        assert!(run(
+            "fn t() {\n    let x = 1;\n    assert_eq!(f(1), 2);\n}",
+            pin
+        ));
+        // Whitespace and the trailing semicolon do not matter.
+        assert!(run("fn t() {\n    assert_eq!( f(1),2 )\n}", pin));
+        for body in [
+            "fn t() {\n    if flag {\n        assert_eq!(f(1), 2);\n    }\n}",
+            "fn t() {\n    return;\n    assert_eq!(f(1), 2);\n}",
+            "fn t() {\n    let c = || assert_eq!(f(1), 2);\n}",
+            "fn t() {\n    assert_eq!(f(1), 3);\n}",
+            "this is not rust",
+        ] {
+            assert!(!run(body, pin), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_table_loop_pin_must_be_a_direct_statement_of_a_top_level_loop() {
+        let pin = "assert_eq!(sum(&row), 3);";
+        let run = |body: &str| assertion_is_top_level_loop_statement(body, pin);
+        // The loop as a statement followed by more code.
+        assert!(run(
+            "fn t() {\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n    let done = 1;\n}"
+        ));
+        assert!(run(
+            "fn t() {\n    let rows = 1;\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}"
+        ));
+        // The loop as the test's tail expression.
+        assert!(run(
+            "fn t() {\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}"
+        ));
+        for body in [
+            // Not in a loop at all.
+            "fn t() {\n    assert_eq!(sum(&row), 3);\n}",
+            // Nested in a branch of the loop body.
+            "fn t() {\n    for row in rows {\n        if row.ok {\n            assert_eq!(sum(&row), 3);\n        }\n    }\n}",
+            // A different assertion in the loop.
+            "fn t() {\n    for row in rows {\n        assert_eq!(sum(&row), 4);\n    }\n}",
+            // The test may leave before the table runs.
+            "fn t() {\n    return;\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}",
+            "fn t() {\n    let v = parse()?;\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}",
+            "fn t() {\n    if bad { panic!(\"x\"); }\n    for row in rows {\n        assert_eq!(sum(&row), 3);\n    }\n}",
+            "this is not rust",
+        ] {
+            assert!(!run(body), "{body}");
+        }
+    }
+
+    #[test]
+    fn an_exact_pin_credits_only_a_live_unconditional_whole_call_on_a_readable_input() {
+        let pins = |test: &TestFact| pins_owner_exactly(test, "owner", Shape::ClosureTail, None);
+        let body = "fn pins() {\n    assert_eq!(owner(3), 4);\n}";
+        let pin = "assert_eq!(owner(3), 4);";
+        assert!(pins(&test_fact(&["#[test]"], body, &[pin])));
+        // The call may stand on either side.
+        let flipped = "assert_eq!(4, owner(3));";
+        assert!(pins(&test_fact(
+            &["#[test]"],
+            "fn pins() {\n    assert_eq!(4, owner(3));\n}",
+            &[flipped]
+        )));
+        // Ignored and should_panic tests do not pin.
+        assert!(!pins(&test_fact(&["#[test]", "#[ignore]"], body, &[pin])));
+        assert!(!pins(&test_fact(
+            &["#[test]", "#[should_panic]"],
+            body,
+            &[pin]
+        )));
+        // A degenerate input, a projection and a self-referential expectation
+        // pin less than the whole result.
+        for (text, source) in [
+            (
+                "assert_eq!(owner(0), 0);",
+                "fn pins() {\n    assert_eq!(owner(0), 0);\n}",
+            ),
+            (
+                "assert_eq!(owner(3).len(), 4);",
+                "fn pins() {\n    assert_eq!(owner(3).len(), 4);\n}",
+            ),
+            (
+                "assert_eq!(owner(3), owner(3));",
+                "fn pins() {\n    assert_eq!(owner(3), owner(3));\n}",
+            ),
+            (
+                "assert_ne!(owner(3), 4);",
+                "fn pins() {\n    assert_ne!(owner(3), 4);\n}",
+            ),
+        ] {
+            assert!(!pins(&test_fact(&["#[test]"], source, &[text])), "{text}");
+        }
+        // A pin under a branch is not unconditional.
+        assert!(!pins(&test_fact(
+            &["#[test]"],
+            "fn pins() {\n    if flag {\n        assert_eq!(owner(3), 4);\n    }\n}",
+            &[pin]
+        )));
+        // A weak assertion does not pin exactly.
+        let mut weak = test_fact(&["#[test]"], body, &[pin]);
+        weak.assertions[0].strength = OracleStrength::Weak;
+        assert!(!pins(&weak));
+    }
+
+    #[test]
+    fn a_result_pin_needs_an_ok_value_or_an_unwrapped_call() {
+        let pins = |text: &str| {
+            let body = format!("fn pins() {{\n    {text}\n}}");
+            pins_result_ok(&test_fact(&["#[test]"], &body, &[text]), "owner")
+        };
+        assert!(pins("assert_eq!(owner(3), Ok(vec![4]));"));
+        assert!(pins("assert_eq!(Ok(vec![4]), owner(3));"));
+        assert!(pins("assert_eq!(owner(3).unwrap(), vec![4]);"));
+        for text in [
+            "assert_eq!(owner(3), Err(\"bad\"));",
+            "assert_eq!(owner(3), vec![4]);",
+            "assert_eq!(owner(0), Ok(vec![]));",
+            "assert_eq!(owner(3), Ok(owner(3)));",
+            "assert_ne!(owner(3), Ok(vec![4]));",
+        ] {
+            assert!(!pins(text), "{text}");
+        }
+        let body = "fn pins() {\n    assert_eq!(owner(3), Ok(vec![4]));\n}";
+        let pin = "assert_eq!(owner(3), Ok(vec![4]));";
+        assert!(!pins_result_ok(
+            &test_fact(&["#[test]", "#[ignore]"], body, &[pin]),
+            "owner"
+        ));
+        assert!(!pins_result_ok(
+            &test_fact(&["#[test]", "#[should_panic]"], body, &[pin]),
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn a_let_else_exit_is_the_else_body_in_an_owner_with_no_other_exit() {
+        let family = ProbeFamily::ReturnValue;
+        let owner = "fn f(x: Option<u32>) -> u32 {\n    let Some(v) = x else {\n        return 7;\n    };\n    v\n}\n";
+        assert!(matches!(
+            unread_shape(owner, 2, &family),
+            Some(Shape::LetElseExit)
+        ));
+        // The `let` line itself, or the tail, is not the else exit.
+        assert!(unread_shape(owner, 4, &family).is_none());
+        // An initializer on the changed line cannot be told from the exit.
+        let one_line =
+            "fn f(x: Option<u32>) -> u32 {\n    let Some(v) = x else { return 7 };\n    v\n}\n";
+        assert!(unread_shape(one_line, 1, &family).is_none());
+        // Another early exit means the input may leave elsewhere.
+        let other_exit = "fn f(x: Option<u32>) -> u32 {\n    let Some(v) = x else {\n        return 7;\n    };\n    if v > 3 {\n        return 1;\n    }\n    v\n}\n";
+        assert!(unread_shape(other_exit, 2, &family).is_none());
+        // A `let` without `else` has no exit.
+        let plain = "fn f(x: u32) -> u32 {\n    let v = x;\n    v\n}\n";
+        assert!(unread_shape(plain, 1, &family).is_none());
+    }
+
+    #[test]
+    fn a_returned_receiver_is_a_method_call_statement_on_the_value_the_owner_returns() {
+        let owner = "fn f(mut v: Vec<u32>) -> Vec<u32> {\n    v.sort_by_key(|k| *k);\n    v\n}\n";
+        for family in [ProbeFamily::CallDeletion, ProbeFamily::SideEffect] {
+            assert!(matches!(
+                unread_shape(owner, 1, &family),
+                Some(Shape::ReturnedReceiver)
+            ));
+        }
+        // Other probe families are not this shape.
+        assert!(unread_shape(owner, 1, &ProbeFamily::Predicate).is_none());
+        // The receiver is not the returned value.
+        let other = "fn f(mut v: Vec<u32>, w: Vec<u32>) -> Vec<u32> {\n    w.len();\n    v\n}\n";
+        assert!(unread_shape(other, 1, &ProbeFamily::CallDeletion).is_none());
+        // The tail is not a plain returned name.
+        let computed = "fn f(mut v: Vec<u32>) -> usize {\n    v.sort();\n    v.len()\n}\n";
+        assert!(unread_shape(computed, 1, &ProbeFamily::CallDeletion).is_none());
+        // A later rebinding or assignment gives the tail another value.
+        let rebound = "fn f(mut v: Vec<u32>) -> Vec<u32> {\n    v.sort();\n    let v = Vec::new();\n    v\n}\n";
+        assert!(unread_shape(rebound, 1, &ProbeFamily::CallDeletion).is_none());
+        let assigned =
+            "fn f(mut v: Vec<u32>) -> Vec<u32> {\n    v.sort();\n    v = Vec::new();\n    v\n}\n";
+        assert!(unread_shape(assigned, 1, &ProbeFamily::CallDeletion).is_none());
+        // Another exit can leave before the tail.
+        let early = "fn f(mut v: Vec<u32>) -> Vec<u32> {\n    v.sort();\n    if v.is_empty() {\n        return v;\n    }\n    v\n}\n";
+        assert!(unread_shape(early, 1, &ProbeFamily::CallDeletion).is_none());
+    }
+
+    #[test]
+    fn a_closure_tail_needs_a_closure_the_call_runs_on_every_input() {
+        let family = ProbeFamily::ReturnValue;
+        let runs = |tail: &str| {
+            let body = format!("fn f(x: u32, o: Option<u32>) -> u32 {{\n    {tail}\n}}\n");
+            matches!(unread_shape(&body, 1, &family), Some(Shape::ClosureTail))
+        };
+        assert!(runs("std::thread::spawn(move || x + 1).join().unwrap()"));
+        for tail in [
+            // Option combinators that may not run the closure.
+            "o.map(|v| v + 1).unwrap_or(0)",
+            "o.unwrap_or_else(|| x + 1)",
+            "o.and_then(|v| Some(v + 1)).unwrap_or(0)",
+            // Methods only this rule treats as conditional.
+            "o.inspect(|v| drop(*v)).unwrap()",
+            "o.take_if(|v| *v > 1).unwrap()",
+            "o.is_err_and(|v| v > 1) as u32",
+            // A branch around the closure.
+            "if x > 1 { (|| x + 1)() } else { 0 }",
+            "match x { 0 => 0, _ => (|| x + 1)() }",
+            "x > 1 && (|| x > 2)() as u32 == 1",
+            // No closure on the line.
+            "x + 1",
+        ] {
+            assert!(!runs(tail), "{tail}");
+        }
+        // An early exit can leave before the closure runs.
+        let early = "fn f(x: u32) -> u32 {\n    if x == 0 {\n        return 0;\n    }\n    std::thread::spawn(move || x + 1).join().unwrap()\n}\n";
+        assert!(unread_shape(early, 4, &family).is_none());
+    }
+
+    #[test]
+    fn a_map_or_filter_closure_runs_only_when_the_chain_is_an_iterator() {
+        let rooted = |source: &str| {
+            let body = format!("fn f() {{ {source}; }}");
+            parse_clean_source_file(&body)
+                .and_then(|parse| {
+                    parse
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::MethodCallExpr::cast)
+                        .find(|call| call.name_ref().is_some_and(|name| name.text() == "map"))
+                })
+                .map(|call| iterator_rooted(&call))
+        };
+        for source in [
+            "xs.iter().map(|x| x + 1)",
+            "xs.iter().rev().skip(1).map(|x| x + 1)",
+            "(0..n).map(|x| x + 1)",
+            "xs.chars().filter(|c| c.is_ascii()).map(|c| c)",
+            "(xs.iter()).map(|x| x + 1)",
+        ] {
+            assert_eq!(rooted(source), Some(true), "{source}");
+        }
+        for source in [
+            "xs.iter().next().map(|x| x + 1)",
+            "xs.get(0).map(|x| x + 1)",
+            "opt.map(|x| x + 1)",
+            "f().map(|x| x + 1)",
+        ] {
+            assert_eq!(rooted(source), Some(false), "{source}");
+        }
+    }
 }
