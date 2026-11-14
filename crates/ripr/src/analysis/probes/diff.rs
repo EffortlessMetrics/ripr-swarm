@@ -522,7 +522,8 @@ pub(crate) fn probes_for_file_with_relations(
                     })
             };
             // The other shape must hold the whole edit itself (its own old
-            // cut differs), not merely sit unchanged inside the scrutinee.
+            // cut differs), not merely sit unchanged inside the scrutinee,
+            // and must survive the filters below as a probe of its own.
             let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
                 let header = canonical_probe_text(text, shape.text);
                 removed_counterpart.as_deref().is_some_and(|removed| {
@@ -530,6 +531,8 @@ pub(crate) fn probes_for_file_with_relations(
                         let other_text = canonical_probe_text(text, other.text);
                         other.family != ProbeFamily::MatchArm
                             && other.family != ProbeFamily::StaticUnknown
+                            && !unchanged_return(other)
+                            && !respelled_return(other)
                             && header.contains(other_text.as_str())
                             && removed_span_of_shape(text, &other_text, removed.trim())
                                 .is_some_and(|old| old != other_text)
@@ -4911,9 +4914,9 @@ mod tests {
         );
     }
 
-    /// #14722: an arm edit on a line that also holds the header keeps its
-    /// match-arm probe, and an unchanged header never becomes a probe of
-    /// its own.
+    /// #14722: an arm edit on a line that also holds the header reaches past
+    /// the scrutinee, so the header stays a match-arm probe and is never
+    /// read as an unclassified scrutinee edit.
     #[test]
     fn an_arm_edit_beside_an_unchanged_header_stays_a_match_arm() {
         let probes = shapes_probes(
@@ -4932,10 +4935,13 @@ mod tests {
                 .all(|probe| probe.family != ProbeFamily::StaticUnknown),
             "{probes:?}"
         );
+        // The edit reaches past the scrutinee, so the header keeps its
+        // match-arm probe over the whole old line.
         assert!(
-            probes
-                .iter()
-                .any(|probe| probe.family == ProbeFamily::MatchArm),
+            probes.iter().any(|probe| {
+                probe.family == ProbeFamily::MatchArm
+                    && probe.before.as_deref() == Some("match kind { 0 => 1, _ => 9 }")
+            }),
             "{probes:?}"
         );
     }
