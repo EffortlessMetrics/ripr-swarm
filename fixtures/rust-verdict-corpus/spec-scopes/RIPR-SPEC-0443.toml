@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0443"
+scope = "out"
+reason = "Repo-scope seam grip credit for a branch-local return_value seam; corpus rows score diff verdicts and carry no seam fields, so no case can pin them. The branch-miss control lives in the evidence-promotion honesty corpus as rust_branch_local_return_value_else_only"

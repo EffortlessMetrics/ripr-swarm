@@ -23805,3 +23805,679 @@ fn field_write_facts_with_tail(
         .map(|fact| fact.value.clone())
         .collect())
 }
+
+/// #14496: the owner's early return is one branch of an `if`. A test that
+/// calls the owner with arguments that take the other branch observes the
+/// other value, so it must not strongly grip this seam.
+#[test]
+fn branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 control: the committed two-test fixture reaches both branches, so
+/// the early-return seam stays strongly gripped. A blanket downgrade fails
+/// here.
+#[test]
+fn branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let both = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, both)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a reaching call must keep the seam strongly gripped: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: the else-branch seam is reached by the else-branch call, so the
+/// same test that withholds the then-branch seam keeps this one strong.
+#[test]
+fn branch_local_return_value_seam_in_the_taken_branch_stays_strong() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression().trim() == "amount")
+        .ok_or_else(|| format!("expected the else-branch seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the else-branch call reaches the else-branch seam: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 control: the committed `fixtures/boundary_gap` two-test fixture
+/// still grades its predicate seam strongly, so the branch gate does not
+/// blanket-downgrade the fixture.
+#[test]
+fn committed_boundary_gap_fixture_stays_strongly_gripped() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = include_str!("../../../../../fixtures/boundary_gap/input/src/lib.rs");
+    let tests = PathBuf::from("tests/pricing.rs");
+    let tests_src = include_str!("../../../../../fixtures/boundary_gap/input/tests/pricing.rs");
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| format!("expected the predicate seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the committed two-test fixture must stay strongly gripped: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: the assertion may pin a local the call was bound to. The gate must
+/// resolve the `let` initializer before deciding reach, or the most common
+/// Rust test shape keeps today's over-credit.
+#[test]
+fn branch_local_return_value_seam_is_not_gripped_by_a_let_bound_else_branch_call()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    let got = discounted_total(50, 100);\n    assert_eq!(got, 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a let-bound else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: an enclosing `if` the call does not take keeps the seam
+/// unreachable even when the seam's own condition folds true.
+#[test]
+fn branch_local_return_value_seam_behind_an_untaken_enclosing_guard_is_not_gripped()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if discount_threshold > 0 {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 0), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an untaken enclosing guard must not strongly grip the inner return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a parameter rebound before the `if` makes the call-argument fold
+/// stale. The gate must keep today's credit rather than withhold a real
+/// discriminator.
+#[test]
+fn branch_local_return_value_seam_with_a_rebound_parameter_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    let amount = -amount;\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn negated_amount_reaches_the_discount() {\n    assert_eq!(discounted_total(-50, 0), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a reaching call through a rebound parameter must keep its grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: both arms holding the same expression makes the seam's own branch
+/// ambiguous by text. The gate must keep today's credit, so an else-arm call
+/// that reaches its return is not downgraded.
+#[test]
+fn branch_local_return_value_seam_with_identical_arms_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount;\n    } else {\n        return amount;\n    }\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let return_seams: Vec<_> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::ReturnValue)
+        .collect();
+    assert!(
+        !return_seams.is_empty(),
+        "expected the return seams; seams: {seams:?}"
+    );
+    for seam in return_seams {
+        let evidence = evidence_for_seam(seam, &index);
+        assert_eq!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "identical arms are ambiguous, so the else-arm call keeps its grip: {:?}",
+            evidence.discriminate
+        );
+    }
+    Ok(())
+}
+
+/// #14496: the per-test record must agree with the discriminate stage. A test
+/// the branch gate refuses must not publish strong per-test grip.
+#[test]
+fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the stage must withhold credit: {:?}",
+        evidence.discriminate
+    );
+    let grip = evidence
+        .related_tests
+        .iter()
+        .find(|grip| grip.test_name == "below_threshold_has_no_discount")
+        .ok_or_else(|| "expected the else-only test record".to_string())?;
+    assert_ne!(
+        grip.oracle_strength,
+        OracleStrength::Strong,
+        "the per-test record must not publish strong grip the stage refuses: {grip:?}"
+    );
+    Ok(())
+}
+
+/// #14496: a value-transparent wrapper around the call is the sibling
+/// convention, so the gate reads through it. `block_on(owner(..))` from the
+/// else branch must not strongly grip the then-branch return.
+#[test]
+fn branch_local_return_value_seam_is_not_gripped_by_a_wrapped_else_branch_call()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(block_on(discounted_total(50, 100)), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a wrapped else-branch call must not strongly grip the then-branch return: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a sibling `return` after the `if` holds the same expression, so the
+/// seam's own occurrence must be told apart by its line, not by counting. The
+/// call `discounted_total(50, 100)` takes the else path, so the sibling return
+/// on line 5 is reached and keeps its grip, while the then-branch return on
+/// line 3 is not reached and must not answer `Yes` (#14496 review).
+#[test]
+fn branch_local_return_value_seam_with_a_sibling_duplicate_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    return amount - 10;\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let evidence_at = |line: usize| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.display_line() == line)
+            .ok_or_else(|| format!("expected a return seam on line {line}; seams: {seams:?}"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+    let sibling = evidence_at(5)?;
+    assert_eq!(
+        sibling.discriminate.state,
+        StageState::Yes,
+        "a call that reaches the sibling return keeps its grip: {:?}",
+        sibling.discriminate
+    );
+    let then_branch = evidence_at(3)?;
+    assert_ne!(
+        then_branch.discriminate.state,
+        StageState::Yes,
+        "the then-branch return is not reached, so it must not answer Yes: {:?}",
+        then_branch.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a parameter mutated inside a loop after the `if` makes the
+/// call-argument fold stale. The gate must keep today's credit rather than
+/// withhold a branch the call reaches on a later iteration.
+#[test]
+fn branch_local_return_value_seam_with_a_loop_carried_rebind_keeps_its_grip() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(mut amount: i32, discount_threshold: i32) -> i32 {\n    loop {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n        amount += 10;\n    }\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn loop_reaches_the_discount() {\n    assert_eq!(discounted_total(50, 100), 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a loop-carried rebind keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a `for` pattern that binds a parameter makes the call-argument
+/// environment stale. The gate must keep today's credit rather than fold the
+/// condition against the original argument.
+#[test]
+fn branch_local_return_value_seam_with_a_for_pattern_rebind_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    for amount in 0..10 {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn for_loop_reaches_the_discount() {\n    assert_eq!(discounted_total(0, 5), -5);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a for-pattern rebind keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: `a && b || c` short-circuits only the `&&` right operand. Skipping
+/// at the `||` level ate the following comparison and folded `false`, which
+/// withheld credit from a call that does reach the branch.
+#[test]
+fn branch_local_return_value_seam_behind_a_short_circuited_or_keeps_its_grip() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount < 0 && amount > 100 || amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn threshold_reaches_the_discount() {\n    assert_eq!(discounted_total(50, 0), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "the `||` comparison after a short-circuited `&&` must be folded: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: when one compared operand holds an owner call neither parser can
+/// resolve (`owner(..) / 2`), the other operand's call must not decide the
+/// branch. Before the fix the parsed operand withheld credit from a reaching
+/// call in the unparsed operand.
+#[test]
+fn branch_local_return_value_seam_with_an_unresolved_operand_call_keeps_its_grip()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let mixed = "#[test]\nfn halved_discount_still_counts() {\n    assert_eq!(discounted_total(50, 100), discounted_total(110, 100) / 2);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, mixed)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an unresolved operand call must keep today's credit: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a destructuring `let` rebinds the parameter, so folding the
+/// condition against the original argument would withhold a real
+/// discriminator. Only a top-level `IdentPat` was inspected before.
+#[test]
+fn branch_local_return_value_seam_with_a_destructured_rebind_keeps_its_grip() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    let (amount,) = (-amount,);\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn negated_amount_reaches_the_discount() {\n    assert_eq!(discounted_total(-50, 0), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a destructured rebind keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 review: a non-plain `let` pattern in the test body rebinds the
+/// compared local, so the earlier plain initializer is stale and the gate must
+/// not fold the call's arguments through it.
+#[test]
+fn branch_local_return_value_seam_with_a_tuple_rebind_after_the_call_keeps_its_grip()
+-> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let rebinding = "#[test]\nfn tuple_rebind_after_the_call_keeps_its_grip() {\n    let got = discounted_total(50, 100);\n    let (got,) = (got + 1,);\n    assert_eq!(got, 51);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, rebinding)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a tuple rebind after the call keeps its grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 review: an `if let` binding that shadows a parameter makes the
+/// call-argument environment stale, so the condition must not fold.
+#[test]
+fn branch_local_return_value_seam_with_an_if_let_shadow_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if let Some(amount) = Some(amount) {\n        let _shadowed = amount;\n    }\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "an if-let shadow keeps the call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a mutable borrow hands out an alias the assignment scan cannot
+/// follow, so the parameter's value at the `if` is unknown.
+#[test]
+fn branch_local_return_value_seam_with_a_mutable_borrow_keeps_its_grip() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(mut amount: i32, discount_threshold: i32) -> i32 {\n    let slot = &mut amount;\n    *slot = -*slot;\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let reaching = "#[test]\nfn negated_amount_reaches_the_discount() {\n    assert_eq!(discounted_total(-50, 0), 40);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, reaching)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a mutable borrow keeps the reaching call's grip: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: the stage summary used to report `best_matching != None` as
+/// "kind-match false", so a branch-reach refusal read as a kind mismatch.
+#[test]
+fn branch_local_return_value_seam_summary_names_the_branch_refusal() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let else_only = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, else_only)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence
+            .discriminate
+            .summary
+            .contains("does not reach the seam's branch"),
+        "the summary must name the branch refusal: {:?}",
+        evidence.discriminate
+    );
+    assert!(
+        !evidence.discriminate.summary.contains("kind-match false"),
+        "a kind-matching oracle must not be reported as a kind mismatch: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a snapshot oracle that names a different receiver is refused by the
+/// exact-read gate (#8121/#12189/#11398), not by kind. The summary used to
+/// print `best_matching != None` as "kind-match", so that refusal read as a
+/// kind mismatch. Named input: `rust-field-snapshot-wrong-receiver.json`,
+/// `src/lib.rs:7`.
+#[test]
+fn branch_local_return_value_seam_summary_names_the_exact_read_refusal() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub struct Record {\n    pub items: usize,\n}\n\npub fn make_record(count: usize) -> Record {\n    let record = Record { items: count + 0 };\n    record\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn snapshot_field() {\n        let record = make_record(2);\n        let other = Record { items: 2 };\n        insta::assert_json_snapshot!(other.items);\n    }\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue && seam.expression() == "record")
+        .ok_or_else(|| format!("expected the returned-record seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.discriminate.summary.contains("kind-match true"),
+        "a kind-matching oracle refused by the exact-read gate must not read as a kind mismatch: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496: a Strong oracle that misses the branch must not lift the stage to
+/// `Yes` above a Weak oracle that reaches it — the record grades the former at
+/// `Weak`, and the stage used to disagree.
+#[test]
+fn branch_local_return_value_seam_stage_is_not_stronger_than_a_missing_branch() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let mixed = "#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn above_threshold_has_a_discount() {\n    assert!(discounted_total(110, 100) > 0);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, mixed)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a branch-missing Strong oracle must not decide the stage: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 round 3: a tuple-pattern `let` rebinds the compared local, so the
+/// earlier plain initializer is stale. The gate must not fold the call's
+/// arguments through it; the asserted call takes the then branch and returns 90.
+#[test]
+fn probe_tuple_rebind_stale_initializer() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        return amount - 10;\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let body = "#[test]\nfn tuple_rebind_after_the_call_keeps_its_grip() {\n    let got = discounted_total(50, 100);\n    let (got,) = (discounted_total(100, 50),);\n    assert_eq!(got, 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, body)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a tuple rebind must not fold the stale initializer: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}
+
+/// #14496 round 3: a `while let` binding that shadows a parameter makes the
+/// call-argument environment stale, so the condition must not fold.
+#[test]
+fn probe_while_let_shadow_stale_environment() -> Result<(), String> {
+    let prod = PathBuf::from("src/lib.rs");
+    let prod_src = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    while let Some(amount) = Some(100) {\n        if amount >= discount_threshold {\n            return amount - 10;\n        }\n    }\n    amount\n}\n";
+    let tests = PathBuf::from("tests/pricing.rs");
+    let body = "#[test]\nfn while_let_shadow_reaches_the_discount() {\n    assert_eq!(discounted_total(50, 100), 90);\n}\n";
+    let index = index_from_files(&[(prod.clone(), prod_src), (tests, body)])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&prod), &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ReturnValue && seam.expression().contains("amount - 10")
+        })
+        .ok_or_else(|| format!("expected the early-return seam; seams: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_eq!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "a while-let shadow must not fold the parameter: {:?}",
+        evidence.discriminate
+    );
+    Ok(())
+}

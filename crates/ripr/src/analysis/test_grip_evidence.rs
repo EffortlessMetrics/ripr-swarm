@@ -4548,6 +4548,11 @@ fn discriminate_evidence(
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
+    // The kind match of the best-ranked oracle, kept apart from whether that
+    // oracle discriminates. `best_matching` folds in every refusal gate, so
+    // reading it as "kind-match" named the wrong gate (#14496 review).
+    let mut best_kind_matches: Option<bool> = None;
+    let mut best_branch_withheld = false;
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
@@ -4574,8 +4579,23 @@ fn discriminate_evidence(
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
-            if strength.rank() > best.rank() {
-                best = strength.clone();
+            // #14496: a branch-withheld return-value oracle keeps at most Weak
+            // credit, exactly as `best_oracle` grades it. Ranking the raw
+            // strength here let a Strong oracle that misses the branch set
+            // `best`, so the stage answered `Yes` while the record published
+            // `Weak` — the disagreement this PR exists to remove.
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let graded = if branch_withheld
+                && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            {
+                OracleStrength::Weak
+            } else {
+                strength.clone()
+            };
+            if graded.rank() > best.rank() {
+                best = graded;
+                best_kind_matches = Some(oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind));
+                best_branch_withheld = branch_withheld;
             }
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
@@ -4605,12 +4625,26 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
-    let mut summary = format!(
-        "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
-        seam.kind().as_str(),
-        best.as_str(),
-        best_matching != OracleStrength::None
-    );
+    // #14496: name the gate that actually refused. The parenthetical used to
+    // print `best_matching != None` as "kind-match", so any refusal that was
+    // not a kind mismatch (a branch-reach refusal, a #8121/#12189/#11398
+    // refusal) read as one. Report the best-ranked oracle's own kind match,
+    // and name the branch refusal as itself.
+    let kind_matches = best_kind_matches.unwrap_or(false);
+    let mut summary = if best_branch_withheld && kind_matches {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind matches; the call does not reach the seam's branch)",
+            seam.kind().as_str(),
+            best.as_str()
+        )
+    } else {
+        format!(
+            "Strongest oracle for seam kind `{}` is `{}` (kind-match {})",
+            seam.kind().as_str(),
+            best.as_str(),
+            kind_matches
+        )
+    };
     if !contradictions.is_empty() {
         summary.push_str("; ");
         summary.push_str(&contradictions.join("; "));
@@ -4843,6 +4877,14 @@ fn oracle_discriminates_seam_in_test(
                 )
         });
     }
+    // #14496: a return-value seam inside one branch of the owner is credited
+    // only by an oracle whose call statically reaches that branch. An exact pin
+    // of the owner's result from a call that takes the other branch observes a
+    // different value, so it is not strong grip for this seam. `None` (a shape
+    // the fold cannot read) keeps today's credit.
+    if branch_gate_withholds(seam, oracle, test, owner) {
+        return false;
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
@@ -4860,6 +4902,27 @@ fn oracle_discriminates_seam_in_test(
                                 receiver, owner, index, test, oracle, pin_syntax,
                             )))
             })
+}
+
+/// #14496: whether the branch gate withholds credit for this oracle. Shared by
+/// the discriminate stage and the per-test record so they cannot disagree
+/// about one assertion.
+fn branch_gate_withholds(
+    seam: &RepoSeam,
+    oracle: &OracleFact,
+    test: &TestSummary,
+    owner: Option<&FunctionSummary>,
+) -> bool {
+    seam.kind() == SeamKind::ReturnValue
+        && owner.is_some_and(|owner| {
+            value_contradiction::seam_branch_reached_by_call(
+                owner,
+                seam.expression(),
+                seam.display_line(),
+                &oracle.text,
+                test,
+            ) == Some(false)
+        })
 }
 
 fn collection_assertion_admitted(
@@ -5841,6 +5904,16 @@ fn best_oracle(
             )
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
+        // #14496: the per-test record must not publish strong grip for a
+        // return-value seam the branch gate refuses, or the record and the
+        // discriminate stage disagree about the same assertion.
+        let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && branch_gate_withholds(seam, oracle, test, owner_fn)
         {
             OracleStrength::Weak
         } else {
