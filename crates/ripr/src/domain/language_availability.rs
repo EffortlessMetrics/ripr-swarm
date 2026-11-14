@@ -254,6 +254,44 @@ pub fn unavailable_recovery(report: &LanguageAvailabilityReport) -> Option<&str>
     }
 }
 
+/// The `[languages].enabled` entry that turns on analysis of `language`.
+pub(crate) fn config_entry_language(language: LanguageId) -> LanguageId {
+    match language {
+        LanguageId::JavaScript => LanguageId::TypeScript,
+        other => other,
+    }
+}
+
+/// Resolve availability for one detected project language from the effective
+/// enabled set and whether that set came from built-in defaults (#2961).
+pub(crate) fn availability_report_for_detected(
+    language: LanguageId,
+    file_count: usize,
+    enabled_languages: Option<&[LanguageId]>,
+    auto_defaulted: bool,
+) -> LanguageAvailabilityReport {
+    let config_language = config_entry_language(language);
+    let enabled = enabled_languages.map(|list| list.contains(&config_language));
+    let auto_enabled = auto_defaulted
+        && enabled == Some(true)
+        && matches!(config_language, LanguageId::Python | LanguageId::TypeScript);
+    resolve_language_availability(&LanguageAvailabilityInput {
+        project_detected: true,
+        file_count,
+        configured: match enabled {
+            Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+            Some(false) => ConfiguredIntent::Disabled,
+            _ => ConfiguredIntent::Unspecified,
+        },
+        auto_policy: if auto_enabled {
+            AutoDetectionPolicy::WhenDetected
+        } else {
+            AutoDetectionPolicy::Never
+        },
+        ..LanguageAvailabilityInput::for_language(language)
+    })
+}
+
 fn enable_step(language: LanguageId) -> String {
     format!(
         "enable `{}` under `[languages]` in ripr.toml (`enabled = [..., \"{}\"]`)",
