@@ -531,7 +531,6 @@ pub(crate) fn probes_for_file_with_relations(
                         let other_text = canonical_probe_text(text, other.text);
                         other.family != ProbeFamily::MatchArm
                             && other.family != ProbeFamily::StaticUnknown
-                            && !unchanged_return(other)
                             && !respelled_return(other)
                             && header.contains(other_text.as_str())
                             && removed_span_of_shape(text, &other_text, removed.trim())
@@ -551,8 +550,8 @@ pub(crate) fn probes_for_file_with_relations(
                 shape.family != ProbeFamily::MatchArm
                     && shape.family != ProbeFamily::StaticUnknown
                     && removed_counterpart.as_deref().is_some_and(|removed| {
-                        !removed_span_of_shape(text, &shape_text, removed.trim())
-                            .is_some_and(|old| old != shape_text)
+                        removed_span_of_shape(text, &shape_text, removed.trim())
+                            .is_none_or(|old| old == shape_text)
                     })
                     && canonical_shapes.iter().any(|header| {
                         scrutinee_only_header(header)
@@ -4928,6 +4927,34 @@ mod tests {
         assert_eq!(
             probes[0].before.as_deref(),
             Some("match tag(\"x > 0\", before())"),
+            "{probes:?}"
+        );
+    }
+
+    /// #14722: a respelled integer inside the scrutinee (`Some(21)` to
+    /// `Some(0x15)`) holds the whole edit but is dropped as no change of
+    /// value, so it cannot license dropping the header too: the line keeps
+    /// the header's unclassified probe.
+    #[test]
+    fn a_respelled_return_in_the_scrutinee_does_not_drop_the_header() {
+        let probes = shapes_probes(
+            "match pick(Some(0x15)) {",
+            "match pick(Some(21)) {",
+            &[
+                (ProbeShapeKind::MatchArm, "match pick(Some(0x15))"),
+                (ProbeShapeKind::ReturnValue, "Some(0x15)"),
+            ],
+            "",
+        );
+
+        let families = probes
+            .iter()
+            .map(|probe| probe.family.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(families, vec![ProbeFamily::StaticUnknown], "{probes:?}");
+        assert_eq!(
+            probes[0].before.as_deref(),
+            Some("match pick(Some(21))"),
             "{probes:?}"
         );
     }
