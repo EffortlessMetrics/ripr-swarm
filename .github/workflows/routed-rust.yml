@@ -632,7 +632,11 @@ jobs:
     needs: [admission, detect-docs-only]
     if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.admission.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 45min: the full precommit table on a cold merge_group cache builds the
+    # covered_by test binaries and runs workspace Clippy, which does not fit the
+    # old 20min cap. Runs 43635293436, 43635494995, 43636266395 and 43638224810
+    # were all cancelled at ~20m17s with step 6 still running. Advances #14644.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
