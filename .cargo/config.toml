@@ -10,6 +10,6 @@ xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
 [env]
-TEMP = { value = "target/tmp", relative = true, force = true }
-TMP = { value = "target/tmp", relative = true, force = true }
-TMPDIR = { value = "target/tmp", relative = true, force = true }
+TEMP = { value = "target", relative = true, force = true }
+TMP = { value = "target", relative = true, force = true }
+TMPDIR = { value = "target", relative = true, force = true }
