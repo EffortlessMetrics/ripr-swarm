@@ -1240,7 +1240,18 @@ impl OwnerPinSyntax {
                 } else {
                     self.macro_binding_site(test, assertion.line, &name, index)
                 };
-                AssertionRefusal::MacroBinding { name, site }
+                let placement_include = site
+                    .as_ref()
+                    .filter(|(path, site)| {
+                        path != &test.file
+                            && matches!(&site.kind, MacroBindingKind::ForeignGlob(_))
+                    })
+                    .and_then(|_| self.target_roots(index).workspace_include.clone());
+                AssertionRefusal::MacroBinding {
+                    name,
+                    site,
+                    placement_include,
+                }
             }
             refusal => refusal,
         })
@@ -2932,6 +2943,10 @@ struct TargetRoots {
     /// mount other crates that way, may compile any file into another
     /// crate, so no file is charged to one root.
     disabled: bool,
+    /// The first include limitation whose paste reaches the workspace. This
+    /// explains placement loss without blaming an inert include or a separate
+    /// unresolved `#[path]` / unindexed member.
+    workspace_include: Option<RustIncludeLimitation>,
     /// #14116: integration test, bench and example roots holding an
     /// `include!` whose inert fragment may bind an assertion macro. The
     /// binding lands in that crate only and nothing imports it, so files
@@ -3344,9 +3359,15 @@ impl TargetRoots {
             .collect();
         let mut tainted = BTreeSet::new();
         let mut include_reaches_workspace = false;
+        let mut workspace_include = None;
         for limitation in &index.include_limitations {
             match include_limitation_reach(index, limitation, &src_dirs) {
-                IncludeReach::Workspace => include_reaches_workspace = true,
+                IncludeReach::Workspace => {
+                    include_reaches_workspace = true;
+                    if workspace_include.is_none() {
+                        workspace_include = Some(limitation.clone());
+                    }
+                }
                 IncludeReach::Roots(roots) => tainted.extend(roots),
             }
         }
@@ -3361,6 +3382,7 @@ impl TargetRoots {
             });
         Self {
             disabled,
+            workspace_include,
             tainted,
             src_dirs,
             memo: SyncMemo::default(),
@@ -3830,6 +3852,9 @@ pub(in crate::analysis) enum AssertionRefusal {
     MacroBinding {
         name: String,
         site: Option<(PathBuf, MacroBindingSite)>,
+        /// The first include that disabled placement, when an unrelated
+        /// foreign glob is ambiguous because it cannot be module-confined.
+        placement_include: Option<RustIncludeLimitation>,
     },
     /// The test's only `return` sits under `if <condition> { return; }`,
     /// whose condition compares `subject` (the call the assertion compares)
@@ -4036,11 +4061,25 @@ impl AssertionRefusal {
                 "an earlier `if {condition} {{ return; }}` spares the value the assertion expects, so whether the assertion runs depends on the value of `{subject}`, which ripr does not evaluate"
             ),
             Self::ExpectedPanicUnresolved => "the expected-panic matches check has an unresolved panic source or expected diagnostic, which ripr cannot establish".into(),
-            Self::MacroBinding { name, site } => match site {
+            Self::MacroBinding {
+                name,
+                site,
+                placement_include,
+            } => match site {
                 None => format!("`{name}!` may be redefined somewhere in the workspace"),
                 Some((path, site)) => {
                     let place = at(path, site.line);
-                    match &site.kind {
+                    if let (Some(limitation), MacroBindingKind::ForeignGlob(import)) =
+                        (placement_include, &site.kind)
+                    {
+                        format!(
+                            "`{import}` at {place} could not be confined to its module because placement is unavailable, so it may bring in a different `{name}!`; first include limitation: `{}` at {} ({})",
+                            limitation.expression,
+                            at(&limitation.parent, limitation.line),
+                            limitation.reason_code
+                        )
+                    } else {
+                        match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
                             crate::analysis::stable_path_text(path)
@@ -4083,6 +4122,7 @@ impl AssertionRefusal {
                         } => format!(
                             "the body of `{macro_name}!` at {place} carries `{binding}`, which its expansion may apply, bringing in a different `{name}!`"
                         ),
+                        }
                     }
                 }
             },

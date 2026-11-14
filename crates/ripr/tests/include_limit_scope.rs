@@ -4,7 +4,7 @@
 //! workspace. Every row changes `score` in `src/b.rs` from `x + 1` to `x + 2`
 //! beside a sibling module holding `use rayon::prelude::*;`.
 
-use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,6 +14,7 @@ const OWNER: &str = "pub fn score(x: i32) -> i32 { x + 2 }\n";
 const PLAIN: &str = "pub const K: i32 = 1;\n";
 const NAMESAKE: &str = "pub fn score(x: i32) -> i32 { x + 3 }\n";
 const NESTED: &str = "pub mod inner { include!(\"generated/g.rs\"); }\n";
+const SCIP_GENERATED: &str = include_str!("../src/analysis/scip/generated/scip.rs");
 const DIFF: &str = "diff --git a/src/b.rs b/src/b.rs
 index 1111111..2222222 100644
 --- a/src/b.rs
@@ -76,7 +77,7 @@ impl TempRepo {
         Ok(repo)
     }
 
-    fn class(&self) -> Result<ExposureClass, String> {
+    fn finding(&self) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
             base: None,
@@ -86,13 +87,17 @@ impl TempRepo {
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
-        let mut found = output.findings.iter().filter(|finding| {
+        let mut found = output.findings.into_iter().filter(|finding| {
             finding.probe.location.line == 1 && finding.probe.location.file.ends_with("b.rs")
         });
         match (found.next(), found.next()) {
-            (Some(finding), None) => Ok(finding.class.clone()),
+            (Some(finding), None) => Ok(finding),
             _ => Err("premise: exactly one finding on the rewritten line".to_string()),
         }
+    }
+
+    fn class(&self) -> Result<ExposureClass, String> {
+        Ok(self.finding()?.class)
     }
 }
 
@@ -198,6 +203,26 @@ fn a_read_inert_fragment_in_the_library_leaves_its_tests_credited() -> Result<()
                         "pub mod inner { include!(\"fixtures/g.rs\"); }\n".to_string(),
                     ),
                     ("src/fixtures/g.rs", PLAIN.to_string()),
+                ],
+            ),
+            (
+                "a nested include whose fragment declares only inline modules",
+                vec![
+                    (
+                        "src/lib.rs",
+                        "pub mod a;\npub mod analysis;\npub mod b;\n".to_string(),
+                    ),
+                    ("src/analysis/mod.rs", "pub mod scip;\n".to_string()),
+                    (
+                        "src/analysis/scip/mod.rs",
+                        "pub mod generated { pub mod scip { include!(\"generated/scip.rs\"); } }\n"
+                            .to_string(),
+                    ),
+                    (
+                        "src/analysis/scip/generated/scip.rs",
+                        SCIP_GENERATED.to_string(),
+                    ),
+                    ("src/b.rs", own_unit()),
                 ],
             ),
         ],
@@ -331,6 +356,36 @@ fn a_fragment_symlinked_out_of_the_repository_is_not_read() -> Result<(), String
         ExposureClass::StaticUnknown => Ok(()),
         other => Err(format!("symlinked fragment: got {other:?}")),
     }
+}
+
+#[test]
+fn the_refusal_names_the_include_that_makes_placement_unavailable() -> Result<(), String> {
+    let repo = TempRepo::create(&[
+        ("src/b.rs", &own_unit()),
+        ("src/gen.rs", NESTED),
+        ("src/generated/g.rs", "mod y;\n"),
+    ])?;
+    let found = repo.finding()?;
+    assert_eq!(found.class, ExposureClass::StaticUnknown);
+    let refusals = found
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("assertion not credited: "))
+        .collect::<Vec<_>>();
+    assert_eq!(refusals.len(), 1, "{:?}", found.evidence);
+    let refusal = refusals[0];
+    for expected in [
+        "placement is unavailable",
+        "`use rayon::prelude::*;` at src/a.rs:1 could not be confined",
+        "first include limitation: `include!(",
+        "generated/g.rs",
+        "src/gen.rs:1",
+        "rust_include_nested_module_context",
+    ] {
+        assert!(refusal.contains(expected), "{expected:?} missing from {refusal:?}");
+    }
+
+    Ok(())
 }
 
 #[test]
