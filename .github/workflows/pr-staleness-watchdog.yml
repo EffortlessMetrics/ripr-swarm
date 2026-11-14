@@ -21,8 +21,9 @@ name: PR Staleness Watchdog
 # A post-request push has revoked its own admission and must not be qualified
 # by a lighter branch-head dispatch (no `pull_request`-scoped PR evidence): the
 # author merges main first when conflicted, then removes and re-applies
-# `merge-ready`, which re-runs the full qualification and also recovers a
-# dropped delivery.
+# `merge-ready`, which requests admission and qualification and also recovers a
+# dropped delivery. After qualification is green, the author enqueues the PR
+# through the native queue route; re-applying the label does not enqueue it.
 #
 # - Every 30 minutes, list open PRs and, for each head SHA, ask the checks
 #   API whether the required `Ripr Rust Small Result` check run exists on
@@ -36,8 +37,9 @@ name: PR Staleness Watchdog
 #   dark: re-applying the label would cancel that run
 #   (`cancel-in-progress` for pull_request) and restart the qualification.
 # - Dark heads are reported in the step summary with the remedy (merge main
-#   first when `mergeable_state` is `dirty`, then re-apply merge-ready). The watchdog
-#   never dispatches a workflow, so it needs no
+#   first when `mergeable_state` is `dirty`, then re-apply merge-ready for
+#   qualification, and enqueue through the native queue route after it is green).
+#   The watchdog never dispatches a workflow, so it needs no
 #   `actions: write` and cannot create a duplicate or lighter required gate.
 # - Drafts and PRs without the merge-ready label are skipped (they made no
 #   qualification request);
@@ -57,7 +59,8 @@ name: PR Staleness Watchdog
 # - The second write is the re-apply notice (#10136). A merge-ready head that is
 #   not conflicting (mergeability computed), has no required check and no run in
 #   flight was pushed after the label or lost its label event; the sweep comments
-#   once per head (marker merge-ready-dark) saying to remove and re-apply the label.
+#   once per head (marker merge-ready-dark) saying to re-apply for qualification,
+#   then enqueue through the native queue route after qualification is green.
 # - The third write retires a stale failure: a draft or unlabeled same-repo PR whose
 #   head still carries this repository's actions-bot `merge-ready conflict` failure gets
 #   a success status instead, since no qualification is requested on it any more (#10136).
@@ -113,11 +116,10 @@ jobs:
             echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready"
             echo "routed-rust.yml run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists"
             echo "but has not reached its result job yet; leave it alone."
-            echo "This sweep never dispatches. Remedy for a dark head: remove and re-apply the"
-            echo "merge-ready label to request the qualification again."
-            echo "First check before re-applying the label: merge conflicts (#7079). A conflicting (\`dirty\`)"
-            echo "PR has no merge ref, so no pull_request run can exist for it: merge main into"
-            echo "the branch first, and only then re-apply merge-ready."
+            echo "This sweep never dispatches. Dark-head remedy: 1. remove and re-apply merge-ready"
+            echo "to request admission and qualification only; 2. after green qualification, enqueue"
+            echo "through the native queue route. For a conflict, first merge main into the branch and"
+            echo "resolve it (#7079): a dirty PR has no merge ref or pull_request run. Then do 1 and 2."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
@@ -145,9 +147,9 @@ jobs:
             still_requested "$1" "$2" "$3" || return $?
             if [ "$known" = "0" ]; then
               gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
-          \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null || return 1
+          \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. 1. Merge \`$3\` into the branch and resolve the conflicts. 2. Remove and re-apply \`merge-ready\` to request admission and qualification only. 3. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null || return 1
             fi
-            gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: resolve, re-apply merge-ready for qualification, then enqueue through the native queue route" > /dev/null || return 1
           }
 
           # A draft or unlabeled PR made no qualification request, so a conflict status this
@@ -193,7 +195,7 @@ jobs:
               cause="the qualification run for head \`${2:0:8}\` finished without the required check (for example admission was refused; see its run)"
             fi
             gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
-          \`merge-ready\` is set, but $cause. Remove and re-apply \`merge-ready\` to request it again." > /dev/null
+          \`merge-ready\` is set, but $cause. 1. Remove and re-apply \`merge-ready\` to request admission and qualification only. 2. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null
           }
 
           scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0
@@ -234,14 +236,14 @@ jobs:
                   disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)"
                 elif [ "$mergeable_state" = "dirty" ]; then
                   dark=$((dark + 1)); dark_counted=1
-                  disposition="DARK (conflicted); merge main into \`$head_ref\`, then re-apply merge-ready"
-                  echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then remove and re-apply the merge-ready label."
+                  disposition="DARK (conflicted); merge main into \`$head_ref\`, re-apply merge-ready for qualification, then enqueue through the native queue route"
+                  echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref and resolve conflicts first, then re-apply merge-ready for qualification and enqueue through the native queue route after qualification is green."
                 else
                   dark=$((dark + 1)); dark_counted=1
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
                   [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
-                  disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)"
-                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply the merge-ready label."
+                  disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)"
+                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
                 fi
               fi
               ours="$(ours_state "$head_sha")"

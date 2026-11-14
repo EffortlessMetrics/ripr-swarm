@@ -5971,7 +5971,13 @@ fn inherent_receiver_call_resolves_with(
                             // root must name the owner's own type.
                             root_library_names_owner_type(index, owner, ty)
                         } else {
-                            associated_constructor_names_own_type(index, ty, name, None)
+                            // The constructor is found by the type's base
+                            // name alone, so the name must declare one type:
+                            // with a second `Ty` in another library module,
+                            // `krate::Ty` may be that one (`pub use b::Ty;`
+                            // beside the owner's `a::Ty`, #14083 A2).
+                            super::owner_pin::workspace_type_name_count(ty, index) == 1
+                                && associated_constructor_names_own_type(index, ty, name, None)
                         }
                 })
             } else {

@@ -10,8 +10,11 @@
 //! empty `values` means "not a closed set the catalog can state".
 //!
 //! Subcommand groups that document several subcommands in one shared body
-//! (`policy`, `reports`, `baseline`, ...) cannot be split from the text; their
-//! rows are marked `flags_scope: "shared_help_body"` and list the union.
+//! (`policy`, `reports`, `baseline`, ...) are projected through
+//! `help_leaf::leaf_help`, so each leaf row lists only its own usage line and
+//! options section and is marked `flags_scope: "leaf_section"` (#14314). A
+//! shared-body path with no section mapping would still be marked
+//! `shared_help_body` and list the union.
 
 use serde::Serialize;
 
