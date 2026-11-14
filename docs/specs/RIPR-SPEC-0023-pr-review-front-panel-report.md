@@ -501,6 +501,11 @@ Next: regenerate the missing first-useful-action or PR guidance artifact before
 acting on this panel.
 ```
 
+When the panel is incomplete because a required input is missing, the
+`Missing input:` line names the input whose warning promoted the panel to
+`missing_required_input`, not merely the first warning in the list; with no such
+warning it falls back to the first warning.
+
 ## Generated CI Projection
 
 Generated GitHub CI may run the front-panel producer only when the configured
