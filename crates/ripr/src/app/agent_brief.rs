@@ -1,7 +1,7 @@
 mod bounded;
 pub(crate) use bounded::BoundedAgentBrief;
 
-use crate::analysis::seams::SeamGripClass;
+use crate::analysis::seams::{SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
 use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::config::{ConfigSeverity, RiprConfig};
@@ -829,7 +829,23 @@ fn compare_selected_parts(
         })
         .then_with(|| normalized_path(left.seam.file()).cmp(&normalized_path(right.seam.file())))
         .then_with(|| left.seam.display_line().cmp(&right.seam.display_line()))
+        .then_with(|| {
+            same_line_kind_priority(left.seam.kind())
+                .cmp(&same_line_kind_priority(right.seam.kind()))
+        })
         .then_with(|| left.seam.id().as_str().cmp(right.seam.id().as_str()))
+}
+
+/// #14702: on one changed `return Err(..)` line the analyzer emits both an
+/// `error_variant` seam and a `return_value` seam. The error-variant seam names
+/// the exact variant a test must pin, so it leads; without this tie-break the
+/// seam-id hash decided, and an unresolved `return_value` seam could take the
+/// top slot and push a concrete error-variant seam past the brief cap.
+fn same_line_kind_priority(kind: SeamKind) -> u8 {
+    match kind {
+        SeamKind::ErrorVariant => 0,
+        _ => 1,
+    }
 }
 
 fn why_now_sort_priority(why_now: &AgentBriefWhyNow) -> u8 {
@@ -1195,6 +1211,58 @@ mod tests {
                 statically_contradicted_related_tests: 0,
             },
         }
+    }
+
+    #[test]
+    fn same_line_error_variant_seam_leads_its_return_value_twin() -> Result<(), String> {
+        // #14702: one changed `return Err(..)` line yields both seam kinds.
+        // Before the tie-break the seam-id hash ordered them, so the
+        // unresolved return-value seam could lead the brief.
+        let with_kind = |kind: SeamKind, expression: &str| {
+            let mut entry = classified(
+                "src/lib.rs",
+                12,
+                "names::parse_name",
+                expression,
+                SeamGripClass::WeaklyGripped,
+            );
+            entry.seam = RepoSeam::new(
+                "src/lib.rs",
+                "names::parse_name",
+                kind,
+                120,
+                12,
+                expression,
+                RequiredDiscriminator::BoundaryValue {
+                    description: expression.to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            entry
+        };
+        let error_variant = with_kind(SeamKind::ErrorVariant, "Err(NameError::Empty)");
+        let return_value = with_kind(SeamKind::ReturnValue, "return Err(NameError::Empty)");
+        let why_now = AgentBriefWhyNow {
+            reason: AgentBriefWhyNowReason::ChangedLineIntersectsSeam,
+            confidence: AgentBriefWhyNowConfidence::High,
+            evidence: "changed line 12 intersects the seam origin".to_string(),
+        };
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        for (left, right, expected) in [
+            (&error_variant, &return_value, Ordering::Less),
+            (&return_value, &error_variant, Ordering::Greater),
+        ] {
+            let order = compare_selected_parts(left, &why_now, right, &why_now, policy);
+            if order != expected {
+                return Err(format!(
+                    "error_variant must lead return_value on the same line: {} vs {} gave {order:?}",
+                    left.seam.id().as_str(),
+                    right.seam.id().as_str()
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]
