@@ -44,6 +44,17 @@ name: PR Staleness Watchdog
 #   fork PRs (head repo != this repository) are skipped, matching
 #   routed-rust.yml's own untrusted-PR guard.
 #
+# - Mergeability is read once per head, never retried in-sweep (#14636).
+#   GitHub computes `mergeable_state` lazily and leaves quiet heads at
+#   `unknown` indefinitely, so an in-sweep retry cost 10 s of sleep per
+#   unreadable head and alone exceeded the job cap once 63 of 102 eligible
+#   heads stayed `unknown`. A head whose mergeability is still unreadable is
+#   classified `mergeability unreadable`, counted in the sweep summary, and
+#   left for the next sweep to read again, so the bound is one interval.
+#   Conflict detection needs `mergeable_state == "dirty"`, so **conflict
+#   notices are unavailable for those heads**: the summary says so per head
+#   and in its totals, and no conflict is implied to be covered.
+#
 # - The one write is the conflict report (#10136). A merge-ready PR that is
 #   `dirty` and whose head has no `merge-ready conflict` failure from this
 #   repository's actions bot gets one comment per head and base plus that failing
@@ -110,23 +121,22 @@ jobs:
           {
             echo "### PR Staleness Watchdog (alert-only)"
             echo ""
-            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready"
-            echo "routed-rust.yml run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists"
-            echo "but has not reached its result job yet; leave it alone."
-            echo "This sweep never dispatches. Remedy for a dark head: remove and re-apply the"
-            echo "merge-ready label to request the qualification again."
-            echo "First check before re-applying the label: merge conflicts (#7079). A conflicting (\`dirty\`)"
-            echo "PR has no merge ref, so no pull_request run can exist for it: merge main into"
-            echo "the branch first, and only then re-apply merge-ready."
+            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready routed-rust.yml"
+            echo "run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists but has not"
+            echo "reached its result job yet; leave it alone. This sweep never dispatches: the remedy for a"
+            echo "dark head is to remove and re-apply the merge-ready label, which requests qualification again."
+            echo "First check before re-applying: merge conflicts (#7079). A conflicting (\`dirty\`) PR has no merge"
+            echo "ref, so no pull_request run can exist: merge main into the branch first."
+            echo "Mergeability is read once per head; an \`unknown\` head is counted as unreadable and re-read by"
+            echo "the next sweep, and conflict notices are unavailable for it (#14636)."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # A conflicting PR has no merge ref, so no pull_request run can exist for it
-          # (#9842, #10136). The label-event workflow tells a PR once at request time;
-          # this sweep tells the ones it could not reach and clears its own failure
-          # when the conflict is gone. Same marker and context, so they never double up.
+          # A conflicting PR has no merge ref, so no pull_request run can exist for it (#9842, #10136).
+          # The label-event workflow tells a PR once at request time; this sweep tells the ones it
+          # could not reach and clears its own failure when the conflict is gone.
           ours_state() {
             gh api "repos/$REPOSITORY/commits/$1/statuses?per_page=100" --jq '[.[] | select(.context == "merge-ready conflict" and .creator.login == "github-actions[bot]")][0].state // "none"'
           }
@@ -196,11 +206,11 @@ jobs:
           \`merge-ready\` is set, but $cause. Remove and re-apply \`merge-ready\` to request it again." > /dev/null
           }
 
-          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0
+          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0 unreadable=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref updated_at; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
-            mergeable_state="n/a" dark_kind="" dark_counted=0 in_flight_counted=0
+            mergeable_state="n/a" dark_kind="" dark_counted=0 in_flight_counted=0 unreadable_note=""
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
               [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
@@ -210,14 +220,13 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              # mergeable_state is computed lazily and reset whenever the base moves, so
-              # the first read of a quiet PR is often "unknown"; that read starts the work.
-              for _ in 1 2 3; do
-                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
-                read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
-                [ "$mergeable_state" != "unknown" ] && break
-                sleep 5
-              done
+              # mergeable_state is computed lazily and reset when the base moves, so the first
+              # read of a quiet PR is often "unknown". Read once and defer to the next sweep
+              # instead of sleeping on it: an in-sweep retry cost 10 s per unreadable head,
+              # which alone exceeded the job cap once 63 heads stayed unknown (#14636).
+              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
+              read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
+              [ "$mergeable_state" = "unknown" ] && { unreadable=$((unreadable + 1)); unreadable_note="; mergeability unreadable, conflict status unavailable"; }
               # Eligibility can be withdrawn after the list snapshot. Use the same
               # live read as mergeability, without adding a per-PR API request.
               if [ "$live_state" != "open" ] || [ "$live_draft" != "false" ] || [ "$live_requested" != "true" ] || [ "$live_repo" != "$REPOSITORY" ]; then
@@ -226,7 +235,7 @@ jobs:
               fi
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
-                disposition="covered ($count required check(s) on head)"
+                disposition="covered ($count required check(s) on head)$unreadable_note"
               else
                 in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
                 if [ "$in_flight" != "0" ]; then
@@ -239,8 +248,9 @@ jobs:
                 else
                   dark=$((dark + 1)); dark_counted=1
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
+                  # An unreadable head may be a conflict, so it never blames a push.
                   [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
-                  disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)"
+                  disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)$unreadable_note"
                   echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply the merge-ready label."
                 fi
               fi
@@ -290,3 +300,4 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared; re-apply notices: $told." >> "$GITHUB_STEP_SUMMARY"
+          echo "Unreadable mergeability: $unreadable head(s) deferred to the next sweep; conflict notices are unavailable for them (#14636)." >> "$GITHUB_STEP_SUMMARY"
