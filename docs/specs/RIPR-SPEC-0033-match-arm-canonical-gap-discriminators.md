@@ -30,10 +30,12 @@ A match head whose edit lies wholly inside its scrutinee
 assertion naming an arm is not its discriminator (#14722). When another shape
 inside the scrutinee, such as a comparison, itself holds the whole edit, that
 shape is the finding; otherwise the head reads as an unclassified change, as
-the same expression edit does on a plain line, and a shape on that line that
-did not change (an untouched comparison in the scrutinee) is no finding of its
-own. A head edit that also reaches past the scrutinee keeps the match-arm
-probe.
+the same expression edit does on a plain line. When the head stands for the
+edit this way, a shape inside it that owns no cut of the edit (an untouched
+comparison, or one whose text repeats on the line so its cut cannot be
+located) is no finding of its own; the head's unclassified finding is the
+conservative reading. A head edit that also reaches past the scrutinee keeps
+the match-arm probe.
 
 The source location remains anchored to the existing match token or fat-arrow
 token range. The discriminating text changes the missing-discriminator input to
