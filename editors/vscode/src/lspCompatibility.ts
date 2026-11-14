@@ -1,5 +1,6 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
+import { hasUnsafeShellMetacharacter } from './packetJson';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -637,13 +638,29 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
   child.kill('SIGKILL');
 }
 
+function windowsDoubleQuoted(argument: string): string {
+  // Preserve empty arguments, embedded quotes, and trailing backslashes before
+  // the closing quote, whether the token goes through cmd.exe or native argv.
+  return '"' + argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+/** Preserve configured argument boundaries in the shell probe and client launch. */
+export function windowsShellArguments(args: readonly string[]): string[] {
+  return args.map(argument => {
+    const needsQuoting = argument.length === 0
+      || /\s/.test(argument)
+      || hasUnsafeShellMetacharacter(argument, true)
+      || /[<>]/.test(argument);
+    return needsQuoting ? windowsDoubleQuoted(argument) : argument;
+  });
+}
+
 // ProcessStartInfo.Arguments uses native Windows argv quoting when no shell
 // participates. Preserve every token, including empty strings and a trailing
 // backslash before the closing quote. Shell command strings keep their
 // separate existing path and are never encoded with this rule.
 export function windowsNativeArguments(args: readonly string[]): string {
-  return args.map(argument => '"' + argument.replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\+)$/, '$1$1') + '"').join(' ');
+  return args.map(windowsDoubleQuoted).join(' ');
 }
 
 export function spawnProbeProcess(
@@ -680,7 +697,7 @@ export function spawnProbeProcess(
         env: {
           ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
-          RIPR_PROBE_ARGUMENTS: useShell ? args.join(' ') : windowsNativeArguments(args),
+          RIPR_PROBE_ARGUMENTS: useShell ? windowsShellArguments(args).join(' ') : windowsNativeArguments(args),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
           RIPR_PROBE_DRAIN_OUTPUT: context.drainOutput ? '1' : '0',
           RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'

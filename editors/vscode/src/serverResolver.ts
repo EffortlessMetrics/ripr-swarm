@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
+import { hasUnsafeShellMetacharacter } from './packetJson';
 import {
   combineActiveManagedServerIdentity,
   ManagedServerInstallation,
@@ -283,14 +284,14 @@ async function probePathServer(
 }
 
 /**
- * Quote a server command containing whitespace when spawning through `shell: true`
- * so `cmd.exe` does not split paths containing spaces (#14659).
+ * Quote a server command containing whitespace or cmd.exe metacharacters when
+ * spawning through `shell: true`, so the path cannot split into another command.
  */
 export function serverLaunchCommand(command: string, needsShell?: boolean): string {
-  if (needsShell && /\s/.test(command) && !/^".*"$/.test(command)) {
-    return `"${command}"`;
-  }
-  return command;
+  const needsQuoting = needsShell
+    && !/^".*"$/.test(command)
+    && (/\s/.test(command) || hasUnsafeShellMetacharacter(command, true) || /[<>]/.test(command));
+  return needsQuoting ? `"${command}"` : command;
 }
 
 /**
