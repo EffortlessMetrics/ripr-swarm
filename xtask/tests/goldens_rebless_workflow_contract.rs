@@ -33,13 +33,31 @@
 //!   `preflight_refuses_forks_and_conflicts` fails on the head-repo and
 //!   mergeability markers;
 //! - the allowlist budget row removed → `run_block_budget_is_registered`
-//!   fails (and `cargo xtask check-workflows` fails the PR).
+//!   fails (and `cargo xtask check-workflows` fails the PR);
+//! - the pinned toolchain step losing its `with: toolchain:` input, or moving
+//!   it under `env:`, inside `run:`, or into a sibling step →
+//!   `bless_installs_the_pinned_toolchain` fails; a block scalar or nested
+//!   mapping under `with:` masquerading as the input, or a blank line
+//!   splitting the step → `toolchain_parser_shapes` fails; scalar shapes are
+//!   covered by `toolchain_scalar_shapes` (#14563).
 
 use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/goldens-rebless.yml";
 const ALLOWLIST: &str = "policy/workflow_allowlist.txt";
+
+/// `dtolnay/rust-toolchain` refs whose `action.yml` has no default for the
+/// `toolchain` input, so a step pinned to one must pass `with: toolchain:` or
+/// the action exits 1 with "'toolchain' is a required input" before any step
+/// runs (#14563).
+///
+/// Verified against the action's refs: `683b588c…` is `refs/heads/master` and
+/// `refs/tags/v1` and has no default. `refs/heads/stable` (`b725eda5…`),
+/// `refs/heads/1.95`/`1.95.0` (`035fceb3…`) and the pinned commit
+/// `4cda84d5…` all carry a toolchain default, so they need no input. This list
+/// is maintained by hand: a new no-default ref must be added here.
+const NO_DEFAULT_TOOLCHAIN_REFS: &[&str] = &["683b588c487a69d01f6c6ddf40f036ff682cc2c8"];
 
 /// Executable (non-comment) fragments that would let the route gate,
 /// dispatch, mutate review state, or exceed its write boundary.
@@ -692,6 +710,264 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
         "pull-requests: write",
         "the comment authority for claim, refusal and re-arm notes",
     )
+}
+
+/// The full list-item block for the step containing `index`: from its `- `
+/// line to (not including) the next sibling item or shallower key.
+fn step_lines<'a>(lines: &[&'a str], index: usize) -> Vec<&'a str> {
+    let step_indent = lines[index].len() - lines[index].trim_start().len();
+    let mut start = index;
+    if !lines[index].trim_start().starts_with("- ") {
+        for candidate in (0..index).rev() {
+            let trimmed = lines[candidate].trim_start();
+            let indent = lines[candidate].len() - trimmed.len();
+            if trimmed.starts_with("- ") && indent <= step_indent {
+                start = candidate;
+                break;
+            }
+        }
+    }
+    let item_indent = lines[start].len() - lines[start].trim_start().len();
+    let mut end = lines.len();
+    for (offset, line) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        if indent < item_indent || (indent == item_indent && trimmed.starts_with("- ")) {
+            end = offset;
+            break;
+        }
+    }
+    lines[start..end].to_vec()
+}
+
+/// The `toolchain:` value under the step's `with:` mapping, if any.
+///
+/// Only a key directly under `with:` counts. A `toolchain:` under `env:`,
+/// inside a `run:` block, or in a sibling step is not the action input and
+/// must not satisfy the contract (#14563 review).
+///
+/// Only a direct child key of `with:` counts: the `toolchain:` line must sit
+/// at `with_indent + 2`. A deeper line is block-scalar content or a nested
+/// mapping, not an action input (#14563 review).
+fn with_toolchain_value(step: &[&str]) -> Option<String> {
+    let first = step.first()?;
+    let item_indent = first.len() - first.trim_start().len();
+    let with_index = step.iter().position(|line| {
+        let trimmed = line.trim_start();
+        trimmed == "with:" && line.len() - trimmed.len() == item_indent + 2
+    })?;
+    let with_indent = item_indent + 2;
+    let child_indent = with_indent + 2;
+    step[with_index + 1..]
+        .iter()
+        .take_while(|line| {
+            let trimmed = line.trim_start();
+            trimmed.is_empty() || line.len() - trimmed.len() > with_indent
+        })
+        .find(|line| {
+            let trimmed = line.trim_start();
+            line.len() - trimmed.len() == child_indent && trimmed.starts_with("toolchain:")
+        })
+        .and_then(|line| line.trim_start().strip_prefix("toolchain:"))
+        .and_then(yaml_scalar)
+}
+
+/// The text of a one-line YAML scalar, or `None` when the key carries no
+/// usable value.
+///
+/// Supported shapes:
+/// - a plain scalar: `1.95.0`, `stable`;
+/// - a single- or double-quoted scalar: `"1.95.0"`, `'1.95.0'`;
+/// - a trailing comment after any of the above: `1.95.0 # pinned`,
+///   `"" # pinned`, `'' # pinned`;
+/// - YAML null forms, which mean no input: empty, `~`, `null`, `Null`,
+///   `NULL` (quoted or not).
+///
+/// A `#` inside a quoted scalar is part of the value, not a comment. This is a
+/// one-line heuristic, not a full YAML parser: it does not handle multi-line
+/// scalars, anchors, or escapes inside double quotes.
+fn yaml_scalar(value: &str) -> Option<String> {
+    let value = strip_trailing_comment(value);
+    let value = strip_matching_quotes(value.trim());
+    let value = value.trim();
+    if value.is_empty() || is_yaml_null(value) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+/// Drop a trailing YAML comment, respecting quoted scalars so a `#` inside
+/// quotes is not treated as a comment.
+fn strip_trailing_comment(value: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(open) => {
+                if open == '"' && ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                } else if ch == '#' {
+                    let before = &value[..index];
+                    if before.is_empty() || before.chars().last().is_some_and(char::is_whitespace) {
+                        return before;
+                    }
+                }
+            }
+        }
+    }
+    value
+}
+
+/// Strip one pair of matching single or double quotes, if present.
+fn strip_matching_quotes(value: &str) -> &str {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+/// YAML null spellings that mean the key carries no value.
+fn is_yaml_null(value: &str) -> bool {
+    matches!(value, "~" | "null" | "Null" | "NULL")
+}
+
+#[test]
+fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    let bless = job_block(&lines, "bless");
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let needle = format!("uses: dtolnay/rust-toolchain@{reference}");
+    let index = bless
+        .iter()
+        .position(|line| line.contains(&needle))
+        .ok_or_else(|| {
+            "the bless job must install the toolchain the goldens are rendered with".to_string()
+        })?;
+    let step = step_lines(&bless, index);
+    let value = with_toolchain_value(&step).ok_or_else(|| {
+        "the no-default `v1` ref needs an explicit `with: toolchain:` input (#14563)".to_string()
+    })?;
+    if value != "1.95.0" {
+        return Err(format!(
+            "the bless toolchain must be 1.95.0 to match rust-toolchain.toml; found `{value}`"
+        ));
+    }
+    Ok(())
+}
+
+/// Parse one synthetic step and return its `with: toolchain:` value.
+fn step_value(source: &str) -> Option<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let index = lines
+        .iter()
+        .position(|line| line.contains("uses: dtolnay/rust-toolchain@"))?;
+    let step = step_lines(&lines, index);
+    with_toolchain_value(&step)
+}
+
+#[test]
+fn toolchain_scalar_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        ("plain", "1.95.0", true),
+        ("double quoted", "\"1.95.0\"", true),
+        ("single quoted", "'1.95.0'", true),
+        ("plain with comment", "1.95.0 # pinned", true),
+        ("double quoted with comment", "\"1.95.0\" # pinned", true),
+        ("single quoted with comment", "'1.95.0' # pinned", true),
+        ("hash inside quotes", "\"a#b\"", true),
+        ("empty", "", false),
+        ("double quoted empty", "\"\"", false),
+        ("single quoted empty", "''", false),
+        ("double quoted empty with comment", "\"\" # pinned", false),
+        ("single quoted empty with comment", "'' # pinned", false),
+        ("whitespace only", "   ", false),
+        ("double quoted whitespace", "\"   \"", false),
+        ("comment only", "# pinned", false),
+        ("tilde null", "~", false),
+        ("null", "null", false),
+        ("Null", "Null", false),
+        ("NULL", "NULL", false),
+        ("quoted null", "\"null\"", false),
+    ];
+    for (name, value, expected) in cases {
+        let source = format!(
+            "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: {value}\n"
+        );
+        let accepted = step_value(&source).is_some();
+        if accepted != expected {
+            return Err(format!(
+                "{name}: expected accepted={expected}, got accepted={accepted}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn toolchain_parser_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        (
+            "block scalar under with:",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          components: |\n            toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "nested mapping under with:",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          components:\n            toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "blank line between uses and with",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "direct child",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "env: toolchain",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        env:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+    ];
+    for (name, source, expected) in cases {
+        let actual = step_value(&source);
+        if actual.as_deref() != expected {
+            return Err(format!("{name}: expected {expected:?}, got {actual:?}"));
+        }
+    }
+    Ok(())
 }
 
 #[test]
