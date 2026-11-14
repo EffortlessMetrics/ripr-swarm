@@ -284,7 +284,7 @@ async function probePathServer(
 
 /**
  * Quote a server command containing whitespace when spawning through `shell: true`
- * so `cmd.exe` does not split paths like `C:\Program Files\...\ripr.cmd` (#14659).
+ * so `cmd.exe` does not split paths containing spaces (#14659).
  */
 export function serverLaunchCommand(command: string, needsShell?: boolean): string {
   if (needsShell && /\s/.test(command) && !/^".*"$/.test(command)) {

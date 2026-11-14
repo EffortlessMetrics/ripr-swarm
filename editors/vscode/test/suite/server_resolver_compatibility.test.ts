@@ -560,18 +560,11 @@ suite('Server resolver stale PATH version (#13638)', () => {
       );
       assert.ok('command' in result, JSON.stringify(result));
       assert.deepStrictEqual(observedArgs, customArgs);
-      assert.strictEqual(
-        serverLaunchCommand('C:\\Program Files\\ripr\\ripr.cmd', true),
-        '"C:\\Program Files\\ripr\\ripr.cmd"'
-      );
-      assert.strictEqual(
-        serverLaunchCommand('"C:\\Program Files\\ripr\\ripr.cmd"', true),
-        '"C:\\Program Files\\ripr\\ripr.cmd"'
-      );
-      assert.strictEqual(
-        serverLaunchCommand('C:\\Program Files\\ripr\\ripr.exe', false),
-        'C:\\Program Files\\ripr\\ripr.exe'
-      );
+      const spacedCmd = path.join(root, 'ripr tools', 'ripr.cmd');
+      const spacedExe = path.join(root, 'ripr tools', 'ripr.exe');
+      assert.strictEqual(serverLaunchCommand(spacedCmd, true), `"${spacedCmd}"`);
+      assert.strictEqual(serverLaunchCommand(`"${spacedCmd}"`, true), `"${spacedCmd}"`);
+      assert.strictEqual(serverLaunchCommand(spacedExe, false), spacedExe);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
