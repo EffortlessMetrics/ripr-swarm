@@ -888,23 +888,26 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     let mut skipped = Vec::new();
 
     let mut child_diagnostics = Vec::new();
+    let mut impact_disclosure = String::new();
     if let Err(error) = check_fast_gates(
+        repository_root,
         changed,
         &categories,
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
+        &mut impact_disclosure,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
             write_report(
                 "check-fast.md",
-                &format!("{body}\n{}", selection.diagnostic()),
+                &check_fast_failure_body(body, &selection.diagnostic(), &impact_disclosure),
             )
         });
     }
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n\n{}\nTests: not run by check-fast (neither workspace nor impacted-package tests); an impacted Clippy pass is local feedback only, not full workspace or test readiness.\n",
         selection.diagnostic(),
         ran.iter()
             .map(|g| format!("- {g}"))
@@ -918,7 +921,8 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
                 .map(|g| format!("- {g}"))
                 .collect::<Vec<_>>()
                 .join("\n")
-        }
+        },
+        impact_disclosure
     );
     write_report(
         "check-fast.md",
@@ -927,11 +931,13 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
 }
 
 fn check_fast_gates(
+    repository_root: &Path,
     changed: &[String],
     categories: &ChangedFileCategories,
     ran: &mut Vec<&'static str>,
     skipped: &mut Vec<&'static str>,
     child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+    impact_disclosure: &mut String,
 ) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
     run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
@@ -967,20 +973,32 @@ fn check_fast_gates(
         ran.push("check-allow-attributes");
         check_file_policy()?;
         ran.push("check-file-policy");
-        run::run_diagnostic(
-            "cargo",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
-            child_diagnostics,
-        )?;
-        ran.push("clippy");
+        // #14644 D: scope Clippy to the impacted packages (reverse
+        // dependents included) through the shared precommit planner.
+        // Shared surfaces, unknown owners and any planner failure widen
+        // or fail closed; a metadata failure is an error, never a
+        // silently narrower or skipped pass.
+        let plan = dispatch::precommit_v2::check_fast_impact_plan(repository_root, changed)?;
+        *impact_disclosure = dispatch::precommit_v2::impact_plan_disclosure(&plan);
+        let invocations = dispatch::precommit_v2::clippy_invocations(repository_root, &plan);
+        if invocations.is_empty() {
+            // Fail closed: `rust_src` with an empty plan (for example an
+            // empty package graph, #8233) cannot establish coverage, so
+            // refuse instead of reporting a pass with Clippy skipped.
+            return Err(format!(
+                "check-fast impacted Clippy plan is empty for a Rust change: {impact_disclosure}"
+            ));
+        } else {
+            for args in &invocations {
+                let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+                run::run_diagnostic("cargo", &arg_refs, child_diagnostics)?;
+            }
+            ran.push("clippy");
+        }
     } else {
+        *impact_disclosure =
+            "Impact plan: no Rust surface changed; Clippy skipped (no impacted package)."
+                .to_string();
         skipped.extend_from_slice(&[
             "check-no-panic-family",
             "check-allow-attributes",
@@ -1044,6 +1062,14 @@ fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
     )
 }
 
+fn check_fast_failure_body(body: &str, diagnostic: &str, impact_disclosure: &str) -> String {
+    if impact_disclosure.is_empty() {
+        format!("{body}\n{diagnostic}")
+    } else {
+        format!("{body}\n{diagnostic}\n{impact_disclosure}")
+    }
+}
+
 fn check_fast_failure_report(
     error: &str,
     diagnostics: &[run::CommandDiagnostic],
@@ -1102,15 +1128,21 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         // The retained Rust gates include workspace/all-target Clippy and
         // test-source policy. Include package tests, examples and build scripts,
         // with anchored roots so fixture lookalikes keep their own category.
-        rust_src: files.iter().any(|f| {
-            f == "Cargo.lock"
-                || f == "Cargo.toml"
-                || f.ends_with("/Cargo.toml")
-                || (f.ends_with(".rs")
-                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+        rust_src: dispatch::precommit_v2::workspace_widening_reason(files).is_some()
+            || files.iter().any(|f| {
+                f == "Cargo.lock"
+                    || f == "Cargo.toml"
+                    || f.ends_with("/Cargo.toml")
+                    || (f.ends_with(".rs")
+                        && [
+                            "crates/ripr/",
+                            "crates/ripr-contract/",
+                            "xtask/",
+                            "tools/repo-policy/",
+                        ]
                         .iter()
                         .any(|root| f.starts_with(root)))
-        }),
+            }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
             .iter()
@@ -1220,6 +1252,14 @@ mod check_fast_selector_tests {
     }
 
     #[test]
+    fn check_fast_failure_body_carries_impact_disclosure() {
+        let with = check_fast_failure_body("body", "diag", "Impact plan: widened");
+        assert!(with.contains("Impact plan: widened"), "{with}");
+        let without = check_fast_failure_body("body", "diag", "");
+        assert_eq!(without, "body\ndiag");
+    }
+
+    #[test]
     fn workspace_rust_targets_select_existing_rust_gates() {
         for path in [
             "crates/ripr/src/lib.rs",
@@ -1227,6 +1267,8 @@ mod check_fast_selector_tests {
             "crates/ripr/tests/cli_smoke/workflow_directory.rs",
             "crates/ripr/build.rs",
             "crates/ripr/examples/check_diff.rs",
+            "crates/ripr-contract/src/lib.rs",
+            "crates/ripr-contract/tests/contract.rs",
             "xtask/src/main.rs",
             "xtask/tests/spec_format_determinism.rs",
             "xtask/examples/mandatory_partitions.rs",
@@ -1237,6 +1279,14 @@ mod check_fast_selector_tests {
             "Cargo.toml",
             "Cargo.lock",
             "crates/ripr/Cargo.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "clippy.toml",
+            ".clippy.toml",
+            "rustfmt.toml",
+            ".cargo/config.toml",
+            "policy/clippy.toml",
+            "policy/lint-policy.toml",
         ] {
             assert!(
                 categorize_changed_files(&[path.to_string()]).rust_src,
