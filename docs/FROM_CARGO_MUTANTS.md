@@ -142,8 +142,11 @@ What it blocks: gaps that are policy-eligible and have a complete, bounded
 repair route. It does not block every finding. In the example above
 `missed-txt` listed two lines, while the gate reported one blocking gap and
 kept the other advisory (`incomplete_repair_route`). A gap stays advisory, for
-instance, when ripr cannot name a repair or when a test next to it changed in
-the same pull request. `gate-decision.md` states the reason for each one.
+instance, when ripr cannot name a repair, or when the pull request changed a
+test that calls the gap's function (directly, through a helper, or through a
+verified re-export). Changing an unrelated test, even one in the same file or
+with the same name in another module, does not keep a gap advisory.
+`gate-decision.md` states the reason for each one.
 
 ### Observed
 

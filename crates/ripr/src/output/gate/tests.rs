@@ -2928,12 +2928,11 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
 
     assert_eq!(report.status, "advisory");
     assert_eq!(report.summary.blocking, 0);
-    assert!(
-        report
-            .decisions
-            .iter()
-            .any(|decision| decision.gate_reason.contains("nearby focused test changed"))
-    );
+    assert!(report.decisions.iter().any(|decision| {
+        decision
+            .gate_reason
+            .contains("a test changed in this PR reaches")
+    }));
     let missing_guidance = write_temp_json(&dir, "missing.json", MISSING_GUIDANCE_JSON)?;
     input.pr_guidance = Some(
         missing_guidance
@@ -2952,12 +2951,69 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
     Ok(())
 }
 
-/// #4216 row 2: a review card the producer declared a static limitation
-/// because no test reaches the changed owner must not be headlined with the
-/// PR-wide "nearby focused test changed" reason. The headline follows the
-/// card's own `why_not_actionable`; the nearby-test flag and the advisory
-/// decision are unchanged. A card without a static limitation keeps the
-/// nearby-test reason (control).
+/// #13893: a test changed somewhere in the PR (`unchanged_tests: false`), but
+/// the card names no changed test reaching its owner, so the policy-eligible
+/// gap still blocks: PR or file proximity grants no waiver. The positive
+/// control names a changed reaching test on the same card and stays advisory.
+#[test]
+fn gate_changed_test_waiver_needs_a_changed_test_that_reaches_the_owner() -> Result<(), String> {
+    let dir = temp_dir("gate-changed-test-waiver")?;
+    let (fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    let source = fixture
+        .path()
+        .join("fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json");
+    let text = std::fs::read_to_string(&source).map_err(|err| err.to_string())?;
+    let mut guidance: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    assert_eq!(guidance["comments"].as_array().map(Vec::len), Some(1));
+    guidance["summary"]["unchanged_tests"] = json!(false);
+    input.root = dir.clone();
+
+    let pr_wide_only = write_temp_json(&dir, "pr-wide.json", &guidance.to_string())?;
+    input.pr_guidance = Some(
+        pr_wide_only
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.decisions.len(), 1);
+    assert!(!report.decisions[0].evidence.nearby_test_changed);
+    assert_eq!(
+        report.decisions[0].decision, "blocking",
+        "{}",
+        report.decisions[0].gate_reason
+    );
+    assert_eq!(report.status, "blocked");
+
+    guidance["comments"][0]["changed_reaching_tests"] =
+        json!(["tests/pricing.rs::discounted_total_boundary"]);
+    let reaching = write_temp_json(&dir, "reaching.json", &guidance.to_string())?;
+    input.pr_guidance = Some(
+        reaching
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    assert!(report.decisions[0].evidence.nearby_test_changed);
+    assert_ne!(report.decisions[0].decision, "blocking");
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("a test changed in this PR reaches this owner"),
+        "{}",
+        report.decisions[0].gate_reason
+    );
+    assert_eq!(report.summary.blocking, 0);
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+/// #4216 row 2 / #13893: a review card the producer declared a static
+/// limitation because no test reaches the changed owner must never be
+/// headlined with a changed-test waiver, even when some other test changed
+/// in the PR (`unchanged_tests: false`). The waiver is per card: only the
+/// control card, which names a changed test reaching its owner, carries it.
 #[test]
 fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(), String> {
     let dir = temp_dir("gate-no-test-reaches-owner")?;
@@ -2980,19 +3036,26 @@ fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(
             .iter()
             .find(|decision| decision.source_id == "loyalty")
             .ok_or("missing static-limitation decision")?;
+        // With no changed-test waiver the card is headlined by the gate's own
+        // incomplete-route limitation, exactly as when no test changed (the
+        // N3 pin below): the PR-wide flag no longer changes this card.
         assert!(
             limited
                 .gate_reason
-                .contains("no existing test reaches `src/lib.rs::loyalty_price`"),
+                .starts_with("incomplete_repair_route: missing "),
             "{}",
             limited.gate_reason
         );
         assert!(
-            !limited.gate_reason.contains("nearby focused test changed"),
+            !limited
+                .gate_reason
+                .contains("a test changed in this PR reaches"),
             "{}",
             limited.gate_reason
         );
-        assert!(limited.evidence.nearby_test_changed);
+        // #13893: no test reaches this owner, so no changed test can waive it,
+        // whatever the PR-wide `unchanged_tests` flag says.
+        assert!(!limited.evidence.nearby_test_changed);
         assert_ne!(limited.decision, "blocking");
         let control = report
             .decisions
@@ -3000,7 +3063,9 @@ fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(
             .find(|decision| decision.source_id == "changed-test")
             .ok_or("missing control decision")?;
         assert!(
-            control.gate_reason.contains("nearby focused test changed"),
+            control
+                .gate_reason
+                .contains("a test changed in this PR reaches this owner"),
             "{}",
             control.gate_reason
         );
@@ -5537,7 +5602,8 @@ const NO_TEST_REACHES_OWNER_GUIDANCE_JSON: &str = r#"{
           "severity": "warning",
           "missing_discriminator": "amount == discount_threshold",
           "placement": {"path": "src/pricing.rs", "line": 88},
-          "why_not_actionable": "ignored: only static_limitation cards carry a producer reason"
+          "why_not_actionable": "ignored: only static_limitation cards carry a producer reason",
+          "changed_reaching_tests": ["tests/pricing.rs::above_threshold_gets_discount"]
         }
       ]
     }"#;
@@ -5554,7 +5620,8 @@ const INELIGIBLE_GUIDANCE_JSON: &str = r#"{
           "grip_class": "weakly_gripped",
           "severity": "warning",
           "missing_discriminator": "amount == discount_threshold",
-          "placement": {"path": "src/pricing.rs", "line": 88}
+          "placement": {"path": "src/pricing.rs", "line": 88},
+          "changed_reaching_tests": ["tests/pricing.rs::above_threshold_gets_discount"]
         },
         {
           "id": "missing-guidance",
