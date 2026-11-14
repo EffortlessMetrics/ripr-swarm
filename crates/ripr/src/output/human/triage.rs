@@ -1128,8 +1128,13 @@ fn offers_test_stub(finding: &Finding) -> bool {
 }
 
 pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
-    hidden_window(&triage.omitted)
-        .into_iter()
+    // Hidden routing consumes the omitted set in report order, independently of
+    // the priority-ranked Hidden: display window (#14687).
+    triage
+        .omitted
+        .iter()
+        .copied()
+        .take(HIDDEN_FINDINGS_LISTED)
         .filter(|finding| offers_test_stub(finding))
         .collect()
 }
@@ -3030,15 +3035,23 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // #14233: the one candidate-current row sorts last in report order,
-        // and the window keeps it ahead of the non-candidate rows.
-        assert_eq!(
-            candidates(&rows),
-            vec!["hidden:20"],
-            "the window keeps the candidate-current row"
+        // and the display window keeps it ahead of the non-candidate rows.
+        assert!(
+            hidden_window(&rows.iter().collect::<Vec<_>>())
+                .iter()
+                .any(|finding| finding.id == "hidden:20"),
+            "the displayed Hidden: window keeps the candidate-current row"
         );
-        // Eligibility is still decided inside the displayed window: with 21
-        // candidate-current rows, the one that ranks last (no recommended next
-        // step) falls outside the window and offers no stub route.
+        // #14687: stub selection is decoupled from that priority window and
+        // reads the first 20 rows in report order instead.
+        assert!(
+            candidates(&rows).is_empty(),
+            "the candidate-current row at index 20 is outside the first 20 rows"
+        );
+        // Eligibility is separately filtered inside the first 20 report-order
+        // rows: with 21 candidate-current rows, the one that ranks last (no
+        // recommended next step) still offers a stub route despite being
+        // excluded from the displayed Hidden: window.
         let mut all_current = rows.clone();
         for (index, row) in all_current.iter_mut().enumerate() {
             row.source_currentness = SourceCurrentness::CandidateCurrent;
@@ -3049,8 +3062,8 @@ mod tests {
         let windowed = candidates(&all_current);
         assert_eq!(windowed.len(), 20, "{windowed:?}");
         assert!(
-            !windowed.contains(&"hidden:7".to_string()),
-            "take the displayed window before eligibility filtering: {windowed:?}"
+            windowed.contains(&"hidden:7".to_string()),
+            "stub eligibility filters within the first 20 rows, independently of the display window: {windowed:?}"
         );
         rows[20].source_currentness = SourceCurrentness::BaseDeleted;
         assert!(candidates(&rows).is_empty());
