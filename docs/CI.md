@@ -112,8 +112,9 @@ An explicit `VERDICT:` field is recognized only at line start after the same lis
 quote, heading, emphasis or code prefix. Its whole value must be `APPROVE`, with an
 optional 7–40 hexadecimal head SHA, to admit; `BLOCK`, `ABSTAIN`, empty, mixed and
 unrecognized values refuse. A table row whose first cell is `Verdict` uses that same
-grammar. An APPROVE field is not a readiness carrier: the separate first-line readiness
-marker is still required. A PR description carrying `VERDICT:` or a first-cell
+grammar: the trailing pipe is optional, and a row whose value side carries more than one
+non-empty cell refuses as ambiguous. An APPROVE field is not a readiness carrier: the
+separate first-line readiness marker is still required. A PR description carrying `VERDICT:` or a first-cell
 `Verdict` table row has a competing field and attests nothing, whatever the value.
 Free-prose retraction on later lines is best-effort (#12835). A later line changes the
 disposition only when it states one: it opens, after list (bulleted, numbered or task),
@@ -127,6 +128,14 @@ A state word inside prose, such as a backticked quotation of a marker or "the ea
 review is superseded", is narration and is not read, because that scan ejected fully
 green queue entries after the whole run (#11566). The PR author can still
 self-attest (unchanged), and retractions posted as issue comments are not read.
+All three positive carriers (native approval, ready COMMENT, and description)
+first check outstanding trusted current-head negative COMMENT statements (#14578).
+Neutral replies do not clear them. Only the same reviewer's later explicit ready
+COMMENT or current trusted native approval on this head resolves their objection;
+another reviewer cannot resolve it, and a dismissed approval cannot resolve it.
+Native `CHANGES_REQUESTED` remains a separate veto until its native decisive
+state is superseded. Review timestamp and native ID order these statements,
+independently of input-page order; missing submission timestamps still refuse.
 A negated change/repair phrase is resolved work, not a blocker: `no code change
 needed`, `no changes needed` and `without a change` admit, while `Code change
 needed`, `A change is needed`, `Changes required` and `Repairs required` still
@@ -606,7 +615,7 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 4`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start alongside the hosted `rust-gates.yml` job (called with `test-shards: 4`, which runs every other gate) on that job's own condition, so the required context fits inside the merge queue's status-check timeout (#4838; a gate failure still spends the shard minutes), plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. The shards set `CARGO_PROFILE_DEV_DEBUG=0` for every Cargo call, so their test binaries carry no debug info: generating and linking it for about 345 test executables pushed a 16 GB runner deep into swap and past its build limit (#11566). A failing test still reports its panic location; only backtrace frames lose file and line. Each shard writes its partition list (shard 1 also the workspace list) from the prepared binaries before it runs the tests; listing after the run cost shard 4 four to six minutes on every run (#12915). Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -1242,7 +1251,16 @@ target/sample build residue and shares the same badge endpoint boundary.
 `goldens check` validate the current fixture and
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
-for reviewers. `test-oracle-report` writes an advisory baseline for the strength
+for reviewers. The opt-in `cargo xtask goldens check-with-fixtures` evaluates
+each selected fixture once and writes both `fixtures.md` and the existing golden
+reports from that in-memory result. It retains preparation, assistant-loop corpus,
+expected-class ratchet, drift, line-ending and provenance checks. The fixture
+report retains its fixtures-only verdict; golden-only failures still fail the
+combined command. Early preparation or report-write failures return non-success
+and do not establish both reports. This command does not reuse prior reports,
+change hosted obligation rows, or qualify a timing improvement. The existing
+CI/DAG owner must retain both obligations when integrating it (#8198).
+`test-oracle-report` writes an advisory baseline for the strength
 of `ripr`'s own Rust test oracles. If no tests are selected, both report formats
 use status `not_run` and explain that oracle evidence was not established; this
 is distinct from a nonempty all-strong `pass` and remains advisory. `dogfood` writes a
@@ -2986,7 +3004,7 @@ declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
 `fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
-`metrics/public-proof/**`, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` binds by name: each must be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name; a new family is added to
+`metrics/public-proof/**`, the canonical `metrics/dx-scoreboard/baseline.json` report, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` binds by name: each must be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name; a new family is added to
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever

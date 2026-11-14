@@ -264,11 +264,14 @@ blockers when performing that explicit verification.
 
 ### Focused setup reference
 
-1. Install [`rustup`](https://rustup.rs/) if you don't already have it.
-   `rust-toolchain.toml` pins the exact toolchain version and its
+1. Install [`rustup`](https://rustup.rs/) if you don't already have it, then select
+   stable as your default toolchain (`rustup default stable`); use
+   `rustup update stable` to refresh it later. You do not need to install the
+   MSRV by hand. `rust-toolchain.toml` pins the exact build toolchain and its
    `rustfmt` and `clippy` components with the minimal installation profile;
    `rustup` picks it up automatically the first time you run a `cargo` command
-   in this repo. The optional prebuilt Rust HTML documentation is not installed.
+   in this repo, so a stable default and the pinned build toolchain coexist.
+   The optional prebuilt Rust HTML documentation is not installed.
    `cargo doc` still generates package documentation. For offline standard-library
    documentation, run `rustup component add rust-docs` from this repo while online.
 2. Clone the repo:

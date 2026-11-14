@@ -1023,7 +1023,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Test Mapping
 
-- Rule 10: `crates/ripr/tests/claims_payload_eq_owner_pin.rs`; the
+- Rule 10: `crates/ripr/tests/wrapped_owner_pins/claims_payload_eq_owner_pin.rs`; the
   inventory rows in
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` are the
   predicate-family contrast.

@@ -251,6 +251,15 @@ pub(crate) fn probes_for_file_with_relations(
     } else {
         added_type_bound_lines(index, changed)
     };
+    // Added lines whose only lexical family is `static_unknown`: a type-bound
+    // line, or (#14094) a string-literal continuation line, whose text is
+    // data even when it reads like code. A removed line pairs with them on
+    // that family alone.
+    let added_static_only = added_bounds
+        .iter()
+        .zip(&changed.added_lines)
+        .map(|(bound, line)| *bound || added_string_continuations.contains(&line.new_side_line))
+        .collect::<Vec<_>>();
 
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
     // token text, not a Rust expression. One `static_unknown` probe per
@@ -294,8 +303,10 @@ pub(crate) fn probes_for_file_with_relations(
         // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
         // after macro membership: inside a `macro_rules!` transcriber they
         // are emitted tokens, so an edit there is a macro-definition edit.
+        // `//` inside a string literal is string data, not a comment (#14094).
         if text.is_empty()
-            || text.starts_with("//")
+            || (text.starts_with("//")
+                && !added_string_continuations.contains(&added.new_side_line))
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
         {
@@ -325,7 +336,8 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if should_ignore_changed_line(text)
+        if (should_ignore_changed_line(text)
+            && !added_string_continuations.contains(&added.new_side_line))
             || added_attribute_lines.contains(&added.new_side_line)
             || added_use_lines.contains(&added.new_side_line)
             || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
@@ -609,10 +621,18 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        let families = classify_changed_line_against(text, removed_counterpart.as_deref())
-            .into_iter()
-            .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
-            .collect::<Vec<_>>();
+        // #14094: a line wholly inside a multi-line string literal holds no
+        // code. Its text (`if x > 3 { return Err(e) }` in a help message)
+        // selects no behavioral family; the literal's own rule below decides
+        // whether the edited text keeps one `static_unknown`.
+        let families = if added_string_continuations.contains(&added.new_side_line) {
+            vec![ProbeFamily::StaticUnknown]
+        } else {
+            classify_changed_line_against(text, removed_counterpart.as_deref())
+                .into_iter()
+                .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
+                .collect::<Vec<_>>()
+        };
         // #3294: a changed simple `let` initializer that only lands in the
         // static-unknown catch-all retargets to its same-function predicate
         // uses when the binding reaches them directly. The changed
@@ -744,7 +764,10 @@ pub(crate) fn probes_for_file_with_relations(
         {
             continue;
         }
-        let families = if removed_bounds.lines[removed_index] {
+        // #14094: deleted string-literal text is not deleted code either.
+        let families = if removed_bounds.lines[removed_index]
+            || removed_string_continuations.contains(&removed.line)
+        {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line(text)
@@ -762,7 +785,7 @@ pub(crate) fn probes_for_file_with_relations(
                 removed,
                 &family,
                 changed,
-                &added_bounds,
+                &added_static_only,
                 &added_run_starts,
             ) || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
@@ -2493,7 +2516,7 @@ fn has_matching_added_line(
     removed_line: &ChangedLine,
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
-    added_bounds: &[bool],
+    added_static_only: &[bool],
     added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
@@ -2505,7 +2528,7 @@ fn has_matching_added_line(
             {
                 return false;
             }
-            let added_families = if added_bounds[index] {
+            let added_families = if added_static_only[index] {
                 vec![ProbeFamily::StaticUnknown]
             } else {
                 classify_changed_line(line.text.trim())
@@ -2515,7 +2538,7 @@ fn has_matching_added_line(
             // reads `static_unknown` rather than `call_deletion` (#8027).
             // A different callee is a real deletion and does not pair.
             let accumulator_rewrite = *removed_family == ProbeFamily::CallDeletion
-                && !added_bounds[index]
+                && !added_static_only[index]
                 && is_accumulator_rewrite_of(&removed_line.text, &line.text);
             if !accumulator_rewrite && !added_families.iter().any(|family| family == removed_family)
             {

@@ -223,13 +223,17 @@ fn skip_ascii_whitespace(source: &str, start: usize) -> usize {
 }
 
 /// Whether `{`/`(`/[` opens a `macro_rules! name …` body rather than a normal
-/// item block.
-fn macro_rules_definition_opens_delimiter(before_delimiter: &str) -> bool {
-    const MARKER: &str = "macro_rules!";
-    let Some(marker_start) = before_delimiter.rfind(MARKER) else {
+/// item block. `marker_start` is where the last `macro_rules!` lying wholly
+/// inside `before_delimiter` begins (what `rfind` would return), if any.
+fn macro_rules_definition_opens_delimiter(
+    before_delimiter: &str,
+    marker_start: Option<usize>,
+) -> bool {
+    let Some(marker_start) = marker_start else {
         return false;
     };
-    let mut cursor = skip_ascii_whitespace(before_delimiter, marker_start + MARKER.len());
+    let mut cursor =
+        skip_ascii_whitespace(before_delimiter, marker_start + MACRO_RULES_MARKER.len());
     let bytes = before_delimiter.as_bytes();
     let Some(&first) = bytes.get(cursor) else {
         return false;
@@ -247,25 +251,66 @@ fn macro_rules_definition_opens_delimiter(before_delimiter: &str) -> bool {
     skip_ascii_whitespace(before_delimiter, cursor) == before_delimiter.len()
 }
 
+const MACRO_RULES_MARKER: &str = "macro_rules!";
+
 /// Whether `offset` sits inside macro token trees: invocation delimiters
 /// (`name!(..)`, `name![..]`, `name!{..}`) or a `macro_rules!` definition body.
-pub(crate) fn offset_inside_macro_invocation_delimiters(masked: &str, offset: usize) -> bool {
+#[cfg(test)]
+fn offset_inside_macro_invocation_delimiters(masked: &str, offset: usize) -> bool {
+    offsets_inside_macro_invocation_delimiters(masked, &[offset])
+        .first()
+        .copied()
+        .unwrap_or(false)
+}
+
+/// [`offset_inside_macro_invocation_delimiters`] for every offset in
+/// `offsets`, answered in one forward pass over `masked` (offsets in any
+/// order; answers align with `offsets`). Asking per offset rescanned the whole
+/// prefix and searched it backwards for `macro_rules!` at every delimiter,
+/// which made a file with many attributes cubic in its length (bevy pilot
+/// spent most of its evidence stage here).
+pub(crate) fn offsets_inside_macro_invocation_delimiters(
+    masked: &str,
+    offsets: &[usize],
+) -> Vec<bool> {
     let bytes = masked.as_bytes();
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&position| offsets[position]);
+    let mut answers = vec![false; offsets.len()];
+    let markers: Vec<usize> = masked
+        .match_indices(MACRO_RULES_MARKER)
+        .map(|(start, _)| start)
+        .collect();
     let mut stack: Vec<bool> = Vec::new();
-    for (index, byte) in bytes[..offset.min(bytes.len())].iter().enumerate() {
-        match byte {
-            b'(' | b'[' | b'{' => {
-                let before = masked[..index].trim_end();
-                let invocation = before.as_bytes().last() == Some(&b'!');
-                stack.push(invocation || macro_rules_definition_opens_delimiter(before));
+    let mut macro_depth = 0usize;
+    let mut index = 0usize;
+    for position in order {
+        let offset = offsets[position].min(bytes.len());
+        while index < offset {
+            match bytes[index] {
+                b'(' | b'[' | b'{' => {
+                    let before = masked[..index].trim_end();
+                    let invocation = before.as_bytes().last() == Some(&b'!');
+                    let is_macro = invocation || {
+                        let fitting = markers.partition_point(|&start| {
+                            start + MACRO_RULES_MARKER.len() <= before.len()
+                        });
+                        let marker = fitting.checked_sub(1).map(|last| markers[last]);
+                        macro_rules_definition_opens_delimiter(before, marker)
+                    };
+                    macro_depth += usize::from(is_macro);
+                    stack.push(is_macro);
+                }
+                b')' | b']' | b'}' => {
+                    macro_depth -= usize::from(stack.pop() == Some(true));
+                }
+                _ => {}
             }
-            b')' | b']' | b'}' => {
-                stack.pop();
-            }
-            _ => {}
+            index += 1;
         }
+        answers[position] = macro_depth > 0;
     }
-    stack.into_iter().any(|is_macro| is_macro)
+    answers
 }
 
 /// CallFact already owns a source line. Exclude opaque arguments from that
@@ -830,5 +875,76 @@ let spaced = render_pipeline ("beta");
             &masked,
             derive_offsets[0]
         ));
+    }
+
+    /// The one-pass answer for every offset agrees with the former
+    /// per-offset scan (kept here as the reference): rescan the prefix,
+    /// `rfind` the last `macro_rules!` before each delimiter.
+    #[test]
+    fn batched_macro_delimiter_offsets_match_the_per_offset_scan() {
+        fn reference(masked: &str, offset: usize) -> bool {
+            let bytes = masked.as_bytes();
+            let mut stack: Vec<bool> = Vec::new();
+            for (index, byte) in bytes[..offset.min(bytes.len())].iter().enumerate() {
+                match byte {
+                    b'(' | b'[' | b'{' => {
+                        let before = masked[..index].trim_end();
+                        let invocation = before.as_bytes().last() == Some(&b'!');
+                        let marker = before.rfind(MACRO_RULES_MARKER);
+                        stack.push(
+                            invocation || macro_rules_definition_opens_delimiter(before, marker),
+                        );
+                    }
+                    b')' | b']' | b'}' => {
+                        stack.pop();
+                    }
+                    _ => {}
+                }
+            }
+            stack.into_iter().any(|is_macro| is_macro)
+        }
+        let sources = [
+            "macro_rules! m {\n    () => { #[derive(A)] struct E; };\n}\n#[derive(B)]\nstruct F;\n",
+            "fn f() { vec![1, (2)]; m!{ x { y } } }\n#[derive(C)] struct G { a: [u8; 2] }\n",
+            "macro_rules!   spaced\n( ($x:expr) => {{ $x }} )\nmacro_rules! 9bad { }\nstruct H(u8);\n)] unbalanced (",
+            "fn a() { b(); }\nmacro_rules! m { () => { c(); }; }\nfn d() { e(); }\n",
+            "",
+        ];
+        for source in sources {
+            let masked = crate::analysis::extract::mask_comments_and_strings(source);
+            let span = masked.len() + 3;
+            // Every offset once, out of order (even offsets descending, then
+            // odd ones ascending), plus a duplicate, so neither sorted nor
+            // reversed order is assumed and no offset is skipped.
+            let mut offsets: Vec<usize> = (0..span).filter(|step| step % 2 == 0).rev().collect();
+            offsets.extend((0..span).filter(|step| step % 2 == 1));
+            let mut covered = offsets.clone();
+            covered.sort_unstable();
+            assert_eq!(
+                covered,
+                (0..span).collect::<Vec<_>>(),
+                "every offset is checked"
+            );
+            offsets.push(3);
+            let batched = offsets_inside_macro_invocation_delimiters(&masked, &offsets);
+            assert_eq!(batched.len(), offsets.len());
+            for (&offset, answer) in offsets.iter().zip(&batched) {
+                assert_eq!(
+                    *answer,
+                    reference(&masked, offset),
+                    "offset {offset} in {source:?}"
+                );
+            }
+            assert!(
+                batched.iter().any(|answer| *answer) || !source.contains('!'),
+                "fixture must exercise a macro region: {source:?}"
+            );
+            if let Some(body) = source.find("c();") {
+                assert!(
+                    offsets_inside_macro_invocation_delimiters(&masked, &[0, body])[1],
+                    "a macro_rules! body after ordinary blocks is a macro region"
+                );
+            }
+        }
     }
 }

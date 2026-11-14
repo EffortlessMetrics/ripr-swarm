@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const WORKFLOW: &str = include_str!("../../../../.github/workflows/routed-rust.yml");
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 

@@ -40,38 +40,51 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
         Some(value) => vec![fixture_dir_for_name(value)?],
         None => fixture_dirs,
     };
-    // Parallelize fixture execution via rayon (#2415). Each fixture is
-    // independent (disjoint input/expected dirs), so parallel runs produce
-    // identical output.
-    let results: Vec<FixtureResult> = selected
-        .par_iter()
-        .map(|path| {
-            if !path.exists() {
-                return Ok((
-                    vec![format!("fixture does not exist: {}", normalize_path(path))],
-                    None,
-                ));
-            }
-            if !path.is_dir() {
-                return Ok((
-                    vec![format!(
-                        "fixture is not a directory: {}",
-                        normalize_path(path)
-                    )],
-                    None,
-                ));
-            }
-            let contract_violations = fixture_contract_violations(path)?;
-            if !contract_violations.is_empty() {
-                return Ok((contract_violations, None));
-            }
-            match run_fixture(path) {
-                Ok(run) => Ok((run.comparison_violations(), Some(run))),
-                Err(err) => Err(err),
-            }
-        })
-        .collect();
+    let run_set = collect_fixture_runs(selected, evaluate_fixture);
+    write_fixture_report(name.map(String::as_str), &run_set)?;
+    if run_set.violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "fixture command failed; see target/ripr/reports/fixtures.md\n{}",
+            run_set.violations.join("\n")
+        ))
+    }
+}
 
+fn evaluate_fixture(path: &Path) -> FixtureResult {
+    if !path.exists() {
+        return Ok((
+            vec![format!("fixture does not exist: {}", normalize_path(path))],
+            None,
+        ));
+    }
+    if !path.is_dir() {
+        return Ok((
+            vec![format!(
+                "fixture is not a directory: {}",
+                normalize_path(path)
+            )],
+            None,
+        ));
+    }
+    let contract_violations = fixture_contract_violations(path)?;
+    if !contract_violations.is_empty() {
+        return Ok((contract_violations, None));
+    }
+    match run_fixture(path) {
+        Ok(run) => Ok((run.comparison_violations(), Some(run))),
+        Err(err) => Err(err),
+    }
+}
+
+/// Evaluate each selected fixture once, retaining deterministic input order.
+/// Both reports consume this in-memory result; no persisted result is reused.
+fn collect_fixture_runs(
+    selected: Vec<PathBuf>,
+    evaluate: impl Fn(&Path) -> FixtureResult + Sync,
+) -> GoldenRunSet {
+    let results: Vec<FixtureResult> = selected.par_iter().map(|path| evaluate(path)).collect();
     let mut violations = Vec::new();
     let mut runs = Vec::new();
     for result in results {
@@ -85,24 +98,28 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
             Err(err) => violations.push(err),
         }
     }
-
-    let body = fixture_report_body(name.map(String::as_str), &selected, &runs, &violations);
-    write_report("fixtures.md", &body)?;
-
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "fixture command failed; see target/ripr/reports/fixtures.md\n{}",
-            violations.join("\n")
-        ))
+    GoldenRunSet {
+        fixtures: selected,
+        runs,
+        violations,
     }
+}
+
+fn write_fixture_report(name: Option<&str>, run_set: &GoldenRunSet) -> Result<(), String> {
+    let body = fixture_report_body(name, &run_set.fixtures, &run_set.runs, &run_set.violations);
+    write_report("fixtures.md", &body)
 }
 
 pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("prepare") => preparation::prepare(&args[1..]),
         Some("check") => goldens_check(),
+        Some("check-with-fixtures") if args.len() == 1 => {
+            match golden_check_run_with_fixture_report(true)? {
+                GoldenCheckRun::Clean => Ok(()),
+                GoldenCheckRun::Failed { message, .. } => Err(message),
+            }
+        }
         Some("bless") => {
             let Some(name) = args.get(1) else {
                 return Err(
@@ -114,10 +131,10 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
             goldens_bless(name, &reason)
         }
         Some(other) => Err(format!(
-            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "unknown goldens command `{other}`\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens check-with-fixtures\n       cargo xtask goldens bless <name> --reason <reason>"
         )),
         None => Err(
-            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens bless <name> --reason <reason>"
+            "missing goldens command\nusage: cargo xtask goldens prepare [--offline]\n       cargo xtask goldens check\n       cargo xtask goldens check-with-fixtures\n       cargo xtask goldens bless <name> --reason <reason>"
                 .to_string(),
         ),
     }
@@ -143,6 +160,10 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    golden_check_run_with_fixture_report(false)
+}
+
+fn golden_check_run_with_fixture_report(fixtures_report: bool) -> Result<GoldenCheckRun, String> {
     if let Err(err) = preparation::ensure_ready() {
         let violations = vec![err];
         let provenance = golden_drift_provenance();
@@ -152,7 +173,7 @@ fn golden_check_run() -> Result<GoldenCheckRun, String> {
             violations,
         });
     }
-    let mut run_set = collect_golden_runs()?;
+    let mut run_set = collect_golden_runs_with_fixture_report(fixtures_report)?;
     // #12928: print the expected-class ledger; the per-language count may only rise.
     let (ledger_line, ratchet_violations) = crate::fixture_expected_classes::ledger_report(
         Path::new("fixtures"),
@@ -343,44 +364,23 @@ pub(crate) fn golden_drift_impl() -> Result<(), String> {
 }
 
 fn collect_golden_runs() -> Result<GoldenRunSet, String> {
-    let fixture_dirs = fixture_dirs()?;
+    collect_golden_runs_with_fixture_report(false)
+}
+
+fn collect_golden_runs_with_fixture_report(fixtures_report: bool) -> Result<GoldenRunSet, String> {
+    let selected = fixture_dirs()?;
     let mut violations = golden_assistant_loop_health_contract_violations_at(Path::new(
         "fixtures/boundary_gap/expected/assistant-loop-health",
     ))?;
-    // Parallelize fixture execution via rayon (#2415). Each fixture is independent
-    // (disjoint input/expected dirs), so parallel runs produce identical output.
-    // The sequential results are collected in input order for deterministic reports.
-    let results: Vec<FixtureResult> = fixture_dirs
-        .par_iter()
-        .map(|fixture| {
-            let contract_violations = fixture_contract_violations(fixture)?;
-            if !contract_violations.is_empty() {
-                return Ok((contract_violations, None));
-            }
-            match run_fixture(fixture) {
-                Ok(run) => Ok((run.comparison_violations(), Some(run))),
-                Err(err) => Err(err),
-            }
-        })
-        .collect();
-
-    let mut runs = Vec::new();
-    for result in results {
-        match result {
-            Ok((vios, maybe_run)) => {
-                violations.extend(vios);
-                if let Some(run) = maybe_run {
-                    runs.push(run);
-                }
-            }
-            Err(err) => violations.push(err),
-        }
+    let mut run_set = collect_fixture_runs(selected, evaluate_fixture);
+    if fixtures_report {
+        // Preserve the fixtures-only verdict before adding golden-only checks.
+        // A failed write fails the joint command; it cannot certify both reports.
+        write_fixture_report(None, &run_set)?;
     }
-    Ok(GoldenRunSet {
-        fixtures: fixture_dirs,
-        runs,
-        violations,
-    })
+    violations.append(&mut run_set.violations);
+    run_set.violations = violations;
+    Ok(run_set)
 }
 
 /// One `git ls-files --eol` row: index/worktree ending classes and the raw
@@ -3445,6 +3445,106 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn joint_fixture_reports_consume_one_evaluation_per_subject() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        let selected = vec![PathBuf::from("first"), PathBuf::from("second")];
+        let run_set = collect_fixture_runs(selected.clone(), |path| {
+            let index = usize::from(path == Path::new("second"));
+            calls[index].fetch_add(1, Ordering::SeqCst);
+            Ok((Vec::new(), Some(joint_fixture_run(path, true))))
+        });
+        assert_eq!(run_set.fixtures, selected);
+        assert_eq!(run_set.runs.len(), 2);
+        assert!(run_set.violations.is_empty());
+        for report in [
+            fixture_report_body(None, &run_set.fixtures, &run_set.runs, &run_set.violations),
+            goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations),
+        ] {
+            assert!(report.contains("Status: pass"), "{report}");
+            assert!(
+                report.contains("first") && report.contains("second"),
+                "{report}"
+            );
+        }
+        assert_eq!(calls.map(|count| count.load(Ordering::SeqCst)), [1, 1]);
+    }
+
+    fn joint_fixture_run(path: &Path, matches: bool) -> FixtureRun {
+        FixtureRun {
+            name: normalize_path(path),
+            actual_dir: path.join("actual"),
+            check_json: path.join("actual/check.json"),
+            human_txt: path.join("actual/human.txt"),
+            human_full_txt: path.join("actual/human-full.txt"),
+            comparisons: vec![GoldenComparison {
+                surface: "check.json",
+                expected: path.join("expected/check.json"),
+                actual: path.join("actual/check.json"),
+                matches,
+                first_difference: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn joint_fixture_reports_retain_contract_execution_and_drift_failures() {
+        let selected = ["contract", "execution", "drift"]
+            .map(PathBuf::from)
+            .to_vec();
+        let run_set = collect_fixture_runs(selected.clone(), |path| {
+            if path == Path::new("contract") {
+                Ok((vec!["missing fixture contract".into()], None))
+            } else if path == Path::new("execution") {
+                Err("fixture child failed".into())
+            } else {
+                let run = joint_fixture_run(path, false);
+                Ok((run.comparison_violations(), Some(run)))
+            }
+        });
+        assert_eq!(run_set.fixtures, selected);
+        assert_eq!(run_set.runs.len(), 1);
+        assert_eq!(run_set.violations.len(), 3);
+        assert_eq!(run_set.violations[0], "missing fixture contract");
+        assert_eq!(run_set.violations[1], "fixture child failed");
+        assert!(run_set.violations[2].contains("check.json drift for fixture `drift`"));
+        for report in [
+            fixture_report_body(None, &run_set.fixtures, &run_set.runs, &run_set.violations),
+            goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations),
+        ] {
+            assert!(report.contains("Status: fail"), "{report}");
+            for violation in &run_set.violations {
+                assert!(report.contains(violation), "{report}");
+            }
+        }
+    }
+
+    #[test]
+    fn joint_fixture_evaluator_refuses_invalid_inputs_without_running_them() -> Result<(), String> {
+        let root = unique_temp_path("joint-fixture-invalid");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join("file"), "not a directory").map_err(|error| error.to_string())?;
+        fs::create_dir(root.join("contract")).map_err(|error| error.to_string())?;
+        let run_set = collect_fixture_runs(
+            ["missing", "file", "contract"]
+                .map(|name| root.join(name))
+                .to_vec(),
+            evaluate_fixture,
+        );
+        assert!(run_set.runs.is_empty());
+        assert_eq!(run_set.violations.len(), 3);
+        assert!(run_set.violations[0].starts_with("fixture does not exist:"));
+        assert!(run_set.violations[1].starts_with("fixture is not a directory:"));
+        assert!(run_set.violations[2].ends_with("is missing SPEC.md"));
+        fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn joint_fixture_command_rejects_extra_arguments_before_execution() {
+        let result = goldens_impl(&["check-with-fixtures".into(), "ignored-filter".into()]);
+        assert!(result.is_err());
+    }
 
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
