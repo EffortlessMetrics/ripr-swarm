@@ -158,12 +158,10 @@ fn event_drifts_committed_source(
     if !deleted {
         return carries_diagnostics || is_related_test;
     }
-    // `symlink_metadata` so a dangling link left behind still reads as present
-    // (the event named the entry, not its target).
-    if std::fs::symlink_metadata(&path).is_ok() {
-        return false;
-    }
-    carries_diagnostics
+    // The delete watcher covers every path under the root, so most events
+    // (build output, editor scratch files) name nothing committed: answer that
+    // from memory first and touch the filesystem only for a covered path.
+    let covers_committed_input = carries_diagnostics
         || is_related_test
         || committed
             .related_test_files
@@ -173,7 +171,10 @@ fn event_drifts_committed_source(
         || committed.diagnostic_uris.iter().any(|uri| {
             path_from_file_uri(uri)
                 .is_some_and(|stored| stored != path && stored.starts_with(&path))
-        })
+        });
+    // `symlink_metadata` so a dangling link left behind still reads as present
+    // (the event named the entry, not its target).
+    covers_committed_input && std::fs::symlink_metadata(&path).is_err()
 }
 
 #[cfg(test)]
