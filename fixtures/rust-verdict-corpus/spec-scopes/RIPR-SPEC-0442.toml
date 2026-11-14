@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0442"
+scope = "out"
+reason = "Related-test credit and direct-owner evidence kind for an import alias of the owner; the examples assert an evidence classification, not an exposure verdict a Rust diff plus runtime mutant truth labels. Pinned by crates/ripr/src/analysis/test_grip_evidence/tests.rs and the analysis::extract::shadow import-shadow table."

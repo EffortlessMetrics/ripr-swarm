@@ -3,7 +3,7 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasModuleItem, HasName},
 };
 mod closure_callbacks;
 #[cfg(test)]
@@ -1140,18 +1140,26 @@ fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
 
 /// Collects the parser-backed test-body shadow facts for one function
 /// (#3727 Slice A): the names of `fn` items nested inside the function's
-/// body, and one [`LetBindingFact`] per whole-word name in every
-/// initialized `let` binding's pattern, line-relative to the function's
-/// `fn` keyword line.
+/// body, and one [`LetBindingFact`] per whole-word name in a `let` pattern,
+/// a nested `fn` name, and each closure, `for`, match-arm,
+/// `if let`/`while let` or nested-`fn` parameter, line-relative to the
+/// function's `fn` keyword line.
 ///
-/// The semantics are deliberately scanner-equivalent at line granularity
-/// (see `analysis::extract::shadow`): a nested `fn <callee>` item is
-/// hoisted and defeats the whole body, and a binding defeats uses at and
-/// after its own body-relative line. No scope extents, no columns. The
-/// pattern names are extracted with the shared lexical authority's
-/// whole-word vocabulary (`extract_pattern_words`), so the fact-derived
-/// decisions equal the lexical scanners' decisions on the same masked body
-/// for realistic Rust — the equivalence battery in this module pins it.
+/// A nested `fn <callee>` item is hoisted and defeats the whole body. A
+/// `let` binding carries `scope_end: None` and keeps the shipped
+/// end-of-function over-approximation. A closure, `for`, match-arm,
+/// `if let`/`while let` or nested-`fn` parameter carries `scope_end` with
+/// the inclusive end line of its body or arm, so it defeats only uses inside
+/// that scope. The pattern names are extracted with the shared lexical
+/// authority's whole-word vocabulary (`extract_pattern_words`).
+///
+/// The lexical fallback in `analysis::extract::shadow` deliberately diverges
+/// for the scoped forms: it withholds the whole body rather than computing
+/// the exact extent, which is fail-closed (it may drop credit for a genuine
+/// call after the scope on a file the parser could not read, and never
+/// grants credit to a scoped binding). The equivalence battery in this
+/// module pins only the shared families (`let` bindings and nested `fn`
+/// names), not the scoped forms.
 ///
 /// `line_of` maps a tree offset to a 1-based line, and `fn_line` is the
 /// 1-based line of the function's `fn` keyword — the two inputs that make
@@ -1202,6 +1210,7 @@ fn collect_body_shadow_facts(
         for name in extract_pattern_words(&pattern.syntax().text().to_string()) {
             let_bindings.push(LetBindingFact {
                 line: body_relative_line,
+                scope_end: None,
                 name,
             });
         }
@@ -1264,14 +1273,221 @@ fn collect_body_shadow_facts(
             for name in extract_pattern_words(&pattern) {
                 let_bindings.push(LetBindingFact {
                     line: body_relative_line,
+                    scope_end: None,
                     name,
                 });
             }
         }
     }
+    // #14508 review: a closure, `for`, match-arm, `if let`/`while let` or
+    // nested-fn parameter binds the alias only inside its own body/arm. The
+    // fact carries that scope end so a genuine call after the scope keeps its
+    // credit.
+    for closure in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ClosureExpr::cast)
+    {
+        let Some(body) = closure.body() else {
+            continue;
+        };
+        let scope_end = body.syntax().text_range().end();
+        if let Some(params) = closure.param_list() {
+            for param in params.params() {
+                push_scoped_binding_facts(
+                    &mut let_bindings,
+                    param.pat(),
+                    scope_end,
+                    line_of,
+                    fn_line,
+                );
+            }
+        }
+    }
+    for for_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ForExpr::cast)
+    {
+        let Some(body) = for_expr.loop_body() else {
+            continue;
+        };
+        push_scoped_binding_facts(
+            &mut let_bindings,
+            for_expr.pat(),
+            body.syntax().text_range().end(),
+            line_of,
+            fn_line,
+        );
+    }
+    for arm in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+    {
+        let Some(expr) = arm.expr() else {
+            continue;
+        };
+        push_scoped_binding_facts(
+            &mut let_bindings,
+            arm.pat(),
+            expr.syntax().text_range().end(),
+            line_of,
+            fn_line,
+        );
+    }
+    for if_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IfExpr::cast)
+    {
+        let Some(condition) = if_expr.condition() else {
+            continue;
+        };
+        let Some(then_branch) = if_expr.then_branch() else {
+            continue;
+        };
+        // A let-chain condition (`if let Some(dt) = .. && cond`) is a
+        // BinExpr, so walk every LetExpr under it, not only a direct
+        // condition (#14508 review).
+        for let_expr in condition
+            .syntax()
+            .descendants()
+            .filter_map(ast::LetExpr::cast)
+        {
+            push_scoped_binding_facts(
+                &mut let_bindings,
+                let_expr.pat(),
+                then_branch.syntax().text_range().end(),
+                line_of,
+                fn_line,
+            );
+        }
+    }
+    for while_expr in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::WhileExpr::cast)
+    {
+        let Some(condition) = while_expr.condition() else {
+            continue;
+        };
+        let Some(body) = while_expr.loop_body() else {
+            continue;
+        };
+        for let_expr in condition
+            .syntax()
+            .descendants()
+            .filter_map(ast::LetExpr::cast)
+        {
+            push_scoped_binding_facts(
+                &mut let_bindings,
+                let_expr.pat(),
+                body.syntax().text_range().end(),
+                line_of,
+                fn_line,
+            );
+        }
+    }
+    for nested_fn in function.syntax().descendants().filter_map(ast::Fn::cast) {
+        if nested_fn.syntax().text_range() == function.syntax().text_range() {
+            continue;
+        }
+        let Some(body) = nested_fn.body() else {
+            continue;
+        };
+        if let Some(params) = nested_fn.param_list() {
+            for param in params.params() {
+                push_scoped_binding_facts(
+                    &mut let_bindings,
+                    param.pat(),
+                    body.syntax().text_range().end(),
+                    line_of,
+                    fn_line,
+                );
+            }
+        }
+    }
+    // The enclosing function's own parameters shadow the alias for its whole
+    // body; a `#[rstest]` fixture parameter named like the alias is the
+    // compiling case (#14508 review).
+    if let (Some(body), Some(params)) = (function.body(), function.param_list()) {
+        for param in params.params() {
+            push_scoped_binding_facts(
+                &mut let_bindings,
+                param.pat(),
+                body.syntax().text_range().end(),
+                line_of,
+                fn_line,
+            );
+        }
+    }
+    // A closure inside a macro token tree is not a `ClosureExpr` node, so the
+    // AST walk above cannot see its parameters. Read each token tree's masked
+    // text for `|params|` pairs and bind each name for the rest of the tree
+    // (fail closed, #14508 review).
+    for tree in function
+        .syntax()
+        .descendants()
+        .filter(|node| node.kind() == SyntaxKind::TOKEN_TREE)
+    {
+        let text = crate::analysis::extract::mask_comments_and_strings(&tree.text().to_string());
+        let last = TextSize::from(u32::from(tree.text_range().end()).saturating_sub(1));
+        let (Some(line), Some(end_line)) = (
+            line_of(tree.text_range().start()).checked_sub(fn_line),
+            line_of(last).checked_sub(fn_line),
+        ) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(open) = rest.find('|') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('|') else { break };
+            for segment in after[..close].split(',') {
+                let name_part = segment.split(':').next().unwrap_or(segment);
+                for name in extract_pattern_words(name_part) {
+                    let_bindings.push(LetBindingFact {
+                        line,
+                        scope_end: Some(end_line),
+                        name,
+                    });
+                }
+            }
+            rest = &after[close + 1..];
+        }
+    }
     let_bindings.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     let_bindings.dedup();
     (nested_fn_names, let_bindings)
+}
+
+/// Record one scoped binding fact per whole-word name in `pattern`, with the
+/// binding's body-relative start line and the inclusive end line of the
+/// body/arm that scopes it (#14508 review).
+fn push_scoped_binding_facts(
+    let_bindings: &mut Vec<LetBindingFact>,
+    pattern: Option<ast::Pat>,
+    scope_end: TextSize,
+    line_of: &impl Fn(TextSize) -> usize,
+    fn_line: usize,
+) {
+    let Some(pattern) = pattern else {
+        return;
+    };
+    let Some(start) = line_of(pattern.syntax().text_range().start()).checked_sub(fn_line) else {
+        return;
+    };
+    let last = TextSize::from(u32::from(scope_end).saturating_sub(1));
+    let Some(end) = line_of(last).checked_sub(fn_line) else {
+        return;
+    };
+    for name in extract_pattern_words(&pattern.syntax().text().to_string()) {
+        let_bindings.push(LetBindingFact {
+            line: start,
+            scope_end: Some(end),
+            name,
+        });
+    }
 }
 
 /// Parser-backed shadow facts (#3727 Slice A) for a bare body text that is
@@ -5165,11 +5381,16 @@ mod nested { include!("nested.rs"); }
 
 #[cfg(test)]
 mod shadow_fact_equivalence_tests {
-    //! #3727 Slice A: the parser-produced body facts must decide the shared
-    //! shadow authority EXACTLY like the lexical scanners decide the same
-    //! masked body, so switching consumers between the two authorities
-    //! cannot move a verdict. The battery pins scanner equivalence over the
-    //! #3722/#3728 pin families plus the positional and same-line rules.
+    //! #3727 Slice A: the parser-produced body facts and the lexical
+    //! scanners must agree on the shared families — `let` bindings and
+    //! nested `fn` names — so switching consumers between the two
+    //! authorities cannot move a verdict for those forms. The battery pins
+    //! that shared-family equivalence over the #3722/#3728 pin families plus
+    //! the positional and same-line rules. It does not cover the scoped
+    //! forms (closure, `for`, match-arm, `if let`/`while let` and nested-`fn`
+    //! parameters): the parser carries their `scope_end` and credits a
+    //! genuine call after the scope, while the lexical fallback withholds the
+    //! whole body by design (see `analysis::extract::shadow`).
 
     use super::*;
     use crate::analysis::extract::{

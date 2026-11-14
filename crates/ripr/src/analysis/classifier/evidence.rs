@@ -3862,6 +3862,7 @@ mod tests {
     fn owner_local_bindings_exclude_names_the_signature_binds() {
         let binding = |name: &str| LetBindingFact {
             line: 1,
+            scope_end: None,
             name: name.to_string(),
         };
         let owner = FunctionSummary {

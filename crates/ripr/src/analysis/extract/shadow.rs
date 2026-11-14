@@ -10,15 +10,17 @@
 //! the original text, and shadow-shaped text inside comments, strings, or
 //! char literals never defeats a real call (#3728 rounds 3-5).
 //!
-//! #3727 Slice A adds a parser-backed decision path with the SAME rules at
-//! line granularity: on files whose `FileFacts.used_lexical_fallback` is
-//! false, [`ShadowAuthority::ParserBodyFacts`] derives the decision from
-//! the parser-produced `nested_fn_names` / `let_bindings` fact fields; on
-//! fallback files (or files absent from the index)
-//! [`ShadowAuthority::LexicalMaskedBody`] runs the byte-level scanners
-//! byte-identically. THE FLAG — not set emptiness — is the discriminator:
-//! a parser-backed file can legitimately contain zero bindings, and empty
-//! fact sets on parser-backed files are real "no shadow" results.
+//! The two authorities share the same binding vocabulary and the same
+//! whole-body `let`/nested-`fn` rules, but they diverge deliberately for the
+//! scoped binding forms added in #14508: the parser path carries each
+//! binding's `scope_end` and defeats only uses inside that body/arm, while
+//! the lexical fallback detects the same forms and withholds the whole body.
+//! The fallback is deliberately conservative (it may drop credit for a
+//! genuine call after the scope on a file the parser could not read; it
+//! never grants credit to a scoped binding). THE FLAG — not set emptiness —
+//! is the discriminator: a parser-backed file can legitimately contain zero
+//! bindings, and empty fact sets on parser-backed files are real "no shadow"
+//! results.
 
 use crate::analysis::facts::LetBindingFact;
 
@@ -90,12 +92,18 @@ pub(crate) fn fact_body_let_shadow_line(
     }
     let_bindings
         .iter()
+        .filter(|binding| binding.scope_end.is_none())
         .filter(|binding| binding.name == callee)
         .map(|binding| binding.line)
         .min()
 }
 
 /// Parser-fact twin of [`body_shadows_callee_at_line`] (#3727 Slice A).
+///
+/// A `let` binding keeps the shipped end-of-function over-approximation
+/// (`scope_end == None`); a closure, `for`, match-arm, `if let`/`while let`
+/// or nested-fn parameter carries its body/arm end and defeats only uses
+/// inside that scope (#14508 review).
 pub(crate) fn fact_body_shadows_callee_at_line(
     nested_fn_names: &[String],
     let_bindings: &[LetBindingFact],
@@ -103,7 +111,25 @@ pub(crate) fn fact_body_shadows_callee_at_line(
     body_line: usize,
 ) -> bool {
     fact_body_defines_callee_fn(nested_fn_names, callee)
-        || fact_body_let_shadow_line(let_bindings, callee).is_some_and(|shadow| shadow <= body_line)
+        || fact_body_binding_shadows_at_line(let_bindings, callee, body_line)
+}
+
+/// Whether a binding of `callee` is in scope at `body_line`: the binding
+/// starts at its own line and ends at `scope_end` (inclusive), or at the end
+/// of the function when `scope_end` is `None` (a `let`).
+pub(crate) fn fact_body_binding_shadows_at_line(
+    let_bindings: &[LetBindingFact],
+    callee: &str,
+    body_line: usize,
+) -> bool {
+    if callee.is_empty() {
+        return false;
+    }
+    let_bindings.iter().any(|binding| {
+        binding.name == callee
+            && binding.line <= body_line
+            && binding.scope_end.is_none_or(|end| body_line <= end)
+    })
 }
 
 /// Whole-word identifier extraction over one binding pattern's text
@@ -278,6 +304,127 @@ pub(crate) fn test_body_defines_callee_fn(body: &str, callee: &str) -> bool {
 pub(crate) fn body_shadows_callee_at_line(body: &str, callee: &str, body_line: usize) -> bool {
     test_body_defines_callee_fn(body, callee)
         || test_body_let_shadow_line(body, callee).is_some_and(|shadow| shadow <= body_line)
+        || test_body_scoped_shadow_at_line(body, callee)
+}
+
+/// The current match arm's pattern: the text after the last top-level `,`,
+/// `;` or `{` in the pre-`=>` text. Depth tracking keeps a tuple or struct
+/// pattern's bindings, which a plain `rsplit` on `,` would drop (#14508
+/// review).
+fn arm_pattern_before_arrow(text: &str) -> &str {
+    let mut depth = 0i32;
+    let mut cut = 0usize;
+    for (index, byte) in text.bytes().enumerate() {
+        match byte {
+            b')' | b']' | b'}' => depth -= 1,
+            b'(' | b'[' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    cut = index + 1;
+                }
+                depth += 1;
+            }
+            b',' | b';' if depth == 0 => cut = index + 1,
+            _ => {}
+        }
+    }
+    &text[cut..]
+}
+
+/// Lexical fallback for the scoped binding forms the parser facts cover
+/// (#14508 review): a closure, `for`, match-arm, `if let`/`while let` or
+/// nested-fn parameter that names `callee`. The lexical path is a
+/// whole-body approximation like [`test_body_let_shadow_line`]: it withholds
+/// credit for the whole body rather than computing the binding's exact
+/// extent. That is the fail-closed direction (a genuine call after the scope
+/// may lose credit on a file the parser could not read), and it keeps the
+/// fallback from crediting a scoped binding as the owner.
+pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool {
+    if callee.is_empty() {
+        return false;
+    }
+    // `for <pat> in ..`
+    if any_between_keywords(body, "for ", " in ", callee) {
+        return true;
+    }
+    // `if let <pat> = ..` and `while let <pat> = ..`
+    for keyword in ["if let ", "while let "] {
+        if any_between_keywords(body, keyword, " = ", callee) {
+            return true;
+        }
+    }
+    // `match .. { <pat> => .. }`
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find("match ") {
+        let open = search + offset;
+        let Some(brace) = body[open..].find('{') else {
+            break;
+        };
+        let arms = &body[open + brace + 1..];
+        // Only text before a `=>` is a pattern; the final segment is the
+        // last arm's body and must not be scanned as a pattern (#14508
+        // review).
+        let mut rest = arms;
+        while let Some((pattern, after)) = rest.split_once("=>") {
+            let pattern = arm_pattern_before_arrow(pattern);
+            if pattern_contains_word(pattern, callee) {
+                return true;
+            }
+            rest = after;
+        }
+        search = open + brace + 1;
+    }
+    // `|<pat>| ..`
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find('|') {
+        let start = search + offset;
+        if body.as_bytes().get(start + 1) == Some(&b'|') {
+            search = start + 2;
+            continue;
+        }
+        let Some(end) = body[start + 1..].find('|') else {
+            break;
+        };
+        let params = &body[start + 1..start + 1 + end];
+        if pattern_contains_word(params, callee) {
+            return true;
+        }
+        search = start + 1 + end + 1;
+    }
+    // `fn <name>(<pat>: T) ..`
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find("fn ") {
+        let start = search + offset;
+        search = start + 3;
+        let Some(open) = body[start..].find('(') else {
+            continue;
+        };
+        let Some(close) = body[start + open..].find(')') else {
+            continue;
+        };
+        let params = &body[start + open + 1..start + open + close];
+        if pattern_contains_word(params, callee) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether any `<start><pattern><end>` occurrence names `callee`, so a later
+/// loop or `if let` binding is not invisible (#14508 review).
+fn any_between_keywords(body: &str, start: &str, end: &str, callee: &str) -> bool {
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find(start) {
+        let pattern_start = search + offset + start.len();
+        let Some(end_offset) = body[pattern_start..].find(end) else {
+            return false;
+        };
+        if pattern_contains_word(&body[pattern_start..pattern_start + end_offset], callee) {
+            return true;
+        }
+        search = pattern_start + end_offset + end.len();
+    }
+    false
 }
 
 /// Whole-word containment: `word` delimited by non-identifier characters on
@@ -308,6 +455,7 @@ mod fact_authority_tests {
     fn binding(line: usize, name: &str) -> LetBindingFact {
         LetBindingFact {
             line,
+            scope_end: None,
             name: name.to_string(),
         }
     }
@@ -441,5 +589,139 @@ mod fact_authority_tests {
                 "`{word}` must NOT tokenize out of `{pattern}` (prefix/substring is another name)"
             );
         }
+    }
+
+    #[test]
+    fn scoped_shadow_ignores_a_genuine_call_in_the_last_match_arm() {
+        let body = "match v {\n    Some(x) => helper(x),\n    _ => owner(1)\n}\n";
+        assert!(
+            !test_body_scoped_shadow_at_line(body, "owner"),
+            "the last arm's body is not a pattern; a genuine owner(..) call must not shadow"
+        );
+    }
+
+    #[test]
+    fn scoped_shadow_keeps_a_real_match_arm_binding() {
+        let body = "match v {\n    Some(owner) => helper(x),\n    _ => other(1)\n}\n";
+        assert!(
+            test_body_scoped_shadow_at_line(body, "owner"),
+            "a real arm binding of owner must still shadow"
+        );
+    }
+
+    #[test]
+    fn scoped_shadow_table_covers_each_scanned_form() {
+        let cases = [
+            ("for pattern", "for owner in items { use_it(); }", true),
+            ("for other", "for item in items { use_it(); }", false),
+            (
+                "if let pattern",
+                "if let Some(owner) = value { use_it(); }",
+                true,
+            ),
+            (
+                "if let other",
+                "if let Some(item) = value { use_it(); }",
+                false,
+            ),
+            (
+                "while let pattern",
+                "while let Some(owner) = value { use_it(); }",
+                true,
+            ),
+            (
+                "while let other",
+                "while let Some(item) = value { use_it(); }",
+                false,
+            ),
+            ("closure parameter", "let f = |owner| owner;", true),
+            ("closure other", "let f = |item| item;", false),
+            ("nested fn parameter", "fn helper(owner: i32) { }", true),
+            ("nested fn other", "fn helper(item: i32) { }", false),
+            (
+                "match arm binding",
+                "match v { Some(owner) => helper(x), _ => other(1) }",
+                true,
+            ),
+            (
+                "match arm other",
+                "match v { Some(item) => helper(x), _ => other(1) }",
+                false,
+            ),
+            (
+                "last arm bare call",
+                "match v { Some(x) => helper(x), _ => owner(1) }",
+                false,
+            ),
+            (
+                "last arm block call",
+                "match v { Some(x) => helper(x), _ => { owner(1) } }",
+                false,
+            ),
+            (
+                "last arm binding",
+                "match v { Some(x) => helper(x), owner => owner(1) }",
+                true,
+            ),
+            (
+                "tuple pattern binding",
+                "match pair { (owner, _) => owner(100, 100), _ => 0 }",
+                true,
+            ),
+            (
+                "struct pattern binding",
+                "match pair { Foo { owner, .. } => owner(100, 100), _ => 0 }",
+                true,
+            ),
+            (
+                "nested tuple pattern binding",
+                "match pair { Some((owner, _)) => owner(100, 100), _ => 0 }",
+                true,
+            ),
+            (
+                "slice pattern binding",
+                "match pair { [owner, _] => owner(100, 100), _ => 0 }",
+                true,
+            ),
+        ];
+        for (label, body, expected) in cases {
+            assert_eq!(
+                test_body_scoped_shadow_at_line(body, "owner"),
+                expected,
+                "{label}: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_flat_tuple_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { (owner, _) => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_nested_tuple_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { Some((owner, _)) => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_slice_pattern_binding() {
+        assert!(test_body_scoped_shadow_at_line(
+            "match pair { [owner, _] => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_binding_in_a_later_loop() {
+        assert!(test_body_scoped_shadow_at_line(
+            "for item in first { consume(item); } for owner in callbacks { owner(100, 100); }",
+            "owner"
+        ));
     }
 }

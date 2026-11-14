@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0442"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0442-aliased-owner-import-credit.md"
+status = "accepted"
+owner = "product-analysis"
+standalone_reason = "Issue #14508 makes an aliased direct import of the owner credit the owner only when the import names its module in the same compilation unit; no existing spec states the alias rule."

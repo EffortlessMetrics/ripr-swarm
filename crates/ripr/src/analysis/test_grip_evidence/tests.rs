@@ -22956,6 +22956,1222 @@ fn given_integration_test_when_bare_import_names_other_module_then_owner_keeps_r
 }
 
 #[test]
+fn given_integration_test_when_owner_is_imported_under_an_alias_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508: both the crate-relative and the external package spelling of a
+    // direct import alias must resolve to the owner. The external case needs a
+    // real manifest so the owner's own package is the only import name that
+    // counts (#14508 review).
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let crate_src = format!(
+        "{prod_src}\n#[cfg(test)]\nmod tests {{\n    use crate::discounted_total as dt;\n\n    #[test]\n    fn aliased() {{\n        assert_eq!(dt(100, 100), 90);\n    }}\n}}\n"
+    );
+    let crate_root = alias_workspace_root("lib_proptest")?;
+    fs::write(crate_root.join("src/lib.rs"), crate_src).map_err(|error| error.to_string())?;
+    let crate_files = [PathBuf::from("src/lib.rs")];
+    let crate_index = build_index(&crate_root, &crate_files)?;
+    let crate_seams = inventory_seams_from_index(&crate_files, &crate_index);
+    let crate_seam = crate_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let crate_related: Vec<String> = evidence_for_seam(crate_seam, &crate_index)
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect();
+    assert_eq!(
+        crate_related,
+        vec!["aliased".to_string()],
+        "use crate::discounted_total as dt;"
+    );
+
+    let external_root = alias_workspace_root("lib_proptest")?;
+    fs::write(external_root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(
+        external_root.join("tests/boundary.rs"),
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn aliased() {\n    assert_eq!(dt(100, 100), 90);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let external_files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let external_index = build_index(&external_root, &external_files)?;
+    let external_seams =
+        inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &external_index);
+    let external_seam = external_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let external_related: Vec<String> = evidence_for_seam(external_seam, &external_index)
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect();
+    assert_eq!(
+        external_related,
+        vec!["aliased".to_string()],
+        "use lib_proptest::discounted_total as dt;"
+    );
+    Ok(())
+}
+
+fn alias_workspace_root(package: &str) -> Result<AuthorityFixtureRoot, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = claim_index_fixture_root(stamp)?;
+    fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_local_function_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: the test file declares its own `dt`, so the alias-spelled
+    // call binds to this local function; the owner must not be credited.
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn shadowed() {\n    fn dt(_amount: i32, _threshold: i32) -> i32 { 777 }\n    assert_eq!(dt(100, 100), 777);\n}\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("tests/boundary.rs"), tests_src).map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related: Vec<String> = evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect();
+    assert!(
+        related.is_empty(),
+        "a local function shadowing the import alias must not credit the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_free_and_an_associated_owner_share_the_name_then_associated_takes_no_value()
+-> Result<(), String> {
+    // #14508 review: the alias names the free owner. A free `dt(7, 7)` must
+    // not lend its arguments to a same-named associated owner.
+    let lib_src = "pub struct Rival;\n\nimpl Rival {\n    pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 777 } else { 7 } }\n}\n\npub fn discounted_total(amount: i32, _threshold: i32) -> i32 { amount + 1 }\n\n#[cfg(test)]\nmod tests {\n    use crate::discounted_total as dt;\n    use crate::Rival;\n\n    #[test]\n    fn mixed() {\n        assert_eq!(Rival::discounted_total(100, 100), 777);\n        assert_eq!(dt(7, 7), 8);\n    }\n}\n";
+    let root = alias_workspace_with_files("lib_proptest", &[("src/lib.rs", lib_src)])?;
+    let evidence = evidence_for_alias_seam(&root, &[PathBuf::from("src/lib.rs")], "src/lib.rs")?;
+    let values: Vec<&str> = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.as_str())
+        .collect();
+    assert!(
+        !values.contains(&"7"),
+        "the free alias call must not lend its argument to the associated owner: {values:?}"
+    );
+    assert!(
+        values.contains(&"100"),
+        "the associated call's argument is the associated owner's activation value: {values:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_qualified_call_shares_the_alias_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    // #14508 review: a test may call the owner through the alias and also
+    // spell `rival::dt(..)` on a lowercase module, which the free-call reader
+    // otherwise accepts. The relation still credits the owner through the bare
+    // alias, but the qualified call's arguments must not become its values.
+    let prod_src = "pub mod rival;\n\npub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let rival_src = "pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let tests_src = "use lib_proptest::discounted_total as dt;\nuse lib_proptest::rival;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    assert_eq!(rival::dt(7, 7), 777);\n}\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("src/rival.rs"), rival_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("tests/boundary.rs"), tests_src).map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/rival.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.test_name == "mixed"),
+        "the free alias call still credits the owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "a qualified `Rival::dt(..)` must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "the free alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_two_indexed_packages_when_alias_names_a_sibling_package_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a test in package A that imports package B's function
+    // under an alias must not credit package A's own same-named owner, even
+    // when both packages are indexed.
+    let negative = two_package_workspace("pkg_b")?;
+    let negative_files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("pkg_a/src/lib.rs"),
+        PathBuf::from("pkg_a/tests/control.rs"),
+    ];
+    let negative_index = build_index(&negative, &negative_files)?;
+    let negative_seams =
+        inventory_seams_from_index(&[PathBuf::from("pkg_a/src/lib.rs")], &negative_index);
+    let negative_seam = negative_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let negative_related: Vec<String> = evidence_for_seam(negative_seam, &negative_index)
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect();
+    assert!(
+        negative_related.is_empty(),
+        "a sibling package's alias must not credit pkg_a's owner: {negative_related:?}"
+    );
+
+    let positive = two_package_workspace("pkg_a")?;
+    let positive_files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("pkg_a/src/lib.rs"),
+        PathBuf::from("pkg_a/tests/control.rs"),
+    ];
+    let positive_index = build_index(&positive, &positive_files)?;
+    let positive_seams =
+        inventory_seams_from_index(&[PathBuf::from("pkg_a/src/lib.rs")], &positive_index);
+    let positive_seam = positive_seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let positive_related: Vec<String> = evidence_for_seam(positive_seam, &positive_index)
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.clone())
+        .collect();
+    assert_eq!(
+        positive_related,
+        vec!["aliased".to_string()],
+        "the owner's own package alias must still credit it"
+    );
+    Ok(())
+}
+
+fn two_package_workspace(alias_package: &str) -> Result<AuthorityFixtureRoot, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = claim_index_fixture_root(stamp)?;
+    for dir in ["src", "pkg_a/src", "pkg_a/tests"] {
+        fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+    }
+    // The root package is `pkg_b`, so `index.package_names` names the sibling
+    // package; the old all-packages check credited `pkg_a`'s owner for it.
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"pkg_b\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\"pkg_a\"]\nresolver = \"2\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("pkg_a/Cargo.toml"),
+        "[package]\nname = \"pkg_a\"\nversion = \"0.1.0\"\n\n[dependencies]\npkg_b = { path = \"..\" }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("pkg_a/src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("pkg_a/tests/control.rs"),
+        format!(
+            "use {alias_package}::discounted_total as dt;\n\n#[test]\nfn aliased() {{\n    assert_eq!(dt(100, 100), 90);\n}}\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_block_binding_shadows_it_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    // #14508 review: a block-scoped `let dt = |..| 999;` beside a genuine
+    // `dt(100, 100)` must not lend the owner the closure's argument.
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    {\n        let dt = |a: i32, b: i32| { let _ = (a, b); 999 };\n        assert_eq!(dt(7, 7), 999);\n    }\n}\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("tests/boundary.rs"), tests_src).map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.test_name == "mixed"),
+        "the genuine alias call still credits the owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "a block-scoped closure binding must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "the genuine alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_scoped_binding_shadows_it_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    // One table over every scanned shadowing form keeps each form and its
+    // expected value covered without five near-identical functions.
+    let cases = [
+        (
+            "closure parameter",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let f = |dt: fn(i32, i32) -> i32| dt(7, 7);\n    assert_eq!(f(|a, b| a + b), 14);\n}\n",
+        ),
+        (
+            "for pattern",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    for dt in [|a: i32, b: i32| a + b] {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+        ),
+        (
+            "match arm",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    let x = |a: i32, b: i32| a + b;\n    match x {\n        dt => assert_eq!(dt(7, 7), 14),\n    };\n}\n",
+        ),
+        (
+            "if let pattern",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+        ),
+        (
+            "nested fn parameter",
+            "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    fn helper(dt: fn(i32, i32) -> i32) -> i32 {\n        dt(7, 7)\n    }\n    assert_eq!(helper(|a, b| a + b), 14);\n}\n",
+        ),
+    ];
+    for (label, tests_src) in cases {
+        assert_scoped_alias_shadow(tests_src, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_closure_parameter_shadows_it_then_a_later_genuine_call_keeps_credit()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    let f = |dt: fn(i32, i32) -> i32| dt(7, 7);\n    assert_eq!(f(|a, b| a + b), 14);\n    assert_eq!(dt(100, 100), 90);\n}\n",
+        "closure parameter after scope",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_for_pattern_shadows_it_then_a_later_genuine_call_keeps_credit()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    for dt in [|a: i32, b: i32| a + b] {\n        assert_eq!(dt(7, 7), 14);\n    }\n    assert_eq!(dt(100, 100), 90);\n}\n",
+        "for pattern after scope",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_match_arm_shadows_it_then_a_later_genuine_call_keeps_credit()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    let x = |a: i32, b: i32| a + b;\n    match x {\n        dt => assert_eq!(dt(7, 7), 14),\n    };\n    assert_eq!(dt(100, 100), 90);\n}\n",
+        "match arm after scope",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_an_if_let_pattern_shadows_it_then_a_later_genuine_call_keeps_credit()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) {\n        assert_eq!(dt(7, 7), 14);\n    }\n    assert_eq!(dt(100, 100), 90);\n}\n",
+        "if let pattern after scope",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nested_fn_parameter_shadows_it_then_a_later_genuine_call_keeps_credit()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    fn helper(dt: fn(i32, i32) -> i32) -> i32 {\n        dt(7, 7)\n    }\n    assert_eq!(helper(|a, b| a + b), 14);\n    assert_eq!(dt(100, 100), 90);\n}\n",
+        "nested fn parameter after scope",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_let_chain_shadows_it_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) && 1 > 0 {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+        "let-chain",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_while_let_chain_shadows_it_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    assert_scoped_alias_shadow(
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 100), 90);\n    while let Some(dt) = Some(|a: i32, b: i32| a + b) && 1 > 0 {\n        assert_eq!(dt(7, 7), 14);\n        break;\n    }\n}\n",
+        "while-let-chain",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_let_chain_is_the_only_call_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("tests/boundary.rs"),
+        "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn only_shadowed() {\n    if let Some(dt) = Some(|a: i32, b: i32| a + b) && 1 > 0 {\n        assert_eq!(dt(7, 7), 14);\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.is_empty(),
+        "a let-chain-only shadowed call must not credit the owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "a let-chain-only shadowed call must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+fn assert_scoped_alias_shadow(tests_src: &str, label: &str) -> Result<(), String> {
+    let prod_src = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("tests/boundary.rs"), tests_src).map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.test_name == "mixed"),
+        "{label}: the genuine alias call must still credit the owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "{label}: a scoped binding must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "{label}: the genuine alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nested_import_shadows_it_then_owner_takes_no_value_from_it()
+-> Result<(), String> {
+    // #14508 review: one test can hold an outer owner-bound `dt(100, 101)`
+    // and an inner `use rival::different_function as dt` whose `dt(7, 7)`
+    // binds to the rival. The inner call must not borrow the outer alias
+    // row's authority: neither its arguments as observed values nor its
+    // equal operands as boundary overlap.
+    let prod_src = "pub mod rival;\n\npub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let rival_src = "pub fn different_function(_amount: i32, _threshold: i32) -> i32 { 777 }\n";
+    let tests_src = "use lib_proptest::discounted_total as dt;\n\n#[test]\nfn mixed() {\n    assert_eq!(dt(100, 101), 100);\n    {\n        use lib_proptest::rival::different_function as dt;\n        assert_eq!(dt(7, 7), 777);\n    }\n}\n";
+    let root = alias_workspace_root("lib_proptest")?;
+    fs::write(root.join("src/lib.rs"), prod_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("src/rival.rs"), rival_src).map_err(|error| error.to_string())?;
+    fs::write(root.join("tests/boundary.rs"), tests_src).map_err(|error| error.to_string())?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/rival.rs"),
+        PathBuf::from("tests/boundary.rs"),
+    ];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.test_name == "mixed"),
+        "the outer genuine alias call still credits the owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "a nested import-bound `dt(..)` must not lend the owner its argument: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "the outer genuine alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("threshold")),
+        "the nested equal-operand call must not close the boundary-equality gap: {:?}",
+        evidence.missing_discriminators
+    );
+    Ok(())
+}
+
+/// Build an `alias_workspace_root` and write every `(path, source)` into it.
+fn alias_workspace_with_files(
+    package: &str,
+    files: &[(&str, &str)],
+) -> Result<AuthorityFixtureRoot, String> {
+    let root = alias_workspace_root(package)?;
+    for (path, source) in files {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(full, source).map_err(|error| error.to_string())?;
+    }
+    Ok(root)
+}
+
+fn evidence_for_alias_seam(
+    root: &Path,
+    files: &[PathBuf],
+    seam_file: &str,
+) -> Result<TestGripEvidence, String> {
+    let index = build_index(root, files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from(seam_file)], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    Ok(evidence_for_seam(seam, &index))
+}
+
+/// The related tests the direct-owner-alias relation credited. Proximity
+/// strategies (`AssertionTargetAffinity`) may also relate a test; those are
+/// not the authority this repair reads.
+fn direct_owner_call_tests(evidence: &TestGripEvidence) -> Vec<&str> {
+    evidence
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_reason == RelationReason::DirectOwnerCall)
+        .map(|test| test.test_name.as_str())
+        .collect()
+}
+
+#[test]
+fn given_direct_owner_alias_when_an_integration_test_module_shadows_the_library_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: `crate::pricing` in an integration test names the test
+    // crate's own `tests/pricing.rs`, not the library's `src/pricing.rs`.
+    // The rival call must not credit the library owner; the genuine
+    // package-qualified alias beside it still must.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let rival = "pub fn owner(amount: i32) -> i32 { amount }\n";
+    let control = "mod pricing;\n\nuse crate::pricing::owner as rival_dt;\nuse lib_proptest::pricing::owner as genuine_dt;\n\n#[test]\nfn rival() {\n    assert_eq!(rival_dt(100), 100);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(genuine_dt(100), 90);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing.rs", library),
+            ("tests/pricing.rs", rival),
+            ("tests/control.rs", control),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/pricing.rs"),
+        PathBuf::from("tests/pricing.rs"),
+        PathBuf::from("tests/control.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(
+        related,
+        vec!["genuine"],
+        "a test crate's own `crate::pricing` module must not credit the library owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100"),
+        "the genuine alias call's argument is the owner's activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_binary_inline_module_shadows_the_library_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a package with both a library and a binary. The binary's
+    // inline `mod pricing` is a different compilation unit from the library's
+    // `src/pricing.rs`, so `crate::pricing::owner` in `src/main.rs` binds to
+    // the binary's own function. The library unit test beside it still must
+    // credit the owner, and the rival's argument must not become an observed
+    // value.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::owner as dt;\n\n    #[test]\n    fn library_unit_test() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let binary = "mod pricing {\n    pub fn owner(amount: i32) -> i32 {\n        amount\n    }\n}\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn binary_local_rival() {\n    assert_eq!(dt(7), 7);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing.rs", library),
+            ("src/main.rs", binary),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/pricing.rs"),
+        PathBuf::from("src/main.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(
+        related,
+        vec!["library_unit_test"],
+        "a binary's inline `mod pricing` must not credit the library owner: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "the binary rival's argument must not become an observed value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_binary_root_imports_the_library_root_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: `crate::` in `src/main.rs` names the binary crate, so it
+    // can never name the library root `src/lib.rs`.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "use crate::owner as dt;\n\n#[test]\nfn binary_root_rival() {\n    assert_eq!(dt(7), 7);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[("src/lib.rs", library), ("src/main.rs", binary)],
+    )?;
+    let files = [PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty(),
+        "a binary root's `crate::owner` must not credit the library root: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "the binary rival's argument must not become an observed value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_bin_target_imports_a_library_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a `src/bin/<name>` target's module tree is confined to
+    // its own directory, so `crate::pricing` there never names the library's
+    // `src/pricing.rs`.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "use crate::pricing::owner as dt;\n\n#[test]\nfn bin_target_rival() {\n    assert_eq!(dt(7), 7);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing.rs", library),
+            ("src/bin/cli.rs", binary),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/pricing.rs"),
+        PathBuf::from("src/bin/cli.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty(),
+        "a `src/bin` target's `crate::pricing` must not credit the library module: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nested_bin_module_imports_the_library_root_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a module inside a `src/bin/<name>` target is not the
+    // target root, but its `crate::owner` still names the binary crate, never
+    // the library root `src/lib.rs`.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary_root = "mod work;\n\nfn main() {}\n";
+    let nested = "use crate::owner as dt;\n\n#[test]\nfn nested_bin_rival() {\n    assert_eq!(dt(7), 7);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", library),
+            ("src/bin/cli/main.rs", binary_root),
+            ("src/bin/cli/work.rs", nested),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/bin/cli/main.rs"),
+        PathBuf::from("src/bin/cli/work.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty(),
+        "a nested bin module's `crate::owner` must not credit the library root: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "7"),
+        "the nested bin rival's argument must not become an observed value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_library_child_module_imports_the_crate_root_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: `crate::owner` in a library child module names the
+    // library root, so the alias must credit the root owner.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\npub mod child;\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn child_module_uses_the_root_owner() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[("src/lib.rs", library), ("src/child.rs", child)],
+    )?;
+    let files = [PathBuf::from("src/lib.rs"), PathBuf::from("src/child.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(
+        related,
+        vec!["child_module_uses_the_root_owner"],
+        "a library child module's `crate::owner` credits the root owner: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_bin_only_child_module_imports_its_crate_root_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: with no library target, `crate::owner` in a child module
+    // names the binary root `src/main.rs`, so the alias must credit it.
+    let main = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\npub mod child;\n\nfn main() {}\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn bin_child_uses_the_root_owner() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let root = alias_workspace_with_files(
+        "bin_only",
+        &[("src/main.rs", main), ("src/child.rs", child)],
+    )?;
+    let files = [PathBuf::from("src/main.rs"), PathBuf::from("src/child.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/main.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(
+        related,
+        vec!["bin_child_uses_the_root_owner"],
+        "a bin-only child module's `crate::owner` credits the binary root owner: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_binary_child_module_imports_the_binary_root_then_library_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a package with both `src/lib.rs` and `src/main.rs` has
+    // two compilation units. `src/child.rs` is declared only by the binary, so
+    // `crate::owner` in it names the binary's re-export, never the library
+    // owner.
+    let library = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "pub fn binary_value(_: i32) -> i32 { 800 }\n\npub use crate::binary_value as owner;\n\nmod child;\n\nfn main() {}\n";
+    let child = "use crate::owner as dt;\n\n#[test]\nfn binary_child() {\n    assert_eq!(dt(100), 800);\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", library),
+            ("src/main.rs", binary),
+            ("src/child.rs", child),
+        ],
+    )?;
+    let files = ["src/lib.rs", "src/main.rs", "src/child.rs"].map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty() && evidence.observed_values.is_empty(),
+        "a binary-only child module's `crate::owner` must not credit the library root: {:?} / {:?}",
+        evidence.related_tests,
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_bin_only_package_imports_its_own_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review control: with no library target, `mod pricing;` in
+    // `src/main.rs` resolves to `src/pricing.rs`, so the crate-relative alias
+    // is a genuine direct owner call and must keep its credit.
+    let pricing = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "mod pricing;\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn bin_genuine() {\n    assert_eq!(dt(100), 90);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "bin_only",
+        &[("src/main.rs", binary), ("src/pricing.rs", pricing)],
+    )?;
+    let files = [
+        PathBuf::from("src/main.rs"),
+        PathBuf::from("src/pricing.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(
+        related,
+        vec!["bin_genuine"],
+        "a bin-only package's own module is the owner: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_crate_root_redirects_the_module_with_path_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: `#[path = "binary_pricing.rs"]` makes the binary's
+    // `crate::pricing` name `src/binary_pricing.rs`, not the library's
+    // `src/pricing.rs`, so the alias must fail closed.
+    let owner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "#[path = \"binary_pricing.rs\"]\nmod pricing;\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn binary_redirected() {\n    assert_eq!(dt(7), 7);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing.rs", owner),
+            ("src/main.rs", binary),
+            ("src/binary_pricing.rs", owner),
+        ],
+    )?;
+    let files = [
+        "src/lib.rs",
+        "src/pricing.rs",
+        "src/main.rs",
+        "src/binary_pricing.rs",
+    ]
+    .map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty()
+            && evidence
+                .observed_values
+                .iter()
+                .all(|fact| fact.value != "7")
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_an_intermediate_segment_redirects_with_path_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // `mod pricing` is redirected to `other_pricing.rs`, so
+    // `crate::pricing::inner` does not name `src/pricing/inner.rs`.
+    let owner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let lib = "#[path = \"other_pricing.rs\"]\npub mod pricing;\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::inner::owner as dt;\n\n    #[test]\n    fn redirected() {\n        assert_eq!(dt(7), 7);\n    }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", lib),
+            ("src/pricing/inner.rs", owner),
+            ("src/other_pricing.rs", "pub mod inner;\n"),
+            (
+                "src/other_pricing/inner.rs",
+                "pub fn owner(amount: i32) -> i32 { amount }\n",
+            ),
+        ],
+    )?;
+    let files = [
+        "src/lib.rs",
+        "src/pricing/inner.rs",
+        "src/other_pricing.rs",
+        "src/other_pricing/inner.rs",
+    ]
+    .map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing/inner.rs")?;
+    assert!(direct_owner_call_tests(&evidence).is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_flat_bin_root_imports_its_sibling_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let cargo = "[package]\nname = \"lib_proptest\"\nversion = \"0.1.0\"\nedition = \"2021\"\nautobins = false\n\n[[bin]]\nname = \"cli\"\npath = \"src/bin/cli.rs\"\n";
+    let cli = "mod pricing;\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn binary_genuine_flat() {\n    assert_eq!(dt(100), 90);\n}\n\nfn main() {}\n";
+    let pricing = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("Cargo.toml", cargo),
+            ("src/bin/cli.rs", cli),
+            ("src/bin/pricing.rs", pricing),
+        ],
+    )?;
+    let files = ["src/bin/cli.rs", "src/bin/pricing.rs"].map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/bin/pricing.rs")?;
+    assert_eq!(
+        direct_owner_call_tests(&evidence),
+        vec!["binary_genuine_flat"]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_directory_bin_root_imports_its_own_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let cargo = "[package]\nname = \"lib_proptest\"\nversion = \"0.1.0\"\nedition = \"2021\"\nautobins = false\n\n[[bin]]\nname = \"cli\"\npath = \"src/bin/cli/main.rs\"\n";
+    let main = "mod pricing;\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn binary_genuine_dir() {\n    assert_eq!(dt(100), 90);\n}\n\nfn main() {}\n";
+    let pricing = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("Cargo.toml", cargo),
+            ("src/bin/cli/main.rs", main),
+            ("src/bin/cli/pricing.rs", pricing),
+        ],
+    )?;
+    let files = ["src/bin/cli/main.rs", "src/bin/cli/pricing.rs"].map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/bin/cli/pricing.rs")?;
+    assert_eq!(
+        direct_owner_call_tests(&evidence),
+        vec!["binary_genuine_dir"]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_lib_and_bin_share_the_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let owner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n";
+    let binary = "mod pricing;\n\nuse crate::pricing::owner as dt;\n\n#[test]\nfn bin_genuine() {\n    assert_eq!(dt(100), 90);\n}\n\nfn main() {}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing.rs", owner),
+            ("src/main.rs", binary),
+        ],
+    )?;
+    let files = ["src/lib.rs", "src/pricing.rs", "src/main.rs"].map(PathBuf::from);
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing.rs")?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["bin_genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_owner_is_a_nested_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: the alias table stores the import with `::` while the
+    // owner's module path comes from the index with `/`; the nested owner
+    // (`pricing/inner`) must still resolve its `crate::pricing::inner` import
+    // whether `pricing` is `pricing/mod.rs` or `pricing.rs`, whose
+    // `pub mod inner;` rustc resolves under `pricing/`, not `src/`.
+    let inner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::inner::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let lib = "pub mod pricing;\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::inner::owner as dt;\n\n    #[test]\n    fn aliased_from_root() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    for module in ["src/pricing/mod.rs", "src/pricing.rs"] {
+        let root = alias_workspace_with_files(
+            "lib_proptest",
+            &[
+                ("src/lib.rs", lib),
+                (module, "pub mod inner;\n"),
+                ("src/pricing/inner.rs", inner),
+            ],
+        )?;
+        let files = [
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from(module),
+            PathBuf::from("src/pricing/inner.rs"),
+        ];
+        let evidence = evidence_for_alias_seam(&root, &files, "src/pricing/inner.rs")?;
+        let mut related = direct_owner_call_tests(&evidence);
+        related.sort_unstable();
+        assert_eq!(related, vec!["aliased", "aliased_from_root"], "{module}");
+        assert!(
+            evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "100"),
+            "{module}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nested_main_module_declares_the_owner_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: a nested `main.rs` is a module, not a crate root, so its
+    // `pub mod inner;` resolves under `main/`, not beside it.
+    let inner = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::outer::main::inner::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let lib = "pub mod outer;\n\n#[cfg(test)]\nmod tests {\n    use crate::outer::main::inner::owner as dt;\n\n    #[test]\n    fn aliased_from_root() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", lib),
+            ("src/outer.rs", "pub mod main;\n"),
+            ("src/outer/main.rs", "pub mod inner;\n"),
+            ("src/outer/main/inner.rs", inner),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/outer.rs"),
+        PathBuf::from("src/outer/main.rs"),
+        PathBuf::from("src/outer/main/inner.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/outer/main/inner.rs")?;
+    let mut related = direct_owner_call_tests(&evidence);
+    related.sort_unstable();
+    assert_eq!(related, vec!["aliased", "aliased_from_root"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_owner_is_a_mod_rs_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: `src/pricing/mod.rs` is the `pricing` module, whose
+    // import is `crate::pricing`; the index's file-stem path (`pricing/mod`)
+    // must fold the `mod` leaf.
+    let pricing = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", "pub mod pricing;\n"),
+            ("src/pricing/mod.rs", pricing),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("src/pricing/mod.rs"),
+    ];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/pricing/mod.rs")?;
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(related, vec!["aliased"]);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100")
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_sibling_module_declares_the_alias_name_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: inline modules have separate name scopes. `dt` in
+    // `mod unrelated` cannot bind the `dt(..)` call in `mod tests`, so the
+    // import alias still reaches the owner.
+    let lib = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\nmod unrelated {\n    pub fn dt(_amount: i32) -> i32 { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use crate::owner as dt;\n\n    #[test]\n    fn aliased() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let root = alias_workspace_with_files("lib_proptest", &[("src/lib.rs", lib)])?;
+    let files = [PathBuf::from("src/lib.rs")];
+    let index = build_index(&root, &files)?;
+    let seams = inventory_seams_from_index(&files, &index);
+    let owner_seam = seams
+        .iter()
+        .find(|seam| {
+            seam.owner() == "src/lib.rs::owner" && seam.kind() == SeamKind::PredicateBoundary
+        })
+        .ok_or_else(|| "expected the owner's predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(owner_seam, &index);
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(
+        related,
+        vec!["aliased"],
+        "a sibling module's `dt` is a different name scope: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100")
+    );
+    // The sibling function is not the callee: the test's `dt(..)` binds to
+    // the imported owner, so the sibling must not be credited (#14508
+    // review).
+    let sibling_seam = seams
+        .iter()
+        .find(|seam| seam.owner() == "src/lib.rs::unrelated::dt")
+        .ok_or_else(|| "expected the sibling module's seam".to_string())?;
+    let sibling_evidence = evidence_for_seam(sibling_seam, &index);
+    assert!(
+        direct_owner_call_tests(&sibling_evidence).is_empty(),
+        "the sibling module's `dt` must not be credited: {:?}",
+        sibling_evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_test_module_declares_the_alias_name_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review, mirror-image control for the enclosing-module case: the
+    // `use` is at the crate root and `fn dt` is inside `mod tests`, so the
+    // innermost binding is the local function and the import must not credit
+    // the owner. The shape compiles (the two `dt` items are in different
+    // modules).
+    let lib = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\nuse crate::owner as dt;\n\n#[cfg(test)]\nmod tests {\n    fn dt(_amount: i32) -> i32 { 0 }\n\n    #[test]\n    fn shadowed() {\n        assert_eq!(dt(100), 0);\n    }\n}\n";
+    let root = alias_workspace_with_files("lib_proptest", &[("src/lib.rs", lib)])?;
+    let files = [PathBuf::from("src/lib.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    assert!(
+        direct_owner_call_tests(&evidence).is_empty(),
+        "a same-module `dt` must shadow the import alias: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_an_enclosing_module_declares_the_alias_name_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // #14508 review: the `use` inside `mod tests` shadows the crate-root
+    // `fn dt`, so the call binds to the import and the owner is credited.
+    let lib = "pub fn owner(amount: i32) -> i32 {\n    if amount >= 100 { amount - 10 } else { amount }\n}\n\nfn dt(_amount: i32) -> i32 { 0 }\n\n#[cfg(test)]\nmod tests {\n    use crate::owner as dt;\n\n    #[test]\n    fn aliased_owner_is_reached() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let root = alias_workspace_with_files("lib_proptest", &[("src/lib.rs", lib)])?;
+    let files = [PathBuf::from("src/lib.rs")];
+    let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
+    let related = direct_owner_call_tests(&evidence);
+    assert_eq!(
+        related,
+        vec!["aliased_owner_is_reached"],
+        "an inner use shadows the enclosing fn: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "100")
+    );
+    Ok(())
+}
+
+#[test]
 fn given_integration_test_when_rival_nested_in_another_module_then_owner_gets_no_related_test()
 -> Result<(), String> {
     for call in [
@@ -23804,4 +25020,92 @@ fn field_write_facts_with_tail(
         .iter()
         .map(|fact| fact.value.clone())
         .collect())
+}
+
+/// Build the lib+integration-test fixture and read the alias seam's evidence.
+fn alias_evidence_for_lib_and_test(
+    lib_src: &str,
+    tests_src: &str,
+) -> Result<TestGripEvidence, String> {
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[("src/lib.rs", lib_src), ("tests/boundary.rs", tests_src)],
+    )?;
+    evidence_for_alias_seam(
+        &root,
+        &[
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("tests/boundary.rs"),
+        ],
+        "src/lib.rs",
+    )
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_nearer_unsupported_import_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: `use self::rival::different as dt;` is not a supported
+    // owner path, but it still binds `dt` nearer than the outer owner alias.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\nmod rival {\n    pub fn different(_amount: i32) -> i32 { 0 }\n}\n\n#[test]\nfn shadowed() {\n    use self::rival::different as dt;\n    assert_eq!(dt(100), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_closure_in_a_macro_token_tree_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a closure inside an assertion macro is an opaque token
+    // tree, so its parameter is not a `ClosureExpr` node.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\n#[test]\nfn shadowed() {\n    assert_eq!((|dt: fn(i32) -> i32| dt(100))(fake), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_the_test_function_parameter_shadows_it_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: a `#[rstest]` fixture parameter named like the alias
+    // shadows it for the whole body.
+    let lib_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let tests_src = "use lib_proptest::owner as dt;\n\n#[rstest]\nfn shadowed(dt: fn(i32) -> i32) {\n    assert_eq!(dt(100), 0);\n}\n\n#[test]\nfn genuine() {\n    assert_eq!(dt(100), 90);\n}\n";
+    let evidence = alias_evidence_for_lib_and_test(lib_src, tests_src)?;
+    assert_eq!(direct_owner_call_tests(&evidence), vec!["genuine"]);
+    Ok(())
+}
+
+#[test]
+fn given_direct_owner_alias_when_a_cfg_gated_module_has_two_paths_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    // #14508 review: two `#[cfg]`-gated `mod pricing;` declarations with
+    // different `#[path]` targets compile different files per configuration.
+    let lib_src = "#[cfg(unix)]\n#[path = \"pricing_unix.rs\"]\nmod pricing;\n#[cfg(windows)]\n#[path = \"pricing_windows.rs\"]\nmod pricing;\n\n#[cfg(test)]\nmod tests {\n    use crate::pricing::owner as dt;\n\n    #[test]\n    fn shadowed() {\n        assert_eq!(dt(100), 90);\n    }\n}\n";
+    let unix_src =
+        "pub fn owner(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n";
+    let windows_src = "pub fn owner(amount: i32) -> i32 { amount }\n";
+    let root = alias_workspace_with_files(
+        "lib_proptest",
+        &[
+            ("src/lib.rs", lib_src),
+            ("src/pricing_unix.rs", unix_src),
+            ("src/pricing_windows.rs", windows_src),
+        ],
+    )?;
+    let evidence = evidence_for_alias_seam(
+        &root,
+        &[
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("src/pricing_unix.rs"),
+            PathBuf::from("src/pricing_windows.rs"),
+        ],
+        "src/pricing_unix.rs",
+    )?;
+    assert!(direct_owner_call_tests(&evidence).is_empty());
+    Ok(())
 }
