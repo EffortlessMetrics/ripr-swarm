@@ -138,11 +138,16 @@ fn render_report(
         .as_ref()
         .is_some_and(|start| start.command.is_some());
     let unconfirmed = unconfirmed_gap_count(&triage, &gaps, incomplete);
+    // #14338: one printed row per distinct row. `gaps` stays whole for every
+    // membership decision (limits, stop, next), so a folded finding is never
+    // re-listed as a non-gap and verification still counts every probe.
+    let rows = fold_identical_gap_rows(&output.root, &gaps);
     let mut out = header_line(
         output,
         &considered,
         HeaderCounts {
-            gaps: gaps.len(),
+            gaps: rows.len(),
+            folded: gaps.len() - rows.len(),
             unconfirmed,
             repairable: startable,
         },
@@ -213,8 +218,8 @@ fn render_report(
     }
 
     let mut tests: Vec<TestRef> = Vec::new();
-    let budget = gap_line_budget(gaps.len());
-    for finding in gaps.iter().take(budget) {
+    let budget = gap_line_budget(rows.len());
+    for finding in rows.iter().take(budget) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
@@ -224,10 +229,10 @@ fn render_report(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if gaps.len() > budget {
+    if rows.len() > budget {
         out.push_str(&format!(
             "+{} more gaps not shown; `--format json` lists all\n",
-            gaps.len() - budget
+            rows.len() - budget
         ));
     }
     push_limits(&mut out, &considered, &gaps);
@@ -355,6 +360,51 @@ fn preview_leaves_test_side_open(finding: &Finding) -> bool {
         )
         && !finding.activation.missing_discriminators.is_empty()
         && triage::weak_assertion_row(finding).is_some()
+}
+
+/// The agent-format record for a refused `ripr check` run (#14452): the
+/// same typed identity, repair route and machine-safe message every other
+/// machine format renders from one [`RefusalNotice`], in the format's own
+/// `stop=` / `next=` / `verify=` vocabulary instead of zero bytes. `next=`
+/// appears only when the remedy states one command that runs as-is
+/// (`output::refusal::runnable_command`): a conditional remedy, placeholders,
+/// or flags or env named outside the command stay prose on `stop=`. A timed
+/// run's bounded retry (`retry`, from the stashed timeout projection) is the
+/// replayable command and takes that slot, so the recovery the JSON envelope
+/// and human stderr offer reaches the agent record too.
+///
+/// [`RefusalNotice`]: crate::core_error::RefusalNotice
+pub(super) fn render_refusal(
+    notice: &crate::core_error::RefusalNotice,
+    retry: Option<&str>,
+) -> String {
+    let message = notice
+        .message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = format!(
+        "#ripr agent static-advisory refused run_status={} repair_route={}\nstop={}\n",
+        notice.identity,
+        notice.repair_route,
+        super::terminal_safe(message)
+    );
+    // A command spanning lines (a root or diff path holding a line break) is
+    // not one runnable line and could forge record lines, so it is withheld.
+    if let Some(command) = retry
+        .or_else(|| crate::output::refusal::runnable_command(&notice.remedy))
+        .filter(|command| !command.contains(['\n', '\r', '\u{85}', '\u{2028}', '\u{2029}']))
+    {
+        out.push_str(&format!(
+            "next={}\n",
+            super::terminal_safe(command.to_string())
+        ));
+    }
+    out.push_str(&format!(
+        "verify=refused|outcome=refused|findings=0|exposed=0|reason={}\n",
+        notice.identity
+    ));
+    out
 }
 
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
@@ -703,8 +753,10 @@ fn unconfirmed_gap_count(triage: &HumanTriage<'_>, gaps: &[&Finding], incomplete
 
 /// The header's gap facts, each owned by the body path that prints it.
 struct HeaderCounts {
-    /// Confirmed test-side gaps (`gaps=`).
+    /// Confirmed test-side gaps (`gaps=`), counting identical rows once.
     gaps: usize,
+    /// Gap findings folded into an identical row (`folded_gaps=`, #14338).
+    folded: usize,
     /// Listed gaps the static evidence cannot confirm (`unconfirmed_gaps=`).
     unconfirmed: usize,
     /// A guided repair start the agent can run now (`repairable=1`).
@@ -722,6 +774,11 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], counts: HeaderCoun
         considered.len(),
         counts.gaps,
     );
+    if counts.folded > 0 {
+        // #14338: say how many findings share a printed row, so `gaps=`
+        // (one test to write per row) still reconciles with `findings=`.
+        line.push_str(&format!(" folded_gaps={}", counts.folded));
+    }
     if counts.unconfirmed > 0 {
         // #13803: `gaps=` counts confirmed gaps only; a listed preview-only
         // or reach-limited gap is counted here so the header agrees with
@@ -814,6 +871,16 @@ fn terminal_line(
                         .to_string()
                 }
             }
+        }
+        // #14423: on the base branch the empty range is the base compared
+        // with itself; name the last-commit rerun the human view prints
+        // instead of leaving REV to be guessed.
+        NextActionCheckCase::ScopeMissing if triage::last_commit_retry_applies(output) => {
+            format!(
+                "stop=nothing was analyzed: HEAD is at the comparison base `{}`, so the diff is empty; to check the last commit run `{}`\n",
+                output.base.as_deref().unwrap_or_default(),
+                triage::last_commit_retry_command(output, Some("agent"))
+            )
         }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
@@ -984,6 +1051,80 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
     }
     tests.push(TestRef { key, line });
     tests.len()
+}
+
+/// Gap findings with one row each, in triage order (#14338). Two findings
+/// fold only when everything their records would print agrees except the
+/// id: class, location, expression, `missing=`, the strongest related test
+/// (its full `tN=` line) and the `stages=` row, compared unclipped. Then
+/// one test closes both, so a second row would only make an agent plan a
+/// second test. The first finding in triage order keeps the row, so the top
+/// gap and `next=` are unchanged; any difference keeps the rows separate
+/// (fail closed).
+fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut rows = Vec::with_capacity(gaps.len());
+    for finding in gaps {
+        let key = gap_row_key(root, finding);
+        if !seen.contains(&key) {
+            seen.push(key);
+            rows.push(*finding);
+        }
+    }
+    rows
+}
+
+/// What a gap's records say, without its id (see `fold_identical_gap_rows`).
+/// Built from the unclipped values, and from every missing discriminator
+/// value rather than the one printed, so two findings that differ past the field
+/// budget or in a later missing value never fold.
+fn gap_row_key(root: &Path, finding: &Finding) -> String {
+    // Every missing discriminator value; the `missing` prose only when it is
+    // the fallback `missing=` prints, since its wording differs by probe
+    // family ("no exact error variant" vs "no strong discriminator") for
+    // one value.
+    // Each fact also keys its shape, flow sink and drafted boundary call: one
+    // value asserted at two different sinks, or drafted against two different
+    // calls, is two tests.
+    let missing: Vec<String> = if finding.activation.missing_discriminators.is_empty() {
+        finding.missing.clone()
+    } else {
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| {
+                format!(
+                    "{:?} {:?} {:?} {:?}",
+                    fact.value, fact.shape, fact.flow_sink, fact.drafted_boundary
+                )
+            })
+            .collect()
+    };
+    let test = strongest_test(finding).map(|test| {
+        format!(
+            "{}:{} {} {} {:?} {:?}",
+            repository_display_path(root, &test.file),
+            test.line,
+            test.name,
+            test.oracle_kind.as_str(),
+            test.oracle,
+            test.miss.map(|miss| miss.as_str())
+        )
+    });
+    let stages = crate::output::stage_rows::stage_rows_agent_line(
+        &crate::output::stage_rows::evidence_stage_rows(finding),
+    );
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        finding.probe.expression,
+        missing,
+        test,
+        stages
+    )
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {

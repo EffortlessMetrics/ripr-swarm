@@ -1,0 +1,7 @@
+# Registers the draft-mode own-file `#[path]` placement controls for #14260 under RIPR-SPEC-0352.
+[[extend]]
+id = "RIPR-SPEC-0352"
+tests = [
+  "crates/ripr/tests/unindexed_member_own_path.rs::a_member_reaching_its_own_file_through_path_keeps_draft_placement",
+  "crates/ripr/tests/unindexed_member_own_path.rs::a_member_that_may_compile_an_indexed_file_still_withholds_draft_placement",
+]

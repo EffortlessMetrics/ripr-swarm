@@ -2,14 +2,6 @@ name: Coverage
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  # Advisory lane: a daily run on main instead of every push (a merge lands
-  # every few minutes and this lane takes 30+ minutes). Use workflow_dispatch
-  # for an on-demand run.
-  schedule:
-    - cron: "23 3 * * *"
-
 permissions:
   contents: read
 

@@ -44,6 +44,14 @@ checkout and setup
 -> preserve configured gate-decision authority
 ```
 
+The job summary keeps each section's at-a-glance lines and names its full
+Markdown report by its path inside the `ripr-reports` artifact (for example
+`ripr/pilot/pilot-summary.md`) instead of inlining it (#14301). Only the
+inline comment publish plan stays inline, in one collapsed block. The
+`ci_summary` test `complete_artifacts_render_every_section_in_order` (the
+single fold) and `generated_workflow_replay_prints_only_runnable_next_steps`
+(no inlined report heading, under 20,000 bytes) pin this.
+
 The workflow may summarize and upload evidence. It must not create analyzer
 truth, rerun hidden analysis to patch missing artifacts, edit source, generate
 tests, call providers, run mutation testing, publish inline comments, change

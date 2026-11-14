@@ -263,3 +263,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_generated_file_excluded (17)
+
+Reason:
+RIPR-SPEC-0147: human limitation lines carry the producer's bounded detail (#14398)
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

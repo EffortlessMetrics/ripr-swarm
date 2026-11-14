@@ -34,7 +34,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach price: contract_journey
     - infection yes: Detected related test input at the changed boundary
-    - 16 more detail line(s) in --format human-full
+    - 15 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

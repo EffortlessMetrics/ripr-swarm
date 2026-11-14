@@ -500,6 +500,28 @@ stay legacy-string-only),
 (the LSP binds recovery to its workspace root, not the server's working
 directory, and the legacy-only path recovers nothing).
 
+`ripr reports gap-ledger` given a readable source that is not valid JSON or
+not that source kind's shape writes the `blocked` ledger to `--out` (replacing
+any earlier ledger) and then exits `2`, naming the flag, path, cause and the
+command that produces a valid input (#14311). Pinned by
+`crates/ripr/src/cli/commands/reports.rs::tests::reports_gap_ledger_refuses_a_malformed_source_after_writing_blocked`,
+whose valid `[]` control stays `no_records` with exit `0`.
+
+A source that parses but is a producer refusal (`downstream_consumable:
+false` in `analysis_scope` or `run_limitations[]`, nothing analyzed) also
+writes the `blocked` ledger and then exits `2`, naming the flag, path and
+refusal (#14434). The error names the source's recorded `repair_route` when it
+has one (`analysis_scope`, else a non-consumable `run_limitations[]` entry). A
+saved `blocked` ledger keeps `run_limitations[]`, so fed back as `--records` it
+still names that route; a refusal disclosed only in `analysis_scope` is saved
+with a marker-only entry, so its error says to re-run the producing check
+instead.
+Findings-bounded, partial-scope and incomplete-outcome sources keep their own
+typed handling and exit `0`. Pinned by
+`crates/ripr/src/cli/commands/reports.rs::tests::reports_gap_ledger_refuses_a_producer_refusal_source_after_writing_blocked`,
+whose bounded and complete controls exit `0` (the complete one as
+`no_records`).
+
 This spec PR does not add production code or public output fields.
 
 ## Implementation Mapping

@@ -23,9 +23,9 @@ mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
-#[doc(hidden)]
-pub use parse::extract_global_verbose;
 pub(crate) use parse::reconcile_root;
+#[doc(hidden)]
+pub use parse::{extract_global_verbose, split_long_flag_values};
 pub(crate) use suggest::unknown_argument;
 
 #[doc(hidden)]
@@ -125,6 +125,9 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // a standalone `cli_refusal` document to stdout; exit code and stderr
     // prose are unchanged. The argv copy is only read for that request check.
     usage_refusal::reset();
+    // #14292: `--name=value` means `--name value` on every command family;
+    // the rewrite runs once here, before every reader of argv below.
+    let args = parse::split_long_flag_values(args);
     let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
     if let Err(error) = &outcome {
@@ -769,6 +772,7 @@ fn persist_before_repair_attempt(
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
         typescript_test_cache_guidance,
+        focused_test_command: focused_test_command(root, &packet_text),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -857,6 +861,17 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
+}
+
+/// The exact native command for the packet's suggested Rust test (#14320),
+/// read from the first packet's `recommended_test`. `None` when the packet
+/// names no file or test name, or no exact command can be established.
+fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let test = value.pointer("/packets/0/recommended_test")?;
+    let file = test.get("file")?.as_str()?;
+    let name = test.get("name")?.as_str()?;
+    crate::app::test_stub::focused_test_run_command(root, file, name)
 }
 
 #[cfg(test)]
@@ -1259,6 +1274,30 @@ mod tests {
             run(args(&["ripr", "-v", "-v", "check", "--format", "xml"])),
             Err(CommandError::Failure(
                 "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn run_reads_flag_equals_value_like_the_spaced_spelling() {
+        // #14292: the rewrite runs on the `run` path, so `--format=xml`
+        // reaches check's own format validation like `--format xml`.
+        let format_error = Err(CommandError::Failure(
+            "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                .to_string(),
+        ));
+        assert_eq!(run(args(&["ripr", "check", "--format=xml"])), format_error);
+        assert_eq!(
+            run(args(&["ripr", "check", "--format", "xml"])),
+            format_error
+        );
+        // A switch given a boolean literal stays one token and is refused
+        // as typed, never read as the switch plus a stray value.
+        assert_eq!(
+            run(args(&["ripr", "check", "--quiet=false"])),
+            Err(CommandError::Failure(
+                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
                     .to_string()
             ))
         );

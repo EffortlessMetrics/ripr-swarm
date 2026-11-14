@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_the_analysis_table_like_ripr_check",
+]
+code = [
+  "crates/ripr/src/mcp/workspace.rs",
+  "crates/ripr/src/mcp/protocol.rs",
+]

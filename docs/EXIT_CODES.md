@@ -15,7 +15,7 @@ analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
 after writing its report. `ripr gate check --base REV` runs `review-comments`
 and then the same evaluation, with the same exit codes. If `review-comments`
-cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
+cannot complete, gate check exits `2` (config_error); it never passes. In `calibrated-gate` mode a changed file the parser could not read also blocks (exit `3`), since no seam was judged for it; the other modes report it as an `advisory` warning (#14485). Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -122,7 +122,9 @@ reached the caller.
   `message: "refused: <identity>"`, repair route in the first warning,
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
-  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
+  refused envelope (zeroed counts, `run_status: "refused"`), and `agent`
+  renders its refused `stop=` / `next=` / `verify=refused` record (#14452;
+  a timed run's bounded retry rides `next=`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
@@ -162,6 +164,20 @@ reached the caller.
   names the root, and does not write `gate-decision.{json,md}`. Evaluation
   does not start. This is distinct from a completed `config_error` decision
   (also exit `2`), which still writes the report before returning.
+- **Unusable report input**: `ripr reports gap-ledger` with a source that
+  is readable but not valid JSON, not that source kind's shape, or a
+  producer refusal (`downstream_consumable: false`, nothing analyzed;
+  #14434); and
+  `ripr policy readiness` with a supplied input that is missing, unreadable,
+  not a JSON object, or empty, a baseline delta, waiver aging, suppression
+  health or previous readiness input whose `kind` names another report, or a
+  gate decision without `status` and `summary`, exit `2` and name the input
+  (the flag for gap-ledger, the input label such as `gate_decision` for
+  readiness), path and cause on stderr. Calibration and repo-config inputs
+  get only the object and non-empty checks. The `blocked` ledger or
+  `config_error` readiness report is still written first, so it replaces an
+  earlier report at `--out` instead of leaving a stale one for a later step
+  to read (#14311).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its

@@ -453,15 +453,7 @@ fn cache_status(root: &Path, perl_cache_dir: Option<&Path>) -> output::doctor::D
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
     let size_bytes = dir_size_bytes(&cache_dir);
     let artifact_roots = analysis::ripr_artifact_roots(root, &cache_dir, perl_cache_dir);
-    // #9858: when nothing exists yet, ripr_artifact_ignore has nothing to
-    // probe and reports NoArtifacts; a non-Cargo project then gets no ignore
-    // guidance before its first write, so probe the would-be root anyway.
-    let artifact_ignore = match ripr_artifact_ignore(root, &artifact_roots) {
-        output::doctor::DoctorArtifactIgnore::NoArtifacts => {
-            preemptive_artifact_ignore(root, &artifact_roots)
-        }
-        verdict => verdict,
-    };
+    let artifact_ignore = artifact_ignore_verdict(root, &artifact_roots);
     output::doctor::DoctorCacheStatus {
         cache_dir: output::path::human_path(&cache_dir),
         relocated_by_env: relocated,
@@ -717,6 +709,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         } else {
             lines.push(compact_tilde_line(evidence));
         }
+    }
+    if let Some(check) = check_named(report, "git_default_base") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(compact_tilde_line(evidence));
     }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
@@ -1271,6 +1267,14 @@ fn doctor_start_here_lines(
         // #5259: the recommended line above already names the commit-first
         // repair; the advisory `git_head` check line carries the same state.
         output::doctor::DoctorFirstCommand::UnbornHead => {}
+        // The advisory `git_default_base` line carries the reason and repair;
+        // say what the placeholder stands for and how to read local edits.
+        output::doctor::DoctorFirstCommand::NoDefaultBase => {
+            lines.push(
+                "- Base note: replace `REF` with the branch or commit this work started from; `--base HEAD` reads uncommitted tracked edits."
+                    .to_string(),
+            );
+        }
     }
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
@@ -1327,7 +1331,11 @@ where
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
         let probe_started = std::time::Instant::now();
-        let (status, evidence) = probe(tool);
+        let (status, evidence) = if language == "python" && tool == "pytest" {
+            python_pytest_runtime_probe(root, &mut probe)
+        } else {
+            probe(tool)
+        };
         let probe_elapsed = probe_started.elapsed();
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
@@ -1348,7 +1356,59 @@ where
     ok
 }
 
+/// The pytest probe describes the command the verify route prints: PATH
+/// `python -m pytest` (#13617; project-venv selection at the producer is
+/// #13801). The project virtualenv is inspected statically (never executed)
+/// only to explain a PATH failure.
+fn python_pytest_runtime_probe<F>(
+    root: &Path,
+    probe: &mut F,
+) -> (output::doctor::DoctorStatus, String)
+where
+    F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
+{
+    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
+    if status == output::doctor::DoctorStatus::Pass {
+        return (status, format!("{evidence} (PATH `python -m pytest`)"));
+    }
+    let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
+    // `venv/bin/python` -> `venv/bin/activate`: name the detected directory.
+    let activate_rel = venv.strip_suffix("python").map_or_else(
+        || ".venv/bin/activate".to_string(),
+        |bin| format!("{bin}activate"),
+    );
+    // With `--root` elsewhere the hint must still paste from the caller's
+    // directory, so join the root and quote it for the host shell.
+    let activate = if root.as_os_str().is_empty() || root == Path::new(".") {
+        activate_rel
+    } else {
+        crate::agent::loop_commands::shell_arg(&root.join(&activate_rel).to_string_lossy())
+    };
+    let note = match project_venv_pytest(root) {
+        VenvPytest::Present(_) => format!(
+            "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source {activate}) before running the printed verify command"
+        ),
+        VenvPytest::Unknown => format!(
+            "a project virtualenv ({venv}) exists but pytest there is not verified (layout not statically readable)"
+        ),
+        VenvPytest::Missing | VenvPytest::NoVenv => String::new(),
+    };
+    if note.is_empty() {
+        (status, evidence)
+    } else {
+        (status, format!("{evidence}; {note}"))
+    }
+}
+
+/// The probe name routed through the injected probe closure for the PATH
+/// `python` interpreter (#13617); `probe_runtime` maps it to the isolated run.
+const PYTHON_PYTEST_PROBE: &str = "python -m pytest";
+
 fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
+    if tool == PYTHON_PYTEST_PROBE {
+        return output::doctor::doctor_python_pytest_check_isolated();
+    }
     // Probe every runtime outside the checkout. yarn loads project config on
     // --version (#2183 review), and pnpm fetches and runs the release a
     // project `packageManager` names; version managers read project files too.
@@ -1483,11 +1543,14 @@ fn language_runtime_probes_for_detected(
         // --features lang-rust (#2418).
         #[cfg(feature = "lang-python")]
         {
-            if analysis::detect_python_test_frameworks(root).contains(&"pytest") {
+            // #13617: the verify command is `python -m pytest` unless the
+            // project is unittest-only, so probe it without requiring config.
+            let frameworks = analysis::detect_python_test_frameworks(root);
+            if frameworks.contains(&"pytest") || !frameworks.contains(&"unittest") {
                 probes.push((
                     "python",
                     "pytest",
-                    "install pytest (e.g. pip install pytest)",
+                    "install pytest for the verify command's python (e.g. python -m pip install pytest)",
                 ));
             }
         }
@@ -1920,31 +1983,52 @@ fn count_files(root: &Path, ext: &str) -> usize {
 }
 
 /// Detect the Perl test framework from .t files (shallow scan).
+///
+/// The answer depends only on what the `t/*.t` files say, never on the order
+/// the directory lists them (#14103): `read_dir` order is filesystem-defined,
+/// so "the first file that names a framework" reported `Test2::V0` on one
+/// checkout and `Test::More` on another for the same mixed suite.
 fn detect_perl_framework(root: &Path) -> &'static str {
     let t_dir = root.join("t");
     let Ok(entries) = std::fs::read_dir(&t_dir) else {
         return "not detected (no t/ directory)";
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "t")
-            && let Ok(content) = std::fs::read_to_string(&path)
+    let sources = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "t"))
+        .filter_map(|path| std::fs::read_to_string(path).ok());
+    perl_framework_in(sources).unwrap_or("not detected")
+}
+
+/// Framework markers in the order doctor prefers them. One file naming two
+/// of them has always answered with the earlier one; the same order now
+/// decides between files too.
+const PERL_FRAMEWORK_MARKERS: [(&str, &str); 4] = [
+    ("use Test2::V0", "Test2::V0"),
+    ("use Test::More", "Test::More"),
+    ("use Test::Exception", "Test::Exception"),
+    ("use Test::Fatal", "Test::Fatal"),
+];
+
+/// The most preferred framework any of `sources` names, whatever order they
+/// arrive in.
+fn perl_framework_in<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Option<&'static str> {
+    let mut best: Option<usize> = None;
+    for source in sources {
+        let source = source.as_ref();
+        let limit = best.unwrap_or(PERL_FRAMEWORK_MARKERS.len());
+        if let Some(rank) = PERL_FRAMEWORK_MARKERS[..limit]
+            .iter()
+            .position(|(marker, _)| source.contains(marker))
         {
-            if content.contains("use Test2::V0") {
-                return "Test2::V0";
-            }
-            if content.contains("use Test::More") {
-                return "Test::More";
-            }
-            if content.contains("use Test::Exception") {
-                return "Test::Exception";
-            }
-            if content.contains("use Test::Fatal") {
-                return "Test::Fatal";
+            best = Some(rank);
+            if rank == 0 {
+                break;
             }
         }
     }
-    "not detected"
+    best.map(|rank| PERL_FRAMEWORK_MARKERS[rank].1)
 }
 
 /// Perl test runners doctor may name. Availability is PATH-only (#5103).
@@ -2879,11 +2963,48 @@ pub(crate) fn uncovered_artifact_roots(
         };
         match probe.status.code() {
             Some(0) => {}
+            Some(1) if self_ignored_contents(root, &pathspec)? => {}
             Some(1) => uncovered.push(pathspec),
             _ => return None,
         }
     }
     Some(uncovered)
+}
+
+/// Whether ripr's own self-ignore file covers the default artifact root.
+/// ripr's `target/ripr/.gitignore` holds `*`, which git applies to the
+/// directory's contents, not to the directory name, so the plain root probe
+/// answers "not ignored" while `git status` stays clean. Only the default
+/// `target/ripr` root qualifies, and only when its ignore file is exactly the
+/// one ripr writes: a user-owned file there may unignore part of the tree
+/// (`!reports/`), and the Cargo `target` substitute must keep its own
+/// whole-directory verdict (#9006). Git still decides the answer: a
+/// would-be entry is probed so an outer negation rule is honored. `Some(false)`
+/// when the fallback does not apply; `None` when git could not answer.
+fn self_ignored_contents(root: &Path, pathspec: &str) -> Option<bool> {
+    if pathspec != crate::atomic_file::DEFAULT_OUTPUT_ROOT {
+        return Some(false);
+    }
+    let marker = root.join(pathspec).join(".gitignore");
+    let is_ripr_marker = std::fs::symlink_metadata(&marker)
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+        && std::fs::read_to_string(&marker)
+            .is_ok_and(|text| text == crate::atomic_file::DEFAULT_OUTPUT_ROOT_GITIGNORE);
+    if !is_ripr_marker {
+        return Some(false);
+    }
+    let entry = format!("{pathspec}/ripr-artifact");
+    let probe = crate::git::run_git_output_with_deadline(
+        root,
+        &["check-ignore", "--no-index", "-q", "--", &entry],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()?;
+    match probe.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
 }
 
 /// #9858: on the first run in a non-Cargo project nothing exists under
@@ -2904,7 +3025,20 @@ fn preemptive_artifact_ignore(
     if root.join("Cargo.toml").is_file() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    let Some(uncovered) = uncovered_artifact_roots(root, artifact_roots) else {
+    // The default `target/ripr` tree ignores itself the moment a command
+    // first writes there (`atomic_file::write_self_ignore_file`), so
+    // only a relocated in-repository writer base still needs a user rule.
+    let relocated: Vec<PathBuf> = artifact_roots
+        .iter()
+        .filter(|relative| {
+            analysis::artifact_root_pathspec(relative) != crate::atomic_file::DEFAULT_OUTPUT_ROOT
+        })
+        .cloned()
+        .collect();
+    if relocated.is_empty() {
+        return DoctorArtifactIgnore::NoArtifacts;
+    }
+    let Some(uncovered) = uncovered_artifact_roots(root, &relocated) else {
         return DoctorArtifactIgnore::NotChecked;
     };
     if uncovered.is_empty() {
@@ -2918,6 +3052,39 @@ fn preemptive_artifact_ignore(
             artifact_roots_display(&uncovered),
             artifact_gitignore_entries(&uncovered),
         ),
+    }
+}
+
+/// The one ignore verdict doctor and the first-`check` note share. Existing
+/// roots are judged by `ripr_artifact_ignore`. #9858: a root that does not
+/// exist yet has nothing to probe, so a non-Cargo project would get no
+/// guidance before its first write there; when the existing roots are covered
+/// (or there are none), the would-be roots are probed pre-emptively. The
+/// default `target/ripr` is not among them: it ignores itself on first write,
+/// so only a relocated in-repository base can still be warned about early.
+fn artifact_ignore_verdict(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactIgnore {
+    use output::doctor::DoctorArtifactIgnore;
+    let existing = ripr_artifact_ignore(root, artifact_roots);
+    if !matches!(
+        existing,
+        DoctorArtifactIgnore::NoArtifacts | DoctorArtifactIgnore::Ignored
+    ) {
+        return existing;
+    }
+    let missing: Vec<PathBuf> = artifact_roots
+        .iter()
+        .filter(|relative| !root.join(relative).is_dir())
+        .cloned()
+        .collect();
+    match preemptive_artifact_ignore(root, &missing) {
+        warning @ DoctorArtifactIgnore::Unignored { .. } => warning,
+        DoctorArtifactIgnore::Ignored if existing == DoctorArtifactIgnore::NoArtifacts => {
+            DoctorArtifactIgnore::Ignored
+        }
+        _ => existing,
     }
 }
 
@@ -2940,11 +3107,7 @@ pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
     use output::doctor::DoctorArtifactIgnore;
     let roots =
         analysis::ripr_artifact_roots(root, &analysis::seam_cache::cache_base_dir(root), None);
-    let verdict = match ripr_artifact_ignore(root, &roots) {
-        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
-        verdict => verdict,
-    };
-    match verdict {
+    match artifact_ignore_verdict(root, &roots) {
         DoctorArtifactIgnore::Unignored { warning } => Some(note_with_tracking_probe(
             warning,
             probe_artifact_tracking(root, &roots),
@@ -3724,6 +3887,138 @@ mod tests {
             None
         );
         assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
+    }
+
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pytest_probe_without_venv_routes_python_dash_m_pytest_and_stays_advisory()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("pytest-no-venv");
+        std::fs::create_dir_all(&root).map_err(|e| format!("mkdir: {e}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
+            .map_err(|e| format!("write: {e}"))?;
+        let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+        let mut seen = Vec::new();
+        let ok = add_language_runtime_probes(
+            &root,
+            &[LanguageId::Python],
+            &[LanguageId::Rust],
+            &mut report,
+            false,
+            |tool| {
+                seen.push(tool.to_string());
+                if tool == "python -m pytest" {
+                    (
+                        output::doctor::DoctorStatus::Fail,
+                        "python -m pytest --version failed (exit status: 1): No module named pytest"
+                            .to_string(),
+                    )
+                } else {
+                    (output::doctor::DoctorStatus::Pass, format!("{tool} ok"))
+                }
+            },
+        );
+        assert!(seen.iter().any(|t| t == "python -m pytest"), "{seen:?}");
+        assert!(!seen.iter().any(|t| t == "pytest"), "{seen:?}");
+        let probe = report
+            .runtime_probes
+            .iter()
+            .find(|p| p.tool == "pytest")
+            .ok_or_else(|| "missing pytest probe".to_string())?;
+        assert_eq!(probe.status, output::doctor::DoctorStatus::Fail);
+        assert!(probe.evidence.contains("No module named pytest"));
+        assert!(!probe.required);
+        assert!(ok);
+        assert_eq!(report.status, output::doctor::DoctorStatus::Pass);
+        std::fs::remove_dir_all(&root).map_err(|e| format!("rm: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pytest_probe_reports_path_python_and_uses_venv_only_as_a_hint() -> std::io::Result<()> {
+        let make = |name: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
+            let root = std::env::temp_dir()
+                .join(format!("ripr-doctor-venv-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let site_dir = root.join(".venv/lib/python3.13/site-packages");
+            std::fs::create_dir_all(&site_dir)?;
+            std::fs::create_dir_all(root.join(".venv/bin"))?;
+            std::fs::write(root.join(".venv/bin/python"), "")?;
+            for entry in site {
+                std::fs::create_dir_all(site_dir.join(entry))?;
+            }
+            Ok(root)
+        };
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let mut path_fail = |tool: &str| {
+            calls.borrow_mut().push(tool.to_string());
+            (
+                output::doctor::DoctorStatus::Fail,
+                "python -m pytest --version failed (exit status: 1): No module named pytest"
+                    .to_string(),
+            )
+        };
+        let with = make("with", &["pytest-9.2.0.dist-info", "pytest"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(evidence.contains("No module named pytest"), "{evidence}");
+        let expected = crate::agent::loop_commands::shell_arg(
+            &with.join(".venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "root-joined activate path: {evidence}"
+        );
+        assert_eq!(*calls.borrow(), ["python -m pytest"]);
+        // Negative control: venv without pytest gives no activation advice.
+        let without = make("without", &["pip"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(!evidence.contains("activate"), "{evidence}");
+        // A `venv/` (not `.venv/`) project is told to activate `venv/`.
+        let plain =
+            std::env::temp_dir().join(format!("ripr-doctor-venv-plain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&plain);
+        std::fs::create_dir_all(plain.join("venv/bin"))?;
+        std::fs::write(plain.join("venv/bin/python"), "")?;
+        std::fs::create_dir_all(
+            plain.join("venv/lib/python3.13/site-packages/pytest-9.2.0.dist-info"),
+        )?;
+        let (_, evidence) = python_pytest_runtime_probe(&plain, &mut path_fail);
+        let expected = crate::agent::loop_commands::shell_arg(
+            &plain.join("venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "{evidence}"
+        );
+        assert!(!evidence.contains(".venv/bin/activate"), "{evidence}");
+        // A `.` root keeps the bare relative hint.
+        let (_, evidence) = python_pytest_runtime_probe(Path::new("."), &mut path_fail);
+        assert!(!evidence.contains("source /"), "{evidence}");
+        let _ = std::fs::remove_dir_all(&plain);
+        // PATH python with pytest passes and says which command was probed,
+        // regardless of the venv.
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut |_: &str| {
+            (
+                output::doctor::DoctorStatus::Pass,
+                "pytest 9.1.1".to_string(),
+            )
+        });
+        assert_eq!(status, output::doctor::DoctorStatus::Pass);
+        assert_eq!(evidence, "pytest 9.1.1 (PATH `python -m pytest`)");
+        // Unknown venv layout is surfaced as not verified, not as a pass.
+        std::fs::write(
+            with.join(".venv/pyvenv.cfg"),
+            "include-system-site-packages = true\n",
+        )?;
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(evidence.contains("not verified"), "{evidence}");
+        let _ = std::fs::remove_dir_all(with);
+        let _ = std::fs::remove_dir_all(without);
+        Ok(())
     }
 
     #[test]
@@ -5394,6 +5689,19 @@ mod tests {
             .ok_or("missing advice")?
             .1;
         assert_eq!(entry, "/target/", "{warning}");
+        // A child-only ignore file inside `target/` (git applies it to the
+        // contents, not to `target` itself) does not satisfy the preflight
+        // either, so the ripr self-ignore fallback must not read it as
+        // coverage of the build directory.
+        std::fs::write(root.join("target/.gitignore"), "*\n").map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+                DoctorArtifactIgnore::Unignored { .. }
+            ),
+            "a child-only target/.gitignore must keep the /target/ advice"
+        );
+        std::fs::remove_file(root.join("target/.gitignore")).map_err(|error| error.to_string())?;
         // A child-only `/target/ripr/` rule (the old advice) does not satisfy
         // the preflight, so doctor still flags it and names `/target/`.
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
@@ -5440,6 +5748,14 @@ mod tests {
         ] {
             crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
         }
+        // With no output yet, the default root needs no chore: ripr marks the
+        // tree it creates as self-ignoring (#14315).
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // An older, unmarked tree is still uncovered and gets the note.
+        std::fs::create_dir_all(root.join("target/ripr/reports"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("target/ripr/reports/old.json"), "{}")
+            .map_err(|error| error.to_string())?;
         let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
         assert!(note.contains("/target/ripr/"), "{note}");
         // Nothing under the roots is tracked here, so the note must not name
@@ -5585,7 +5901,8 @@ mod tests {
     }
 
     #[test]
-    fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
+    fn preemptive_artifact_ignore_needs_no_chore_for_the_self_ignoring_default_root()
+    -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
@@ -5609,21 +5926,27 @@ mod tests {
             ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::NoArtifacts
         );
-        // A non-Cargo project is warned before the first write, with the
-        // exact entry to add (#9858). The subject clause says ripr *will
-        // write*; the consequence and entry match the existing-artifact
-        // warning word for word.
-        match preemptive_artifact_ignore(&root, &default_artifact_roots(&root)) {
-            DoctorArtifactIgnore::Unignored { warning } => {
-                assert!(
-                    warning.contains("will write artifacts under target/ripr"),
-                    "{warning}"
-                );
-                assert!(warning.contains("/target/ripr/"), "{warning}");
-                assert!(warning.starts_with("~ "), "{warning}");
-            }
-            other => return Err(format!("expected Unignored, got {other:?}")),
-        }
+        // A non-Cargo project needs no ignore chore before the first write:
+        // the default `target/ripr` tree ignores itself when a command first
+        // writes there, so the pre-emptive arm reports nothing to cover. The
+        // relocated-base arm keeps the #9858 warning (tested below).
+        assert_eq!(
+            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::NoArtifacts
+        );
+        // The guard alone creates nothing; the first write into the guarded
+        // tree gives it the self-ignore file, and the existing-artifact
+        // verdict then reads the tree as ignored even though no rule names
+        // `target/ripr` itself.
+        crate::atomic_file::ensure_report_output_contained(&root)?;
+        assert!(!root.join("target").exists());
+        crate::atomic_file::write(&root.join("target/ripr/reports/x.json"), b"{}", "test")?;
+        assert!(root.join("target/ripr/.gitignore").is_file());
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        std::fs::remove_dir_all(root.join("target")).map_err(|error| error.to_string())?;
         // A Cargo project keeps the historical first-run silence: Rust
         // behavior is unchanged.
         std::fs::write(
@@ -5635,12 +5958,23 @@ mod tests {
             preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::NoArtifacts
         );
-        // The covering entry silences the pre-emptive arm too.
+        // A relocated in-repository base is not self-ignoring, so the
+        // pre-emptive arm still warns for it, naming only that root.
         std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
-        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+        let relocated = analysis::ripr_artifact_roots(&root, &root.join(".ripr-cache"), None);
+        match preemptive_artifact_ignore(&root, &relocated) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(warning.contains("will write artifacts under"), "{warning}");
+                assert!(warning.contains("/.ripr-cache/"), "{warning}");
+                assert!(!warning.contains("/target/ripr/"), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
+        // A covering entry silences it.
+        std::fs::write(root.join(".gitignore"), "/.ripr-cache/\n")
             .map_err(|error| error.to_string())?;
         assert_eq!(
-            preemptive_artifact_ignore(&root, &default_artifact_roots(&root)),
+            preemptive_artifact_ignore(&root, &relocated),
             DoctorArtifactIgnore::Ignored
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -6797,6 +7131,75 @@ mod tests {
             assert_eq!(detect_languages(&root), expected, "{name}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn perl_framework_ignores_the_order_test_files_are_listed() -> Result<(), String> {
+        // #14103: `read_dir` order is filesystem-defined. A mixed suite must
+        // name one framework whichever file is read first.
+        let more = "use Test::More;\nok(1);\ndone_testing;\n";
+        let v0 = "use Test2::V0;\nok(1);\ndone_testing;\n";
+        let fatal = "use Test::Fatal;\n";
+        let exception = "use Test::Exception;\n";
+        let plain = "print qq(ok 1\\n);\n";
+
+        // Fixture: each source alone names exactly its own framework, so the
+        // mixed answers below come from combining them, not from one file.
+        assert_eq!(perl_framework_in([more]), Some("Test::More"));
+        assert_eq!(perl_framework_in([v0]), Some("Test2::V0"));
+        assert_eq!(perl_framework_in([fatal]), Some("Test::Fatal"));
+        assert_eq!(perl_framework_in([exception]), Some("Test::Exception"));
+        assert_eq!(perl_framework_in([plain]), None);
+        assert_eq!(perl_framework_in(Vec::<&str>::new()), None);
+
+        let mixed: [(&[&str], &str); 4] = [
+            (&[more, v0], "Test2::V0"),
+            (&[fatal, more, plain], "Test::More"),
+            (&[fatal, exception], "Test::Exception"),
+            (&[plain, fatal, exception, more, v0], "Test2::V0"),
+        ];
+        for (sources, expected) in mixed {
+            // Every rotation and its reverse: each source takes each position.
+            for start in 0..sources.len() {
+                let mut order = sources.to_vec();
+                order.rotate_left(start);
+                assert_eq!(perl_framework_in(&order), Some(expected), "{order:?}");
+                order.reverse();
+                assert_eq!(perl_framework_in(&order), Some(expected), "{order:?}");
+            }
+        }
+
+        // Through the directory read, in both creation orders. A filesystem
+        // that lists in creation order (tmpfs) reported two answers here.
+        let mut answers = Vec::new();
+        for (name, files) in [
+            ("more-first", [("more.t", more), ("v0.t", v0)]),
+            ("v0-first", [("v0.t", v0), ("more.t", more)]),
+        ] {
+            let root = unique_command_test_dir(&format!("perl-framework-order-{name}"));
+            let t_dir = root.join("t");
+            std::fs::create_dir_all(&t_dir).map_err(|err| format!("mkdir: {err}"))?;
+            for (file, source) in files {
+                std::fs::write(t_dir.join(file), source)
+                    .map_err(|err| format!("write {file}: {err}"))?;
+            }
+            answers.push(detect_perl_framework(&root));
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        }
+        assert_eq!(answers, ["Test2::V0", "Test2::V0"]);
+
+        // The two not-detected spellings keep their meaning.
+        let root = unique_command_test_dir("perl-framework-order-none");
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        assert_eq!(
+            detect_perl_framework(&root),
+            "not detected (no t/ directory)"
+        );
+        std::fs::create_dir_all(root.join("t")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(root.join("t/plain.t"), plain).map_err(|err| format!("write: {err}"))?;
+        assert_eq!(detect_perl_framework(&root), "not detected");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 

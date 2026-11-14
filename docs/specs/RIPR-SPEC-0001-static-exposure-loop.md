@@ -96,6 +96,14 @@ families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
 
+A removed line that is one bare literal (a number, `true`/`false`, or one
+quoted string or char, optionally followed by `,` or `;`) adds no removed-side
+`static_unknown` probe when its positional replacement in the same block
+already carries a modeled-family probe whose `before` is that literal
+(#14325). That probe judges the replaced value; a base-side catch-all would
+keep verification refused for code no test can reach. An equal literal
+deleted with no replacement keeps its own probe.
+
 ## Required Evidence
 
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
@@ -151,6 +159,18 @@ initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
 reads as a declaration; so does `A + B` between two bound names and a
 parenthesised single path `(a)`.
+A parameter line of a `fn` written in a macro call body (`feature! { fn f(
+a: u32, ) {} }`) is a declaration under the same type-syntax allowlist
+(#13983). Its `( .. )` tree must directly follow `fn name` or `fn name<..>`;
+the generic list must balance, may hold `Item = u8` and `Fn() -> u8` bounds,
+and fails closed on `;` or `=>`. The parameter list must sit in an item
+position of the macro call: the call's own token tree, or below it only
+`{ .. }` trees that are each an `impl`, `trait` or `mod` body or the body of a
+nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
+(`fn(..)`), a call argument (`make(a: 1,)`), a macro arm, a struct literal and
+a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
+line (`&self,`) has no type and is not classified by this rule, and a fn nested
+inside another fn body in a macro keeps `field_construction`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -422,10 +442,22 @@ credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
 an unchanged chain keeps its boundary credit. Because it compares only the
 connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
-&& b`) or regrouping a chain is not yet caught. The rule reads one changed
-line: a chain that rustfmt splits across lines (`if other > 0` over `&&
-100 <= points`) pairs only its first old line as `before`, so it is not yet
-covered (#7945).
+&& b`) or regrouping a chain is not yet caught. A chain that rustfmt split
+across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
+(#7945): when a predicate's replacement block removes two or more consecutive
+old lines and one of them starts or ends with `&&` or `||` outside strings
+and comments, the predicate's old text is the whole block, joined into its
+one-line spelling, instead of the one removed line that pairing names. A
+block holding a comment keeps its line breaks and is compared uncut. A block
+holding more than one statement head (outside strings and comments it holds
+a `;`, a `}` or more than one `{`) is not read whole, because its connectives
+belong to several predicates; it keeps the single-line pairing, and its
+lines keep their own probes. The chain's old lines
+(each line that starts or ends with a connective, and the neighbour it
+continues) are the predicate's old side, so they get no deleted-line probe of
+their own: one operand of the old chain is not a predicate an input at its
+boundary can expose. A new-side chain that spans several added lines still
+reads its probe's own shape text.
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
@@ -601,6 +633,36 @@ owner's own source file through the shared named-constant lookup in
   the constant's value; repo-seam grip reports activation unknown with the
   boundary-constant limitation and no actionable repair packet.
 
+Appended string-equality arm example (#14388):
+
+```rust
+pub fn options_from_flag(flag: &str) -> Options {
+    Options { retries: 3, verbose: flag == "-v" || flag == "--verbose" }
+}
+```
+
+When the diff appends one `|| param == "lit"` arm to a chain of string
+equalities on the same parameter (base `flag == "-v"`), a related test that
+calls the owner with exactly the new literal (`options_from_flag("--verbose")`)
+reads infection `yes` (medium confidence): distinct literals make every
+original arm false on that input and the new arm true. The reading is
+fail-closed and every other shape keeps the ordinary reading. It requires:
+
+- every arm to be a plain `==` between the one parameter and an escape-free
+  string literal, joined only by `||`, with distinct literals and the base
+  chain equal to the head chain minus its last arm;
+- the parameter to be declared `&str`, `&'a str`, `String` or `&String`
+  (another type may implement `PartialEq<&str>` differently), never
+  rebound, and the owner to have no other callers;
+- an owner-call argument fact binding the parameter to exactly the new
+  literal, and no assertion macro name rebound anywhere in the indexed
+  workspace, since a rebound macro could discard the call. This is a
+  workspace-wide condition, as in RIPR-SPEC-0353;
+- the chain to be the owner's first decision and to end its expression. No
+  `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
+  `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
+  follows it.
+
 ## Test Mapping
 
 Fixture coverage:
@@ -675,6 +737,7 @@ Fixture coverage:
 - `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_multi_line_dropped_conjunct`
 - `fixtures/rust_slice_table_try_exit`
 - `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
@@ -722,6 +785,8 @@ Fixture coverage:
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
 - `attribute_continuation_lines_cover_the_span_and_fail_closed`
+- `multi_line_use_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `use_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
@@ -729,10 +794,32 @@ Fixture coverage:
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
 
+A private, plain `extern crate name;` line seeds no probe: like a private `use`
+import it only links a crate and holds no behavior a test could notice
+(#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports the
+crate under the module's path, like a visible `use`, and keeps its probe; so do
+the renaming form (`extern crate core as std;`, `extern crate self as name;`)
+and a line with any trailing code. The rule reads one line on either diff side, so a removed
+`#[macro_use]` + `extern crate foo;` pair also seeds no probe, matching the
+existing `#[macro_use] mod name;` behavior; a macro that pair brought into scope
+is a known limitation, not a reported change.
+- `plain_extern_crate_is_ignored_but_a_rename_is_not`
+- `diff_producer_ignores_plain_extern_crate_but_probes_a_rename`
+
 The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
 argument list) are attribute text, like the single-line form, and seed no probe
 on either diff side (#10089). The closing line counts only when nothing follows
 the bracket, and an unclosed attribute marks nothing.
+
+The entries of a multi-line `use a::{ .. };` or `pub use a::{ .. };` declaration
+are import text, like the single-line form, and seed no probe on either diff
+side (#8389). The openers are exactly the single-line forms already skipped, so
+a visibility-qualified re-export (`pub(crate) use`) keeps its probes on every
+line. The closing line counts only when nothing follows the `;`, and a
+declaration that never closes, closes outside its braces, or holds a character
+no `use` tree can hold marks nothing. Import-shaped tokens inside a
+token-observing macro such as `stringify!` are that macro's data and keep
+their probes.
 
 Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
@@ -758,6 +845,15 @@ no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
 lines). It declares only, so it seeds a single `static_unknown` probe like a
 one-line `impl ... {` header (#8389) and never `field_construction` for a
 const-generic bound or `call_deletion` for a generic attribute (#10244).
+
+A one-line `type` item (a trait's associated type `type Eq: CmpEq;` or
+`type Item;`, an impl binding `type Eq = __m128i;`, or a type alias
+`pub type Map<K> = BTreeMap<K, u8>;`) declares a type and runs nothing. It
+seeds a single `static_unknown` probe, like an item header, and never
+`field_construction` for its `name: Bound` text (#14429). A line that does not
+end the item with `;`, joins a second statement, or whose type holds an
+expression (a block, a macro, or any array length such as `[T; 4]`) keeps its
+ordinary families.
 
 ## Implementation Mapping
 

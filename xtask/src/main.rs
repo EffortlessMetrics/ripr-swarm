@@ -29,6 +29,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod cache_payload_tamper_recovery;
+mod cargo_job_cap;
 mod check_fast_cli;
 mod check_fast_selector;
 mod cli_exit_contract;
@@ -662,11 +663,17 @@ fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
 }
 
-fn precommit() -> Result<(), String> {
-    precommit_policy(false)
+/// Local `precommit` policy leg. `coverage` comes from the precommit change
+/// set: a diff that cannot change any test-valued `covered_by` listing skips
+/// the test-binary builds that enumeration needs (#13705).
+fn precommit(coverage: policy::CoverageEnumeration) -> Result<(), String> {
+    precommit_policy(false, coverage)
 }
 
-fn precommit_policy(collect_all: bool) -> Result<(), String> {
+fn precommit_policy(
+    collect_all: bool,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
     // CI rejects stale/partial proof before compilation-bearing file policy.
@@ -690,7 +697,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
     let mut deferred = None;
-    check_file_policy_deferring(&mut deferred)?;
+    check_file_policy_deferring(&mut deferred, coverage)?;
     let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
     finish_precommit_policy(deferred, remaining, collect_all)
 }
@@ -703,8 +710,11 @@ const PRECOMMIT_INSTRUMENT_PREFIX: &str =
 
 /// `check_file_policy`, except that an instrument failure (cargo lock wait or
 /// timeout) is stored in `deferred` instead of returned.
-fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
-    match check_file_policy() {
+fn check_file_policy_deferring(
+    deferred: &mut Option<String>,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
+    match policy::check_file_policy_with(coverage) {
         Err(error) if policy::is_covered_by_instrument_failure(&error) => {
             *deferred = Some(error);
             Ok(())
@@ -23968,6 +23978,15 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("examples/")
+        && (path.ends_with(".ts") || path.ends_with(".py"))
+        && (path.contains("/project/") || path.contains("/strengthened/"))
+    {
+        return Some(
+            "Starter example projects are analyzed inputs that users run `ripr check` on (#14151); the Python and TypeScript examples must stay in their own language to show the preview adapters honestly.",
         );
     }
 

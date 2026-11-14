@@ -1,0 +1,11 @@
+{
+  "cache_dir": "target/ripr/cache",
+  "entry_count": 12,
+  "foreign_entry_count": 1,
+  "foreign_total_size_bytes": 64,
+  "real_cache_dir": null,
+  "schema_version": "0.2",
+  "status": "ok",
+  "total_size_bytes": 48211,
+  "via_symlink": false
+}

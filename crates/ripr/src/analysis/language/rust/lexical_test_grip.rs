@@ -124,6 +124,9 @@ fn line_registers_executable_test(line: &str) -> bool {
     name == "test"
         || name == "tokio::test"
         || name == "async_std::test"
+        || name == "actix_rt::test"
+        || name == "actix_web::test"
+        || name == "test_log::test"
         || name == "rstest"
         || name.starts_with("rstest::")
 }

@@ -734,7 +734,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
 /// (#5346, #12641) — cached boundary verdicts from before the widening are not
 /// reused.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
+/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
+/// is no longer read as an opaque closure, so its direct propagation witness
+/// can complete (#14326).
+/// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
+/// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
+/// `None`) seam it cannot reach (#12757).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.181";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -954,7 +960,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1176,7 +1184,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
 /// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
 /// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.183";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1389,7 +1399,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// warm entries deserialize with an empty guard vector.
 /// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+/// `1.59`: file-fact keys carry the normalized path spelling (#13887); `1.58`
+/// entries may name the same file under another spelling.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.59";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1708,6 +1720,55 @@ pub(crate) struct RepoSeamCacheKey {
 
 const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
 
+/// Canonical spelling of a file-fact cache identity (#13887). Callers reach
+/// the same file through native separators (discovery), forward slashes
+/// (git/LSP), `./` prefixes, and on Windows through case variants and the
+/// `\\?\` verbatim prefix; each spelling used to mint its own cache entry.
+/// Mirrors the TypeScript fact store's `normalized_path`: forward slashes,
+/// no leading `./`, no verbatim prefix, and case folding only where the
+/// filesystem is case-insensitive.
+fn normalize_file_fact_path(path: &Path) -> String {
+    // Only Windows treats `\` as a separator (and folds case); on Unix a
+    // backslash is an ordinary filename character, so rewriting it would
+    // merge distinct files into one identity.
+    #[cfg(windows)]
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let mut normalized = path.to_string_lossy().into_owned();
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+            normalized = format!("//{stripped}");
+        } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+            normalized = stripped.to_string();
+        }
+        normalized = normalized.to_lowercase();
+    }
+    normalized
+}
+
+/// Identity of `path` as stored in a file-fact key. Non-UTF-8 paths keep
+/// their verbatim spelling: the lossy form could merge two distinct files.
+fn file_fact_identity_path(path: &Path) -> PathBuf {
+    if path.to_str().is_some() {
+        PathBuf::from(normalize_file_fact_path(path))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Whether two spellings name the same file-fact identity.
+fn file_fact_paths_equal(left: &Path, right: &Path) -> bool {
+    if left.to_str().is_some() && right.to_str().is_some() {
+        normalize_file_fact_path(left) == normalize_file_fact_path(right)
+    } else {
+        left == right
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
     schema_version: String,
@@ -1721,7 +1782,7 @@ impl RepoFileFactCacheKey {
         Self {
             schema_version: FILE_FACT_CACHE_SCHEMA_VERSION.to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
-            file_path: file_path.to_path_buf(),
+            file_path: file_fact_identity_path(file_path),
             content_hash: hash_bytes(content),
         }
     }
@@ -1747,11 +1808,11 @@ impl RepoFileFactCacheKey {
     }
 
     fn filename(&self) -> String {
-        let file_path = self.file_path.to_string_lossy();
+        let file_path = normalize_file_fact_path(&self.file_path);
         let parts = [
             self.schema_version.as_str(),
             self.analyzer_version.as_str(),
-            file_path.as_ref(),
+            file_path.as_str(),
             self.content_hash.as_str(),
         ];
         let mut buf = String::new();
@@ -3413,6 +3474,26 @@ fn indexed_paths_all_under_cache_layers(toplevel: &Path, base_relative: &Path) -
     indexed
 }
 
+/// Rebind every serialized fact that names its containing file to the
+/// requested path spelling. Owner resolution also reads the file prefix in a
+/// function's `SymbolId`, so preserve only the symbol-local suffix. Source
+/// declaration targets are not containing-file identities and stay untouched.
+fn rebind_file_fact_identity(mut facts: FileFacts, path: &Path) -> FileFacts {
+    let old_id_prefix = format!("{}::", crate::analysis::stable_path_text(&facts.path));
+    let new_id_prefix = format!("{}::", crate::analysis::stable_path_text(path));
+    for function in &mut facts.functions {
+        if let Some(suffix) = function.id.0.strip_prefix(&old_id_prefix) {
+            function.id = crate::domain::SymbolId(format!("{new_id_prefix}{suffix}"));
+        }
+        function.file = path.to_path_buf();
+    }
+    for test in &mut facts.tests {
+        test.file = path.to_path_buf();
+    }
+    facts.path = path.to_path_buf();
+    facts
+}
+
 impl RepoFileFactCache {
     pub(crate) fn at(workspace_root: &Path) -> Self {
         let dir = cache_layer_dir(workspace_root, CacheLayer::FileFacts)
@@ -3481,6 +3562,17 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
+        self.load_file_facts_for_path(key, key.file_path())
+    }
+
+    /// Load a key hit with the same path spelling a cold parse for
+    /// `requested_path` would produce. The normalized key remains the cache
+    /// identity; the requested spelling must resolve to that key or miss.
+    pub(crate) fn load_file_facts_for_path(
+        &self,
+        key: &RepoFileFactCacheKey,
+        requested_path: &Path,
+    ) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3490,6 +3582,9 @@ impl RepoFileFactCache {
             return CacheLoad::CorruptIgnored {
                 reason: reason.to_owned(),
             };
+        }
+        if !file_fact_paths_equal(requested_path, key.file_path()) {
+            return CacheLoad::Miss;
         }
         let path = self.entry_path(key);
         let bytes = match std::fs::read(&path) {
@@ -3514,7 +3609,10 @@ impl RepoFileFactCache {
                     if let Err(reason) = envelope.validate_integrity() {
                         return corrupt_entry(&path, reason);
                     }
-                    CacheLoad::Hit(envelope.file_facts)
+                    CacheLoad::Hit(rebind_file_fact_identity(
+                        envelope.file_facts,
+                        requested_path,
+                    ))
                 } else {
                     CacheLoad::Miss
                 }
@@ -3554,7 +3652,10 @@ impl RepoFileFactCache {
             if header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                 && header.analyzer_version == identity
             {
-                candidates.entry(header.file_path).or_default().push(path);
+                candidates
+                    .entry(file_fact_identity_path(&header.file_path))
+                    .or_default()
+                    .push(path);
             }
         }
         KnownFilePaths { candidates }
@@ -4183,13 +4284,14 @@ impl KnownFilePaths {
     /// full-decode inventory applied to every entry.
     pub(crate) fn contains(&self, file: &Path) -> bool {
         let identity = crate::build_identity::cache_identity();
-        self.candidates.get(file).is_some_and(|entries| {
+        let identity_path = file_fact_identity_path(file);
+        self.candidates.get(&identity_path).is_some_and(|entries| {
             entries.iter().any(|entry| {
                 std::fs::read(entry).ok().is_some_and(|bytes| {
                     codec::decode_file_facts(&bytes).is_ok_and(|envelope| {
                         envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                             && envelope.analyzer_version == identity
-                            && envelope.file_path == file
+                            && file_fact_paths_equal(&envelope.file_path, file)
                             && envelope.validate_integrity().is_ok()
                     })
                 })
@@ -4224,7 +4326,7 @@ impl FileFactCacheEnvelope {
     fn matches_key(&self, key: &RepoFileFactCacheKey) -> bool {
         self.file_fact_cache_schema_version == key.schema_version
             && self.analyzer_version == key.analyzer_version
-            && self.file_path == key.file_path
+            && file_fact_paths_equal(&self.file_path, &key.file_path)
             && self.content_hash == key.content_hash
     }
 }
@@ -5187,6 +5289,140 @@ mod tests {
     }
 
     #[test]
+    fn file_fact_key_unifies_path_spellings_of_one_file() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #13887: one file must keep one cache identity across the path
+        // spellings different callers produce (native separator, forward
+        // slash, `./` prefix; on Windows also case and verbatim prefix).
+        let scratch = integrity_scratch("key-path-spelling")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let source = "#[path = \"other.rs\"]\nmod other;\npub fn f(x: u32) -> u32 { x + 1 }\n#[test]\nfn changes_f() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("./src/lib.rs"), source)?;
+        let assert_requested_identity = |loaded: &FileFacts, path: &Path| {
+            assert_eq!(loaded.path, path);
+            assert_eq!(loaded.tests.len(), 1);
+            for function in &loaded.functions {
+                assert_eq!(function.file, path);
+                assert_eq!(
+                    function.id.0,
+                    format!(
+                        "{}::{}",
+                        crate::analysis::stable_path_text(path),
+                        function.name
+                    )
+                );
+            }
+            for test in &loaded.tests {
+                assert_eq!(test.file, path);
+            }
+            assert_eq!(loaded.module_declarations, facts.module_declarations);
+        };
+        let stored = RepoFileFactCacheKey::new(Path::new("./src/lib.rs"), source.as_bytes());
+        cache.store_file_facts(&stored, &facts)?;
+        for spelling in ["src/lib.rs", "./src/lib.rs"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            match cache.load_file_facts_for_path(&key, Path::new(spelling)) {
+                // A hit serves all file-local identities under the caller's
+                // requested spelling, not the stored producer's spelling.
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new(spelling));
+                }
+                other => {
+                    return Err(format!("spelling {spelling} must hit: {other:?}"));
+                }
+            }
+            assert!(
+                cache.known_file_paths().contains(Path::new(spelling)),
+                "known paths must recognize spelling {spelling}"
+            );
+        }
+        // On Windows the native separator spelling is the same file; on Unix
+        // a backslash is an ordinary filename character and stays distinct.
+        #[cfg(windows)]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows separator spelling must hit the stored entry"
+            );
+            // Facts summarized under the backslash spelling are served under
+            // the canonical identity path.
+            let backslash_facts =
+                RaRustSyntaxAdapter.summarize_file(Path::new(r"src\other.rs"), source)?;
+            let backslash_key =
+                RepoFileFactCacheKey::new(Path::new(r"src\other.rs"), source.as_bytes());
+            cache.store_file_facts(&backslash_key, &backslash_facts)?;
+            let canonical = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+            match cache.load_file_facts_for_path(&canonical, Path::new("src/other.rs")) {
+                CacheLoad::Hit(loaded) => {
+                    assert_requested_identity(&loaded, Path::new("src/other.rs"));
+                }
+                other => return Err(format!("canonical spelling must hit: {other:?}")),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Miss),
+                "unix backslash spelling is a distinct file and must miss"
+            );
+        }
+        // Windows filesystems are case-insensitive and canonicalized forms
+        // carry a verbatim prefix; both spellings name the same file.
+        #[cfg(windows)]
+        for spelling in [r"Src\Lib.rs", "SRC/LIB.RS"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows spelling {spelling} must hit the stored entry"
+            );
+        }
+        #[cfg(windows)]
+        {
+            // Built from components so the test carries no absolute machine
+            // path literal (check-local-context).
+            let abs_path = PathBuf::from(format!("{}:/", 'C'))
+                .join("repo")
+                .join("src")
+                .join("lib.rs");
+            let abs = RepoFileFactCacheKey::new(&abs_path, source.as_bytes());
+            cache.store_file_facts(&abs, &facts)?;
+            let verbatim_path = PathBuf::from(format!(r"\\?\{}", abs_path.display()));
+            let verbatim = RepoFileFactCacheKey::new(&verbatim_path, source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&verbatim), CacheLoad::Hit(_)),
+                "verbatim spelling must hit the plain absolute entry"
+            );
+        }
+        // Distinct files and distinct content keep distinct identities.
+        #[cfg(not(windows))]
+        {
+            let case_variant =
+                RepoFileFactCacheKey::new(Path::new("Src/Lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&case_variant), CacheLoad::Miss),
+                "case-sensitive filesystems keep case-distinct files apart"
+            );
+        }
+        let other_path = RepoFileFactCacheKey::new(Path::new("src/another.rs"), source.as_bytes());
+        assert!(matches!(
+            cache.load_file_facts(&other_path),
+            CacheLoad::Miss
+        ));
+        assert!(matches!(
+            cache.load_file_facts_for_path(&stored, Path::new("src/another.rs")),
+            CacheLoad::Miss
+        ));
+        let other_content = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn f() {}\n");
+        assert!(matches!(
+            cache.load_file_facts(&other_content),
+            CacheLoad::Miss
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn producer_directories_match_the_maintenance_inventory() -> Result<(), String> {
         let root = Path::new("/workspace");
         let base = cache_base_dir(root);
@@ -5392,7 +5628,8 @@ mod tests {
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.59");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5599,7 +5836,9 @@ mod tests {
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
         // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
         // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.178");
+        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
+        // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.181");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5759,8 +5998,10 @@ mod tests {
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
         // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
         // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
+        // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.183");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
