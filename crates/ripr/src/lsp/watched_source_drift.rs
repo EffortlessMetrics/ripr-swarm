@@ -40,7 +40,7 @@ pub(super) fn committed_source_watchers(
     root_uri: Option<&Uri>,
     absolute_root: &str,
 ) -> Vec<LSPAny> {
-    let extensions = ["rs", "py"]
+    let extensions = ["rs", "py", "pm", "pl", "t"]
         .iter()
         .chain(crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS)
         .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
@@ -526,7 +526,7 @@ mod tests {
         let pattern = anchored[0]["globPattern"]["pattern"]
             .as_str()
             .ok_or("anchored pattern must be a string")?;
-        assert!(pattern.starts_with("**/*.{rs,py"), "{pattern}");
+        assert!(pattern.starts_with("**/*.{rs,py,pm,pl,t"), "{pattern}");
 
         // Deletions are watched on every path under the root, so a folder
         // deleted as one entry is reported (#14099). Nothing is watched twice

@@ -300,6 +300,10 @@ and never the raw capability document or the client name.
 - `crates/ripr/tests/lsp_lifecycle.rs::deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics`
   — the real server retracts a deleted file's diagnostics from the
   watched-file event alone.
+- `crates/ripr/src/lsp/backend.rs::watched_event_for_an_uncaptured_related_test_refreshes_from_the_committed_snapshot`
+  — the related-test set that routes a watched-file event comes from the
+  committed snapshot's findings: a listed test refreshes, an unlisted one does
+  not.
 - `crates/ripr/tests/lsp_lifecycle.rs::deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it`
   — the real server retracts the diagnostics of a file below a folder that
   was deleted as one entry, from the folder's watched-file event alone, and
