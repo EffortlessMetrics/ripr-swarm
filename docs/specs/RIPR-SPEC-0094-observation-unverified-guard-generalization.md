@@ -870,6 +870,50 @@ Proof: `a_kept_field_is_read_only_whole_or_through_that_field` in
 `crates/ripr/src/analysis/classify/owner_value_sink.rs`, and
 `crates/ripr/tests/predicate_record_field_masked.rs` through `check_workspace`.
 
+## A bare `assert!` on the changed bool field (#14701)
+
+`assert!` takes a `bool`, so `assert!(opts(10).big)` is
+`assert_eq!(opts(10).big, true)` and `assert!(!opts(9).big)` is
+`assert_eq!(opts(9).big, false)`. The classifier still grades a bare `assert!`
+as `relational_check` / weak, so a test that pins a changed bool field this
+way left both findings on the line `weakly_exposed`. The `assert_eq!`
+spelling already read `exposed`.
+
+Rule, for a `field_construction` probe, or a predicate probe under the #14562
+field rule, whose line sets field `name` of a record the owner returns
+(`owner_returns_record`): the assertion counts as a pin of that field
+(`bool_field_assertion`) when
+- it is a single plain `assert!` invocation (not `debug_assert!`, not a
+  path-qualified macro, and not a second macro inside it);
+- its condition, after parentheses and at most one `!`, is exactly a field
+  read `<record>.name`;
+- `<record>` reads as the owner's whole returned record under
+  `owner_field_value_flow` with `name` kept. That means the owner call itself,
+  a once-bound plain `let` of it, or the record-keeping methods (`clone`,
+  `unwrap`, `as_ref`, ...).
+
+Its kind stays `relational_check`. Only its strength relative to the probe
+rises to strong, as the RIPR-SPEC-0197 bool owner pin's does. The same pin
+satisfies the predicate's same-test boundary pairing. The usual caps still
+apply: self-computed expected values, and #14206 masking. A condition that
+compares (`opts(10).big == true`), combines (`&&`, `||`), negates twice,
+calls a method, or reads the field through another field or a helper stays
+weak.
+
+Static evidence only: the assertion's polarity is not checked against either
+version's value.
+
+Known limit: a `field_construction` probe on a nested or unrelated struct
+literal whose field shares its name with a field of the owner's returned
+record (`Opts { inner: Inner { big: pred }, big: true }`) is credited by
+`assert!(opts(10).big)`, exactly as `assert_eq!(opts(10).big, true)` already
+was. The field rule matches the field by name, not by literal identity.
+
+Proof: `a_bare_assert_on_the_kept_field_is_a_field_pin` in
+`owner_value_sink.rs`, plus `a_bare_assert_on_the_changed_bool_field_is_exposed`
+and `a_bare_assert_on_anything_else_stays_weak` in
+`crates/ripr/tests/predicate_record_field_masked.rs`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.

@@ -123,5 +123,55 @@ fn a_read_of_the_changed_field_or_the_whole_record_stays_exposed() -> Result<(),
             "{body}: {predicate}"
         );
     }
+    // The field_construction finding has its own field-value recognizer,
+    // which credits a direct read of the field; `.clone().big` and a
+    // whole-record comparison are outside it and read weak before and after
+    // this change.
+    for body in &OBSERVING[..2] {
+        let field = finding(body, "field_construction")?;
+        assert_eq!(field["classification"], "exposed", "{body}: {field}");
+    }
+    Ok(())
+}
+
+/// #14701: a bare `assert!` on the changed bool field is
+/// `assert_eq!(opts(10).big, true)` spelled another way, so both findings on
+/// the line read `exposed`.
+#[test]
+fn a_bare_assert_on_the_changed_bool_field_is_exposed() -> Result<(), String> {
+    for body in [
+        "assert!(opts(10).big);",
+        "let o = opts(10); assert!(o.big);",
+        "assert!(opts(10).big, \"big at ten\");",
+        "assert!(!opts(9).big);\n        assert!(opts(10).big);",
+    ] {
+        for family in ["predicate", "field_construction"] {
+            let finding = finding(body, family)?;
+            assert_eq!(
+                finding["classification"], "exposed",
+                "{family} {body}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #14701: a bare `assert!` that does not read the changed field whole stays
+/// weak.
+#[test]
+fn a_bare_assert_on_anything_else_stays_weak() -> Result<(), String> {
+    for body in [
+        "assert!(opts(10).retries == 3);",
+        "assert!(opts(10).big || opts(10).retries == 3);",
+        "assert!(opts(10).summary() == 3);",
+    ] {
+        for family in ["predicate", "field_construction"] {
+            let finding = finding(body, family)?;
+            assert_ne!(
+                finding["classification"], "exposed",
+                "{family} {body}: {finding}"
+            );
+        }
+    }
     Ok(())
 }

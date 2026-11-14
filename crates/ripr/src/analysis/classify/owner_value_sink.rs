@@ -197,6 +197,77 @@ pub(in crate::analysis) fn owner_field_value_flow(
     flow
 }
 
+/// #14701: whether `assertion_text` is a plain `assert!(owner(..).field)` or
+/// `assert!(!owner(..).field)`, where `owner(..)` is the owner's whole
+/// returned record read as [`owner_field_value_flow`] reads it with `field`
+/// kept (directly, through a once-bound `let`, or through a method that hands
+/// the record back). `assert!` takes a `bool`, so the assertion is
+/// `assert_eq!(owner(..).field, true)` (or `false`) spelled another way.
+pub(in crate::analysis) fn bool_field_assertion(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &str,
+    field: &str,
+) -> bool {
+    if owner.is_empty() || !super::owner_pin::is_plain_macro(assertion_text, "assert") {
+        return false;
+    }
+    let Some(operands) = assertion_oracle_text(assertion_text) else {
+        return false;
+    };
+    let Some(ast::Expr::MacroExpr(invocation)) = parse_expression(&operands) else {
+        return false;
+    };
+    let Some(operands) = invocation
+        .macro_call()
+        .and_then(|call| macro_arguments(&call))
+    else {
+        return false;
+    };
+    let [operand] = operands.as_slice() else {
+        return false;
+    };
+    let Some(mut expr) = parse_expression(operand) else {
+        return false;
+    };
+    let mut negations = 0;
+    let expr = loop {
+        expr = match expr {
+            ast::Expr::ParenExpr(inner) => match inner.expr() {
+                Some(inner) => inner,
+                None => return false,
+            },
+            ast::Expr::PrefixExpr(prefix)
+                if negations == 0 && prefix.op_kind() == Some(ast::UnaryOp::Not) =>
+            {
+                negations += 1;
+                match prefix.expr() {
+                    Some(inner) => inner,
+                    None => return false,
+                }
+            }
+            other => break other,
+        };
+    };
+    let ast::Expr::FieldExpr(read) = expr else {
+        return false;
+    };
+    if read
+        .name_ref()
+        .map(|name| name.text().to_string())
+        .as_deref()
+        != Some(field)
+    {
+        return false;
+    }
+    let reader = Reader {
+        test,
+        owner,
+        kept_field: Some(field),
+    };
+    reader.inner(read.expr(), 0) == Sink::Record
+}
+
 /// The comma-separated arguments of a macro call. The split points are read
 /// from text with string, char and comment contents erased, so a comma or
 /// bracket inside a literal cannot split an argument; the arguments
@@ -722,6 +793,60 @@ mod tests {
             generated: None,
         };
         owner_field_value_flow(&test, assertion, "over", kept_field)
+    }
+
+    /// #14701: only a plain `assert!` whose whole condition is the kept field
+    /// read off the owner's record (optionally negated once) is a field pin.
+    #[test]
+    fn a_bare_assert_on_the_kept_field_is_a_field_pin() {
+        let pins = |body: &str, assertion: &str| {
+            let (_, let_bindings) = shadow_facts_for_body_text(body);
+            let test = TestSummary {
+                name: "t".to_string(),
+                body: body.to_string().into(),
+                assertions: Vec::new(),
+                file: "src/lib.rs".into(),
+                start_line: 1,
+                end_line: 1,
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::from_vec(let_bindings),
+                generated: None,
+            };
+            bool_field_assertion(&test, assertion, "over", "big")
+        };
+        for assertion in [
+            "assert!(over(10).big);",
+            "assert!(!over(9).big);",
+            "assert!(over(10).big, \"big at ten\");",
+            "assert!((over(10).big));",
+            "assert!(!(over(9).big));",
+            "assert!(over(10).clone().big);",
+            "assert!(over(10).unwrap().big);",
+        ] {
+            assert!(pins(assertion, assertion), "{assertion}");
+        }
+        let body = "let o = over(10);\nassert!(o.big);";
+        assert!(pins(body, "assert!(o.big);"));
+        for assertion in [
+            "assert!(over(10).retries);",
+            "assert!(over(10).big && ok);",
+            "assert!(over(10).big || true);",
+            "assert!(!!over(10).big);",
+            "assert!(over(10).big == true);",
+            "assert!(over(10).inner.big);",
+            "assert!(wrap(over(10)).big);",
+            "assert!(other(10).big);",
+            "assert!(over(10).big());",
+            "debug_assert!(over(10).big);",
+            "assert_eq!(over(10).big, true);",
+            "assert!(matches!(over(10), Opts { big: true, .. }));",
+            "my::assert!(over(10).big);",
+        ] {
+            assert!(!pins(assertion, assertion), "{assertion}");
+        }
     }
 
     /// #14562: with the changed field `big` kept, the owner's record reaches
