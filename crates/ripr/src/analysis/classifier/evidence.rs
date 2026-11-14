@@ -4,17 +4,18 @@ use crate::analysis::classify::{
     ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
     WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
-    assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
-    call_text_may_call_free_function, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
+    assertion_pins_pushed_collection_count, body_contains_owner_call, bool_field_assertion,
+    call_parameter_names, call_text_may_call_free_function, callee_is_unique,
+    chain_entry_pin_admits, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
     oracle_crediting_relations, outer_imported_names, owner_returns_record,
-    owner_touches_field_only_at, package_prefix, parameter_rebound,
+    owner_touches_field_only_at, package_prefix, parameter_rebound, predicate_initialized_field,
     propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
     reach_evidence, returned_array_construction_plain, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
@@ -1173,26 +1174,36 @@ impl ClassifiedProbeEvidence {
         // only once per original test, and borrow its rows instead of copying
         // them for each assertion. File/name/coordinate retain provenance.
         let wrapper_activations = RefCell::new(BTreeMap::new());
-        // #14562: the owner's source line at a predicate probe, so reveal can
-        // tell a predicate that sets one field of a returned record.
-        let predicate_source_line = matches!(context.probe.family, ProbeFamily::Predicate)
-            .then(|| {
-                let function = context
-                    .owner_fn
-                    .filter(|function| owner_returns_record(function.body.as_str()))?;
-                let offset = context
-                    .probe
-                    .location
-                    .line
-                    .checked_sub(function.start_line)?;
-                function
-                    .body
-                    .as_str()
-                    .lines()
-                    .nth(offset)
-                    .map(str::to_string)
-            })
-            .flatten();
+        // #14562, #14701: the owner's source line at a predicate or
+        // field_construction probe, so reveal can tell a change that sets one
+        // field of a returned record.
+        let predicate_source_line = matches!(
+            context.probe.family,
+            ProbeFamily::Predicate | ProbeFamily::FieldConstruction
+        )
+        .then(|| {
+            let function = context
+                .owner_fn
+                .filter(|function| owner_returns_record(function.body.as_str()))?;
+            let offset = context
+                .probe
+                .location
+                .line
+                .checked_sub(function.start_line)?;
+            function
+                .body
+                .as_str()
+                .lines()
+                .nth(offset)
+                .map(str::to_string)
+        })
+        .flatten();
+        // #14701: the record field a predicate probe sets, for the same-test
+        // pairing's bool-field pin.
+        let pairing_bool_field = predicate_source_line
+            .as_deref()
+            .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))
+            .and_then(|line| predicate_initialized_field(line, &context.probe.expression));
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1452,7 +1463,7 @@ impl ClassifiedProbeEvidence {
                 owner_returns_value: context
                     .owner_fn
                     .is_none_or(|function| function_returns_value(function.body.as_str())),
-                predicate_record_field: predicate_source_line.as_deref(),
+                record_field_line: predicate_source_line.as_deref(),
                 owner_may_exit_before_probe: context.owner_fn.is_some_and(|function| {
                     crate::analysis::classify::owner_may_exit_before_line(
                         function.body.as_str(),
@@ -1685,7 +1696,14 @@ impl ClassifiedProbeEvidence {
                             !import_defeats(test, &owner.name)
                                 && !cross_package_defeats(test, &owner.name)
                         })
-                        && owner_pin_admits(test, assertion)
+                        && (owner_pin_admits(test, assertion)
+                            // #14701: `assert!(owner(..).field)` on the field
+                            // a predicate sets pins it as reveal reads it.
+                            || pairing_bool_field.zip(context.owner_fn).is_some_and(
+                                |(field, owner)| {
+                                    bool_field_assertion(test, &assertion.text, &owner.name, field)
+                                },
+                            ))
                 },
                 // #6482: a check helper's borrowed assertion, under the
                 // same name defeats as an inline one and the owner pin's
