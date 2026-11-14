@@ -7,6 +7,7 @@
   `python_env` test fixtures are gated to `cfg(not(windows))`, the doctor
   temp-dir builder no longer needs `let mut` on Windows, and a session-end test
   matches the infallible service error instead of mapping it. The Windows-only
-  `clippy::never_loop` finding in the unindexed-member test is allowed with its
-  cfg rationale. Pre-existing clippy findings elsewhere in the workspace are
+  `clippy::never_loop` finding in the unindexed-member test has a fulfilled
+  `#[expect]` under `cfg(not(unix))` with that rationale. Pre-existing clippy
+  findings elsewhere in the workspace are
   out of scope for this change (#14649).
