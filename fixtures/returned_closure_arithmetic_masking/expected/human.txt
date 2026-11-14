@@ -46,14 +46,14 @@ No test stub here: the owner returns `impl Trait`, which cannot be compared
 Hidden:
   10 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:4 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:7 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:10 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:13 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:16 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:7 (unknown: static analysis limited); kind: return_value; reason: same as above
+    - ./src/lib.rs:10 (unknown: static analysis limited); kind: return_value; reason: same as above
+    - ./src/lib.rs:13 (unknown: static analysis limited); kind: return_value; reason: same as above
+    - ./src/lib.rs:16 (unknown: static analysis limited); kind: return_value; reason: same as above
     - ./src/lib.rs:22 (weak); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:25 (weak); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:28 (weak); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:31 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:25 (weak); kind: return_value; reason: same as above
+    - ./src/lib.rs:28 (weak); kind: return_value; reason: same as above
+    - ./src/lib.rs:31 (weak); kind: return_value; reason: same as above
     - ./src/lib.rs:34 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
   Hidden classes:
     weak = tests reach it but check it only loosely
