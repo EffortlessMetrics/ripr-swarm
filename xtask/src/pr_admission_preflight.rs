@@ -300,7 +300,7 @@ pub(crate) fn evaluate(pr: &Value, unresolved_threads: Option<u64>) -> Vec<Findi
         Some(count) => findings.push(Finding {
             gate: "review_threads",
             problem: format!("{count} unresolved review thread(s)"),
-            remediation: "reply to and resolve each thread (gh api graphql resolveReviewThread) or repair the finding".into(),
+            remediation: "reply to and resolve each thread in the PR Conversation after verifying or repairing the finding".into(),
         }),
         None => findings.push(Finding {
             gate: "review_threads",
