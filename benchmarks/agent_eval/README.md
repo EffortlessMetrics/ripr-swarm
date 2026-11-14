@@ -47,6 +47,7 @@ no timings, paths or dates; only `ripr_version` changes between builds.
 | `cli-json-terse` | `check --format json-terse` |
 | `agent-brief` | `agent brief --json` |
 | `mcp` | `initialize`, `tools/list`, `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`, then `ripr_get_gap` for each listed item that is not `exposed` |
+| `mcp-brief` | the `mcp` flow with `RIPR_MCP_TEXT_CONTENT=brief`, the opt-in text companion for hosts that read `structuredContent` (#14327) |
 
 Every route passes `--base main` (or `{"base": "main"}`) and runs in a fresh
 copy of the scenario repository, so first-run state cannot leak between routes.
@@ -105,6 +106,12 @@ Route totals are the `routes` rows at the top of `baseline.json`. What they show
   the second gap stays hidden.
 - MCP costs about 35 times the agent CLI to reach the same answer. The tool
   list alone is about 4,300 estimated tokens per session.
+- `mcp-brief` (#14327) reaches every answer for 35,267 tokens, against
+  51,878 on `mcp` (both measured on main 7f40eca6). Its rows were added to
+  `baseline.json` from that run without rewriting the other rows, so the
+  CLI and `agent-brief` drift main accumulated since the baseline stays
+  visible to `--compare`. The eight `ripr_get_gap` reads drop from 12,294 to 3,083, so the
+  fixed `tools/list` cost now dominates.
 - Loop: after the reference test, two of the five gap scenarios
   (`changed_constant_return`, `struct_field`) still end with
   `verify=refused`, so an agent following the block cannot finish.

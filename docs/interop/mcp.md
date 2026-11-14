@@ -554,7 +554,7 @@ the default and the token saver is an explicit opt-in per server process:
 |---|---|
 | unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
 | `summary` (ASCII case-insensitive, surrounding whitespace ignored) | a digest, not a copy |
-| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
+| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap (#11621); for `ripr_get_gap`, the gap's test-author facts one per line (#14327); every other tool falls back to the `summary` digest |
 
 `brief` exists because `summary` shows only counts and identities for a list, so
 a text-only host cannot tell which gap is which. A `brief` list is a header
@@ -572,6 +572,32 @@ example, an empty no-scope result from a complete one; absent fields are marked
 escaped, so a document string cannot forge a line. It is opt-in, not the
 default, for the compatibility reason below: a host that feeds only text to its
 model would lose the detail that is not in a line (evidence, discriminators).
+
+A `brief` `ripr_get_gap` (#14327) gives the facts a test author acts on, in
+the order the `check --format agent` gap row gives them:
+
+```text
+ripr gap: <class> <file>:<line> owner=<owner>. This text is a brief, not a copy: ...
+canonical_id: <canonical_id>; snapshot_id: <snapshot_id>
+changed: <before> -> <after>; probe: <probe_family>
+missing: <discriminator value> (<reason>)
+test: <name> <file>:<line> oracle=<strength> miss=<miss|none>: <oracle>
+readiness: repair_ready=<true|false> (<reason>); static_limitation: <kind|none>; source: <currentness>
+next: <recommended_next_step>
+```
+
+It lists up to three `missing` and three `test` lines. When the document holds
+more, a `+N more ... entries in structuredContent` line follows. `changed`
+falls back to the expression when `before` or `after` is absent and adds `arm
+result: <result>` when the document carries `changed_behavior.arm_result`.
+`missing` falls back to the producer's `missing` prose when no discriminator is
+listed, and says `missing: none listed` when neither exists. A gap with no
+related test says `test: none related`. An absent value is `?`, and an absent
+`next` step is left out rather than written. Observed values, evidence prose,
+causal attribution beyond the owner, and links stay in `structuredContent`
+only. Measured with `cargo xtask agent-eval` (routes `mcp` and `mcp-brief`),
+the eight `ripr_get_gap` reads across the six scenarios cost 12,294 estimated
+tokens as JSON and 3,083 as `brief`, and every scenario is still answered.
 
 Set it in the host's server `env` (for example `"env": {"RIPR_MCP_TEXT_CONTENT":
 "summary"}` beside `command` and `args`) only for a host known to read

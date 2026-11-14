@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- With the opt-in `RIPR_MCP_TEXT_CONTENT=brief`, `ripr_get_gap` text is now the gap's test-author facts, one per line, instead of a field-name digest. It gives class, location, owner, the changed expression, what no test pins (with the reason), related tests, readiness, and the next step. `structuredContent` and the default `full` text are unchanged. On `cargo xtask agent-eval`, the eight gap reads cost 3,083 estimated tokens instead of 12,294 as JSON, and the new `mcp-brief` route still answers every scenario (#14327).
