@@ -1,5 +1,5 @@
 //! Real Git input must keep the selected source's native filename and live text.
-use super::{run_command, run_git, unique_external_workspace};
+use super::{DeclaredHunkScratch, run_command, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -29,6 +29,7 @@ fn check(cwd: &Path, scope: &[&str]) -> TestResult<Value> {
 fn git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory() -> TestResult {
     for (escape, control) in [('a', '\x07'), ('b', '\x08'), ('v', '\x0b'), ('f', '\x0c')] {
         let root = unique_external_workspace(&format!("diff-selection-{escape} 'quoted'"))?;
+        let _cleanup = DeclaredHunkScratch(root.clone());
         fs::create_dir_all(root.join("src/nested directory"))?;
         let path = format!("src/byte{control}.rs");
         let mimic = format!("src/byte{escape}.rs");

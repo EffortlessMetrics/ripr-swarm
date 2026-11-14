@@ -1,5 +1,5 @@
 //! The Evidence legend is a first-run aid: later runs keep one pointer line.
-use super::{run_command, run_command_with_env, unique_external_workspace};
+use super::{DeclaredHunkScratch, run_command, run_command_with_env, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -8,8 +8,9 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const LEGEND: &str = "Stages (static evidence)";
 const POINTER: &str = "Terms: rerun with `--legend`";
 
-fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
+fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(project.clone());
     fs::create_dir_all(project.join("src"))?;
     fs::create_dir_all(project.join("tests"))?;
     fs::write(
@@ -25,7 +26,7 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
         project.join("change.diff"),
         "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price() -> u32 { 1 }\n+pub fn price() -> u32 { 2 }\n",
     )?;
-    Ok(project)
+    Ok((project, cleanup))
 }
 
 fn check(project: &Path, extra: &[&str]) -> TestResult<String> {
@@ -46,7 +47,7 @@ fn check_diff(project: &Path, diff: &str, extra: &[&str]) -> TestResult<String> 
 
 #[test]
 fn legend_prints_on_the_first_run_then_collapses_to_a_pointer() -> TestResult {
-    let project = workspace("legend-first-run")?;
+    let (project, _cleanup) = workspace("legend-first-run")?;
     let marker = project.join("target/ripr/legend-seen");
 
     let first = check(&project, &[])?;
@@ -72,7 +73,7 @@ fn legend_prints_on_the_first_run_then_collapses_to_a_pointer() -> TestResult {
 
 #[test]
 fn machine_formats_and_a_run_without_a_legend_do_not_consume_the_first_run() -> TestResult {
-    let project = workspace("legend-machine")?;
+    let (project, _cleanup) = workspace("legend-machine")?;
     let marker = project.join("target/ripr/legend-seen");
 
     check(&project, &["--format", "json"])?;
@@ -86,7 +87,7 @@ fn machine_formats_and_a_run_without_a_legend_do_not_consume_the_first_run() -> 
 
 #[test]
 fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count() -> TestResult {
-    let project = workspace("legend-forced")?;
+    let (project, _cleanup) = workspace("legend-forced")?;
     let marker = project.join("target/ripr/legend-seen");
 
     // A run with no selected finding prints no legend, so it is not a first run.
@@ -115,7 +116,7 @@ fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count(
 // refactor that moved it after that logic would record state here.
 #[test]
 fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
-    let project = workspace("legend-fanout")?;
+    let (project, _cleanup) = workspace("legend-fanout")?;
     for label in ["first", "second"] {
         let output = run_command(
             env!("CARGO_BIN_EXE_ripr"),
@@ -147,7 +148,7 @@ fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
 
 #[test]
 fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestResult {
-    let project = workspace("legend-marker-dir")?;
+    let (project, _cleanup) = workspace("legend-marker-dir")?;
     let marker = project.join("target/ripr/legend-seen");
     fs::create_dir_all(&marker)?;
     for _ in 0..2 {
@@ -164,7 +165,7 @@ fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestRes
 // root). The facts cache is redirected so the analysis itself still completes.
 #[test]
 fn an_unwritable_output_tree_shows_the_full_legend_every_run() -> TestResult {
-    let project = workspace("legend-unwritable")?;
+    let (project, _cleanup) = workspace("legend-unwritable")?;
     fs::create_dir_all(project.join("target"))?;
     fs::write(project.join("target/ripr"), b"not a directory")?;
     let cache = project.join("external-cache");
@@ -195,6 +196,7 @@ fn an_unwritable_output_tree_shows_the_full_legend_every_run() -> TestResult {
 #[test]
 fn a_root_named_like_one_legend_line_does_not_count_as_a_displayed_legend() -> TestResult {
     let base = unique_external_workspace("legend-spoof-root")?;
+    let _cleanup = DeclaredHunkScratch(base.clone());
     let root = base.join("n\n    Stages (static evidence): reach = ");
     fs::create_dir_all(root.join("src"))?;
     fs::write(

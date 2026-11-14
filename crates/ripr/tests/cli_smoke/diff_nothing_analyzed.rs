@@ -1,7 +1,7 @@
 //! A non-empty unparseable `--diff` maps to `unsupported_input`, so the agent
 //! and github formats take the incomplete-analysis path and never report a
 //! clean result (#13658). The empty-diff `no_scope` case is pinned elsewhere.
-use super::{run_command, unique_external_workspace};
+use super::{DeclaredHunkScratch, run_command, unique_external_workspace};
 use std::fs;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -9,6 +9,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn unparseable_diff_routes_to_incomplete_analysis_not_a_clean_result() -> TestResult {
     let root = unique_external_workspace("diff-unparseable-routing")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     fs::create_dir_all(&root)?;
     let diff = root.join("garbage.diff");
     fs::write(&diff, "this is not a diff\n")?;
@@ -47,6 +48,7 @@ fn unparseable_diff_routes_to_incomplete_analysis_not_a_clean_result() -> TestRe
 #[test]
 fn docs_only_diff_is_not_reported_clean_on_stdout() -> TestResult {
     let root = unique_external_workspace("diff-docs-only")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
     fs::create_dir_all(&root)?;
     let diff = root.join("docs.diff");
     fs::write(
