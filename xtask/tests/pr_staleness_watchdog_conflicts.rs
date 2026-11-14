@@ -555,8 +555,12 @@ fn a_head_pushed_since_the_list_call_is_left_for_the_next_sweep() -> Result<(), 
 }
 
 #[test]
-fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(), String> {
-    // The first read is "unknown" (the base just moved); the retry sees the conflict.
+fn a_head_whose_mergeability_is_unreadable_is_deferred_not_retried() -> Result<(), String> {
+    // The sweep reads mergeability once. Retrying in-sweep cost 10 s of sleep per
+    // unreadable head and alone exceeded the job cap once 63 of 102 eligible heads
+    // were queued and stayed `unknown` (#14636); GitHub does not resolve mergeability
+    // for a queued head. The next sweep re-reads them, so each sweep defers a head at
+    // most once per interval, not a resolution bound.
     let lazy = Pr {
         state: "unknown",
         later_state: Some("dirty"),
@@ -564,11 +568,30 @@ fn a_head_whose_mergeability_is_still_being_computed_is_read_again() -> Result<(
     };
     let outcome = run(&[lazy], "lazy")?;
     assert_eq!(
-        (outcome.comments, outcome.failures),
-        (1, 1),
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
         "{}",
         outcome.summary
     );
+    assert!(
+        outcome.summary.contains("mergeability unreadable"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("Unreadable mergeability: 1 head(s) deferred to the next sweep"),
+        "{}",
+        outcome.summary
+    );
+    // One live read per head: the in-sweep retry loop is gone.
+    let reads = outcome
+        .log
+        .lines()
+        .filter(|line| line.contains("/pulls/16 "))
+        .count();
+    assert_eq!(reads, 1, "{}", outcome.log);
     Ok(())
 }
 
@@ -606,6 +629,48 @@ fn a_clean_head_pushed_after_the_label_is_told_once_to_re_apply_it() -> Result<(
     assert!(
         outcome.summary.contains("re-apply notice already posted")
             && outcome.summary.contains("re-apply notices: 0"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+#[test]
+fn an_in_flight_head_with_unreadable_mergeability_keeps_the_unreadability_note()
+-> Result<(), String> {
+    // A freshly pushed head can start a qualification while its first mergeability
+    // read is still unknown. The row must keep the in-flight instruction and the
+    // per-head unreadability classification the header and AC3 promise (#14636).
+    let in_flight = Pr {
+        state: "unknown",
+        in_flight: true,
+        ..Pr::dirty(980)
+    };
+    let outcome = run(&[in_flight], "in-flight-unreadable")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures, outcome.successes),
+        (0, 0, 0),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome.summary.contains(
+            "in flight (1 merge-ready run(s) not yet at result; do not re-apply the label)"
+        ),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("mergeability unreadable, conflict status unavailable"),
+        "{}",
+        outcome.summary
+    );
+    assert!(
+        outcome
+            .summary
+            .contains("in-flight qualifications: 1; dark merge-ready heads reported: 0"),
         "{}",
         outcome.summary
     );

@@ -46,6 +46,23 @@ name: PR Staleness Watchdog
 #   fork PRs (head repo != this repository) are skipped, matching
 #   routed-rust.yml's own untrusted-PR guard.
 #
+# - Mergeability is read once per head, never retried in-sweep (#14636).
+#   `mergeable_state` is not resolved for heads in the merge queue: a queued
+#   head reads `unknown` on repeated polls, so an in-sweep retry spent 10 s of
+#   sleep per queued head and alone exceeded the job cap once 63 of 102
+#   eligible heads were queued. A non-queued head that reads `unknown` is the
+#   lazy first read after a base push and resolves on its own, so the next
+#   sweep sees it. A head whose mergeability is still unreadable is classified
+#   `mergeability unreadable`, counted in the sweep summary, and re-read by the
+#   next sweep, so each sweep defers a head at most once per interval.
+#   Conflict detection needs `mergeable_state == "dirty"`, so **conflict
+#   notices are unavailable for those heads** — and a queued head is the worst
+#   place to lose that signal, because it is about to merge. The summary says
+#   so per head and in its totals, and no conflict is implied to be covered.
+#   The queue's own `removed_from_merge_queue` event with
+#   `reason=merge_conflict` is the only signal that exists for a queued head;
+#   watching it is a separate change, not part of this one.
+#
 # - The one write is the conflict report (#10136). A merge-ready PR that is
 #   `dirty` and whose head has no `merge-ready conflict` failure from this
 #   repository's actions bot gets one comment per head and base plus that failing
@@ -115,20 +132,19 @@ jobs:
             echo ""
             echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress merge-ready"
             echo "routed-rust.yml run on a merge-ready PR head SHA (#4937, #4986). In flight = the run exists"
-            echo "but has not reached its result job yet; leave it alone."
-            echo "This sweep never dispatches. Dark-head remedy: 1. remove and re-apply merge-ready"
-            echo "to request admission and qualification only; 2. after green qualification, enqueue"
-            echo "through the native queue route. For a conflict, first merge main into the branch and"
-            echo "resolve it (#7079): a dirty PR has no merge ref or pull_request run. Then do 1 and 2."
+            echo "but has not reached its result job yet; leave it alone. This sweep never dispatches;"
+            echo "dark-head remedy: remove and re-apply merge-ready to request admission and qualification,"
+            echo "then enqueue through the native queue route. For a conflict, merge main in first (#7079)."
+            echo "Mergeability is read once per head; a queued head reads \`unknown\` on every poll, so it is"
+            echo "counted as unreadable and conflict notices are unavailable for it (#14636)."
             echo ""
             echo "| PR | head | mergeable_state | disposition |"
             echo "| --- | --- | --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # A conflicting PR has no merge ref, so no pull_request run can exist for it
-          # (#9842, #10136). The label-event workflow tells a PR once at request time;
-          # this sweep tells the ones it could not reach and clears its own failure
-          # when the conflict is gone. Same marker and context, so they never double up.
+          # A conflicting PR has no merge ref, so no pull_request run can exist for it (#9842, #10136).
+          # The label-event workflow tells a PR once at request time; this sweep tells the ones it
+          # could not reach and clears its own failure when the conflict is gone.
           ours_state() {
             gh api "repos/$REPOSITORY/commits/$1/statuses?per_page=100" --jq '[.[] | select(.context == "merge-ready conflict" and .creator.login == "github-actions[bot]")][0].state // "none"'
           }
@@ -198,11 +214,11 @@ jobs:
           \`merge-ready\` is set, but $cause. 1. Remove and re-apply \`merge-ready\` to request admission and qualification only. 2. After qualification is green, enqueue the PR through the native queue route; re-applying the label does not enqueue it." > /dev/null
           }
 
-          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0
+          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0 unreadable=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref updated_at; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
-            mergeable_state="n/a" dark_kind="" dark_counted=0 in_flight_counted=0
+            mergeable_state="n/a" dark_kind="" dark_counted=0 in_flight_counted=0 unreadable_note=""
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
               [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
@@ -212,28 +228,27 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              # mergeable_state is computed lazily and reset whenever the base moves, so
-              # the first read of a quiet PR is often "unknown"; that read starts the work.
-              for _ in 1 2 3; do
-                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
-                read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
-                [ "$mergeable_state" != "unknown" ] && break
-                sleep 5
-              done
+              # mergeable_state is not resolved for queued heads and resets when the base moves, so a
+              # head can read "unknown". Read once and defer: an in-sweep retry cost 10 s per
+              # unreadable head, which alone exceeded the job cap once 63 heads stayed unknown (#14636).
+              live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
+              read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
               # Eligibility can be withdrawn after the list snapshot. Use the same
               # live read as mergeability, without adding a per-PR API request.
               if [ "$live_state" != "open" ] || [ "$live_draft" != "false" ] || [ "$live_requested" != "true" ] || [ "$live_repo" != "$REPOSITORY" ]; then
                 echo "| #$number | \`$head_sha\` | \`$mergeable_state\` | skip: request withdrawn since listing |" >> "$GITHUB_STEP_SUMMARY"
                 continue
               fi
+              # Counted only for heads this sweep defers, not an ineligible one that read unknown.
+              [ "$mergeable_state" = "unknown" ] && { unreadable=$((unreadable + 1)); unreadable_note="; mergeability unreadable, conflict status unavailable"; }
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
-                disposition="covered ($count required check(s) on head)"
+                disposition="covered ($count required check(s) on head)$unreadable_note"
               else
                 in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
                 if [ "$in_flight" != "0" ]; then
                   in_progress=$((in_progress + 1)); in_flight_counted=1
-                  disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)"
+                  disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)$unreadable_note"
                 elif [ "$mergeable_state" = "dirty" ]; then
                   dark=$((dark + 1)); dark_counted=1
                   disposition="DARK (conflicted); merge main into \`$head_ref\`, re-apply merge-ready for qualification, then enqueue through the native queue route"
@@ -241,9 +256,10 @@ jobs:
                 else
                   dark=$((dark + 1)); dark_counted=1
                   # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
+                  # An unreadable head may be a conflict, so neither the row nor the warning may blame a push (#14636).
                   [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
-                  disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)"
-                  echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."
+                  if [ "$mergeable_state" = "unknown" ]; then disposition="deferred to the next sweep; check mergeability before re-applying merge-ready (\`$head_ref\`)$unreadable_note"; else disposition="DARK; re-apply merge-ready for qualification, then enqueue through the native queue route (\`$head_ref\`)$unreadable_note"; fi
+                  if [ "$mergeable_state" = "unknown" ]; then echo "::warning title=Unreadable merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run, and its mergeability is unreadable; the next sweep re-reads it, so check mergeability before re-applying merge-ready."; else echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply merge-ready for qualification, then enqueue through the native queue route after qualification is green."; fi
                 fi
               fi
               ours="$(ours_state "$head_sha")"
@@ -281,7 +297,7 @@ jobs:
                 case "$status" in
                   0) told=$((told + 1)); disposition="$disposition; re-apply notice posted" ;;
                   2) disposition="$disposition; re-apply notice already posted" ;;
-                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)" ;;
+                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)$unreadable_note" ;;
                   4) dark=$((dark - 1)); disposition="skip: request withdrawn or moved before write" ;;
                   *) disposition="$disposition; re-apply notice failed" ;;
                 esac
@@ -292,3 +308,5 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared; re-apply notices: $told." >> "$GITHUB_STEP_SUMMARY"
+          echo "Unreadable mergeability: $unreadable head(s) deferred to the next sweep; conflict notices are unavailable for them (#14636)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Watchdog sweep totals::scanned=$scanned in_flight=$in_progress dark=$dark unreadable=$unreadable conflicts_reported=$reported cleared=$cleared reapply_notices=$told"
