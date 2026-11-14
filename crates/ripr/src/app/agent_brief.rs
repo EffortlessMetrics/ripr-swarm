@@ -1635,7 +1635,6 @@ mod tests {
     fn producer_return_err_twins_fold_in_both_selection_paths() -> Result<(), String> {
         // #14708 review: build the twins through the producer, not by hand,
         // and check that the fold fires on the shapes it actually stores.
-        use crate::analysis::ScopedEvidenceConsumer;
         let source = "pub enum NameError {\n    Empty,\n    TooLong,\n}\n\npub fn parse_name(raw: &str) -> Result<String, NameError> {\n    if raw.is_empty() {\n        return Err(NameError::Empty);\n    }\n    if raw.len() > 10 {\n        return Err(NameError::TooLong);\n    }\n    Ok(raw.to_string())\n}\n";
         let entries: Vec<ClassifiedSeam> = produced_seams(source, SeamGripClass::WeaklyGripped)?
             .into_iter()
