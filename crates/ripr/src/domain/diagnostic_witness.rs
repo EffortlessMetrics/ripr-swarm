@@ -535,6 +535,15 @@ mod tests {
             RelatedTestMiss::NoCallPath,
         );
         assert_eq!(fix_test(&no_call).as_deref(), Some("accepts_short_names"));
+        // Reach leads (#5335): a direct caller whose assertion pins only the
+        // success arm still outranks an observing row that is linked only by
+        // the owner's name, because that row may never run the change.
+        let mut reach = finding.clone();
+        reach.related_tests[0].relation_reason =
+            Some(crate::domain::RelationReason::DirectOwnerCall);
+        reach.related_tests[1].relation_reason =
+            Some(crate::domain::RelationReason::OwnerNamedTest);
+        assert_eq!(fix_test(&reach).as_deref(), Some("accepts_short_names"));
         finding.related_tests[0].miss = Some(RelatedTestMiss::MissingExactAssertion);
         assert_eq!(fix_test(&finding).as_deref(), Some("accepts_short_names"));
     }
