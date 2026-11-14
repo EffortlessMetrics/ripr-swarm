@@ -411,12 +411,16 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         let text = read_to_string(&dir);
         let bytes = read_with_limit(&dir, MAX_CLI_INPUT_BYTES);
+        #[cfg(windows)]
+        let open_kind = std::fs::File::open(&dir).err().map(|err| err.kind());
         let _ = std::fs::remove_dir(&dir);
         let err = text.err().ok_or("a directory must not read as text")?;
         // Unix opens a directory and refuses it after; Windows keeps the
         // `PermissionDenied` its open returns. The text is the same on both.
         #[cfg(unix)]
         assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
+        #[cfg(windows)]
+        assert_eq!(Some(err.kind()), open_kind);
         assert_eq!(
             err.to_string(),
             "is a directory, not a file; pass the path of a file"
