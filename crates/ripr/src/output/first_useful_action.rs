@@ -128,15 +128,16 @@ fn read_error_report(
     generated_at: &str,
 ) -> Option<FirstUsefulActionReport> {
     let (label, path) = parsed.read_errors.first()?;
-    let mut warnings = Vec::new();
-    warnings.push(format!("missing required artifact: {path}"));
+    // Every read error already carries its own warning naming the input,
+    // its path and the cause. A second `missing required artifact` line
+    // would call a supplied optional input both missing and required.
     Some(missing_required_report(
         input,
         inputs,
         generated_at,
         MissingRequired::for_input_label(label),
         path,
-        warnings,
+        Vec::new(),
     ))
 }
 

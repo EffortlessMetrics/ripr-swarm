@@ -140,13 +140,39 @@ pub(crate) fn read_with_limit(path: impl AsRef<Path>, limit: u64) -> std::io::Re
 /// Open `path`, rejecting a regular file whose reported length already
 /// exceeds `limit` without reading it. This is only a fast path: devices and
 /// FIFOs report length 0, so the read itself stays capped.
+///
+/// A directory is refused with [`directory_error`] instead of the host's
+/// read errno, which differs by platform (`Is a directory (os error 21)` on
+/// Unix from the read, `Access is denied. (os error 5)` on Windows from the
+/// open) and tells the user nothing about what to pass instead.
 fn open_within_limit(path: &Path, limit: u64) -> std::io::Result<std::fs::File> {
-    let file = std::fs::File::open(path)?;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if path.is_dir() => {
+            drop(err);
+            return Err(directory_error());
+        }
+        Err(err) => return Err(err),
+    };
     let metadata = file.metadata()?;
+    if metadata.is_dir() {
+        return Err(directory_error());
+    }
     if metadata.is_file() && metadata.len() > limit {
         return Err(oversize_error(limit));
     }
     Ok(file)
+}
+
+/// Plain, platform-independent cause for a directory named where a file
+/// belongs. Callers prefix the flag or path, so this names only the cause and
+/// the fix. The kind stays [`std::io::ErrorKind::IsADirectory`] so a caller
+/// that branches on the kind keeps working.
+pub(crate) fn directory_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::IsADirectory,
+        "is a directory, not a file; pass the path of a file",
+    )
 }
 
 pub(crate) fn read_reader_to_string_with_limit(
@@ -372,6 +398,30 @@ mod tests {
         let path = temp_file("required-ok", b"{}")?;
         let text = read_required_input("read baseline create source", &path, None)?;
         assert_eq!(text, "{}");
+        Ok(())
+    }
+
+    #[test]
+    fn directory_input_names_the_cause_without_the_host_errno() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-bounded-input-dir-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let text = read_to_string(&dir);
+        let bytes = read_with_limit(&dir, MAX_CLI_INPUT_BYTES);
+        let _ = std::fs::remove_dir(&dir);
+        let err = text.err().ok_or("a directory must not read as text")?;
+        assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
+        assert_eq!(
+            err.to_string(),
+            "is a directory, not a file; pass the path of a file"
+        );
+        assert_eq!(read_failure_detail(&err), err.to_string());
+        let err = bytes.err().ok_or("a directory must not read as bytes")?;
+        assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
+        assert!(!err.to_string().contains("os error"), "{err}");
         Ok(())
     }
 
