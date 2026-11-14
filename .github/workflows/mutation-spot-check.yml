@@ -162,7 +162,7 @@ jobs:
           while IFS=$'\t' read -r name url rev; do
             marker=$(find "$RUNNER_TEMP/legs/spot-$name" -type f -name LEG_COMPLETE 2>/dev/null | head -n 1 || true)
             out="${marker:+$(dirname "$marker")/mutants.out}"
-            if [ -z "$marker" ] || [ ! -s "$out/outcomes.json" ] || [ ! -s "$out/mutants.json" ]; then echo "::warning::incomplete or missing leg for $name; not scored"; continue; fi
+            if [ -z "$marker" ] || [ ! -s "$out/outcomes.json" ] || [ ! -s "$out/mutants.json" ]; then echo "::warning::incomplete or missing leg for $name; recorded as leg_incomplete in the receipt"; printf '%s\n' --limitation "$name=leg_incomplete" >> "$RUNNER_TEMP/score-args"; continue; fi
             git init -q "$corpus/$name"
             git -C "$corpus/$name" remote add origin "$url"
             git -C "$corpus/$name" fetch -q --depth 1 origin "$rev"

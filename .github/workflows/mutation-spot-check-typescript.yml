@@ -71,7 +71,35 @@ jobs:
               printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
             fi
           done
-          [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no Stryker report was produced"; exit 1; }
+
+      - name: Validate and retain the Stryker reports
+        # Per-package failures become receipt limitations; the final step is red.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          score_status="$reports/typescript-stryker-score-status.tsv"
+          mkdir -p "$reports/stryker-raw"
+          : > "$score_status"; : > "$RUNNER_TEMP/xtask-args"
+          for name in $(jq -r '.packages[].name' benchmarks/mutation_spot_check/corpus-typescript.json); do
+            report="$RUNNER_TEMP/corpus/$name/reports/mutation/mutation.json"
+            score_rc=0
+            if [ ! -f "$report" ]; then
+              score_rc=1
+            else
+              cp "$report" "$reports/stryker-raw/$name.json"
+              cargo xtask mutation-spot-check --validate-stryker-report "$report" || score_rc=$?
+            fi
+            printf '%s\t%s\n' "$name" "$score_rc" >> "$score_status"
+            if [ "$score_rc" -eq 0 ]; then
+              printf -- '--repo %s=%s --stryker-report %s=%s ' "$name" "$RUNNER_TEMP/corpus/$name" "$name" "$report" >> "$RUNNER_TEMP/xtask-args"
+            elif [ -f "$report" ]; then
+              printf -- '--limitation %s=invalid_stryker_report ' "$name" >> "$RUNNER_TEMP/xtask-args"
+            else
+              printf -- '--limitation %s=missing_stryker_report ' "$name" >> "$RUNNER_TEMP/xtask-args"
+            fi
+          done
 
       - name: Score ripr against the Stryker outcomes
         # Advisory lane: a scoring failure must not hide the receipt upload;
@@ -89,6 +117,8 @@ jobs:
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
             target/ripr/reports/typescript-stryker-status.tsv
+            target/ripr/reports/typescript-stryker-score-status.tsv
+            target/ripr/reports/stryker-raw/*.json
           if-no-files-found: error
 
       - name: Fail when the receipt is missing or a package failed
@@ -96,7 +126,11 @@ jobs:
         shell: bash
         run: |
           status=target/ripr/reports/typescript-stryker-status.tsv
+          score_status=target/ripr/reports/typescript-stryker-score-status.tsv
           [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
           [ -f "$status" ] || { echo "no per-package Stryker status was recorded"; exit 1; }
           bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
           [ -z "$bad" ] || { echo "Stryker or setup failed for: $bad"; exit 1; }
+          [ -f "$score_status" ] || { echo "no per-package Stryker score status was recorded"; exit 1; }
+          unscored=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$score_status")
+          [ -z "$unscored" ] || { echo "Stryker report validation failed for: $unscored; the receipt names these limitations"; exit 1; }
