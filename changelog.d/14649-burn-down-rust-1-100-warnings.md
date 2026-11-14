@@ -1,9 +1,12 @@
 <!-- section: Internal / CI -->
 - The workspace builds warning-free on both the pinned toolchain and current
-  stable: the duplicated `homepage` manifest field is gone, `repo-policy`'s
-  `libc` dependency is Linux-only, and the `/proc/self/mountinfo`, symlink and
-  Python-venv test helpers are gated to the platforms that use them, so rustc
-  1.100 reports 0 warnings across `--workspace --all-targets` (#14649). The
-  Windows-only `never_loop` clippy finding in the unindexed-member test is
-  allowed with its cfg rationale, so `cargo clippy --workspace --all-targets`
-  is clean on Windows as well.
+  stable. The duplicated `homepage` manifest field is gone, because cargo 1.100
+  warns with `redundant_homepage` when it repeats `repository`; `docs/RELEASE.md`
+  and `docs/PUBLISHING.md` now state that invariant instead of requiring the
+  field. `repo-policy`'s `libc` dependency moved to its Linux target table, the
+  `python_env` test fixtures are gated to `cfg(not(windows))`, the doctor
+  temp-dir builder no longer needs `let mut` on Windows, and a session-end test
+  matches the infallible service error instead of mapping it. The Windows-only
+  `clippy::never_loop` finding in the unindexed-member test is allowed with its
+  cfg rationale. Pre-existing clippy findings elsewhere in the workspace are
+  out of scope for this change (#14649).
