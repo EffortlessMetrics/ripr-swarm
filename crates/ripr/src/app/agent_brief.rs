@@ -352,6 +352,10 @@ pub(crate) fn select_agent_brief_seams<'a>(
     direct
         .candidates
         .sort_by(|left, right| compare_selected(left, right, policy));
+    let folded = fold_return_value_twins(&mut direct.candidates);
+    if let Some(warning) = folded_twin_warning(folded) {
+        warnings.push(warning);
+    }
     let omitted_by_cap = direct.candidates.len().saturating_sub(max_seams);
     if omitted_by_cap > 0 {
         warnings.push(format!(
@@ -372,6 +376,72 @@ pub(crate) fn select_agent_brief_seams<'a>(
         omitted_by_policy: direct.omitted_by_policy,
         omitted_static_limited: direct.omitted_static_limited,
     }
+}
+
+/// #14702: on a changed `return Err(..)` line the analyzer emits a
+/// `return_value` seam and an `error_variant` seam over the same expression.
+/// The brief shows the error-variant seam and folds its return-value twin, so
+/// the twin neither spends a brief slot nor counts as a seam omitted by the cap.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum TwinRole {
+    ErrorVariant,
+    ReturnValue,
+}
+
+/// The fold identity of a seam: its role and a key naming file, line and
+/// expression. Seams of other kinds never fold.
+pub(super) fn twin_key(seam: &RepoSeam) -> Option<(TwinRole, String)> {
+    let (role, expression) = match seam.kind() {
+        SeamKind::ErrorVariant => (TwinRole::ErrorVariant, seam.expression().trim()),
+        SeamKind::ReturnValue => {
+            let expression = seam.expression().trim();
+            let expression = expression.strip_suffix(';').unwrap_or(expression);
+            let expression = expression.strip_prefix("return ")?.trim();
+            if !expression.starts_with("Err(") {
+                return None;
+            }
+            (TwinRole::ReturnValue, expression)
+        }
+        _ => return None,
+    };
+    if expression.is_empty() {
+        return None;
+    }
+    Some((
+        role,
+        format!(
+            "{}\n{}\n{}",
+            normalized_path(seam.file()),
+            seam.display_line(),
+            expression
+        ),
+    ))
+}
+
+fn fold_return_value_twins(candidates: &mut Vec<AgentBriefSelectedSeam<'_>>) -> usize {
+    let error_variants: std::collections::BTreeSet<String> = candidates
+        .iter()
+        .filter_map(|candidate| match twin_key(&candidate.seam.seam) {
+            Some((TwinRole::ErrorVariant, key)) => Some(key),
+            _ => None,
+        })
+        .collect();
+    let before = candidates.len();
+    candidates.retain(|candidate| {
+        !matches!(
+            twin_key(&candidate.seam.seam),
+            Some((TwinRole::ReturnValue, key)) if error_variants.contains(&key)
+        )
+    });
+    before - candidates.len()
+}
+
+pub(super) fn folded_twin_warning(folded: usize) -> Option<String> {
+    (folded > 0).then(|| {
+        format!(
+            "{folded} return_value seams were folded into the error_variant seam on the same line"
+        )
+    })
 }
 
 fn normalize_requested_max(requested: usize) -> usize {
@@ -1261,6 +1331,266 @@ mod tests {
                     right.seam.id().as_str()
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn twin_seam(
+        line: usize,
+        kind: SeamKind,
+        expression: &str,
+        class: SeamGripClass,
+    ) -> ClassifiedSeam {
+        let mut entry = classified("src/lib.rs", line, "names::parse_name", expression, class);
+        entry.seam = RepoSeam::new(
+            "src/lib.rs",
+            "names::parse_name",
+            kind,
+            line * 10,
+            line,
+            expression,
+            RequiredDiscriminator::BoundaryValue {
+                description: expression.to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry
+    }
+
+    fn permutations(len: usize) -> Vec<Vec<usize>> {
+        if len == 0 {
+            return vec![Vec::new()];
+        }
+        let mut all = Vec::new();
+        for rest in permutations(len - 1) {
+            for at in 0..=rest.len() {
+                let mut order = rest.clone();
+                order.insert(at, len - 1);
+                all.push(order);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn complete_brief_folds_return_value_twin_into_same_line_error_variant() -> Result<(), String> {
+        // #14702: the error_variant scenario's shape. Two changed `return
+        // Err(..)` lines each yield both seam kinds; the twins must not spend
+        // the cap of 3 and push the other changed seam out.
+        let entries = vec![
+            twin_seam(
+                12,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                12,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                9,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty);",
+                SeamGripClass::WeaklyGripped,
+            ),
+            twin_seam(
+                9,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            // Not a twin: a different expression on the same line stays.
+            twin_seam(
+                9,
+                SeamKind::ReturnValue,
+                "return Err(NameError::TooLong)",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let selected = select(&entries, &working_set, 3);
+        let shown = selected
+            .top_seams
+            .iter()
+            .map(|entry| (entry.seam.seam.kind(), entry.seam.seam.display_line()))
+            .collect::<Vec<_>>();
+        if shown
+            != [
+                (SeamKind::ErrorVariant, 9),
+                (SeamKind::ReturnValue, 9),
+                (SeamKind::ErrorVariant, 12),
+            ]
+        {
+            return Err(format!("folded brief shows {shown:?}"));
+        }
+        let kept_other = selected
+            .top_seams
+            .iter()
+            .any(|entry| entry.seam.seam.expression() == "return Err(NameError::TooLong)");
+        if !kept_other || selected.omitted_by_cap != 0 {
+            return Err(format!(
+                "a non-twin seam must stay visible and folds must not count as capped: {:?}",
+                selected.warnings
+            ));
+        }
+        if !selected.warnings.iter().any(|warning| {
+            warning
+                == "2 return_value seams were folded into the error_variant seam on the same line"
+        }) {
+            return Err(format!("missing fold warning: {:?}", selected.warnings));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streamed_brief_folds_twins_like_complete_brief_in_every_arrival_order() -> Result<(), String>
+    {
+        // #14702: the streamed path must match the complete path whichever
+        // twin arrives first, including when the return-value twin ranks
+        // above the cap and its error-variant twin ranks below another seam:
+        // the seam between them must survive retention.
+        use crate::analysis::ScopedEvidenceConsumer;
+        let config = RiprConfig::default();
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let entries = vec![
+            twin_seam(
+                12,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Empty)",
+                SeamGripClass::WeaklyGripped,
+            ),
+            classified(
+                "src/lib.rs",
+                5,
+                "names::parse_name",
+                "len > 10",
+                SeamGripClass::Ungripped,
+            ),
+            twin_seam(
+                12,
+                SeamKind::ErrorVariant,
+                "Err(NameError::Empty)",
+                SeamGripClass::ReachableUnrevealed,
+            ),
+            twin_seam(
+                20,
+                SeamKind::ReturnValue,
+                "return Err(NameError::Lone)",
+                SeamGripClass::ReachableUnrevealed,
+            ),
+        ];
+        for limit in [1, 2, 3, 10] {
+            let expected = select(&entries, &working_set, limit);
+            if limit == 1 && selected_ids(&expected) != [entries[1].seam.id().as_str().to_string()]
+            {
+                return Err(format!(
+                    "complete brief at cap 1 shows {:?}",
+                    selected_ids(&expected)
+                ));
+            }
+            for order in permutations(entries.len()) {
+                let mut actual = BoundedAgentBrief::new(
+                    &working_set,
+                    limit,
+                    AgentBriefPolicy::from_config(&config),
+                )?;
+                for &ordinal in &order {
+                    actual.observe(ordinal, entries[ordinal].clone())?;
+                    if actual.retained_payloads() > 2 * limit {
+                        return Err(format!(
+                            "cap {limit} retained {}",
+                            actual.retained_payloads()
+                        ));
+                    }
+                }
+                let selected = actual.selection()?;
+                if selected_ids(&selected) != selected_ids(&expected)
+                    || selected.warnings != expected.warnings
+                    || selected.omitted_by_cap != expected.omitted_by_cap
+                    || selected.returned != expected.returned
+                {
+                    return Err(format!(
+                        "cap {limit} order {order:?}: streamed {:?} {:?} vs complete {:?} {:?}",
+                        selected_ids(&selected),
+                        selected.warnings,
+                        selected_ids(&expected),
+                        expected.warnings
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streamed_brief_bounds_twin_retention_and_says_when_it_overflowed() -> Result<(), String> {
+        // #14702 review: unmatched return-value twins must not grow payload
+        // retention without bound. Past twice the cap the streamed selection
+        // drops seams and must say a lower-ranked seam may be missing.
+        use crate::analysis::ScopedEvidenceConsumer;
+        let config = RiprConfig::default();
+        let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let mut entries = (0..3)
+            .map(|i| {
+                twin_seam(
+                    10 + i,
+                    SeamKind::ReturnValue,
+                    &format!("return Err(NameError::Case{i})"),
+                    SeamGripClass::WeaklyGripped,
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.push(classified(
+            "src/lib.rs",
+            5,
+            "names::parse_name",
+            "len > 10",
+            SeamGripClass::Ungripped,
+        ));
+        entries.extend((0..3).map(|i| {
+            twin_seam(
+                10 + i,
+                SeamKind::ErrorVariant,
+                &format!("Err(NameError::Case{i})"),
+                SeamGripClass::ReachableUnrevealed,
+            )
+        }));
+        let overflow_warning = "streamed selection dropped seams past its retention bound before \
+             return_value twins folded; lower-ranked visible seams may be missing from this brief";
+        let expected = select(&entries, &working_set, 1);
+        let mut actual =
+            BoundedAgentBrief::new(&working_set, 1, AgentBriefPolicy::from_config(&config))?;
+        for (ordinal, entry) in entries.iter().enumerate() {
+            actual.observe(ordinal, entry.clone())?;
+            if actual.retained_payloads() > 2 {
+                return Err(format!(
+                    "retained {} payloads at cap 1",
+                    actual.retained_payloads()
+                ));
+            }
+        }
+        let selected = actual.selection()?;
+        if selected_ids(&expected) != [entries[3].seam.id().as_str().to_string()]
+            || selected_ids(&selected) == selected_ids(&expected)
+            || !selected
+                .warnings
+                .iter()
+                .any(|warning| warning == overflow_warning)
+            || expected
+                .warnings
+                .iter()
+                .any(|warning| warning == overflow_warning)
+        {
+            return Err(format!(
+                "streamed {:?} {:?} vs complete {:?} {:?}",
+                selected_ids(&selected),
+                selected.warnings,
+                selected_ids(&expected),
+                expected.warnings
+            ));
         }
         Ok(())
     }
