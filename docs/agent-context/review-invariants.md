@@ -128,6 +128,10 @@ For Droid workflows:
 - The scheduled security scan must run on a GitHub-hosted runner
   (`runs-on: ubuntu-latest`). A job pinned to an unavailable self-hosted runner
   group queues for 24 hours and is cancelled without running a step (#14641).
+- The scheduled security scan passes the job's own `GITHUB_TOKEN` to the Droid
+  action (`github_token: ${{ secrets.GITHUB_TOKEN }}`) instead of granting
+  `id-token: write`. The token carries exactly the job-level permissions and
+  dies with the job; the OIDC path stays dropped under #2498.
 - These invariants, including scheduled security-scan shape and explicit `show_full_output: false`, are enforced by `cargo xtask check-droid-review-config`.
 
 ## Automatic review retirement

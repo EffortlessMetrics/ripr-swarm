@@ -82,6 +82,11 @@ jobs:
           ANTHROPIC_BASE_URL: ""
         with:
           factory_api_key: ${{ secrets.FACTORY_API_KEY }}
+          # Use the job's own GITHUB_TOKEN: it carries exactly the permissions
+          # declared at job level and dies with the job. The action's OIDC token
+          # path is intentionally not granted (id-token: write stays dropped
+          # under #2498), so the token override is the supported setup route.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7

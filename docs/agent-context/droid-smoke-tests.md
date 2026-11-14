@@ -29,6 +29,9 @@ Triggers:
 - weekly Monday 08:00 UTC schedule
 
 Expected:
+- the job runs on a GitHub-hosted `ubuntu-latest` runner;
+- token setup uses the job's own `GITHUB_TOKEN` (`github_token:` input), not an
+  OIDC token; `id-token: write` stays dropped under #2498;
 - scan uses `custom:MiniMax-M3-0`;
 - scan window is 7 days;
 - severity threshold is `medium`;
