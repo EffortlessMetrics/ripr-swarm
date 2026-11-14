@@ -587,7 +587,11 @@ next: <recommended_next_step>
 ```
 
 It lists up to three `missing` and three `test` lines. When the document holds
-more, a `+N more ... entries in structuredContent` line follows. `changed`
+more, a `+N more ... entries in structuredContent` line follows. When
+`related_tests_total` counts more matches than the document retained, a
+separate `+N more related tests matched but not retained in this document` line
+says so, because those tests are not in `structuredContent` either. A test
+with no oracle reads `none` after its colon. `changed`
 falls back to the expression when `before` or `after` is absent and adds `arm
 result: <result>` when the document carries `changed_behavior.arm_result`.
 `missing` falls back to the producer's `missing` prose when no discriminator is

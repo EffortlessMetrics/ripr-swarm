@@ -691,7 +691,7 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
             number(test.get("line")),
             text(test.get("oracle_strength")),
             nullable(test.get("miss")),
-            text(test.get("oracle")),
+            nullable(test.get("oracle")),
         ));
     }
     let stated_total = item
@@ -714,8 +714,16 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
         &mut lines,
         "test",
         tests.len().min(GAP_BRIEF_LISTED),
-        tests_total,
+        tests.len(),
     );
+    // The producer's count can exceed the retained rows; those matches are
+    // not in `structuredContent` either, so say so instead of pointing there.
+    if tests_total > tests.len() {
+        lines.push(format!(
+            "+{} more related tests matched but not retained in this document",
+            tests_total - tests.len()
+        ));
+    }
     let readiness = item.get("readiness");
     let ready = match readiness
         .and_then(|readiness| readiness.get("repair_packet_ready"))
@@ -2826,8 +2834,28 @@ mod tests {
         counted["item"]["related_tests"] = json!([]);
         counted["item"]["related_tests_total"] = json!(4);
         let text = brief_text_of(counted)?;
-        if text.contains("none related") || !text.contains("+4 more test entries") {
+        if text.contains("none related")
+            || text.contains("more test entries")
+            || !text.contains("+4 more related tests matched but not retained")
+        {
             return Err(format!("a nonzero test count was hidden:\n{text}"));
+        }
+        // Retained rows beyond the three listed are in `structuredContent`;
+        // matches the producer did not retain are disclosed separately.
+        let mut retained = brief_gap_document();
+        let row = retained["item"]["related_tests"][0].clone();
+        retained["item"]["related_tests"] = json!(vec![row; 5]);
+        retained["item"]["related_tests"][4]["oracle"] = Value::Null;
+        retained["item"]["related_tests"][0]["oracle"] = Value::Null;
+        retained["item"]["related_tests_total"] = json!(8);
+        let text = brief_text_of(retained)?;
+        if !text.contains("+2 more test entries in structuredContent")
+            || !text.contains("+3 more related tests matched but not retained in this document")
+            || !text.contains("miss=missing_input: none\n")
+        {
+            return Err(format!(
+                "retained vs unretained tests or a null oracle misread:\n{text}"
+            ));
         }
         // Identities an agent passes back are never clipped.
         let long_id = format!("gap:rust:{}", "a".repeat(250));
@@ -2845,7 +2873,8 @@ mod tests {
         let text = brief_text_of(long)?;
         if !text.contains("missing: c\n+2 more missing entries in structuredContent")
             || text.contains("missing: d")
-            || !text.contains("+5 more test entries in structuredContent")
+            || text.contains("more test entries in structuredContent")
+            || !text.contains("+5 more related tests matched but not retained in this document")
             || !text.contains("static_limitation: macro_expansion")
         {
             return Err(format!(

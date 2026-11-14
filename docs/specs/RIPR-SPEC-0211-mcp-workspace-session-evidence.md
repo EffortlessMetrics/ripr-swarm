@@ -493,7 +493,8 @@ official SDK transport:
   discriminators with their reasons (else the producer's `missing` prose),
   up to three related tests, readiness, static limitation, source currentness
   and the recommended next step, one line each. It discloses how many list
-  entries stay structured-only, marks absent values `?` or `none listed`
+  entries stay structured-only, separately from related-test matches the
+  producer counted but did not retain, marks absent values `?` or `none listed`
   (an explicit `null` reads `none`), never clips identities, and falls back
   to the digest when the document has no `item` object. These projections
   do not replace the full continuation arguments or evidence. The
