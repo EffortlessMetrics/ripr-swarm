@@ -11518,10 +11518,12 @@ id = "RIPR-SPEC-0123"
 name = "targeted Rust rerun"
 spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
-  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
-  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
-  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
-  "crates/ripr/src/analysis/seam_cache/digest_tests.rs::digest_refuses_serialization_failure_after_partial_buffer_flush",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::encoding_views_preserve_wire_bytes_and_digest",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::encoder_refuses_writer_and_serialization_failures",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_preserves_independent_byte_oracle_across_buffer_boundaries",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_coalesces_token_writes_without_retaining_the_body",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_consumes_a_stream_before_the_whole_body_is_serialized",
+  "crates/ripr-contract/src/cache_integrity/digest_tests.rs::digest_refuses_serialization_failure_after_partial_buffer_flush",
   "crates/ripr/src/analysis/seam_cache/digest_tests.rs::real_file_facts_keep_compact_cache_bytes_and_integrity",
   "crates/ripr/src/analysis/seam_cache.rs::tests::file_fact_store_compacts_bytes_without_changing_legacy_admission",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
@@ -11629,6 +11631,7 @@ fixtures = [
   "fixtures/cache-payload-tamper-recovery/corpus.json",
 ]
 code = [
+  "crates/ripr-contract/src/cache_integrity.rs",
   "crates/ripr/src/analysis/classify/targeted_calls.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
