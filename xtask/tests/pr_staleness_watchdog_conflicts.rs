@@ -558,7 +558,9 @@ fn a_head_pushed_since_the_list_call_is_left_for_the_next_sweep() -> Result<(), 
 fn a_head_whose_mergeability_is_unreadable_is_deferred_not_retried() -> Result<(), String> {
     // The sweep reads mergeability once. Retrying in-sweep cost 10 s of sleep per
     // unreadable head and alone exceeded the job cap once 63 of 102 eligible heads
-    // stayed `unknown` (#14636). The next sweep re-reads, so the bound is one interval.
+    // stayed `unknown` (#14636); those heads were in the merge queue, and GitHub
+    // does not resolve mergeability for a queued head. The next sweep re-reads them,
+    // so the deferral is at most one sweep interval, not a resolution bound.
     let lazy = Pr {
         state: "unknown",
         later_state: Some("dirty"),
