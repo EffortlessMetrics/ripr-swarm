@@ -45,11 +45,11 @@ name: PR Staleness Watchdog
 #   routed-rust.yml's own untrusted-PR guard.
 #
 # - Mergeability is read once per head, never retried in-sweep (#14636).
-#   `mergeable_state` is unavailable for every head in the merge queue: a
-#   queued head reads `unknown` on every poll, so an in-sweep retry spent 10 s
-#   of sleep per queued head and alone exceeded the job cap once 63 of 102
+#   `mergeable_state` is not resolved for heads in the merge queue: a queued
+#   head reads `unknown` on repeated polls, so an in-sweep retry spent 10 s of
+#   sleep per queued head and alone exceeded the job cap once 63 of 102
 #   eligible heads were queued. A non-queued head that reads `unknown` is the
-#   lazy first read after the base moved and resolves on its own, so the next
+#   lazy first read after a base push and resolves on its own, so the next
 #   sweep sees it. A head whose mergeability is still unreadable is classified
 #   `mergeability unreadable`, counted in the sweep summary, and left for the
 #   next sweep, so the bound is one interval.
@@ -225,7 +225,7 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              # mergeable_state is unavailable for queued heads and resets when the base moves,
+              # mergeable_state is not resolved for queued heads and resets when the base moves,
               # so a head can read "unknown". Read once and defer to the next sweep instead of
               # sleeping on it: an in-sweep retry cost 10 s per unreadable head, which alone
               # exceeded the job cap once 63 heads stayed unknown (#14636).

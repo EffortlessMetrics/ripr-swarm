@@ -1455,11 +1455,11 @@ minutes), so before calling a head dark the watchdog also lists
 in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Mergeability is read once per head and never retried
-in-sweep (#14636): `mergeable_state` is unavailable for every head in the merge
-queue, which reads `unknown` on every poll, and the former in-sweep retry spent
-10 s of sleep per queued head, which alone exceeded the job cap once most
+in-sweep (#14636): `mergeable_state` is not resolved for heads in the merge
+queue, which read `unknown` on repeated polls, and the former in-sweep retry
+spent 10 s of sleep per queued head, which alone exceeded the job cap once most
 eligible heads were queued. A non-queued head that reads `unknown` is the lazy
-first read after the base moved and resolves on its own. A head whose
+first read after a base push and resolves on its own. A head whose
 mergeability is still unreadable is classified `mergeability unreadable`,
 counted in the sweep totals, and re-read by the next sweep, so the bound is one
 30-minute interval. Conflict detection requires `mergeable_state == "dirty"`, so
