@@ -886,8 +886,8 @@ content stays the caller's claim. A result remains optional and does not gate
 finish.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when the exact finish is
-still owned and no terminal evidence has been committed. An apply-record
-failure can also restore the exact terminal retention that this same
+still owned and no terminal evidence has been committed. A trust-bound apply
+record failure can also restore the exact terminal retention that this same
 invocation committed, provided its entire manifest remains unchanged; reusing
 another retainer's result grants no rollback custody. An unsuccessful restore
 is reported explicitly. If evaluation cannot start after the finish committed,
@@ -901,24 +901,43 @@ manifest commit lock for the whole write for every attempt; non-focused
 attempts keep the same evidence set and the existing retention tests cover
 them. The finish commits the normalized claim before
 publishing the receipt, and retention checks the bytes against that claim.
-A focused finish records its receipt protocol before evaluation starts.
+A focused finish records its receipt recovery protocol before evaluation starts.
 A separate durable marker precedes evaluation, and a successful decision commits
 the exact rendered receipt and verified-input digests before receipt publication.
-A stop after the marker without a matching durable success and receipt is
-ambiguous, so status reports the attempt as limited and a new attempt is the
-safe route. Standalone receipt publication does not commit the after-phase
-outcome. Recovering an interrupted focused finish with the original claim is
-not part of this change: it lands separately, and until then an interrupted
-focused finish is inspected and restarted as a new attempt. These transaction
-checks assume the local manifest and cooperating writers honor the existing
-lock and integrity model; they do not protect against a writer that can
-arbitrarily rewrite the manifest itself.
+After interruption, recovery retains only the receipt and verify bytes named by
+that outcome, and a different supplied claim is refused. Every focused
+recovery, trust-bound or not, requires the same `--test-result FILE`: it is
+re-validated against the current HEAD, the attempt and its test file and must
+equal the pending normalized claim before any evidence is promoted. An after
+phase without it is refused and leaves the attempt recoverable; status names
+that same-result retry for a recoverable finish and a new attempt otherwise
+(including a finish whose recorded recovery protocol is not durable-v1, and an
+accepted decision whose receipt and verify files are not present with the
+accepted digests, or a trust-bound attempt whose apply-record compatibility path
+is already occupied, since the after phase recovers a trust-bound finish only
+while that path is absent). A finish that holds no focused claim keeps the ordinary
+pending-retention route. A stop before the
+marker allows the original claim to retry. A stop after the marker without a
+matching durable success and receipt is ambiguous: the attempt stays finished
+and requires a new attempt, even if evaluation had not yet made its decision.
+This prevents a later edit from erasing a refusal. Standalone receipt publication
+does not commit the after-phase outcome. A trust-bound recovery additionally
+revalidates its retained binding and explicit edit authority and only recovers a
+missing apply projection. These transaction checks assume the local manifest and
+cooperating writers honor the existing lock and integrity model; they do not
+protect against a writer that can arbitrarily rewrite the manifest itself.
+If interruption follows terminal retention but precedes the trust apply
+projection, the same authorized claim may recover that missing projection
+only after revalidating the retained evidence and current cage binding. The
+projection is created exclusively; an existing file is never replaced by
+recovery.
 When a trusted-surface receipt refusal ends evaluation after the marker was
 recorded, the attempt is deliberately not restored: it stays finished, status
-reports it as limited with the started marker, and the safe route is to start a
-new attempt (`ripr agent repair --phase before`). If the marker commit itself
-reports an error whose outcome is uncertain, restore refuses (a marker may
-exist) and says so; the same inspect-then-restart route applies. The named trusted-surface receipt refusal remains a decision refusal with its
+reports it as limited, and the safe route is to start a new attempt
+(`ripr agent repair --phase before`). If the marker commit itself reports an
+error whose outcome is uncertain, restore refuses (a marker may exist) and
+says so; the same inspect-then-restart route applies.
+The named trusted-surface receipt refusal remains a decision refusal with its
 existing recovery guidance; it is not classified as a publication failure.
 These records remain caller claims.
 
@@ -1165,6 +1184,17 @@ is not decided here.
 - `crates/ripr/tests/focused_test_result.rs::interrupted_surface_refusal_cannot_be_retried` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::standalone_receipt_does_not_finish_an_unresolved_evaluation` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_evaluation_start_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_after_retention_can_recover_success` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_before_receipt_requires_and_retries_the_same_claim` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_finish_recovers_the_full_evidence_set` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_receipt_evaluation_fails_closed` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_recovery_refuses_changed_claim_and_partial_publication` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_recovery_revalidates_reported_completion` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::pending_promotion_rejects_an_interposed_receipt_replacement` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::accepted_focused_finish_recovery_requires_the_same_result` (#13203)
+- `crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::proposal_finish_without_a_result_is_retained_after_receipt_publication` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
