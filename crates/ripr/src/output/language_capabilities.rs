@@ -24,9 +24,11 @@ fn selected(language: Option<LanguageId>) -> Vec<&'static CapabilityCell> {
 fn language_status(language: LanguageId) -> &'static str {
     match language {
         LanguageId::Rust => "stable",
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
-            "preview"
-        }
+        LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Python
+        | LanguageId::Perl
+        | LanguageId::Go => "preview",
     }
 }
 
@@ -106,6 +108,9 @@ fn plain_summary(language: LanguageId) -> &'static str {
         LanguageId::Perl => {
             "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
         }
+        LanguageId::Go => {
+            "not supported yet: Go has a closed identity token only; ripr does not analyze `.go` files."
+        }
     }
 }
 
@@ -115,7 +120,9 @@ pub(crate) fn render_human(language: Option<LanguageId>) -> String {
         if language.is_some_and(|wanted| wanted != candidate) {
             continue;
         }
-        let build_note = if candidate.is_available() {
+        let build_note = if candidate == LanguageId::Go {
+            "; no adapter available"
+        } else if candidate.is_available() {
             ""
         } else {
             "; not in this build"
@@ -202,6 +209,21 @@ mod tests {
             1,
             "{one}"
         );
+    }
+
+    #[test]
+    fn go_language_id_serializes_as_go_wire_token() {
+        let json = serde_json::to_string(&LanguageId::Go).unwrap_or_default();
+        assert_eq!(json, "\"go\"");
+        let round_trip: LanguageId = serde_json::from_str(&json).unwrap_or(LanguageId::Rust);
+        assert_eq!(round_trip, LanguageId::Go);
+        for invalid in ["golang", "Golang", "GO", "Go", ""] {
+            let json = serde_json::to_string(invalid).unwrap_or_default();
+            assert!(
+                serde_json::from_str::<LanguageId>(&json).is_err(),
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]

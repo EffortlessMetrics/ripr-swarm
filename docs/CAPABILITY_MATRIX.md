@@ -122,6 +122,8 @@ Status values:
 
 | R preview static facts contract | `planned` | `RIPR-SPEC-0401` | `docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md` (status **proposed**) registers the R preview contract: wire identity `r`, package/script/testthat roles, independent numerical/data/condition/snapshot/side-effect oracle facets with tolerance and observed-quantity recording, typed limits for NSE/dispatch/environment/native edges, #5542 activation projection, #5559 cross-language provenance, shared RIPR-SPEC-0026 output fields, and registrable capability cell ids plus facet vocabulary. No R adapter, parser, routing, default enablement, or domain registry cells land in this slice. | `epic/r/parser-and-routing` | r_preview_contract_registered |
 
+| Go language identity | `planned` | `RIPR-SPEC-0026` | Closed `LanguageId::Go` with wire token `go`, display name Go, serde round-trip, and rejection of golang aliases (#6349). Capability registry cells are `not_proven`; `.go` files stay on the unanalyzed-source list and `[languages] enabled` does not accept `go` yet. Empty Cargo feature `lang-go` aligns `required_feature`/`is_available` without shipping a Go adapter. | `go-adapter-dispatch` | language_identity_go_wire_token |
+
 ## Update Rules
 
 Update this file when a PR changes capability status, adds fixtures, changes a

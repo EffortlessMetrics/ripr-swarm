@@ -61,18 +61,23 @@ pub(crate) fn cache_identity() -> &'static str {
                 cfg!(feature = "lang-typescript"),
                 cfg!(feature = "lang-python"),
                 cfg!(feature = "lang-perl"),
+                cfg!(feature = "lang-go"),
             ],
         )
     })
 }
 
-fn with_analysis_features(identity: String, [rust, typescript, python, perl]: [bool; 4]) -> String {
+fn with_analysis_features(
+    identity: String,
+    [rust, typescript, python, perl, go]: [bool; 5],
+) -> String {
     format!(
-        "{identity}+languages:rust={},typescript={},python={},perl={}",
+        "{identity}+languages:rust={},typescript={},python={},perl={},go={}",
         u8::from(rust),
         u8::from(typescript),
         u8::from(python),
         u8::from(perl),
+        u8::from(go),
     )
 }
 
@@ -195,10 +200,16 @@ mod tests {
             render_cache_identity("0.11.0", None, false, Some("00000000000000aa")),
         ] {
             let mut identities = std::collections::BTreeSet::new();
-            for bits in 0u8..16 {
+            for bits in 0u32..32 {
                 let identity = with_analysis_features(
                     source.clone(),
-                    [bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0],
+                    [
+                        bits & 1 != 0,
+                        bits & 2 != 0,
+                        bits & 4 != 0,
+                        bits & 8 != 0,
+                        bits & 16 != 0,
+                    ],
                 );
                 assert_ne!(
                     identity, source,
@@ -209,15 +220,15 @@ mod tests {
                     "feature set {bits} aliases another"
                 );
             }
-            assert_eq!(identities.len(), 16);
+            assert_eq!(identities.len(), 32);
         }
         assert_eq!(
-            with_analysis_features("same-source".to_owned(), [true, true, true, false]),
-            "same-source+languages:rust=1,typescript=1,python=1,perl=0"
+            with_analysis_features("same-source".to_owned(), [true, true, true, false, false]),
+            "same-source+languages:rust=1,typescript=1,python=1,perl=0,go=0"
         );
         assert_eq!(
-            with_analysis_features("same-source".to_owned(), [true, true, true, true]),
-            "same-source+languages:rust=1,typescript=1,python=1,perl=1"
+            with_analysis_features("same-source".to_owned(), [true, true, true, true, false]),
+            "same-source+languages:rust=1,typescript=1,python=1,perl=1,go=0"
         );
     }
 
@@ -233,6 +244,7 @@ mod tests {
             ),
             (cfg!(feature = "lang-python"), "python=1", "python=0"),
             (cfg!(feature = "lang-perl"), "perl=1", "perl=0"),
+            (cfg!(feature = "lang-go"), "go=1", "go=0"),
         ] {
             assert!(
                 identity.contains(if enabled { present } else { absent }),

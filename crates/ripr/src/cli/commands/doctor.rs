@@ -1307,9 +1307,11 @@ fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> O
 fn language_status(id: LanguageId) -> LanguageStatus {
     match id {
         LanguageId::Rust => LanguageStatus::Stable,
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
-            LanguageStatus::Preview
-        }
+        LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Python
+        | LanguageId::Perl
+        | LanguageId::Go => LanguageStatus::Preview,
     }
 }
 
@@ -1945,6 +1947,7 @@ fn detect_test_surfaces(
                     ));
                 }
             }
+            LanguageId::Go => {}
         }
     }
     surfaces

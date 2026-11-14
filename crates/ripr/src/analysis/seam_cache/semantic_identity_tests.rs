@@ -22,7 +22,13 @@ fn declared_language_features_require_cache_identity_coverage() -> Result<(), St
         .collect();
     assert_eq!(
         languages,
-        BTreeSet::from(["lang-rust", "lang-typescript", "lang-python", "lang-perl"]),
+        BTreeSet::from([
+            "lang-rust",
+            "lang-typescript",
+            "lang-python",
+            "lang-perl",
+            "lang-go",
+        ]),
         "extend build_identity::cache_identity and its feature-set discriminator when adding a language"
     );
     Ok(())

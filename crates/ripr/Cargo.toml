@@ -175,6 +175,7 @@ lang-rust = ["dep:ra_ap_syntax", "dep:unicode-properties", "ripr-contract/lang-r
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
 lang-python = ["dep:rustpython-parser", "ripr-contract/lang-python"]
 lang-perl = ["ripr-contract/lang-perl"]
+lang-go = []
 
 [dev-dependencies]
 # ADR 0027: facade tests import shared fixtures from the contract crate.
