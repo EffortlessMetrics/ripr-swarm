@@ -900,7 +900,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
             write_report(
                 "check-fast.md",
-                &check_fast_failure_body(body, selection.diagnostic(), &impact_disclosure),
+                &check_fast_failure_body(body, &selection.diagnostic(), &impact_disclosure),
             )
         });
     }
