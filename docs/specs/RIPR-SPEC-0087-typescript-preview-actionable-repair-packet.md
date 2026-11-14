@@ -212,6 +212,28 @@ that ineligibility and remains the sole packet-readiness authority.
   `oracle.rs:575`). A finding whose only oracle is dynamic
   (`expect(x).toBe(someVar)`, snapshot, `toBeDefined`) is **not** eligible —
   it routes to `missing_target_shape`, which stays preview.
+  Two error-path exceptions apply to a bare `toThrow()` / `toThrowError()`
+  test, which carries no expected value. When the missing discriminator names
+  a specific thrown class (#12953), the target is `toThrow(<Class>)`. When it
+  names the generic `Error` with a literal message (#13827), the target is
+  `toThrow('<message>')`, but only when all of these hold:
+  - the changed line is exactly `throw new Error('<message>')`, with that one
+    literal as the whole argument;
+  - the message is plain text (letters, digits, spaces, `_ - , . :`, at most
+    120 characters) containing a word of at least three letters;
+  - the analyzer emits `typescript_error_message_pin: <message>`. It does so
+    only at the owner's sole throw site, and only when the old side cannot
+    satisfy the same substring check: a pure addition, or an old message that
+    does not contain the new one, thrown as a built-in error class with no
+    other call on the old line. Every removed line of the file that could
+    have thrown (a `throw`, `reject`, `Promise` or any call other than a pure
+    `Math` method) must be the changed throw's own paired old line.
+
+  A lookup key, ternary, `||` fallback, concatenation, shortened message,
+  moved or inlined throw, other removed throw, replaced user error class or
+  factory, second throw site, or a test that reaches the owner only through
+  an exported wrapper gets no packet. Such a packet also carries a stop condition
+  for a test that reaches a different `throw`.
 - **G-D. Oracle-eligible, token-aware relation.**
   `has_oracle_eligible_relation == true` — the related test is linked by
   owner-call / import-aware / receiver-aware evidence, not heuristic-only.

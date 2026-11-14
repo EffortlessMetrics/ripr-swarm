@@ -6919,6 +6919,12 @@ pub(crate) struct OwnerLineContext<'a> {
     /// Whole-file one-for-one replacement established by the diff-owning driver.
     /// A per-line old counterpart alone cannot rule out other removed calls.
     pub(crate) single_line_replacement: bool,
+    /// Trimmed removed lines of the changed file that could have thrown the
+    /// old side's error (#13827, [`removed_line_may_throw`]). The message pin
+    /// needs every one of them to be the changed throw's own paired old line:
+    /// content alignment can leave a moved or reshaped old throw unpaired,
+    /// and another removed throw or call can carry a containing message.
+    pub(crate) removed_throw_candidates: Vec<String>,
     /// More exports of other modules call the owner than
     /// `MAX_CROSS_MODULE_ENTRIES`, so none were followed (#13592); a
     /// `no_static_path` finding says so.
@@ -6964,6 +6970,7 @@ pub(crate) fn owner_line_context<'a>(
         named_limitations_from_ownership,
         named_limitations_from_spy,
         single_line_replacement: false,
+        removed_throw_candidates: Vec::new(),
         cross_module_fan_in_limited: false,
     }
 }
@@ -8578,6 +8585,37 @@ pub(crate) fn classify_resolved_owner(
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
+    }
+    // #13827: the literal message a bare `toThrow()` repair may pin, read
+    // from both sides of the changed throw. The packet projection offers a
+    // message target only when this fact is present. Any removed line that
+    // could have thrown (a throw, a rejection, a call) must be the changed
+    // throw's own paired old line, whose message the facts already compared:
+    // alignment can leave a moved old throw unpaired, a removed helper call
+    // can throw a containing message, and another removed throw can fire
+    // first on the same input.
+    if matches!(family, ProbeFamily::ErrorPath)
+        && !missing_discriminators.is_empty()
+        && context
+            .removed_throw_candidates
+            .iter()
+            .all(|removed| old_line_text.is_some_and(|old| old.trim() == removed))
+        // Only a test that calls the owner itself: through an exported
+        // wrapper (`ModuleEntryCall`) the wrapper's own unchanged throws can
+        // fire first with a message that contains the pinned one.
+        && !related_candidates.is_empty()
+        && related_candidates.iter().all(|candidate| {
+            matches!(
+                candidate.relation,
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ReExportChainFollowed
+            )
+        })
+        && let Some(message) = error_facts.pinnable_generic_error_message()
+    {
+        evidence.push(format!("typescript_error_message_pin: {message}"));
     }
     // The call input that hits the named predicate boundary, when the owner's
     // module pins it statically (parameter read-only, literal or single
