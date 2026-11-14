@@ -3,4 +3,5 @@
 id = "RIPR-SPEC-0158"
 tests = [
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::compound_predicate_names_only_its_one_comparison",
+  "crates/ripr/tests/check_repair_agree.rs::compound_predicate_gap_id_names_one_seam",
 ]

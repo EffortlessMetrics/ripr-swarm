@@ -1134,3 +1134,28 @@ fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), St
     );
     Ok(())
 }
+
+/// #14719: a compound predicate's gap id names its one comparison
+/// (`s.len==1`), which the inner `s.len() > 1` seam on the same line also
+/// mints. Repair by that id picks the most-specific seam instead of refusing
+/// the id as naming several seams.
+#[test]
+fn compound_predicate_gap_id_names_one_seam() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') {\n        1\n    } else {\n        0\n    }\n}\n",
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') && s.len() > 1 {\n        1\n    } else {\n        0\n    }\n}\n",
+        "use ar::f;\n\n#[test]\nfn t() {\n    let _ = f(\"-v\");\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let id = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:s.len==1";
+    assert!(
+        check.contains(id),
+        "the predicate's gap id names the narrowed comparison:\n{check}"
+    );
+    let (_, repair) = repo.ripr_status(&["repair", id, "--root", "."])?;
+    assert!(
+        !repair.contains("item_names_several_seams") && repair.contains("names gap `"),
+        "the gap id must resolve to one seam:\n{repair}"
+    );
+    Ok(())
+}
