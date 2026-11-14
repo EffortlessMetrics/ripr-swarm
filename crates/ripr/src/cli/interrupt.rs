@@ -73,6 +73,8 @@ impl Drop for ServerInterrupts {
 /// cancellation: bounded child waits observe the flag at their poll cadence,
 /// terminate the owned process tree, and unwind, so no git child is left
 /// behind; a repeated signal restores native termination as the escape.
+/// A signal no attempt consumes is the server's own stop request: the MCP
+/// stdio transport reads the same flag at its idle point (#14102).
 /// Non-Unix targets have no signal-hook surface; containment there is the
 /// job-object ownership already in `process_owner`, and this is a no-op.
 pub(crate) fn install_server_interrupts() -> Result<(), String> {
@@ -108,7 +110,8 @@ pub(crate) fn server_interrupt_flag() -> Option<Arc<std::sync::atomic::AtomicBoo
 /// One atomic exchange both resets the repeated-signal escape and captures a
 /// late signal that arrived after the last analysis checkpoint. That signal
 /// refuses an otherwise successful result; an existing failure keeps its
-/// diagnostic. A signal stored after this exchange belongs to the next attempt.
+/// diagnostic. A signal stored after this exchange was not consumed: the MCP
+/// transport stops the server on it at its next idle point (#14102).
 #[cfg(unix)]
 pub(crate) fn settle_server_attempt<T, E>(
     interrupted: &std::sync::atomic::AtomicBool,

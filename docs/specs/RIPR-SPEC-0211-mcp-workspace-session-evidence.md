@@ -118,11 +118,23 @@ official SDK transport:
   its `attempt` block (a completed document, `isError` false per the #5254
   commit contract).
   A sequential repeated signal before attempt settlement restores native
-  termination as the escape; process exit itself stays transport-owned
-  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
-  a signal observed during final projection converts an otherwise successful
-  result to the typed cancellation, and a signal after that boundary belongs
-  to the next attempt. Configuration refusals also settle the pending signal.
+  termination as the escape. One atomic terminal exchange consumes the
+  attempt's signal: a signal observed during final projection converts an
+  otherwise successful result to the typed cancellation. Configuration
+  refusals also settle the pending signal.
+- A signal with no attempt to consume it stops the server (#14102, Unix).
+  A signal interrupts what the server is doing: a running refresh when there
+  is one, otherwise the server itself. The stdio transport observes a
+  still-pending SIGINT or SIGTERM at its idle point (no request admitted,
+  every earlier reply flushed), before or after `initialize`, and ends the
+  session as it does on stdin EOF: exit 0, no extra stdout frame, nothing on
+  stderr. A signal that lands while a non-refresh request is admitted is
+  honoured after that reply is flushed. A signal a refresh attempt consumed
+  never ends the session, and no later refresh inherits an idle signal as a
+  cancellation. The exit consumes the signal, so a later session in the same
+  process starts clear. Without this rule one `kill`, one supervisor SIGTERM (the npm
+  launcher forwards exactly one, RIPR-SPEC-0212) or one Ctrl-C at a terminal
+  left the server running until stdin closed.
   Repeated native death can bypass cooperative cleanup and leave active children;
   it is an escape, not a cleanup guarantee. Process-group containment covers
   descendants that remain in the owned group, not deliberate group/session escape.
@@ -853,9 +865,17 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session
-  recovery and an independently owned surviving sentinel. Identity-pinned
+  recovery, the clean idle-signal exit with stdin held open (SIGTERM after
+  settled refreshes, SIGINT before any refresh; #14102) and an independently
+  owned surviving sentinel. Identity-pinned
   process handles and adopted descendant wait statuses distinguish product
   settlement from harness cleanup.
+- `crates/ripr/src/mcp/transport_tests.rs::pending_signal_ends_an_idle_session_while_input_stays_open`,
+  `::signal_pending_before_initialize_ends_the_handshake_cleanly`,
+  `::signal_raised_during_a_request_ends_the_session_after_its_reply` and
+  `::consumed_signal_wake_keeps_the_session_serving` — the #14102 idle rule
+  on the in-memory transport: both observation paths (the wake of a blocked
+  read and the flag check at the idle point) and the consumed-signal negative.
 - `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
   concurrent installation, repeated mixed/TERM escape, terminal signal epochs
   and bounded adverse harness controls.
