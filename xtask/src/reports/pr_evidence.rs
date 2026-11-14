@@ -2224,9 +2224,10 @@ mod tests {
                 fake_ripr_invocation(&repo, "fake-ripr-packet-timeout", "", "", 0, Some(30))?;
             (fake.binary, fake.args)
         };
-        let producer_result = write_pr_evidence_with_runner(
+        let producer_result = write_pr_evidence_with_preparer(
             &repo,
             &options,
+            |_| Ok("unused-test-binary".to_string()),
             |_repo, options, _binary, _child_env| {
                 run_ripr_check_binary(&binary, args, options, Duration::from_secs(1))
             },
@@ -2490,9 +2491,10 @@ mod tests {
         )?;
         let binary = fake.binary;
         let args = fake.args;
-        let producer_error = match write_pr_evidence_with_runner(
+        let producer_error = match write_pr_evidence_with_preparer(
             &repo,
             &options,
+            |_| Ok("unused-test-binary".to_string()),
             |_repo, options, _binary, _child_env| {
                 run_ripr_check_binary(&binary, args, options, Duration::from_secs(30))
             },
@@ -2859,6 +2861,31 @@ mod tests {
             |_| Ok("unused-test-binary".to_string()),
             |_, _, _, _| Ok(MINIMAL_CHECK_JSON.to_string()),
         )?;
+        // Materialize only this producer's declared transport members in a new
+        // root. This checks contract/consumer parity, not central archive code.
+        let materialized = temp_repo("ripr-pr-materialized-gate")?;
+        let contract: Value =
+            serde_json::from_str(include_str!("../../../.ci/contabo-product-contract.json"))
+                .map_err(|err| err.to_string())?;
+        let group = contract["required_on_complete_success"]
+            .as_array()
+            .ok_or("missing member groups")?
+            .iter()
+            .find(|group| group["producer"] == "PR evidence: ripr-pr")
+            .ok_or("missing PR evidence member group")?;
+        for member in group["members"].as_array().ok_or("missing members")? {
+            let path = member["path"].as_str().ok_or("missing member path")?;
+            let bytes = fs::read(repo.join(path)).map_err(|err| err.to_string())?;
+            if member["allow_empty"] == false {
+                assert!(!bytes.is_empty(), "empty required member: {path}");
+            }
+            let destination = materialized.join(path);
+            fs::create_dir_all(destination.parent().ok_or("member has no parent")?)
+                .map_err(|err| err.to_string())?;
+            fs::write(destination, bytes).map_err(|err| err.to_string())?;
+        }
+        fs::remove_dir_all(&repo).map_err(|err| err.to_string())?;
+        let repo = materialized;
         // Same eligible blocking ledger shape as the gate's paired absence control.
         let ledger = json!({"gap_records": [{
             "gap_id": "gap:pricing", "source_currentness": "candidate_current",

@@ -172,7 +172,7 @@ A green envelope alone cannot establish product custody. The real portfolio is:
 
 The machine-readable proposed contract is
 [`.ci/contabo-product-contract.json`](../../.ci/contabo-product-contract.json),
-schema `ripr-swarm-product-members/v1`. It declares **18 exact native core
+schema `ripr-swarm-product-members/v1`. It declares **19 exact native core
 members plus the adapter's terminal `target/ripr/contabo/commands.json`** on
 complete product success. It also names retain-if-produced policy/golden/fixture
 reports, source-derived verdict-corpus membership, and the two existing
@@ -194,7 +194,7 @@ job status must retain that absence, never invent a completed command portfolio.
 Empty `annotations.txt` and `pr.diff` can be legitimate. The nextest producer
 still enforces fresh JUnit with at least one executed test. PR evidence no longer
 produces canonical snapshots. A cheap explicit unavailable canonical-delta artifact
-preserves later-consumer behavior but is not a mandatory member of this contract.
+preserves later-consumer behavior and is a mandatory member of this contract.
 The three PR summary
 files include `target/ripr/reports/pr-evidence-summary.{json,md}`; that v1 pair reads optional
 report inputs distinct from `pr/repo-exposure.json` and may honestly report

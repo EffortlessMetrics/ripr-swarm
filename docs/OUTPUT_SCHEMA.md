@@ -20899,7 +20899,7 @@ before adopting any proposal.
 `cargo xtask ripr-pr` writes a cheap explicit unavailable comparison to
 `target/ripr/pr/canonical-delta.json`, without running canonical snapshots.
 This compatibility artifact preserves later gates' incomplete-comparison
-behavior; it is not a required evidence member or completed analysis.
+behavior and remains a required transport member, not completed analysis.
 
 ```json
 {
