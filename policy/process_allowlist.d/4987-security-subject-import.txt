@@ -1,0 +1,1 @@
+tools/repo-policy/tests/security_subject.rs|use std::process::Command|1|security-subject-proof|#4987: import for the same bounded local-only subject consumer controls.

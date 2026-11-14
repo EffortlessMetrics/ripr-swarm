@@ -747,51 +747,51 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
         pr_guidance_json: options
             .pr_guidance
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR guidance", path)),
+            .map(|path| read_report_input_plain("PR guidance", path)),
         first_action_json: options
             .first_action
             .as_ref()
-            .map(|path| read_optional_text_for_report("first useful action", path)),
+            .map(|path| read_report_input_plain("first useful action", path)),
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant proof", path)),
+            .map(|path| read_report_input_plain("assistant proof", path)),
         assistant_health_json: options
             .assistant_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("assistant loop health", path)),
+            .map(|path| read_report_input_plain("assistant loop health", path)),
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger", path)),
+            .map(|path| read_report_input_plain("PR evidence ledger", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| read_report_input_plain("baseline debt delta", path)),
         zero_status_json: options
             .zero_status
             .as_ref()
-            .map(|path| read_optional_text_for_report("RIPR Zero status", path)),
+            .map(|path| read_report_input_plain("RIPR Zero status", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
+            .map(|path| read_report_input_plain("gate decision", path)),
         recommendation_calibration_json: options
             .recommendation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| read_report_input_plain("recommendation calibration", path)),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| read_report_input_plain("mutation calibration", path)),
         coverage_frontier_json: options
             .coverage_frontier
             .as_ref()
-            .map(|path| read_optional_text_for_report("coverage/grip frontier", path)),
+            .map(|path| read_report_input_plain("coverage/grip frontier", path)),
         receipt_json: options
             .receipt
             .as_ref()
-            .map(|path| read_optional_text_for_report("receipt", path)),
+            .map(|path| read_report_input_plain("receipt", path)),
     };
     let report = output::pr_review_front_panel::build_pr_review_front_panel_report(input);
     let rendered_json = output::pr_review_front_panel::render_pr_review_front_panel_json(&report)?;
@@ -800,6 +800,9 @@ fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    emit_report_warnings(
+        &output::pr_review_front_panel::pr_review_front_panel_input_warnings(&report),
+    );
     Ok(())
 }
 
@@ -947,6 +950,19 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
     let repo_exposure_json = repo_exposure_json.ok_or_else(|| {
         "calibrate cargo-mutants requires --repo-exposure-json <path>".to_string()
     })?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "calibrate cargo-mutants",
+            &[("--out", out)],
+            &[
+                ("--mutants-json", Some(&mutants_json)),
+                // A cargo-mutants directory is read through these members.
+                ("--mutants-json", Some(&mutants_json.join("outcomes.json"))),
+                ("--mutants-json", Some(&mutants_json.join("mutants.json"))),
+                ("--repo-exposure-json", Some(&repo_exposure_json)),
+            ],
+        )?;
+    }
     Ok(CalibrateOptions {
         mutants_json,
         repo_exposure_json,
@@ -1111,6 +1127,13 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
 
     let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
     let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
+    if let Some(out) = out.as_deref() {
+        refuse_output_naming_input(
+            "outcome",
+            &[("--out", out)],
+            &[("--before", Some(&before)), ("--after", Some(&after))],
+        )?;
+    }
     Ok(OutcomeOptions {
         before,
         after,
@@ -1163,6 +1186,11 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         i += 1;
     }
 
+    refuse_output_naming_input(
+        "evidence-health",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[("--mutation-calibration", mutation_calibration.as_deref())],
+    )?;
     Ok(EvidenceHealthOptions {
         root,
         out,
@@ -1227,9 +1255,25 @@ fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptio
         i += 1;
     }
 
+    let delta = delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?;
+    refuse_output_naming_input(
+        "zero status",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--baseline", baseline.as_deref()),
+            ("--delta", Some(&delta)),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            ("--gate", gate.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+        ],
+    )?;
     Ok(RiprZeroStatusOptions {
         baseline,
-        delta: delta.ok_or_else(|| "zero status requires --delta <path>".to_string())?,
+        delta,
         gap_ledger,
         gate,
         pr_guidance,
@@ -1396,6 +1440,24 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         );
     }
 
+    refuse_output_naming_input(
+        "pr-ledger record",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--gate", gate.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--gap-ledger", gap_ledger.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--agent-receipt", agent_receipt.as_deref()),
+            ("--coverage", coverage.as_deref()),
+            ("--history", history.as_deref()),
+        ],
+    )?;
     if let Some(jsonl) = out_jsonl.as_ref() {
         let mut forbidden = vec![&out, &out_md];
         for input in [
@@ -1566,6 +1628,14 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
     }
 
+    refuse_output_naming_input(
+        "pr-comments plan",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--existing-comments", existing_comments.as_deref()),
+        ],
+    )?;
     Ok(PrCommentsPlanOptions {
         root,
         pr_guidance,
@@ -1758,6 +1828,27 @@ fn parse_pr_review_front_panel_options(
         );
     }
 
+    refuse_output_naming_input(
+        "pr-review front-panel",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--pr-guidance", pr_guidance.as_deref()),
+            ("--first-action", first_action.as_deref()),
+            ("--assistant-proof", assistant_proof.as_deref()),
+            ("--assistant-health", assistant_health.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+            ("--gate-decision", gate_decision.as_deref()),
+            (
+                "--recommendation-calibration",
+                recommendation_calibration.as_deref(),
+            ),
+            ("--mutation-calibration", mutation_calibration.as_deref()),
+            ("--coverage-frontier", coverage_frontier.as_deref()),
+            ("--receipt", receipt.as_deref()),
+        ],
+    )?;
     Ok(PrReviewFrontPanelOptions {
         root,
         pr_guidance,
@@ -1847,6 +1938,16 @@ fn parse_coverage_grip_frontier_options(
         );
     }
 
+    refuse_output_naming_input(
+        "coverage-grip frontier",
+        &[("--out", &out), ("--out-md", &out_md)],
+        &[
+            ("--coverage", coverage.as_deref()),
+            ("--ledger", ledger.as_deref()),
+            ("--baseline-delta", baseline_delta.as_deref()),
+            ("--zero-status", zero_status.as_deref()),
+        ],
+    )?;
     Ok(CoverageGripFrontierOptions {
         coverage,
         ledger,
@@ -1878,6 +1979,19 @@ pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
+        )
+    })
+}
+
+/// Like `read_optional_text_for_report`, but a missing file reads `not found`
+/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
+/// some policy reports still classify a missing input by that errno text.
+fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        format!(
+            "read {label} {} failed: {}",
+            output::baseline_delta::display_path(path),
+            crate::bounded_input::read_failure_detail(&err)
         )
     })
 }
@@ -1926,6 +2040,31 @@ fn read_optional_manifest_for_report(
             output::suppression_health::display_path(&read_path)
         ))),
     }
+}
+
+/// Refuse, before anything is written, an output flag that names one of the
+/// command's own input files (#14312): the write would silently replace the
+/// evidence the user wants to rerun from. Shared by every artifact report
+/// command so the rule and wording live in one place.
+fn refuse_output_naming_input(
+    command: &str,
+    outputs: &[(&str, &Path)],
+    inputs: &[(&str, Option<&Path>)],
+) -> Result<(), String> {
+    for (out_flag, out_path) in outputs {
+        for (in_flag, in_path) in inputs {
+            let Some(in_path) = in_path else {
+                continue;
+            };
+            if output::path::output_replaces_input(out_path, in_path) {
+                return Err(format!(
+                    "{command} {out_flag} {} names the same file as {in_flag}; writing there would replace that input. Pass a different {out_flag} path",
+                    output::path::human_path(out_path)
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn non_empty_path_arg(

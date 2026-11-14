@@ -120,16 +120,25 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
     );
     for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings.iter()) {
         // Identity and verdict fields move verbatim.
-        for key in [
-            "id",
-            "classification",
-            "severity",
-            "confidence",
-            "probe",
-            "ripr",
-        ] {
+        for key in ["id", "classification", "severity", "confidence", "probe"] {
             assert_eq!(full_finding[key], terse_finding[key], "{key} moved");
         }
+        // `ripr` keeps every state and confidence; a coded stage summary
+        // expands back to the original (#13673).
+        let mut restored_ripr = terse_finding["ripr"].clone();
+        if let Some(stages) = restored_ripr.as_object_mut() {
+            for stage in stages.values_mut() {
+                if let Some(summary) = stage.get_mut("summary")
+                    && let Some(text) = summary.as_str()
+                {
+                    *summary = serde_json::Value::String(expand(text));
+                }
+            }
+        }
+        assert_eq!(
+            full_finding["ripr"], restored_ripr,
+            "ripr did not round-trip"
+        );
         // Coded prose surfaces round-trip through the legend, in order.
         for key in ["evidence_path", "evidence", "missing"] {
             let expanded: Vec<String> = terse_finding[key]

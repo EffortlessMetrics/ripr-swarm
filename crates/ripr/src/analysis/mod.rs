@@ -104,8 +104,8 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, default_base_unresolved_message,
-    is_shallow_repository, load_diff, load_diff_core,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head_with_parent,
+    default_base_unresolved_message, is_shallow_repository, load_diff, load_diff_core,
     load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
@@ -191,12 +191,14 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_seams_at_with_config, prepare_diff_scoped_classified_workspace,
-    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
-    workspace_cache_key_at_with_config,
+    inventory_seams_at_with_config, locate_seam_file_at_with_config,
+    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
+    scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
+#[cfg(test)]
+pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
