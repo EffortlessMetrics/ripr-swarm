@@ -2487,6 +2487,31 @@ render cap; preserve the original rows and count the new row. Otherwise retain
 unknown. Runtime mutation results are evidence for the fixture truth and are
 not themselves a static propagation proof.
 
+### Guard returns the closed subset separates (#14387)
+
+A changed early `return <value>;` inside a guard is credited to an exact
+owner pin when both versions of the owner fall inside the closed integer
+subset (`owner_value`, #12716). That subset covers integer parameters of one
+type, guards of the form `if COND { return RET; }`, and an integer or
+`Ok`/`Some`/`Err`/`None` tail. The changed line must be the whole statement,
+and the old and new texts must both be `return <value>`, so only that guard's
+returned value moves. Every condition and every other exit are then the same
+in both versions.
+
+The pin holds per call:
+- the pinned call is a bare owner call with plain decimal literal arguments;
+- the typed evaluator runs both versions on those arguments without overflow
+  or division by zero, and they return different values;
+- the pinned value is one of the two, so the assertion passes on one version
+  and fails on the other.
+
+A literal that takes an earlier guard or the tail, a pinned value that
+neither version returns, a non-literal argument, an `Err(..)` result whose
+payload the subset leaves unevaluated, and two versions that agree at the
+pinned input (`100 / 5` and `100 - 80`) all keep their earlier reading.
+Anything the subset cannot read refuses. The tail `if`/`else` form waits on
+the branch probe of #14385.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

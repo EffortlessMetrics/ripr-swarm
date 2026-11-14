@@ -1,0 +1,209 @@
+//! #14387: an exact pin credits a changed early `return <value>;` inside a
+//! guard when the closed integer subset shows that the pinned call's literal
+//! arguments make the two versions return different values, and the pinned
+//! value is one of them. Every other shape keeps its earlier reading.
+
+use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+fn lib(function: &str, assertions: &str) -> String {
+    format!(
+        "{function}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn it_works() {{
+        {assertions}
+    }}
+}}
+"
+    )
+}
+
+/// A unified diff covering the whole function, with correct hunk line counts,
+/// so every changed line pairs at its real source line.
+fn fn_diff(before_fn: &str, after_fn: &str) -> String {
+    let before_lines: Vec<&str> = before_fn.lines().collect();
+    let after_lines: Vec<&str> = after_fn.lines().collect();
+    assert_eq!(
+        before_lines.len(),
+        after_lines.len(),
+        "fixture functions must align line for line"
+    );
+    assert!(
+        before_lines
+            .iter()
+            .zip(after_lines.iter())
+            .any(|(before, after)| before != after),
+        "fixture functions must differ somewhere"
+    );
+    let count = before_lines.len();
+    let mut hunk = String::new();
+    for index in 0..count {
+        match before_lines[index] == after_lines[index] {
+            true => {
+                hunk.push(' ');
+                hunk.push_str(before_lines[index]);
+                hunk.push('\n');
+            }
+            false => {
+                hunk.push('-');
+                hunk.push_str(before_lines[index]);
+                hunk.push('\n');
+                hunk.push('+');
+                hunk.push_str(after_lines[index]);
+                hunk.push('\n');
+            }
+        }
+    }
+    format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,{count} +1,{count} @@
+{hunk}"
+    )
+}
+
+struct TempRepo {
+    root: PathBuf,
+}
+
+impl TempRepo {
+    fn create(lib: &str, patch: &str) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-guard-return-closed-pin-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create source directory failed: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"guard-return\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )
+        .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
+        std::fs::write(root.join("src/lib.rs"), lib)
+            .map_err(|error| format!("write source failed: {error}"))?;
+        std::fs::write(root.join("diff.patch"), patch)
+            .map_err(|error| format!("write diff failed: {error}"))?;
+        Ok(Self { root })
+    }
+
+    fn findings(&self) -> Result<Vec<Finding>, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        Ok(output.findings)
+    }
+}
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn finding_on_line<'a>(
+    findings: &'a [Finding],
+    line: usize,
+    expression: &str,
+) -> Result<&'a Finding, String> {
+    let mut on_line = findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::ReturnValue
+            && finding.probe.location.line == line
+            && finding.probe.expression.contains(expression)
+    });
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding),
+        other => Err(format!(
+            "premise: exactly one return_value finding on line {line} for {expression}, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+const AFTER: &str = "pub fn discount(total: u32) -> u32 {
+    if total > 500 {
+        return 1;
+    }
+    if total >= 100 {
+        return total / 5;
+    }
+    0
+}";
+const BEFORE: &str = "pub fn discount(total: u32) -> u32 {
+    if total > 500 {
+        return 1;
+    }
+    if total >= 100 {
+        return total / 10;
+    }
+    0
+}";
+
+fn guard_return_class(before: &str, assertions: &str) -> Result<ExposureClass, String> {
+    let findings =
+        TempRepo::create(&lib(AFTER, assertions), &fn_diff(before, AFTER))?.findings()?;
+    Ok(finding_on_line(&findings, 6, "total / 5")?.class.clone())
+}
+
+#[test]
+fn an_exact_pin_whose_literal_takes_the_changed_guard_is_exposed() -> Result<(), String> {
+    for assertions in [
+        "assert_eq!(discount(200), 20);",
+        // The old value pinned: the test fails on the new code instead.
+        "assert_eq!(discount(200), 40);",
+        "assert_eq!(20, discount(200));",
+    ] {
+        assert_eq!(
+            guard_return_class(BEFORE, assertions)?,
+            ExposureClass::Exposed,
+            "{assertions}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_pin_that_cannot_tell_the_versions_apart_stays_below_exposed() -> Result<(), String> {
+    for assertions in [
+        // The literal skips the changed guard: an earlier guard or the tail
+        // answers on both versions.
+        "assert_eq!(discount(50), 0);",
+        "assert_eq!(discount(600), 1);",
+        // The pinned value is neither version's result.
+        "assert_eq!(discount(200), 99);",
+        // The argument is not a literal the subset reads.
+        "let n = 200;\n        assert_eq!(discount(n), 20);",
+        "assert_eq!(discount(100 + 100), 20);",
+        // Not an exact pin.
+        "assert!(discount(200) > 0);",
+        "assert_ne!(discount(200), 0);",
+    ] {
+        assert_ne!(
+            guard_return_class(BEFORE, assertions)?,
+            ExposureClass::Exposed,
+            "{assertions}"
+        );
+    }
+    // A change both versions agree on at the pinned input: `100 / 5` and
+    // `100 - 80` are both 20.
+    let agreeing = BEFORE.replace("return total / 10;", "return total - 80;");
+    assert_ne!(
+        guard_return_class(&agreeing, "assert_eq!(discount(100), 20);")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

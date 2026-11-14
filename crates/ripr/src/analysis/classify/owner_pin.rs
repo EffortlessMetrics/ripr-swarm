@@ -5003,6 +5003,14 @@ enum ReturnPathGate {
     /// `Result`/`Option`). The pinned value must be a literal of that type,
     /// in the same wrapper, naming the field with an independent value.
     WholeValueField(WholeValueField),
+    /// #14387: the changed line is `return <value>;` inside one guard
+    /// `if COND { return ..; }` of an owner the closed integer subset reads
+    /// in both versions (`owner_value::ClosedChange`). The pinned call must
+    /// pass literal arguments on which the two versions provably return
+    /// different values, and the pinned value must be one of the two, so the
+    /// exact pin fails on one version. Any shape the subset cannot evaluate
+    /// refuses.
+    ClosedGuardReturn(super::owner_value::ClosedChange),
 }
 
 /// The owner-side facts [`ReturnPathGate::WholeValueField`] checks a test's
@@ -5376,6 +5384,17 @@ impl OwnerReturnPin {
                                         )?,
                                     })
                                 })
+                        })
+                        // #14387: a changed early `return` inside a guard of
+                        // an owner the closed subset reads in both versions.
+                        .or_else(|| {
+                            closed_guard_return(
+                                &owner.body,
+                                name,
+                                changed_line,
+                                &probe.expression,
+                                probe.before.as_deref(),
+                            )
                         })?
                 }
             }
@@ -6880,6 +6899,21 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #14387: a guard-return pin holds only where the two versions
+        // provably return different values for this call's literal arguments
+        // and the pin names one of them.
+        if let ReturnPathGate::ClosedGuardReturn(closed) = &self.path
+            && !(helper.is_none()
+                && substituted.is_none()
+                && !unwrapped
+                && matches!(self.call, PinCall::Bare)
+                && call_text
+                    .map(str::to_string)
+                    .or_else(|| owner_call_in(&assertion.text, &self.name, false))
+                    .is_some_and(|call| closed.pin_discriminates(&self.name, &call, expected)))
         {
             return false;
         }
@@ -8405,6 +8439,9 @@ impl ReturnPathGate {
             }
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
+            // Read per call in `admits_candidate`, where the call's literal
+            // arguments are known.
+            Self::ClosedGuardReturn(_) => true,
         }
     }
 }
@@ -9238,6 +9275,34 @@ fn constructor_call_span(text: &str, head: &str) -> Option<usize> {
     let masked = mask_comments_and_strings(text);
     let closing = matching_close(&masked, head.len(), b'(', b')')?;
     text[closing + 1..].trim().is_empty().then_some(closing)
+}
+
+/// #14387: [`ReturnPathGate::ClosedGuardReturn`] when the changed line is
+/// the whole statement `return <value>;`, the changed expression `return
+/// <value>` before and after, so the change moves only that guard's returned
+/// value, and the closed integer subset reads the owner in both versions. The
+/// guard condition and every other exit are then the same in both, and the
+/// pin's literal arguments decide per call which exit runs.
+fn closed_guard_return(
+    body: &str,
+    name: &str,
+    changed_line: usize,
+    expression: &str,
+    before: Option<&str>,
+) -> Option<ReturnPathGate> {
+    let (expression, before) = (expression.trim(), before?.trim());
+    let returned = |text: &str| {
+        text.strip_prefix("return ")
+            .is_some_and(|value| !value.trim().is_empty() && !value.contains([';', '{', '}']))
+    };
+    let after = body.lines().nth(changed_line)?;
+    let statement = format!("{expression};");
+    if !(returned(expression) && returned(before) && after.trim() == statement) {
+        return None;
+    }
+    let old_line = after.replacen(&statement, &format!("{before};"), 1);
+    super::owner_value::ClosedChange::read(body, name, changed_line, &old_line)
+        .map(ReturnPathGate::ClosedGuardReturn)
 }
 
 /// Whether the owner's return value can only have come through the changed

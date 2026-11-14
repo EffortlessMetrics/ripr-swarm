@@ -1,0 +1,8 @@
+# Registers the closed-subset guard-return pin (#14387) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_value.rs::tests::a_pin_discriminates_only_where_the_versions_differ_and_it_names_one",
+  "crates/ripr/tests/guard_return_closed_pin.rs::an_exact_pin_whose_literal_takes_the_changed_guard_is_exposed",
+  "crates/ripr/tests/guard_return_closed_pin.rs::a_pin_that_cannot_tell_the_versions_apart_stays_below_exposed",
+]
