@@ -344,23 +344,22 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
         return false;
     }
     // `for <pat> in ..`
-    if let Some(pattern) = between_keywords(body, "for ", " in ")
-        && pattern_contains_word(pattern, callee)
-    {
+    if any_between_keywords(body, "for ", " in ", callee) {
         return true;
     }
     // `if let <pat> = ..` and `while let <pat> = ..`
     for keyword in ["if let ", "while let "] {
-        if let Some(pattern) = between_keywords(body, keyword, " = ")
-            && pattern_contains_word(pattern, callee)
-        {
+        if any_between_keywords(body, keyword, " = ", callee) {
             return true;
         }
     }
     // `match .. { <pat> => .. }`
-    if let Some(open) = body.find("match ")
-        && let Some(brace) = body[open..].find('{')
-    {
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find("match ") {
+        let open = search + offset;
+        let Some(brace) = body[open..].find('{') else {
+            break;
+        };
         let arms = &body[open + brace + 1..];
         // Only text before a `=>` is a pattern; the final segment is the
         // last arm's body and must not be scanned as a pattern (#14508
@@ -373,6 +372,7 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
             }
             rest = after;
         }
+        search = open + brace + 1;
     }
     // `|<pat>| ..`
     let mut search = 0usize;
@@ -410,11 +410,21 @@ pub(crate) fn test_body_scoped_shadow_at_line(body: &str, callee: &str) -> bool 
     false
 }
 
-/// The text between the first `start` keyword and the next `end` keyword.
-fn between_keywords<'a>(body: &'a str, start: &str, end: &str) -> Option<&'a str> {
-    let start = body.find(start)? + start.len();
-    let end = body[start..].find(end)?;
-    Some(&body[start..start + end])
+/// Whether any `<start><pattern><end>` occurrence names `callee`, so a later
+/// loop or `if let` binding is not invisible (#14508 review).
+fn any_between_keywords(body: &str, start: &str, end: &str, callee: &str) -> bool {
+    let mut search = 0usize;
+    while let Some(offset) = body[search..].find(start) {
+        let pattern_start = search + offset + start.len();
+        let Some(end_offset) = body[pattern_start..].find(end) else {
+            return false;
+        };
+        if pattern_contains_word(&body[pattern_start..pattern_start + end_offset], callee) {
+            return true;
+        }
+        search = pattern_start + end_offset + end.len();
+    }
+    false
 }
 
 /// Whole-word containment: `word` delimited by non-identifier characters on
@@ -703,6 +713,14 @@ mod fact_authority_tests {
     fn scoped_shadow_sees_a_slice_pattern_binding() {
         assert!(test_body_scoped_shadow_at_line(
             "match pair { [owner, _] => owner(100, 100), _ => 0 }",
+            "owner"
+        ));
+    }
+
+    #[test]
+    fn scoped_shadow_sees_a_binding_in_a_later_loop() {
+        assert!(test_body_scoped_shadow_at_line(
+            "for item in first { consume(item); } for owner in callbacks { owner(100, 100); }",
             "owner"
         ));
     }

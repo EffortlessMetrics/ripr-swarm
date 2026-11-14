@@ -23720,13 +23720,13 @@ fn given_direct_owner_alias_when_a_nested_bin_module_imports_the_library_root_th
         "lib_proptest",
         &[
             ("src/lib.rs", library),
-            ("src/bin/cli.rs", binary_root),
+            ("src/bin/cli/main.rs", binary_root),
             ("src/bin/cli/work.rs", nested),
         ],
     )?;
     let files = [
         PathBuf::from("src/lib.rs"),
-        PathBuf::from("src/bin/cli.rs"),
+        PathBuf::from("src/bin/cli/main.rs"),
         PathBuf::from("src/bin/cli/work.rs"),
     ];
     let evidence = evidence_for_alias_seam(&root, &files, "src/lib.rs")?;
