@@ -33,7 +33,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Commands => super::commands_report(),
         XtaskCommand::PrSummary => super::reports::pr_summary(),
         XtaskCommand::Proof(args) => super::reports::proof(&args),
-        XtaskCommand::PrReady => super::pr_ready(),
+        XtaskCommand::PrReady(args) => super::pr_ready(&args),
         XtaskCommand::Cockpit => super::cockpit(),
         XtaskCommand::PrTriageReport => super::reports::pr_triage_report(),
         XtaskCommand::BranchInventory(args) => super::branch_inventory::run(&args),
