@@ -1016,7 +1016,7 @@ fn reverse_dependents(package: &str, roots: &[PackageRoot]) -> BTreeSet<String> 
     }
 }
 
-fn workspace_widening_reason(paths: &[String]) -> Option<String> {
+pub(crate) fn workspace_widening_reason(paths: &[String]) -> Option<String> {
     paths.iter().find_map(|path| {
         if matches!(
             path.as_str(),
@@ -1945,12 +1945,14 @@ mod tests {
             }),
             format!("reverse dependent missing from Clippy args: {invocations:?}"),
         )?;
-        let widened = impact_plan_for_files(&["Cargo.lock".to_string()], &roots);
-        let invocations = clippy_invocations(root, &widened);
-        require(
-            invocations.len() == 1 && invocations[0].iter().any(|arg| arg == "--workspace"),
-            format!("shared surface did not map to workspace Clippy: {invocations:?}"),
-        )?;
+        for shared in ["Cargo.lock", "rust-toolchain.toml", "clippy.toml"] {
+            let widened = impact_plan_for_files(&[shared.to_string()], &roots);
+            let invocations = clippy_invocations(root, &widened);
+            require(
+                invocations.len() == 1 && invocations[0].iter().any(|arg| arg == "--workspace"),
+                format!("shared surface {shared} did not map to workspace Clippy: {invocations:?}"),
+            )?;
+        }
         let empty = impact_plan_for_files(&["docs/guide.md".to_string()], &roots);
         require(
             clippy_invocations(root, &empty).is_empty()

@@ -1127,15 +1127,16 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         // The retained Rust gates include workspace/all-target Clippy and
         // test-source policy. Include package tests, examples and build scripts,
         // with anchored roots so fixture lookalikes keep their own category.
-        rust_src: files.iter().any(|f| {
-            f == "Cargo.lock"
-                || f == "Cargo.toml"
-                || f.ends_with("/Cargo.toml")
-                || (f.ends_with(".rs")
-                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
-                        .iter()
-                        .any(|root| f.starts_with(root)))
-        }),
+        rust_src: dispatch::precommit_v2::workspace_widening_reason(files).is_some()
+            || files.iter().any(|f| {
+                f == "Cargo.lock"
+                    || f == "Cargo.toml"
+                    || f.ends_with("/Cargo.toml")
+                    || (f.ends_with(".rs")
+                        && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                            .iter()
+                            .any(|root| f.starts_with(root)))
+            }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
             .iter()
@@ -1270,6 +1271,13 @@ mod check_fast_selector_tests {
             "Cargo.toml",
             "Cargo.lock",
             "crates/ripr/Cargo.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "clippy.toml",
+            "rustfmt.toml",
+            ".cargo/config.toml",
+            "policy/clippy.toml",
+            "policy/lint-policy.toml",
         ] {
             assert!(
                 categorize_changed_files(&[path.to_string()]).rust_src,
