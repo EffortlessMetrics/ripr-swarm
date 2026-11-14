@@ -643,17 +643,31 @@ const ARM_RESULT_BUDGET: usize = 60;
 /// `Err(..)` (whose sink kind the probe text decides). Anything else is
 /// `None`, and the sink keeps the head.
 fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
-    let line = owner
-        .body
-        .lines()
-        .nth(probe.location.line.checked_sub(owner.start_line)?)?;
+    same_line_arm_result_in(
+        &probe.expression,
+        probe.location.line,
+        &owner.body,
+        owner.start_line,
+    )
+}
+
+/// [`same_line_arm_result`] over any source text: `body` is text whose first
+/// line is `start_line`, and `head` is the arm head on `line` (#14683: the
+/// agent brief reads a seam's arm from its whole file with `start_line` 1).
+pub(in crate::analysis) fn same_line_arm_result_in(
+    head: &str,
+    line_number: usize,
+    body: &str,
+    start_line: usize,
+) -> Option<String> {
+    let line = body.lines().nth(line_number.checked_sub(start_line)?)?;
     let masked = crate::analysis::extract::mask_comments_and_strings(line);
     if masked.len() != line.len() || masked.matches("=>").count() != 1 {
         return None;
     }
     let arrow = masked.find("=>")?;
     let compact = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let head = probe.expression.trim().strip_suffix("=>")?;
+    let head = head.trim().strip_suffix("=>")?;
     if compact(&line[..arrow]) != compact(head) {
         return None;
     }
@@ -681,10 +695,9 @@ fn same_line_arm_result(probe: &Probe, owner: &FunctionSummary) -> Option<String
     // the next line (`base` then `+ 1,`) and its first line alone would
     // name a wrong value.
     if !tail.trim_end().ends_with(',') {
-        let next = owner
-            .body
+        let next = body
             .lines()
-            .skip(probe.location.line.checked_sub(owner.start_line)? + 1)
+            .skip(line_number.checked_sub(start_line)? + 1)
             .map(str::trim)
             .find(|next| !next.is_empty() && !next.starts_with("//"));
         if !next.is_some_and(|next| next.starts_with('}')) {

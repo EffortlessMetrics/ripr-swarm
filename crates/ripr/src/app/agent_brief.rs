@@ -249,6 +249,11 @@ pub(crate) struct AgentBriefWhyNow {
 pub(crate) struct AgentBriefSelectedSeam<'a> {
     pub(crate) seam: &'a ClassifiedSeam,
     pub(crate) why_now: AgentBriefWhyNow,
+    /// #14683: a head-only match-arm seam's same-line arm result
+    /// (`Size::Medium =>` gives `450`), read by
+    /// [`attach_agent_brief_arm_results`] after selection. `None` when not
+    /// read, or for any other seam.
+    pub(crate) arm_result: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -371,6 +376,30 @@ pub(crate) fn select_agent_brief_seams<'a>(
         omitted_by_cap,
         omitted_by_policy: direct.omitted_by_policy,
         omitted_static_limited: direct.omitted_static_limited,
+    }
+}
+
+/// #14683: name each selected head-only match-arm seam's arm result, the
+/// value a test must pin, read from the seam file under `root` with the
+/// flow model's fail-closed same-line rule. Runs after selection, so at most
+/// the brief cap's files are read, each once. An unreadable file, or a line
+/// that no longer holds the seam's head, leaves the seam without one.
+pub(crate) fn attach_agent_brief_arm_results(root: &Path, selection: &mut AgentBriefSelection<'_>) {
+    let mut sources: std::collections::BTreeMap<PathBuf, Option<String>> =
+        std::collections::BTreeMap::new();
+    for selected in &mut selection.top_seams {
+        let seam = &selected.seam.seam;
+        if seam.kind() != crate::analysis::seams::SeamKind::MatchArm {
+            continue;
+        }
+        if !sources.contains_key(seam.file()) {
+            let content = std::fs::read_to_string(root.join(seam.file())).ok();
+            sources.insert(seam.file().to_path_buf(), content);
+        }
+        selected.arm_result = sources
+            .get(seam.file())
+            .and_then(|source| source.as_deref())
+            .and_then(|source| crate::analysis::match_arm_seam_result(seam, source));
     }
 }
 
@@ -798,7 +827,11 @@ fn matching_related_test_file<'a>(
 }
 
 fn selected<'a>(seam: &'a ClassifiedSeam, why_now: AgentBriefWhyNow) -> AgentBriefSelectedSeam<'a> {
-    AgentBriefSelectedSeam { seam, why_now }
+    AgentBriefSelectedSeam {
+        seam,
+        why_now,
+        arm_result: None,
+    }
 }
 
 fn compare_selected(
@@ -2586,5 +2619,111 @@ weakly_gripped = "off"
             "{:?}",
             selection.warnings
         );
+    }
+
+    fn arm_seam(line: usize, expression: &str) -> ClassifiedSeam {
+        let mut entry = classified(
+            "src/lib.rs",
+            line,
+            "price",
+            expression,
+            SeamGripClass::WeaklyGripped,
+        );
+        entry.seam = RepoSeam::new(
+            "src/lib.rs",
+            "price",
+            SeamKind::MatchArm,
+            line * 10,
+            line,
+            expression,
+            RequiredDiscriminator::MatchArmTaken {
+                arm: expression.trim_end_matches("=>").trim().to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        entry
+    }
+
+    /// #14683: the brief names a head-only match-arm seam's same-line arm
+    /// result, read from the seam file after selection. An arm whose result
+    /// is a block, a head no longer on its line, a non-arm seam and an
+    /// unreadable file each read nothing.
+    #[test]
+    fn brief_names_a_head_only_arm_seam_result() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-agent-brief-arm-result-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create root: {error}"))?;
+        let source = "pub enum Size { Small, Medium, Large }\n\
+                      \n\
+                      pub fn price(size: Size) -> u32 {\n\
+                      \x20   match size {\n\
+                      \x20       Size::Small => { 300 }\n\
+                      \x20       Size::Medium => 450,\n\
+                      \x20       Size::Large => 600,\n\
+                      \x20   }\n\
+                      }\n";
+        std::fs::write(root.join("src/lib.rs"), source)
+            .map_err(|error| format!("write: {error}"))?;
+        let seams = [
+            arm_seam(6, "Size::Medium =>"),
+            arm_seam(5, "Size::Small =>"),
+            // The file's line 7 holds `Size::Large`, not this head.
+            arm_seam(7, "Size::Huge =>"),
+            classified(
+                "src/lib.rs",
+                6,
+                "price",
+                "Size::Medium =>",
+                SeamGripClass::WeaklyGripped,
+            ),
+        ];
+        let mut selection = AgentBriefSelection {
+            requested: 4,
+            returned: 4,
+            default: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
+            hard_cap: AGENT_BRIEF_HARD_MAX_SEAMS,
+            top_seams: seams
+                .iter()
+                .map(|seam| {
+                    selected(
+                        seam,
+                        AgentBriefWhyNow {
+                            reason: AgentBriefWhyNowReason::SameFileSeam,
+                            confidence: AgentBriefWhyNowConfidence::Medium,
+                            evidence: "working set includes src/lib.rs".to_string(),
+                        },
+                    )
+                })
+                .collect(),
+            warnings: Vec::new(),
+            omitted_by_cap: 0,
+            omitted_by_policy: 0,
+            omitted_static_limited: 0,
+        };
+        attach_agent_brief_arm_results(&root, &mut selection);
+        let results = selection
+            .top_seams
+            .iter()
+            .map(|selected| selected.arm_result.as_deref())
+            .collect::<Vec<_>>();
+        assert_eq!(results, [Some("450"), None, None, None]);
+
+        // An unreadable seam file names nothing.
+        let missing = root.join("absent");
+        for selected in &mut selection.top_seams {
+            selected.arm_result = None;
+        }
+        attach_agent_brief_arm_results(&missing, &mut selection);
+        assert!(
+            selection
+                .top_seams
+                .iter()
+                .all(|selected| selected.arm_result.is_none())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }
