@@ -586,6 +586,9 @@ jobs:
           HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
+          # Existing bounded stderr telemetry attributes long-tail analyzer cost.
+          # Diagnostics only: no analysis scope, timeout or verdict changes.
+          RIPR_REPO_EXPOSURE_LATENCY_TRACE: "1"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
           # #3674 (#3555 PR C, 4,321-line review-hardened capability diff),
