@@ -28108,6 +28108,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -28134,6 +28135,7 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           ANTHROPIC_BASE_URL: ""
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           upload_debug_artifacts: false
           security_scan_schedule: true
           security_scan_days: 7
@@ -28317,6 +28319,34 @@ fn check_droid_security_scan_flags_missing_contents_read() {
         violations
             .iter()
             .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_self_hosted_runner() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("runs-on: ubuntu-latest", "runs-on: self-hosted");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("GitHub-hosted runner")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_github_token() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("          github_token: ${{ secrets.GITHUB_TOKEN }}\n", "");
+    assert!(
+        !yaml.contains("github_token:"),
+        "token mutation must engage"
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations.iter().any(|v| v.contains("GITHUB_TOKEN")),
+        "{violations:?}"
     );
 }
 

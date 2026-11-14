@@ -132,7 +132,11 @@ For Droid workflows:
   action (`github_token: ${{ secrets.GITHUB_TOKEN }}`) instead of granting
   `id-token: write`. The token carries exactly the job-level permissions and
   dies with the job; the OIDC path stays dropped under #2498.
-- These invariants, including scheduled security-scan shape and explicit `show_full_output: false`, are enforced by `cargo xtask check-droid-review-config`.
+- These invariants, including the scheduled security-scan shape (`runs-on:
+  ubuntu-latest`, the job's own `github_token`, schedule, scan mode, window and
+  thresholds) and explicit `show_full_output: false`, are enforced by
+  `cargo xtask check-droid-review-config`; each has a rejection test that mutates
+  the checked workflow.
 
 ## Automatic review retirement
 
