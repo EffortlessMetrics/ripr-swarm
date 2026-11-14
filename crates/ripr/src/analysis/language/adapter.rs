@@ -130,65 +130,10 @@ pub(crate) struct LanguageDiffResult {
     pub(crate) preview_fact_cache: PreviewFactCacheStats,
 }
 
-/// The stage of a repo run at which a named bound first limited the working
-/// set. Stages are ordered: discovery precedes selection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum RepoLimitingStage {
-    /// The discovery walk stopped at its entry cap.
-    Discovery,
-    /// Discovered files exceeded the working-set limit at selection.
-    Selection,
-}
-
-/// A bound that actually fired, reported by the producer that owns it. `name`
-/// is the producer's own operator-visible bound name (an env override name);
-/// it is never derived from a disclosure string.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RepoCapFired {
-    pub(crate) name: &'static str,
-    pub(crate) stage: RepoLimitingStage,
-    /// The numeric limit in force when the bound fired.
-    pub(crate) limit: usize,
-}
-
-/// Typed repo-mode file accounting reported by the producer (#6466). Every
-/// field is `None` when the producer did not measure it or only has a lower
-/// bound (incomplete discovery); unknown is never zero. When discovered,
-/// selected, skipped and omitted are all known:
-/// `discovered == selected + skipped + omitted`.
-///
-/// Meaning is producer-specific:
-/// - TypeScript: `selected` is production files up to the working-set limit
-///   PLUS every test file (evidence is not capped by that limit); `skipped`
-///   is type declaration files only; `omitted` is production files beyond the
-///   limit. The walk cap (`RIPR_TS_MAX_WORKSPACE_FILES`) counts candidate
-///   TypeScript/JavaScript source files, not every directory entry; a 5x
-///   total-entry backstop still ends a walk over a huge non-source tree.
-/// - Python: `selected` is production plus evidence files under one combined
-///   cap, production taking priority; `skipped` is files excluded by role
-///   (vendor, generated, environment); `omitted` is eligible files beyond the
-///   cap. There is no walk cap.
-///
-/// `files.skipped` is distinct from the older `files_skipped` observation
-/// (`LanguageRepoResult::skipped_files`): that is a compatibility count whose
-/// meaning is producer-specific (TypeScript: capped production files plus
-/// diff skips; Python: evidence-stage skips) and feeds the public
-/// `LanguageRun` reasons. It is not a role/kind exclusion count.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RepoFileAccounting {
-    /// Adapter-routed files seen. `None` when discovery was incomplete, so no
-    /// trustworthy total exists.
-    pub(crate) discovered: Option<usize>,
-    /// Files taken into the working set (production and evidence).
-    pub(crate) selected: Option<usize>,
-    /// Files intentionally excluded by role or kind (generated, declaration,
-    /// environment), not by a cap.
-    pub(crate) skipped: Option<usize>,
-    /// Eligible files left out because a cap fired.
-    pub(crate) omitted: Option<usize>,
-    /// The first bound that limited the run, if any fired.
-    pub(crate) first_cap_fired: Option<RepoCapFired>,
-}
+// Producer accounting DTOs compile below the adapters; existing paths remain.
+pub(crate) use ripr_contract::analysis::language_outcome::{
+    RepoCapFired, RepoFileAccounting, RepoLimitingStage,
+};
 
 /// Per-language results returned by [`LanguageAdapter::analyze_repo`].
 ///

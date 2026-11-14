@@ -12,11 +12,11 @@
 //! surface onto the view directly is tracked on #6475.
 
 use super::{DiffCompleteness, LanguageAggregate, LanguageOutcomeStatus, OutcomeMode};
-use crate::analysis::LanguageRun;
+use crate::analysis::language_run::LanguageRun;
 
 /// Where a row must be visible on the existing public surfaces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LanguageDisclosure {
+pub enum LanguageDisclosure {
     /// Evidenced or nothing in scope: no public row is expected.
     Silent,
     /// A non-success `language_runs[]` row with this status string.
@@ -30,12 +30,12 @@ pub(crate) enum LanguageDisclosure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LanguageCompletenessRow {
-    pub(crate) label: String,
-    pub(crate) status: LanguageOutcomeStatus,
-    pub(crate) findings: usize,
-    pub(crate) limitations: Vec<String>,
-    pub(crate) disclosure: LanguageDisclosure,
+pub struct LanguageCompletenessRow {
+    pub label: String,
+    pub status: LanguageOutcomeStatus,
+    pub findings: usize,
+    pub limitations: Vec<String>,
+    pub disclosure: LanguageDisclosure,
 }
 
 impl LanguageDisclosure {
@@ -45,7 +45,7 @@ impl LanguageDisclosure {
     /// `AnalysisOutcome` limitations and no `language_runs[]` row, while repo
     /// mode records a `partial` run row. (A diff-mode `Err` is never
     /// `partial`; it maps to `failed`.)
-    pub(crate) const fn of(mode: OutcomeMode, status: LanguageOutcomeStatus) -> Self {
+    pub const fn of(mode: OutcomeMode, status: LanguageOutcomeStatus) -> Self {
         match status {
             LanguageOutcomeStatus::Complete
             | LanguageOutcomeStatus::CompleteZero
@@ -64,20 +64,20 @@ impl LanguageDisclosure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LanguageCompletenessView {
-    pub(crate) mode: OutcomeMode,
-    pub(crate) completeness: DiffCompleteness,
+pub struct LanguageCompletenessView {
+    pub mode: OutcomeMode,
+    pub completeness: DiffCompleteness,
     /// One row per canonical language label, in label order.
-    pub(crate) rows: Vec<LanguageCompletenessRow>,
-    pub(crate) total_findings: usize,
+    pub rows: Vec<LanguageCompletenessRow>,
+    pub total_findings: usize,
     /// The public `language_runs` compatibility projection of every row, in
     /// label order. Owned here so a surface cannot invent its own.
-    pub(crate) public_runs: Vec<LanguageRun>,
+    pub public_runs: Vec<LanguageRun>,
 }
 
 impl LanguageDisclosure {
     /// Stable wire label of how the row is disclosed on the public surfaces.
-    pub(crate) const fn wire(self) -> &'static str {
+    pub const fn wire(self) -> &'static str {
         match self {
             Self::Silent => "silent",
             Self::PublicRun(_) => "language_run",
@@ -93,7 +93,7 @@ impl LanguageCompletenessView {
     /// child, so `complete_zero` (an adapter ran and found nothing) stays
     /// distinguishable from `not_selected`/`unavailable`, which an empty
     /// `findings` array alone cannot say.
-    pub(crate) fn to_json_value(&self) -> serde_json::Value {
+    pub fn to_json_value(&self) -> serde_json::Value {
         serde_json::json!({
             "schema_version": "language_completeness.v1",
             "mode": self.mode.as_str(),
@@ -109,7 +109,7 @@ impl LanguageCompletenessView {
         })
     }
 
-    pub(crate) fn from_aggregate(aggregate: &LanguageAggregate) -> Self {
+    pub fn from_aggregate(aggregate: &LanguageAggregate) -> Self {
         let rows: Vec<LanguageCompletenessRow> = aggregate
             .outcomes
             .values()
@@ -141,7 +141,7 @@ impl LanguageCompletenessView {
     }
 
     /// Rows a surface must not drop, as `(label, disclosure)`.
-    pub(crate) fn disclosed(&self) -> Vec<(&str, LanguageDisclosure)> {
+    pub fn disclosed(&self) -> Vec<(&str, LanguageDisclosure)> {
         self.rows
             .iter()
             .map(|row| (row.label.as_str(), row.disclosure))
@@ -154,7 +154,7 @@ impl LanguageCompletenessView {
     /// hidden), and no run names a language the aggregate does not hold. An
     /// out-of-scope optional adapter failure may keep a public run over a
     /// `no_current_scope` row, so extra runs of known labels are allowed.
-    pub(crate) fn reconcile_public_runs(&self, runs: &[LanguageRun]) -> Result<(), String> {
+    pub fn reconcile_public_runs(&self, runs: &[LanguageRun]) -> Result<(), String> {
         for (label, disclosure) in self.disclosed() {
             if let LanguageDisclosure::PublicRun(status) = disclosure
                 && !runs
