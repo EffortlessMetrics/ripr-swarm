@@ -190,13 +190,13 @@ mod tests {
             layer
                 .call(Request::build(method.to_owned()).finish())
                 .await
-                .map_err(|e| e.to_string())?;
+                .unwrap_or_else(|infallible| match infallible {});
         }
         assert_eq!(count.load(Ordering::SeqCst), 0);
         layer
             .call(Request::build("exit".to_owned()).finish())
             .await
-            .map_err(|e| e.to_string())?;
+            .unwrap_or_else(|infallible| match infallible {});
         assert_eq!(count.load(Ordering::SeqCst), 1);
         Ok(())
     }

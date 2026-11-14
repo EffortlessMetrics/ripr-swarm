@@ -111,6 +111,7 @@ pub(crate) fn project_venv_pytest(root: &Path) -> VenvPytest {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     fn fixture(venv: &str, site_entries: &[&str]) -> std::io::Result<tempfile_dir::Dir> {
         let dir = tempfile_dir::Dir::new()?;
         let site = dir.path().join(venv).join("lib/python3.13/site-packages");
@@ -123,6 +124,7 @@ mod tests {
         Ok(dir)
     }
 
+    #[cfg(not(windows))]
     fn write_cfg(dir: &tempfile_dir::Dir, venv: &str, text: &str) -> std::io::Result<()> {
         std::fs::write(dir.path().join(venv).join("pyvenv.cfg"), text)
     }

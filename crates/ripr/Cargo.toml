@@ -6,7 +6,6 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Static check for Rust changes: does your test suite notice if the behavior in this diff were wrong?"
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]

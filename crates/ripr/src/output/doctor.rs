@@ -2179,9 +2179,13 @@ fn create_private_probe_dir() -> std::io::Result<std::path::PathBuf> {
             .unwrap_or(0);
         hasher.write_u128(nanos);
         let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{:016x}", hasher.finish()));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        let builder = {
+            let mut builder = builder;
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
         match builder.create(&dir) {
             Ok(()) => return Ok(dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => last = error,
