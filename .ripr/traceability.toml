@@ -1689,7 +1689,10 @@ tests = [
   "crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result",
   "crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors",
   "crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable",
-  "crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv"
+  "crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv",
+  "crates/ripr/src/cli/commands/init.rs::tests::generated_config_enables_typescript_source_under_a_child_directory",
+  "crates/ripr/src/cli/commands/init.rs::tests::generated_config_keeps_typescript_off_without_child_directory_source",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_has_no_typescript_tip_after_init_for_typescript_under_web"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
